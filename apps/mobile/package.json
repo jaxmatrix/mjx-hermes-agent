@@ -1,0 +1,30 @@
+{
+  "name": "@hermes/mobile",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Hermes Mobile — Tauri v2 Android client (remote-only chat).",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "android:init": "tauri android init",
+    "android:dev": "tauri android dev",
+    "android:build:debug": "tauri android build --debug",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16"
+  }
+}
