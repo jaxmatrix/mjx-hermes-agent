@@ -1,0 +1,151 @@
+import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+
+// An IPC-backed WebSocket: the real socket lives in Rust (`transport.rs`), this
+// class is just a `WebSocketLike` façade so the reused `JsonRpcGatewayClient`
+// can drive it unchanged. It implements exactly the subset that client touches:
+// the numeric `readyState` constants, `send`, `close`, and add/removeEventListener
+// for 'open' | 'message' | 'close' | 'error' (with `message.data` = the frame text).
+
+type EventListenerLike = (event: { type: string; data?: unknown; message?: string }) => void
+
+function deriveOrigin(wsUrl: string): string | undefined {
+  try {
+    const u = new URL(wsUrl)
+    const scheme = u.protocol === 'wss:' ? 'https:' : 'http:'
+    return `${scheme}//${u.host}`
+  } catch {
+    return undefined
+  }
+}
+
+export class TauriWebSocket {
+  static readonly CONNECTING = 0
+  static readonly OPEN = 1
+  static readonly CLOSING = 2
+  static readonly CLOSED = 3
+  readonly CONNECTING = 0
+  readonly OPEN = 1
+  readonly CLOSING = 2
+  readonly CLOSED = 3
+
+  readyState = 0
+
+  private readonly id = crypto.randomUUID()
+  private readonly url: string
+  private readonly origin?: string
+  private readonly listeners = new Map<string, Set<EventListenerLike>>()
+  private unlisten: UnlistenFn[] = []
+  private sendQueue: string[] = []
+  private closed = false
+
+  constructor(url: string, origin?: string) {
+    this.url = url
+    this.origin = origin
+    void this.init()
+  }
+
+  private async init(): Promise<void> {
+    try {
+      const sub = (suffix: string) =>
+        listen(`ws://${this.id}/${suffix}`, event => this.onRustEvent(suffix, event.payload))
+      this.unlisten = await Promise.all([sub('open'), sub('message'), sub('close'), sub('error')])
+
+      if (this.closed) {
+        // close() was called before the socket finished opening.
+        void invoke('ws_close', { id: this.id }).catch(() => undefined)
+        this.teardown()
+        return
+      }
+
+      await invoke('ws_open', {
+        id: this.id,
+        url: this.url,
+        origin: this.origin ?? deriveOrigin(this.url)
+      })
+
+      const queued = this.sendQueue
+      this.sendQueue = []
+      for (const text of queued) {
+        void invoke('ws_send', { id: this.id, text }).catch(() => undefined)
+      }
+    } catch (err) {
+      this.dispatch('error', { message: err instanceof Error ? err.message : String(err) })
+      this.readyState = this.CLOSED
+      this.dispatch('close', {})
+      this.teardown()
+    }
+  }
+
+  private onRustEvent(kind: string, payload: unknown): void {
+    switch (kind) {
+      case 'open':
+        this.readyState = this.OPEN
+        this.dispatch('open', {})
+        break
+      case 'message':
+        this.dispatch('message', { data: payload })
+        break
+      case 'close':
+        this.readyState = this.CLOSED
+        this.dispatch('close', {})
+        this.teardown()
+        break
+      case 'error':
+        this.dispatch('error', { message: String(payload) })
+        break
+    }
+  }
+
+  private dispatch(type: string, extra: { data?: unknown; message?: string }): void {
+    const set = this.listeners.get(type)
+    if (!set) return
+    for (const handler of [...set]) {
+      handler({ type, ...extra })
+    }
+  }
+
+  private teardown(): void {
+    for (const off of this.unlisten) {
+      try {
+        off()
+      } catch {
+        // ignore
+      }
+    }
+    this.unlisten = []
+  }
+
+  addEventListener(type: string, handler: EventListenerLike): void {
+    let set = this.listeners.get(type)
+    if (!set) {
+      set = new Set()
+      this.listeners.set(type, set)
+    }
+    set.add(handler)
+  }
+
+  removeEventListener(type: string, handler: EventListenerLike): void {
+    this.listeners.get(type)?.delete(handler)
+  }
+
+  send(text: string): void {
+    if (this.readyState === this.OPEN) {
+      void invoke('ws_send', { id: this.id, text }).catch(() => undefined)
+    } else {
+      this.sendQueue.push(text)
+    }
+  }
+
+  close(): void {
+    this.closed = true
+    if (this.readyState === this.CLOSED) return
+    this.readyState = this.CLOSING
+    void invoke('ws_close', { id: this.id })
+      .catch(() => undefined)
+      .finally(() => {
+        this.readyState = this.CLOSED
+        this.teardown()
+      })
+  }
+}
