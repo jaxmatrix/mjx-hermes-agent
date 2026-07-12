@@ -2,3 +2,6 @@ dist/
 node_modules/
 src-tauri/target/
 src-tauri/gen/
+
+# Dev-only porting ledger — never committed
+PORT.md
