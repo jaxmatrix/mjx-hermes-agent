@@ -1,14 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { useStore } from '@/store/atom'
 import {
   $connectionError,
   $connectionPhase,
   connect,
-  lastPassword,
-  lastToken,
   lastUrl,
   lastUsername,
+  loadSavedLogin,
   probeStatus
 } from '@/store/connection'
 
@@ -26,9 +25,22 @@ export function ConnectScreen() {
   const [probeError, setProbeError] = useState<string | null>(null)
 
   const [url, setUrl] = useState(lastUrl())
-  const [token, setToken] = useState(lastToken())
+  const [token, setToken] = useState('')
   const [username, setUsername] = useState(lastUsername())
-  const [password, setPassword] = useState(lastPassword())
+  const [password, setPassword] = useState('')
+
+  // Secrets aren't in localStorage — prefill them from the keyring (silent).
+  useEffect(() => {
+    let live = true
+    void loadSavedLogin().then(saved => {
+      if (!live || !saved) return
+      if (saved.token) setToken(saved.token)
+      if (saved.password) setPassword(saved.password)
+    })
+    return () => {
+      live = false
+    }
+  }, [])
 
   const connecting = phase === 'probing' || phase === 'connecting'
 

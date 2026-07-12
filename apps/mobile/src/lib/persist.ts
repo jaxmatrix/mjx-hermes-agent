@@ -1,11 +1,7 @@
-// Lightweight persistence over the webview's localStorage. Used for the last
-// backend URL/token so reconnect is one tap, and as the backend for
-// persistentAtom (./persisted).
-//
-// FIXME(D2): NOT secure storage — values are plaintext. Move credentials
-// (url/token/username/password in store/connection.ts) to secure storage
-// (Android Keystore) via a Tauri secure-store command. This helper stays fine
-// for non-secret UI prefs only.
+// Lightweight persistence over the webview's localStorage, and the backend for
+// persistentAtom (./persisted). NON-SECRET values only — the last backend URL
+// and username for prefill, plus UI prefs. Credentials (token/password) live in
+// the OS keyring instead (see @/lib/secure-store).
 
 // --- null-aware choke point (backs persistentAtom in ./persisted) ---
 

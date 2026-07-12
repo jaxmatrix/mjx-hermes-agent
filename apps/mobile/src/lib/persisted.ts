@@ -9,8 +9,8 @@ import { readKey, writeKey } from './persist'
 //
 //   export const $foo = persistentAtom('hermes.mobile.foo', false, Codecs.bool)
 //
-// FIXME(D2): plain localStorage — use secure storage (Android Keystore) for any
-// sensitive keys. This helper is for non-secret UI prefs only.
+// NOTE: plain localStorage — non-secret UI prefs only. Secrets go through the
+// OS keyring (@/lib/secure-store), never here.
 
 // Maps a value to/from its stored string form. `decode` only ever sees a real
 // stored string (absence falls back); `encode` returning null removes the key.

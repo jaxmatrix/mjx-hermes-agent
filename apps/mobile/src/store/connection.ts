@@ -1,5 +1,6 @@
 import { passwordLogin } from '@/lib/auth'
 import { loadString, saveString } from '@/lib/persist'
+import { clearSecrets, loadSecrets, saveSecrets, type Secrets } from '@/lib/secure-store'
 import { atom } from '@/store/atom'
 import { closeGateway, connectGateway } from '@/store/gateway'
 import { httpRequest } from '@/transport/http'
@@ -39,12 +40,10 @@ export interface ConnectInput {
   password?: string
 }
 
+// Non-secret conveniences live in localStorage for a synchronous prefill; the
+// secrets (token/password) live in the OS keyring (see @/lib/secure-store).
 const URL_KEY = 'hermes.mobile.url'
-const TOKEN_KEY = 'hermes.mobile.token'
 const USER_KEY = 'hermes.mobile.username'
-// NOTE: plaintext in localStorage, same tradeoff as the token today. Replace with
-// Android keystore secure storage before ship (tracked follow-up).
-const PASS_KEY = 'hermes.mobile.password'
 
 export const $connection = atom<Connection | null>(null)
 export const $connectionPhase = atom<ConnectionPhase>('idle')
@@ -52,9 +51,17 @@ export const $connectionError = atom<string | null>(null)
 export const $status = atom<StatusInfo | null>(null)
 
 export const lastUrl = (): string => loadString(URL_KEY)
-export const lastToken = (): string => loadString(TOKEN_KEY)
 export const lastUsername = (): string => loadString(USER_KEY)
-export const lastPassword = (): string => loadString(PASS_KEY)
+
+/** Read the saved token/password from the keyring (silent; null if none). */
+export function loadSavedLogin(): Promise<Secrets | null> {
+  return loadSecrets()
+}
+
+/** Forget the saved secrets (e.g. a "sign out everywhere" affordance). */
+export function forgetSavedLogin(): Promise<void> {
+  return clearSecrets()
+}
 
 export function normalizeBaseUrl(raw: string): string {
   let value = raw.trim()
@@ -102,10 +109,11 @@ export async function connect(input: ConnectInput): Promise<void> {
     await connectGateway(conn)
 
     $connectionPhase.set('ready')
+    // Non-secret prefill in localStorage; secrets in the keyring (best-effort —
+    // if the keyring is unavailable, secrets simply aren't persisted).
     saveString(URL_KEY, input.url.trim())
-    saveString(TOKEN_KEY, input.token?.trim() ?? '')
     saveString(USER_KEY, input.username ?? '')
-    saveString(PASS_KEY, input.password ?? '')
+    await saveSecrets({ token: input.token?.trim() || undefined, password: input.password || undefined })
   } catch (err) {
     $connectionError.set(err instanceof Error ? err.message : String(err))
     $connectionPhase.set('error')
