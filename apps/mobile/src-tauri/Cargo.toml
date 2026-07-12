@@ -1,0 +1,30 @@
+[package]
+name = "hermes-mobile"
+version = "0.0.1"
+description = "Hermes Mobile — Tauri v2 Android client (remote-only chat)."
+authors = ["Nous Research <info@nousresearch.com>"]
+edition = "2021"
+rust-version = "1.77"
+
+# The library target is what the Android/iOS project links against, so the
+# cdylib/staticlib crate-types are mandatory for the mobile targets. The name
+# must match what src/main.rs (desktop) and the generated mobile entry call.
+[lib]
+name = "hermes_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Transport core (Step 2a): all HTTP + WS traffic runs here, not in the webview,
+# so there is no CORS constraint and we can talk to any backend on the LAN.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+# rustls so we don't need OpenSSL/NDK-cross OpenSSL on the Android build.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
