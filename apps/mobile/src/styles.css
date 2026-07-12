@@ -1,3 +1,9 @@
+@import 'tailwindcss';
+/* Dark variant is class-based (matches desktop). Mobile is dark-by-default via
+   :root below; `.dark` toggling lands with the theme engine (Track I3). The
+   variant is declared now so ported `dark:` utilities compile. */
+@custom-variant dark (&:is(.dark *));
+
 /* Design tokens — mobile-first, dark by default (mirrors the desktop token
    families: --ui-* surfaces/strokes/text, one accent). Light mode is layered on
    at the bottom. Components reference tokens only — never raw hex. */
@@ -17,6 +23,43 @@
   --ui-danger: #ff6b6b;
   --ui-good: #4ade80;
   --radius: 12px;
+}
+
+/* Tailwind named-token contract (shadcn). Sourced from the --ui-* palette above
+   so light/dark (prefers-color-scheme) flows through automatically. This is what
+   makes ported shadcn primitives — bg-primary, text-foreground, rounded-lg,
+   border-border, ring-ring — resolve to mobile colors. `inline` keeps the
+   var() references intact so they resolve at runtime. The fuller desktop --ui-*
+   vocabulary + --theme-* engine remain deferred to Track I3. */
+@theme inline {
+  --color-background: var(--ui-bg);
+  --color-foreground: var(--ui-text-primary);
+  --color-card: var(--ui-surface);
+  --color-card-foreground: var(--ui-text-primary);
+  --color-popover: var(--ui-surface);
+  --color-popover-foreground: var(--ui-text-primary);
+  --color-muted: var(--ui-surface-2);
+  --color-muted-foreground: var(--ui-text-tertiary);
+  --color-primary: var(--ui-accent);
+  --color-primary-foreground: var(--ui-accent-ink);
+  --color-secondary: var(--ui-surface-2);
+  --color-secondary-foreground: var(--ui-text-primary);
+  --color-accent: var(--ui-surface-2);
+  --color-accent-foreground: var(--ui-text-primary);
+  --color-border: var(--ui-stroke-primary);
+  --color-input: var(--ui-stroke-primary);
+  --color-ring: var(--ui-accent);
+  --color-destructive: var(--ui-danger);
+  --color-destructive-foreground: var(--ui-accent-ink);
+
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: var(--radius); /* 12px, matches --radius */
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
 }
 
 * {
