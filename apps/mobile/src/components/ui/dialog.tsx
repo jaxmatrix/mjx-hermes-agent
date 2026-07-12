@@ -9,8 +9,9 @@ import { cn } from '@/lib/utils'
 // (showCloseButton / fitContent / banner / bannerTone) so ported desktop dialogs
 // are drop-in. Differences: keyed to the A2 named-token contract (bg-card /
 // border-border / text-muted-foreground) instead of the desktop conversation/
-// chrome tokens, mobile-width sizing, and the i18n close label is a literal for
-// now (TODO: wire i18n in Track I1).
+// chrome tokens, and mobile-width sizing.
+// FIXME(I1): the close label is a literal 'Close' — wire it to i18n (desktop
+// uses t.common.close) once the i18n runtime is ported.
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
