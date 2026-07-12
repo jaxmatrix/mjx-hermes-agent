@@ -21,6 +21,10 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Platform detection (A5): lets the frontend tell Android from a desktop Tauri
+# build so it can gate mobile-only behaviour (e.g. hide Local gateway mode).
+tauri-plugin-os = "2"
+
 # Transport core (Step 2a): all HTTP + WS traffic runs here, not in the webview,
 # so there is no CORS constraint and we can talk to any backend on the LAN.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
