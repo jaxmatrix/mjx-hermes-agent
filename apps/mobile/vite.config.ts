@@ -2,7 +2,9 @@ import { fileURLToPath } from 'node:url'
 
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { defineConfig } from 'vite'
+// `vitest/config` is a superset of Vite's defineConfig — using it lets the test
+// harness share this file's `@` alias, React plugin, and Tailwind wiring.
+import { defineConfig } from 'vitest/config'
 
 // Tauri expects a fixed dev port and a non-clearing console. For Android
 // device dev the host must be reachable from the phone, so bind 0.0.0.0.
@@ -32,5 +34,13 @@ export default defineConfig({
     target: 'es2021',
     minify: process.env.TAURI_DEBUG ? false : 'esbuild',
     sourcemap: !!process.env.TAURI_DEBUG
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test-setup.ts'],
+    // Components don't import CSS (styles.css is loaded once in main.tsx), so
+    // skip stylesheet processing in tests.
+    css: false
   }
 })
