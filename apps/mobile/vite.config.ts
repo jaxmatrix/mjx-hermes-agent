@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url'
 
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 
 // Tauri expects a fixed dev port and a non-clearing console. For Android
@@ -8,7 +9,12 @@ import { defineConfig } from 'vite'
 const host = process.env.TAURI_DEV_HOST
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  // Tailwind v4 is handled entirely by `@tailwindcss/vite`; pin an explicit
+  // empty PostCSS config so Vite doesn't walk UP the filesystem and pick up a
+  // stray postcss/tailwind config from the install location (see desktop
+  // vite.config.ts for the same guard).
+  css: { postcss: { plugins: [] } },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))
