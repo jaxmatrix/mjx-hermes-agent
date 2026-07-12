@@ -11,6 +11,12 @@ export interface ApiRequest {
   method?: string
   body?: unknown
   timeoutMs?: number
+  // Present so the ported desktop REST client (src/hermes.ts) — whose
+  // profileScoped() merges a { profile } into every call — compiles unchanged.
+  // FIXME(E): mobile is single-profile today, so this is accepted and ignored;
+  // thread it into backend selection / a ?profile= query when multi-profile
+  // (Track E) lands.
+  profile?: string | null
 }
 
 export async function api<T = unknown>({ path, method = 'GET', body, timeoutMs }: ApiRequest): Promise<T> {
