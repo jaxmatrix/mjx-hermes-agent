@@ -14,6 +14,7 @@ use transport::{http_request, ws_close, ws_open, ws_send, TransportState};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_keyring::init())
         .manage(TransportState::new())
         .invoke_handler(tauri::generate_handler![
             http_request,

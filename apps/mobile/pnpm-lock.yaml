@@ -44,6 +44,9 @@ importers:
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
+      tauri-plugin-keyring-api:
+        specifier: ^0.1.1
+        version: 0.1.1
     devDependencies:
       '@tailwindcss/vite':
         specifier: ^4.3.2
@@ -1667,6 +1670,9 @@ packages:
   tapable@2.3.3:
     resolution: {integrity: sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A==}
     engines: {node: '>=6'}
+
+  tauri-plugin-keyring-api@0.1.1:
+    resolution: {integrity: sha512-vs1ztf6REJPfvUDBY3VgNHiW+xBHvBtMf3ZQIJKB8UCWdb2bLFoDS+BjUHe58deCPGTInCh+SEtd69pZvV/b4w==}
 
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
@@ -3373,6 +3379,10 @@ snapshots:
   tailwindcss@4.3.2: {}
 
   tapable@2.3.3: {}
+
+  tauri-plugin-keyring-api@0.1.1:
+    dependencies:
+      '@tauri-apps/api': 2.11.1
 
   tinybench@2.9.0: {}
 

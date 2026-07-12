@@ -25,6 +25,10 @@ serde_json = "1"
 # build so it can gate mobile-only behaviour (e.g. hide Local gateway mode).
 tauri-plugin-os = "2"
 
+# Secure credential storage (D1): OS-native keyring (Android Keystore-backed) so
+# the session token/password aren't kept in plaintext localStorage.
+tauri-plugin-keyring = "0.1"
+
 # Transport core (Step 2a): all HTTP + WS traffic runs here, not in the webview,
 # so there is no CORS constraint and we can talk to any backend on the LAN.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
