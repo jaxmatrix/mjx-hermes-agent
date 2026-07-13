@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom'
 import { ChatScreen } from '@/app/chat/chat-screen'
 import { ConnectScreen } from '@/app/connect-screen'
 import { CronScreen } from '@/app/cron/cron-screen'
+import { ProfilesScreen } from '@/app/profiles/profiles-screen'
 import { SettingsIndex } from '@/app/settings/settings-index'
 import { SettingsSection } from '@/app/settings/settings-section'
 import { NotificationStack } from '@/components/notifications'
@@ -45,8 +46,8 @@ export function MobileController() {
           {/* FIXME(K7): port Artifacts */}
           <Route element={<PlaceholderView title="Artifacts" />} path="/artifacts" />
           <Route element={<CronScreen />} path="/cron" />
-          {/* FIXME(K1): port Profiles */}
-          <Route element={<PlaceholderView title="Profiles" />} path="/profiles" />
+          {/* Profile switching/projects gated (FIXME(E)); this is the CRUD/soul view. */}
+          <Route element={<ProfilesScreen />} path="/profiles" />
           {/* FIXME(K3): port Agents */}
           <Route element={<PlaceholderView title="Agents" />} path="/agents" />
           {/* FIXME(K8): port Starmap */}
