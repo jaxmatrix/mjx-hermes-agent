@@ -46,5 +46,7 @@ export {
   IconTool as Wrench,
   IconBell as Bell,
   IconKey as Key,
-  IconRefresh as Refresh
+  IconRefresh as Refresh,
+  IconEye as Eye,
+  IconEyeOff as EyeOff
 } from '@tabler/icons-react'

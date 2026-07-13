@@ -6,6 +6,7 @@ import { ChevronLeft } from '@/lib/icons'
 import { AppearanceSection } from './appearance-section'
 import { ConfigSection } from './config-section'
 import { voiceFieldVisible } from './helpers'
+import { KeysSection } from './keys-section'
 import { ModelSection } from './model-section'
 import { NotificationsSection } from './notifications-section'
 import { EmptyState, SettingsContent } from './primitives'
@@ -47,6 +48,10 @@ function SectionBody({ section }: { section: string }) {
     // Notifications (Jc9): native-notification prefs + haptics.
     case 'notifications':
       return <NotificationsSection />
+
+    // Keys/credentials (Jc10): env-var management. Provider OAuth connect is D2.
+    case 'keys':
+      return <KeysSection />
 
     default:
       // FIXME(J): placeholder until this section's renderer lands.
