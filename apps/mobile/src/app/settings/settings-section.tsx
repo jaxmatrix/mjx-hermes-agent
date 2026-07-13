@@ -4,6 +4,7 @@ import { useI18n } from '@/i18n'
 import { ChevronLeft } from '@/lib/icons'
 
 import { ConfigSection } from './config-section'
+import { voiceFieldVisible } from './helpers'
 import { EmptyState, SettingsContent } from './primitives'
 import { useSettingsNav } from './settings-nav'
 
@@ -19,6 +20,12 @@ function SectionBody({ section }: { section: string }) {
     case 'safety':
     case 'advanced':
       return <ConfigSection sectionId={section} />
+
+    // Voice (Jc5): same renderer, filtered to the active TTS/STT provider's
+    // fields. FIXME(J5): the ElevenLabs voice list is static (no getElevenLabsVoices
+    // fetch), so tts.elevenlabs.voice_id is a free-text field for now.
+    case 'voice':
+      return <ConfigSection fieldFilter={voiceFieldVisible} sectionId="voice" />
 
     default:
       // FIXME(J): placeholder until this section's renderer lands.

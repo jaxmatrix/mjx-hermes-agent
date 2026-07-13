@@ -3,7 +3,15 @@ import { describe, expect, it } from 'vitest'
 import type { HermesConfigRecord } from '@/types/hermes'
 
 import { defineFieldCopy, fieldCopyForSchemaKey, schemaKeyToFieldCopyKey } from './field-copy'
-import { enumOptionsFor, getNested, providerGroup, setNested, stripToolsetLabel, toolsetDisplayLabel } from './helpers'
+import {
+  enumOptionsFor,
+  getNested,
+  providerGroup,
+  setNested,
+  stripToolsetLabel,
+  toolsetDisplayLabel,
+  voiceFieldVisible
+} from './helpers'
 
 describe('settings helpers', () => {
   it('lists Hindsight as a built-in memory provider option', () => {
@@ -132,6 +140,30 @@ describe('settings helpers', () => {
 
     it('falls back to "Other" for un-grouped env vars', () => {
       expect(providerGroup('SOMETHING_RANDOM')).toBe('Other')
+    })
+  })
+
+  describe('voiceFieldVisible', () => {
+    it('always shows top-level (non-provider-scoped) keys', () => {
+      expect(voiceFieldVisible('tts.provider', {})).toBe(true)
+      expect(voiceFieldVisible('voice.auto_tts', {})).toBe(true)
+    })
+
+    it('shows only the selected TTS provider’s sub-fields', () => {
+      const config = { tts: { provider: 'openai' } }
+      expect(voiceFieldVisible('tts.openai.voice', config)).toBe(true)
+      expect(voiceFieldVisible('tts.elevenlabs.voice_id', config)).toBe(false)
+    })
+
+    it('hides all STT provider sub-fields when STT is disabled', () => {
+      const config = { stt: { enabled: false, provider: 'local' } }
+      expect(voiceFieldVisible('stt.local.model', config)).toBe(false)
+    })
+
+    it('shows the selected STT provider’s sub-fields when STT is enabled', () => {
+      const config = { stt: { enabled: true, provider: 'local' } }
+      expect(voiceFieldVisible('stt.local.model', config)).toBe(true)
+      expect(voiceFieldVisible('stt.openai.model', config)).toBe(false)
     })
   })
 

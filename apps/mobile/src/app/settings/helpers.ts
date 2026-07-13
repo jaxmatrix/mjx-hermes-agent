@@ -122,6 +122,25 @@ export function setNested(obj: HermesConfigRecord, path: string, value: unknown)
   return clone
 }
 
+// On the Voice section, only surface the sub-fields of the *selected* TTS/STT
+// provider (otherwise ~30 fields render at once). Top-level keys (tts.provider,
+// stt.enabled, voice.*) always show; STT provider fields hide when STT is off.
+export function voiceFieldVisible(key: string, config: HermesConfigRecord): boolean {
+  const match = /^(tts|stt)\.([^.]+)\./.exec(key)
+
+  if (!match) {
+    return true
+  }
+
+  const [, domain, provider] = match
+
+  if (domain === 'stt' && !getNested(config, 'stt.enabled')) {
+    return false
+  }
+
+  return provider === String(getNested(config, `${domain}.provider`) ?? '')
+}
+
 function personalityOptions(config: HermesConfigRecord): string[] {
   const custom = getNested(config, 'agent.personalities')
 
