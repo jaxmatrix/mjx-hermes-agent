@@ -9,5 +9,18 @@ export {
   IconChevronDown as ChevronDown,
   IconChevronLeft as ChevronLeft,
   IconChevronUp as ChevronUp,
-  IconCircleFilled as Circle
+  IconCircleFilled as Circle,
+  // Navigation glyphs (Track F sidebar)
+  IconMenu2 as Menu,
+  IconSettings as Settings,
+  IconMessageCircle as MessageCircle,
+  IconSparkles as Sparkles,
+  IconCpu as Cpu,
+  IconClock as Clock,
+  IconSend as Send,
+  IconBox as Box,
+  IconStars as Stars,
+  IconLayoutGrid as LayoutGrid,
+  IconUsers as Users,
+  IconPlus as Plus
 } from '@tabler/icons-react'
