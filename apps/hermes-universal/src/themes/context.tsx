@@ -30,8 +30,8 @@ export type ThemeMode = 'light' | 'dark' | 'system'
 
 // Global skin + mode. Mobile has no per-profile appearance (that's a desktop
 // multi-window concern); one persisted choice drives the whole app.
-const $skin = persistentAtom<string>('hermes.mobile.skin', DEFAULT_SKIN_NAME, Codecs.text)
-const $mode = persistentAtom<string>('hermes.mobile.mode', 'system', Codecs.text)
+const $skin = persistentAtom<string>('hermes.skin', DEFAULT_SKIN_NAME, Codecs.text)
+const $mode = persistentAtom<string>('hermes.mode', 'system', Codecs.text)
 
 const resolveMode = (mode: ThemeMode, systemDark = matchesQuery('(prefers-color-scheme: dark)')): 'light' | 'dark' =>
   mode === 'system' ? (systemDark ? 'dark' : 'light') : mode

@@ -22,16 +22,16 @@ describe('secure-store (keyring)', () => {
     mockSet.mockResolvedValue(undefined)
     const ok = await saveSecrets({ token: 'T', password: 'P' })
     expect(ok).toBe(true)
-    expect(mockSet).toHaveBeenCalledWith('hermes-mobile', 'token', 'T')
-    expect(mockSet).toHaveBeenCalledWith('hermes-mobile', 'password', 'P')
+    expect(mockSet).toHaveBeenCalledWith('hermes', 'token', 'T')
+    expect(mockSet).toHaveBeenCalledWith('hermes', 'password', 'P')
   })
 
   it('saveSecrets deletes an empty field instead of writing it', async () => {
     mockSet.mockResolvedValue(undefined)
     mockDel.mockResolvedValue(undefined)
     await saveSecrets({ token: 'T' })
-    expect(mockSet).toHaveBeenCalledWith('hermes-mobile', 'token', 'T')
-    expect(mockDel).toHaveBeenCalledWith('hermes-mobile', 'password')
+    expect(mockSet).toHaveBeenCalledWith('hermes', 'token', 'T')
+    expect(mockDel).toHaveBeenCalledWith('hermes', 'password')
   })
 
   it('loadSecrets reads back the entries; null when both empty', async () => {
@@ -56,7 +56,7 @@ describe('secure-store (keyring)', () => {
   it('clearSecrets removes both entries', async () => {
     mockDel.mockResolvedValue(undefined)
     await clearSecrets()
-    expect(mockDel).toHaveBeenCalledWith('hermes-mobile', 'token')
-    expect(mockDel).toHaveBeenCalledWith('hermes-mobile', 'password')
+    expect(mockDel).toHaveBeenCalledWith('hermes', 'token')
+    expect(mockDel).toHaveBeenCalledWith('hermes', 'password')
   })
 })

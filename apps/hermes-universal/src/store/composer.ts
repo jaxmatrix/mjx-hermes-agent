@@ -5,7 +5,7 @@ import { atom } from '@/store/atom'
 
 const MAX_HISTORY = 50
 
-export const $history = persistentAtom<string[]>('hermes.mobile.composerHistory', [], Codecs.stringArray)
+export const $history = persistentAtom<string[]>('hermes.composerHistory', [], Codecs.stringArray)
 export const $queue = atom<string[]>([])
 
 export function pushHistory(text: string): void {

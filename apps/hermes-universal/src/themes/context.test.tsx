@@ -49,7 +49,7 @@ describe('ThemeProvider', () => {
     expect(root().dataset.hermesMode).toBe('dark')
     // Dark nous foreground is a light color (not the light-mode #17171a).
     expect(root().style.getPropertyValue('--theme-foreground')).not.toBe('#17171a')
-    expect(localStorage.getItem('hermes.mobile.mode')).toBe('dark')
+    expect(localStorage.getItem('hermes.mode')).toBe('dark')
 
     fireEvent.click(screen.getByText('light'))
     expect(root().classList.contains('dark')).toBe(false)
@@ -63,7 +63,7 @@ describe('ThemeProvider', () => {
     )
     fireEvent.click(screen.getByText('ember'))
     expect(screen.getByTestId('state')).toHaveTextContent('ember:')
-    expect(localStorage.getItem('hermes.mobile.skin')).toBe('ember')
+    expect(localStorage.getItem('hermes.skin')).toBe('ember')
     expect(root().dataset.hermesTheme).toBe('ember')
   })
 })

@@ -42,8 +42,8 @@ export interface ConnectInput {
 
 // Non-secret conveniences live in localStorage for a synchronous prefill; the
 // secrets (token/password) live in the OS keyring (see @/lib/secure-store).
-const URL_KEY = 'hermes.mobile.url'
-const USER_KEY = 'hermes.mobile.username'
+const URL_KEY = 'hermes.url'
+const USER_KEY = 'hermes.username'
 
 export const $connection = atom<Connection | null>(null)
 export const $connectionPhase = atom<ConnectionPhase>('idle')

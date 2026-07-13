@@ -14,7 +14,7 @@ export { LOCALE_META } from './languages'
 // the Hermes config). Same public contract as desktop I18nContextValue so ported
 // components + translateNow work unchanged; the async/config fields are trivially
 // satisfied (localStorage is synchronous).
-const $locale = persistentAtom<string>('hermes.mobile.locale', DEFAULT_LOCALE, Codecs.text)
+const $locale = persistentAtom<string>('hermes.locale', DEFAULT_LOCALE, Codecs.text)
 setRuntimeI18nLocale(normalizeLocale($locale.get()))
 
 export interface I18nContextValue {

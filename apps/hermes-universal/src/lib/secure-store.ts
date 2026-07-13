@@ -11,7 +11,7 @@ import { IS_MOBILE } from '@/lib/platform'
 // FIXME(D): keyring is silent; if we later want biometric-gated retrieval, wrap
 // these reads with tauri-plugin-biometric authenticate() first.
 
-const SERVICE = 'hermes-mobile'
+const SERVICE = 'hermes'
 
 export interface Secrets {
   token?: string

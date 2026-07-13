@@ -35,7 +35,7 @@ describe('useSkinCommand', () => {
     render_()
     fireEvent.click(screen.getByText('set'))
     expect(screen.getByTestId('out')).toHaveTextContent('Theme switched to Ember')
-    expect(localStorage.getItem('hermes.mobile.skin')).toBe('ember')
+    expect(localStorage.getItem('hermes.skin')).toBe('ember')
   })
 
   it('cycles to the next skin on a bare command', () => {
@@ -43,13 +43,13 @@ describe('useSkinCommand', () => {
     fireEvent.click(screen.getByText('cycle'))
     // nous is first; a bare /skin advances to the next built-in.
     expect(screen.getByTestId('out')).toHaveTextContent('Theme switched to')
-    expect(localStorage.getItem('hermes.mobile.skin')).not.toBe('nous')
+    expect(localStorage.getItem('hermes.skin')).not.toBe('nous')
   })
 
   it('reports an unknown skin without changing the selection', () => {
     render_()
     fireEvent.click(screen.getByText('bad'))
     expect(screen.getByTestId('out')).toHaveTextContent('Unknown theme: nope')
-    expect(localStorage.getItem('hermes.mobile.skin')).toBeNull()
+    expect(localStorage.getItem('hermes.skin')).toBeNull()
   })
 })

@@ -16,7 +16,7 @@ import { atom } from '@/store/atom'
 import { BUILTIN_THEMES } from './presets'
 import type { DesktopTheme, DesktopThemeColors } from './types'
 
-const USER_THEMES_KEY = 'hermes-mobile-user-themes-v1'
+const USER_THEMES_KEY = 'hermes-user-themes-v1'
 
 // The minimal set of color keys a stored theme must carry to be usable. We keep
 // this loose — `applyTheme` tolerates missing optionals via fallbacks — but a

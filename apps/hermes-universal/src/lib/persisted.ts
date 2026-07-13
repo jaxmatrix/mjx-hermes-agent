@@ -7,7 +7,7 @@ import { readKey, writeKey } from './persist'
 // the ./persist choke point and writes back on every change — no per-atom
 // subscribe boilerplate.
 //
-//   export const $foo = persistentAtom('hermes.mobile.foo', false, Codecs.bool)
+//   export const $foo = persistentAtom('hermes.foo', false, Codecs.bool)
 //
 // NOTE: plain localStorage — non-secret UI prefs only. Secrets go through the
 // OS keyring (@/lib/secure-store), never here.

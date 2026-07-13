@@ -38,7 +38,7 @@ describe('LanguageSwitcher', () => {
     fireEvent.click(within(menu).getByText('日本語'))
 
     // Locale persisted + trigger reflects the new selection.
-    expect(localStorage.getItem('hermes.mobile.locale')).toBe('ja')
+    expect(localStorage.getItem('hermes.locale')).toBe('ja')
     expect(screen.getByRole('button', { name: '言語を切り替え' })).toHaveTextContent('日本語')
   })
 })

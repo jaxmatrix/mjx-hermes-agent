@@ -28,11 +28,11 @@ describe('connect — secure credential storage', () => {
 
     await connect({ url: 'host:1', username: 'admin', password: 'pw' })
 
-    expect(localStorage.getItem('hermes.mobile.username')).toBe('admin')
-    expect(localStorage.getItem('hermes.mobile.url')).toBe('host:1')
+    expect(localStorage.getItem('hermes.username')).toBe('admin')
+    expect(localStorage.getItem('hermes.url')).toBe('host:1')
     // secrets never touch localStorage
-    expect(localStorage.getItem('hermes.mobile.password')).toBeNull()
-    expect(localStorage.getItem('hermes.mobile.token')).toBeNull()
+    expect(localStorage.getItem('hermes.password')).toBeNull()
+    expect(localStorage.getItem('hermes.token')).toBeNull()
     expect(saveSecrets).toHaveBeenCalledWith({ token: undefined, password: 'pw' })
   })
 

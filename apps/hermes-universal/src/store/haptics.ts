@@ -7,7 +7,7 @@ import { Codecs, persistentAtom } from '@/lib/persisted'
 // (browser dev / vitest) never throws.
 export type HapticIntent = 'select' | 'submit' | 'success' | 'warning'
 
-export const $hapticsMuted = persistentAtom<boolean>('hermes.mobile.hapticsMuted', false, Codecs.bool)
+export const $hapticsMuted = persistentAtom<boolean>('hermes.hapticsMuted', false, Codecs.bool)
 
 export async function triggerHaptic(intent: HapticIntent): Promise<void> {
   if ($hapticsMuted.get()) return

@@ -345,21 +345,22 @@ export — needs save/share transport) · H5 (branch tree UI) · J5 (ElevenLabs 
 fetch) · plus assorted K4/K5/K8 polish. Some FIXMEs are stale (e.g. `FIXME(D2)`, `FIXME(Gc9)` were resolved
 by K11/K9) — trust the grep, not old inline notes.
 
-### Rename (this session)
+### Rename + de-mobile (this session)
 `apps/mobile` → **`apps/hermes-universal`** via a forward `git mv` (history preserved; use `git log --follow`).
 Build identity updated to match: npm package `@hermes/universal`, Rust crate `hermes-universal` / lib
 `hermes_universal_lib`, Tauri identifier **`com.nousresearch.hermes.universal`**, user-agent `hermes-universal/`.
 `PORT.md` was un-gitignored and committed. The `apps/*` workspace glob auto-discovers the new folder; no
 cross-package imports needed updating.
+**Runtime storage keys de-mobiled too:** `hermes.mobile.*` `persistentAtom` keys
+(connection/composer/haptics/onboarding/i18n/notifications/themes) → `hermes.*`; keyring `SERVICE`
+`hermes-mobile` → `hermes`; `user-themes` key → `hermes-user-themes-v1`. This orphans any prior on-device dev
+data (re-login / re-pick theme once) — acceptable pre-release. Legacy Electron desktop uses `hermes.desktop.*`,
+so no collision.
 
 ### Deferred: de-mobile pass (next session)
 - **Regenerate `src-tauri/gen/android`** (`tauri android init`) so the Android package + `System.loadLibrary`
   pick up the new identifier (`com.nousresearch.hermes.universal`) and lib name (`hermes_universal_lib`).
   `gen/` is gitignored — device-side, user-run.
-- **Rename runtime "mobile" storage keys** — `hermes.mobile.*` `persistentAtom` keys
-  (connection/composer/haptics/onboarding/i18n/notifications/themes), `secure-store.ts` `SERVICE='hermes-mobile'`,
-  `user-themes.ts` key. Left as-is here because changing them orphans on-device dev data; do with a migration
-  or a deliberate clean reset.
 - **Review mobile-only assumptions** in scope/architecture (the reason for the fresh session): features that
   were gated, simplified, or shaped as "mobile-only" that should be reconsidered now that desktop is also a
   target of this same app.

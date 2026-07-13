@@ -47,7 +47,7 @@ const INITIAL: OnboardingState = { step: 'picker', option: null, providerSlug: n
 
 // Persisted "user has been through (or dismissed) onboarding" flag — the mobile
 // equivalent of desktop's hermes-desktop-onboarded / onboarding-skipped keys.
-export const $onboardingSeen = persistentAtom<boolean>('hermes.mobile.onboarded', false, Codecs.bool)
+export const $onboardingSeen = persistentAtom<boolean>('hermes.onboarded', false, Codecs.bool)
 export const $onboarding = atom<OnboardingState>(INITIAL)
 export const $onboardingActive = atom(false)
 

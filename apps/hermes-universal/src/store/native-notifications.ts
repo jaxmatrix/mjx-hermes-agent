@@ -30,7 +30,7 @@ const DEFAULT_PREFS: NativeNotificationPrefs = {
 }
 
 export const $nativeNotifyPrefs = persistentAtom<NativeNotificationPrefs>(
-  'hermes.mobile.native-notifications',
+  'hermes.native-notifications',
   DEFAULT_PREFS,
   Codecs.json<NativeNotificationPrefs>()
 )
