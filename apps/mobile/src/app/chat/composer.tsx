@@ -9,15 +9,19 @@ import {
   fetchCompletions
 } from '@/app/chat/composer-completions'
 import { useVoiceRecorder } from '@/app/chat/use-voice-recorder'
+import { $ttsSpeaking } from '@/lib/tts'
 import { useStore } from '@/store/atom'
 import { $busy, sendPrompt } from '@/store/chat'
 import { $history, dequeue, enqueue, pushHistory } from '@/store/composer'
 import { triggerHaptic } from '@/store/haptics'
+import { $autoSpeakReplies, seedAutoSpeak, setAutoSpeakReplies } from '@/store/voice-prefs'
 import { useSkinCommand } from '@/themes'
 
 export function Composer() {
   const busy = useStore($busy)
   const history = useStore($history)
+  const autoSpeak = useStore($autoSpeakReplies)
+  const speaking = useStore($ttsSpeaking)
   const [text, setText] = useState('')
   const [staged, setStaged] = useState<StagedAttachment[]>([])
   const [items, setItems] = useState<CompletionEntry[]>([])
@@ -34,6 +38,9 @@ export function Composer() {
     setText(prev => (prev ? `${prev.trimEnd()} ${transcript}` : transcript))
     requestAnimationFrame(() => areaRef.current?.focus())
   })
+
+  // Seed the auto-speak pref from config once (K9).
+  useEffect(() => void seedAutoSpeak(), [])
 
   // Auto-send the next queued prompt once the turn frees up.
   useEffect(() => {
@@ -223,6 +230,15 @@ export function Composer() {
           type="button"
         >
           {voice.transcribing ? '…' : voice.recording ? '■' : '🎙'}
+        </button>
+        <button
+          aria-label={autoSpeak ? 'Stop reading replies aloud' : 'Read replies aloud'}
+          aria-pressed={autoSpeak}
+          className={`composer-mic${speaking ? ' recording' : ''}`}
+          onClick={() => void setAutoSpeakReplies(!autoSpeak).catch(() => {})}
+          type="button"
+        >
+          {autoSpeak ? '🔊' : '🔇'}
         </button>
         <textarea
           ref={areaRef}

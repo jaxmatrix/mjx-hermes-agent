@@ -1,6 +1,8 @@
 import type { GatewayEvent } from '@/gateway'
 import { translateNow } from '@/i18n'
+import { speakNow, stopSpeaking } from '@/lib/tts'
 import { atom } from '@/store/atom'
+import { $autoSpeakReplies } from '@/store/voice-prefs'
 import { requestGateway } from '@/store/gateway'
 import { triggerHaptic } from '@/store/haptics'
 import { dispatchNativeNotification } from '@/store/native-notifications'
@@ -174,6 +176,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     case 'message.start':
       $busy.set(true)
       $statusLine.set('')
+      stopSpeaking() // interrupt any TTS from the previous turn
       update(withActiveAssistant)
       break
 
@@ -214,6 +217,14 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       $busy.set(false)
       $statusLine.set('')
       update(messages => messages.map(m => (m.pending ? { ...m, pending: false } : m)))
+      // Read the reply aloud when auto-TTS is on (K9).
+      if ($autoSpeakReplies.get()) {
+        const last = [...$messages.get()].reverse().find(m => m.role === 'assistant')
+        const text = last?.parts.filter(p => p.type === 'text').map(p => (p as TextPart).text).join(' ') ?? ''
+        if (text.trim()) {
+          void speakNow(text)
+        }
+      }
       dispatchNativeNotification({
         kind: 'turnDone',
         title: translateNow('notifications.native.turnDoneTitle'),
@@ -303,6 +314,7 @@ export async function ensureSession(): Promise<string> {
 export async function sendPrompt(text: string): Promise<void> {
   const trimmed = text.trim()
   if (!trimmed || $busy.get()) return
+  stopSpeaking() // silence any TTS when the user sends a new prompt
 
   update(messages => [...messages, { id: nextId(), role: 'user', parts: [{ type: 'text', text: trimmed }] }])
   $busy.set(true)
@@ -371,4 +383,5 @@ export function resetChat(): void {
   $sudo.set(null)
   $secret.set(null)
   $subagentsBySession.set({})
+  stopSpeaking()
 }
