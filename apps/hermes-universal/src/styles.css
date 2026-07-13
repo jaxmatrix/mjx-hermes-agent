@@ -1,0 +1,610 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+/* Class-based dark variant (matches desktop). `.dark` is toggled on <html> by
+   the ThemeProvider (Ic7); the mode-appropriate `--theme-*` seeds are injected
+   inline per skin by applyTheme(). Declared here so `dark:` utilities compile. */
+@custom-variant dark (&:is(.dark *));
+
+/* Tailwind named-token contract (shadcn). Sourced from the derived `--dt-*`
+   chrome tokens (see @layer base below) so bg-primary / text-foreground /
+   border-border / ring-ring resolve through the full theme engine. `inline`
+   keeps the var() references intact so they resolve at runtime. Radius + fonts
+   stay mobile's own (touch-tuned px radii, system font stacks). */
+@theme inline {
+  --color-background: var(--dt-background);
+  --color-foreground: var(--dt-foreground);
+  --color-card: var(--dt-card);
+  --color-card-foreground: var(--dt-card-foreground);
+  --color-popover: var(--dt-popover);
+  --color-popover-foreground: var(--dt-popover-foreground);
+  --color-muted: var(--dt-muted);
+  --color-muted-foreground: var(--dt-muted-foreground);
+  --color-primary: var(--dt-primary);
+  --color-primary-foreground: var(--dt-primary-foreground);
+  --color-secondary: var(--dt-secondary);
+  --color-secondary-foreground: var(--dt-secondary-foreground);
+  --color-accent: var(--dt-accent);
+  --color-accent-foreground: var(--dt-accent-foreground);
+  --color-border: var(--dt-border);
+  --color-input: var(--dt-input);
+  --color-ring: var(--dt-ring);
+  --color-destructive: var(--dt-destructive);
+  --color-destructive-foreground: var(--dt-destructive-foreground);
+
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: var(--radius); /* 12px, matches --radius */
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+}
+
+/* ── Theme engine (ported from apps/desktop/src/styles.css) ──────────────────
+   Three-layer chain: `--theme-*` seeds (set inline per skin by applyTheme) →
+   `--ui-*` color-mix derivations → `--dt-*` shadcn tokens (mapped into Tailwind
+   above). The :root defaults render the light `nous` skin; `.dark` overrides the
+   per-mode mix knobs + neutrals so the same derivations re-resolve for dark.
+   The desktop chrome/layout vocabulary (titlebar, composer geometry, sidebar,
+   context-usage, ANSI) is intentionally dropped — mobile references only the
+   subset below. A bridge at the end aliases mobile's own `--ui-*` names
+   (`--ui-bg`, `--ui-surface`, …) onto the derived chain. */
+@layer base {
+  :root {
+    color-scheme: light;
+
+    --theme-foreground: #17171a;
+    --theme-primary: #0053fd;
+    --theme-secondary: color-mix(in srgb, #0053fd 7%, #ffffff);
+    --theme-accent-soft: color-mix(in srgb, #0053fd 10%, #ffffff);
+    --theme-midground: #0053fd;
+    --theme-background-seed: #f8faff;
+    --theme-card-seed: #ffffff;
+    --theme-elevated-seed: #ffffff;
+    --theme-bubble-seed: color-mix(in srgb, #0053fd 6%, #ffffff);
+    --theme-neutral-chrome: #f3f3f3;
+    --theme-neutral-card: #fcfcfc;
+    --theme-mix-chrome: 92%;
+    --theme-mix-card: 22%;
+    --theme-mix-elevated: 28%;
+    --theme-mix-bubble: 0%;
+    --theme-fill-tertiary-accent-mix: 8%;
+    --theme-stroke-primary-accent-mix: 24%;
+    --theme-stroke-secondary-accent-mix: 16%;
+    --theme-stroke-tertiary-accent-mix: 10%;
+
+    --ui-base: var(--theme-foreground);
+    --ui-accent: var(--theme-midground);
+    --ui-green: #1f8a65;
+
+    --ui-bg-chrome: color-mix(in srgb, var(--theme-background-seed) var(--theme-mix-chrome), var(--theme-neutral-chrome));
+    --ui-bg-editor: color-mix(in srgb, var(--theme-card-seed) var(--theme-mix-card), var(--theme-neutral-card));
+    --ui-bg-elevated: color-mix(in srgb, var(--theme-elevated-seed) var(--theme-mix-elevated), var(--theme-neutral-card));
+    --ui-bg-tertiary: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-fill-tertiary-accent-mix),
+      color-mix(in srgb, var(--ui-base) 5%, transparent)
+    );
+    --ui-text-primary: color-mix(in srgb, var(--ui-base) 94%, transparent);
+    --ui-text-secondary: color-mix(in srgb, var(--ui-base) 74%, transparent);
+    --ui-text-tertiary: color-mix(in srgb, var(--ui-base) 54%, transparent);
+    --ui-stroke-primary: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-stroke-primary-accent-mix),
+      color-mix(in srgb, var(--ui-base) 10%, transparent)
+    );
+    --ui-stroke-secondary: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-stroke-secondary-accent-mix),
+      color-mix(in srgb, var(--ui-base) 7%, transparent)
+    );
+    --ui-stroke-tertiary: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-stroke-tertiary-accent-mix),
+      color-mix(in srgb, var(--ui-base) 5%, transparent)
+    );
+    --ui-chat-surface-background: var(--ui-bg-chrome);
+    --ui-chat-bubble-background: color-mix(in srgb, var(--theme-bubble-seed) var(--theme-mix-bubble), var(--theme-neutral-card));
+
+    --dt-background: var(--ui-bg-chrome);
+    --dt-foreground: var(--ui-text-primary);
+    --dt-card: var(--ui-bg-editor);
+    --dt-card-foreground: var(--ui-text-primary);
+    --dt-muted: var(--ui-bg-tertiary);
+    --dt-muted-foreground: var(--ui-text-tertiary);
+    --dt-popover: color-mix(in srgb, var(--ui-bg-elevated) 96%, transparent);
+    --dt-popover-foreground: var(--ui-text-primary);
+    --dt-primary: var(--theme-primary);
+    --dt-primary-foreground: #fcfcfc;
+    --dt-secondary: var(--theme-secondary);
+    --dt-secondary-foreground: var(--ui-text-secondary);
+    --dt-accent: var(--theme-accent-soft);
+    --dt-accent-foreground: var(--ui-text-primary);
+    --dt-border: var(--ui-stroke-secondary);
+    --dt-input: var(--ui-stroke-primary);
+    --dt-ring: var(--ui-stroke-primary);
+    --dt-destructive: #cf2d56;
+    --dt-destructive-foreground: #ffffff;
+
+    --radius: 12px;
+
+    /* Bridge: mobile's own `--ui-*` names (referenced across the custom CSS
+       below) aliased onto the derived chain. `--ui-accent` / `--ui-stroke-*` /
+       `--ui-text-*` already carry the desktop derivation names, so only these
+       seven mobile-only aliases need wiring. */
+    --ui-bg: var(--ui-chat-surface-background);
+    --ui-surface: var(--ui-bg-editor);
+    --ui-surface-2: var(--ui-bg-tertiary);
+    --ui-user-bubble: var(--ui-chat-bubble-background);
+    --ui-accent-ink: var(--dt-primary-foreground);
+    --ui-danger: var(--dt-destructive);
+    --ui-good: var(--ui-green);
+  }
+
+  :root.dark {
+    color-scheme: dark;
+    /* Per-mode mix knobs + neutrals — overridden inline by applyTheme() per
+       skin; these are the built-in dark `nous` fallback. */
+    --theme-mix-chrome: 74%;
+    --theme-mix-card: 38%;
+    --theme-mix-elevated: 46%;
+    --theme-mix-bubble: 46%;
+    --theme-neutral-chrome: #0d0d0e;
+    --theme-neutral-card: #161618;
+    --ui-green: #55a583;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ui-bg);
+  color: var(--ui-text-primary);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ui-accent);
+  font-size: 13px;
+}
+
+.muted {
+  color: var(--ui-text-tertiary);
+  font-weight: 400;
+}
+
+/* ── Buttons (one primitive, variants by class) ── */
+.btn {
+  border: none;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 13px 16px;
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-2);
+  cursor: pointer;
+}
+.btn:disabled {
+  opacity: 0.45;
+}
+.btn-primary {
+  background: var(--ui-accent);
+  color: var(--ui-accent-ink);
+}
+.btn-soft {
+  background: var(--ui-surface-2);
+}
+.btn-danger {
+  background: transparent;
+  color: var(--ui-danger);
+  box-shadow: inset 0 0 0 1px var(--ui-stroke-primary);
+}
+.btn-text {
+  background: transparent;
+  color: var(--ui-text-tertiary);
+  padding: 6px 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.btn-sm {
+  padding: 8px 12px;
+  font-size: 14px;
+  border-radius: 8px;
+}
+
+/* ── Fields ── */
+.field {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-stroke-primary);
+  color: var(--ui-text-primary);
+  font-size: 16px; /* ≥16px prevents focus-zoom in the Android WebView */
+}
+.field::placeholder {
+  color: var(--ui-text-tertiary);
+}
+.field-label {
+  display: block;
+  font-size: 13px;
+  color: var(--ui-text-secondary);
+  margin: 4px 2px;
+}
+.error-line {
+  color: var(--ui-danger);
+  font-size: 13px;
+  margin: 2px;
+}
+
+/* ── Connect screen ── */
+.connect {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 18px;
+}
+.connect-card {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.connect-title {
+  font-size: 22px;
+  margin: 6px 0 0;
+  font-weight: 650;
+}
+.connect-sub {
+  color: var(--ui-text-tertiary);
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+.connect .btn-primary {
+  margin-top: 8px;
+}
+
+/* ── Chat ── */
+.chat {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: max(10px, env(safe-area-inset-top)) 14px 10px;
+  border-bottom: 1px solid var(--ui-stroke-tertiary);
+}
+.chat-host {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--ui-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.chat-actions {
+  display: flex;
+  gap: 2px;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.dot-ok {
+  background: var(--ui-good);
+}
+
+.thread {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  -webkit-overflow-scrolling: touch;
+}
+.empty {
+  margin: auto;
+  text-align: center;
+  color: var(--ui-text-tertiary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ── Messages ── */
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 100%;
+}
+.msg-user {
+  align-items: flex-end;
+}
+.msg-bubble {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  font-size: 15px;
+  border-radius: var(--radius);
+  padding: 10px 13px;
+  max-width: 85%;
+}
+.msg-user .msg-bubble {
+  background: var(--ui-user-bubble);
+  border-bottom-right-radius: 4px;
+}
+.msg-assistant .msg-bubble {
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-stroke-tertiary);
+  border-bottom-left-radius: 4px;
+  max-width: 100%;
+}
+.msg-thinking {
+  min-height: 20px;
+}
+.caret {
+  display: inline-block;
+  width: 7px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--ui-accent);
+  animation: blink 1s steps(2, start) infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.reasoning {
+  align-self: stretch;
+}
+.reasoning-toggle {
+  background: none;
+  border: none;
+  color: var(--ui-text-tertiary);
+  font-size: 13px;
+  padding: 0;
+  cursor: pointer;
+}
+.reasoning-body {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--ui-stroke-primary);
+  color: var(--ui-text-tertiary);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--ui-surface-2);
+  color: var(--ui-text-secondary);
+}
+.tool-done {
+  color: var(--ui-good);
+}
+.tool-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ui-accent);
+  animation: blink 0.8s infinite;
+}
+
+.status-line {
+  color: var(--ui-text-tertiary);
+  font-size: 13px;
+  padding-left: 2px;
+}
+
+/* ── Footer / composer / approval ── */
+.chat-footer {
+  border-top: 1px solid var(--ui-stroke-tertiary);
+  padding: 10px 12px max(10px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.composer-input {
+  flex: 1;
+  resize: none;
+  border-radius: 20px;
+  border: 1px solid var(--ui-stroke-primary);
+  background: var(--ui-surface);
+  color: var(--ui-text-primary);
+  padding: 11px 14px;
+  font-size: 16px;
+  line-height: 1.4;
+  max-height: 160px;
+  font-family: inherit;
+}
+.composer-input::placeholder {
+  color: var(--ui-text-tertiary);
+}
+.composer-send {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  background: var(--ui-accent);
+  color: var(--ui-accent-ink);
+  font-size: 20px;
+  font-weight: 700;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.composer-send:disabled {
+  opacity: 0.4;
+}
+
+/* ── Composer completion drawer (slash / @) ── */
+.composer-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* Transient result line for client-side slash commands (e.g. /skin). */
+.composer-notice {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--ui-surface-2);
+  border: 1px solid var(--ui-stroke-tertiary);
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+.completion-drawer {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-stroke-primary);
+  border-radius: var(--radius);
+}
+.completion-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--ui-text-primary);
+  padding: 9px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.completion-item:hover,
+.completion-item:active {
+  background: var(--ui-surface-2);
+}
+
+/* ── Attachments ── */
+.composer-attach,
+.composer-mic {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid var(--ui-stroke-primary);
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+  font-size: 18px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.composer-attach {
+  font-size: 20px;
+}
+.composer-mic.recording {
+  background: var(--ui-danger);
+  color: var(--ui-accent-ink);
+  border-color: var(--ui-danger);
+}
+.composer-mic:disabled {
+  opacity: 0.5;
+}
+.attach-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 999px;
+  background: var(--ui-surface-2);
+  color: var(--ui-text-secondary);
+  max-width: 220px;
+}
+.attach-chip > span,
+.attach-chip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach-chip button {
+  background: none;
+  border: none;
+  color: var(--ui-text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.approval {
+  border: 1px solid var(--ui-stroke-primary);
+  border-radius: var(--radius);
+  background: var(--ui-surface);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.approval-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ui-accent);
+}
+.approval-desc {
+  font-size: 13px;
+  color: var(--ui-text-secondary);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  word-break: break-word;
+}
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

@@ -1,0 +1,51 @@
+[package]
+name = "hermes-universal"
+version = "0.0.1"
+description = "Hermes Universal — Tauri v2 client (desktop + Android + iOS from one codebase)."
+authors = ["Nous Research <info@nousresearch.com>"]
+edition = "2021"
+rust-version = "1.77"
+
+# The library target is what the Android/iOS project links against, so the
+# cdylib/staticlib crate-types are mandatory for the mobile targets. The name
+# must match what src/main.rs (desktop) and the generated mobile entry call.
+[lib]
+name = "hermes_universal_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Platform detection (A5): lets the frontend tell Android from a desktop Tauri
+# build so it can gate mobile-only behaviour (e.g. hide Local gateway mode).
+tauri-plugin-os = "2"
+
+# Secure credential storage (D1): OS-native keyring (Android Keystore-backed) so
+# the session token/password aren't kept in plaintext localStorage.
+tauri-plugin-keyring = "0.1"
+
+# Open external links in the system browser (Gc6/R11).
+tauri-plugin-opener = "2"
+
+# Haptic feedback on send/approval (Gc10/R9).
+tauri-plugin-haptics = "2"
+
+# File attachments (Gc8/R7): native picker + read the picked file to a data-URL.
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+
+# Native OS notifications (Ic10/R8): turn-done / approval / error while backgrounded.
+tauri-plugin-notification = "2"
+
+# Transport core (Step 2a): all HTTP + WS traffic runs here, not in the webview,
+# so there is no CORS constraint and we can talk to any backend on the LAN.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+# rustls so we don't need OpenSSL/NDK-cross OpenSSL on the Android build.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }

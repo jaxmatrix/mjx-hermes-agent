@@ -1,0 +1,80 @@
+import { Tooltip as TooltipPrimitive } from 'radix-ui'
+import * as React from 'react'
+
+import { cn } from '@/lib/utils'
+
+// Ported from apps/desktop/src/components/ui/tooltip.tsx (already on the A2 token
+// contract). Note: tooltips are hover-driven, so on touch they're largely inert
+// — ported for API compatibility with shared components.
+
+function TooltipProvider({
+  delayDuration = 0,
+  disableHoverableContent = true,
+  ...props
+}: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
+  return (
+    <TooltipPrimitive.Provider
+      data-slot="tooltip-provider"
+      delayDuration={delayDuration}
+      disableHoverableContent={disableHoverableContent}
+      {...props}
+    />
+  )
+}
+
+function Tooltip({ ...props }: React.ComponentProps<typeof TooltipPrimitive.Root>) {
+  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />
+}
+
+function TooltipTrigger({ ...props }: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
+  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />
+}
+
+function TooltipContent({
+  className,
+  sideOffset = 6,
+  children,
+  ...props
+}: React.ComponentProps<typeof TooltipPrimitive.Content>) {
+  return (
+    <TooltipPrimitive.Portal>
+      <TooltipPrimitive.Content
+        className={cn('pointer-events-none z-[200] w-fit max-w-64 select-none', className)}
+        data-slot="tooltip-content"
+        sideOffset={sideOffset}
+        {...props}
+      >
+        {/* bg-foreground/text-background auto-inverts per theme; box-decoration
+            clone hugs each wrapped line. */}
+        <span className="box-decoration-clone inline bg-foreground px-1.5 py-1 text-[11px] font-bold leading-normal text-background">
+          {children}
+        </span>
+      </TooltipPrimitive.Content>
+    </TooltipPrimitive.Portal>
+  )
+}
+
+interface TipProps extends Omit<React.ComponentProps<typeof TooltipPrimitive.Content>, 'content'> {
+  label: React.ReactNode
+  children: React.ReactNode
+  delayDuration?: number
+}
+
+// Drop-in replacement for native `title=`: wrap any single element. Self-contained
+// (carries its own Provider). Renders the child untouched when label is falsy.
+function Tip({ label, children, delayDuration = 0, ...props }: TipProps) {
+  if (!label) {
+    return <>{children}</>
+  }
+
+  return (
+    <TooltipProvider delayDuration={delayDuration} disableHoverableContent>
+      <Tooltip disableHoverableContent>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        <TooltipContent {...props}>{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+export { Tip, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger }
