@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom'
 import { ChatScreen } from '@/app/chat/chat-screen'
 import { ConnectScreen } from '@/app/connect-screen'
 import { CronScreen } from '@/app/cron/cron-screen'
+import { MessagingScreen } from '@/app/messaging/messaging-screen'
 import { ProfilesScreen } from '@/app/profiles/profiles-screen'
 import { SettingsIndex } from '@/app/settings/settings-index'
 import { SettingsSection } from '@/app/settings/settings-section'
@@ -41,8 +42,7 @@ export function MobileController() {
           <Route element={<PlaceholderView title="Command Center" />} path="/command-center" />
           {/* FIXME(K2): port Skills */}
           <Route element={<PlaceholderView title="Skills" />} path="/skills" />
-          {/* FIXME(K6): port Messaging */}
-          <Route element={<PlaceholderView title="Messaging" />} path="/messaging" />
+          <Route element={<MessagingScreen />} path="/messaging" />
           {/* FIXME(K7): port Artifacts */}
           <Route element={<PlaceholderView title="Artifacts" />} path="/artifacts" />
           <Route element={<CronScreen />} path="/cron" />
