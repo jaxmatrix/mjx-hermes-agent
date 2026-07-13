@@ -43,5 +43,8 @@ export {
   IconLock as Lock,
   IconMicrophone as Mic,
   IconDeviceDesktop as Monitor,
-  IconTool as Wrench
+  IconTool as Wrench,
+  IconBell as Bell,
+  IconKey as Key,
+  IconRefresh as Refresh
 } from '@tabler/icons-react'

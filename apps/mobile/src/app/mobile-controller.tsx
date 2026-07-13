@@ -2,6 +2,8 @@ import { Route, Routes } from 'react-router-dom'
 
 import { ChatScreen } from '@/app/chat/chat-screen'
 import { ConnectScreen } from '@/app/connect-screen'
+import { SettingsIndex } from '@/app/settings/settings-index'
+import { SettingsSection } from '@/app/settings/settings-section'
 import { NotificationStack } from '@/components/notifications'
 import { useStore } from '@/store/atom'
 import { $connectionPhase } from '@/store/connection'
@@ -31,8 +33,8 @@ export function MobileController() {
       <AppShell>
         <Routes>
           <Route element={<ChatScreen />} path="/" />
-          {/* FIXME(J): port Settings */}
-          <Route element={<PlaceholderView title="Settings" />} path="/settings" />
+          <Route element={<SettingsIndex />} path="/settings" />
+          <Route element={<SettingsSection />} path="/settings/:section" />
           {/* FIXME(K4): port Command Center */}
           <Route element={<PlaceholderView title="Command Center" />} path="/command-center" />
           {/* FIXME(K2): port Skills */}
