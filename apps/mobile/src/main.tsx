@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 
 import { App } from './app'
+import { ErrorBoundary } from './components/error-boundary'
 import { queryClient } from './lib/query-client'
 import './styles.css'
 
@@ -10,10 +11,13 @@ const container = document.getElementById('root')
 if (!container) {
   throw new Error('root container missing')
 }
+// FIXME(I): mount I18nProvider / ThemeProvider / HapticsProvider here (Track I).
 createRoot(container).render(
-  <QueryClientProvider client={queryClient}>
-    <HashRouter>
-      <App />
-    </HashRouter>
-  </QueryClientProvider>
+  <ErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <HashRouter>
+        <App />
+      </HashRouter>
+    </QueryClientProvider>
+  </ErrorBoundary>
 )
