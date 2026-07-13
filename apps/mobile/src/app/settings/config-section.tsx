@@ -181,13 +181,16 @@ export function ConfigField({
 export function ConfigSection({
   sectionId,
   fieldFilter,
-  renderExtra
+  renderExtra,
+  headerSlot
 }: {
   sectionId: string
   // Optional per-key visibility filter (voice hides inactive-provider fields).
   fieldFilter?: (key: string, config: HermesConfigRecord) => boolean
   // Optional extra content rendered under a field (memory provider connect).
   renderExtra?: (key: string, config: HermesConfigRecord) => ReactNode
+  // Optional custom block rendered above the schema fields (model picker).
+  headerSlot?: ReactNode
 }) {
   const { t } = useI18n()
   const c = t.settings.config
@@ -282,8 +285,9 @@ export function ConfigSection({
 
   return (
     <SettingsContent>
+      {headerSlot && <div className="pt-1">{headerSlot}</div>}
       {visibleFields.length === 0 ? (
-        <EmptyState description={c.emptyDesc} title={c.emptyTitle} />
+        headerSlot ? null : <EmptyState description={c.emptyDesc} title={c.emptyTitle} />
       ) : (
         <div className="pt-1">
           {visibleFields.map(([key, field]) => (

@@ -5,6 +5,7 @@ import { ChevronLeft } from '@/lib/icons'
 
 import { ConfigSection } from './config-section'
 import { voiceFieldVisible } from './helpers'
+import { ModelSection } from './model-section'
 import { EmptyState, SettingsContent } from './primitives'
 import { useSettingsNav } from './settings-nav'
 
@@ -31,6 +32,11 @@ function SectionBody({ section }: { section: string }) {
     // connect panel + per-provider config panel are deferred to the auth track.
     case 'memory':
       return <ConfigSection sectionId="memory" />
+
+    // Model (Jc7): default-model picker + the model schema fields. MoA/auxiliary/
+    // local-endpoint onboarding deferred FIXME(J7).
+    case 'model':
+      return <ModelSection />
 
     default:
       // FIXME(J): placeholder until this section's renderer lands.
