@@ -39,6 +39,9 @@ tauri-plugin-haptics = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 
+# Native OS notifications (Ic10/R8): turn-done / approval / error while backgrounded.
+tauri-plugin-notification = "2"
+
 # Transport core (Step 2a): all HTTP + WS traffic runs here, not in the webview,
 # so there is no CORS constraint and we can talk to any backend on the LAN.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }

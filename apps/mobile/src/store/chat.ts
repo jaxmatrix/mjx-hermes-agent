@@ -1,7 +1,9 @@
 import type { GatewayEvent } from '@/gateway'
+import { translateNow } from '@/i18n'
 import { atom } from '@/store/atom'
 import { requestGateway } from '@/store/gateway'
 import { triggerHaptic } from '@/store/haptics'
+import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notifyError } from '@/store/notifications'
 
 // Chat model over the assistant-ui parts vocabulary. The gateway-event reducer
@@ -211,6 +213,12 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       $busy.set(false)
       $statusLine.set('')
       update(messages => messages.map(m => (m.pending ? { ...m, pending: false } : m)))
+      dispatchNativeNotification({
+        kind: 'turnDone',
+        title: translateNow('notifications.native.turnDoneTitle'),
+        body: translateNow('notifications.native.turnDoneBody'),
+        sessionId: $sessionId.get()
+      })
       break
 
     case 'status.update':
@@ -224,6 +232,12 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         allowPermanent: payload.allow_permanent !== false
       })
       void triggerHaptic('warning')
+      dispatchNativeNotification({
+        kind: 'approval',
+        title: translateNow('notifications.native.approvalTitle'),
+        body: coerceText(payload.command) || coerceText(payload.description),
+        sessionId: $sessionId.get()
+      })
       break
 
     case 'clarify.request':
@@ -252,6 +266,12 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       $busy.set(false)
       $statusLine.set(coerceText(payload.message) || 'Something went wrong')
       update(messages => messages.map(m => (m.pending ? { ...m, pending: false, error: coerceText(payload.message) } : m)))
+      dispatchNativeNotification({
+        kind: 'turnError',
+        title: translateNow('notifications.native.turnErrorTitle'),
+        body: coerceText(payload.message),
+        sessionId: $sessionId.get()
+      })
       break
 
     default:
