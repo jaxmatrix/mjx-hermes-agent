@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { getGlobalModelOptions } from '@/hermes'
+import { getGlobalModelOptions, listOAuthProviders } from '@/hermes'
 import { prettyName } from '@/lib/text'
+import type { OAuthProvider } from '@/types/hermes'
 
 // Curated API-key providers (ported from apps/desktop/src/components/onboarding).
 // The `local` entry points OPENAI_BASE_URL at a self-hosted OpenAI-compatible
@@ -46,4 +47,11 @@ export function useApiKeyCatalog(): ApiKeyOption[] {
     }
   }
   return [...API_KEY_OPTIONS, ...derived]
+}
+
+// OAuth-capable providers for the picker. `external` (CLI) providers are
+// excluded — they need a terminal, which mobile doesn't have (FIXME(K11)).
+export function useOAuthProviders(): OAuthProvider[] {
+  const { data } = useQuery({ queryKey: ['oauth-providers'], queryFn: listOAuthProviders, staleTime: 60_000 })
+  return (data?.providers ?? []).filter(p => p.flow !== 'external' && !p.status.logged_in)
 }

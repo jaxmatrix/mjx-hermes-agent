@@ -12,10 +12,12 @@ import {
   confirmModel,
   $onboarding,
   saveApiKey,
-  selectApiKeyProvider
+  selectApiKeyProvider,
+  startProviderOAuth,
+  submitOnboardingCode
 } from '@/store/onboarding'
 
-import { type ApiKeyOption, LOCAL_ENV_KEY, useApiKeyCatalog } from './api-key-options'
+import { type ApiKeyOption, LOCAL_ENV_KEY, useApiKeyCatalog, useOAuthProviders } from './api-key-options'
 
 export function OnboardingScreen() {
   const { t } = useI18n()
@@ -27,7 +29,15 @@ export function OnboardingScreen() {
         <h1 className="text-xl font-semibold text-foreground">{t.onboarding.headerTitle}</h1>
         <p className="mt-1 mb-6 text-sm text-muted-foreground">{t.onboarding.headerDesc}</p>
 
-        {state.step === 'picker' ? <Picker /> : state.step === 'apikey' ? <ApiKeyForm option={state.option} /> : <ConfirmModel />}
+        {state.step === 'picker' ? (
+          <Picker />
+        ) : state.step === 'apikey' ? (
+          <ApiKeyForm option={state.option} />
+        ) : state.step === 'oauth' ? (
+          <OAuthPanel />
+        ) : (
+          <ConfirmModel />
+        )}
       </div>
     </div>
   )
@@ -36,11 +46,26 @@ export function OnboardingScreen() {
 function Picker() {
   const { t } = useI18n()
   const options = useApiKeyCatalog()
+  const oauthProviders = useOAuthProviders()
   const copy = t.onboarding.apiKeyOptions as Record<string, { short: string; description: string }>
 
   return (
     <div className="flex flex-1 flex-col">
       <div className="flex flex-col gap-2">
+        {oauthProviders.map(provider => (
+          <button
+            key={provider.id}
+            className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary"
+            onClick={() => void startProviderOAuth(provider)}
+            type="button"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="truncate text-sm font-medium text-foreground">{t.onboarding.signInWith(provider.name)}</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">{t.onboarding.flowSubtitles[provider.flow]}</span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+          </button>
+        ))}
         {options.map(option => (
           <button
             key={option.id}
@@ -127,6 +152,65 @@ function ApiKeyForm({ option }: { option: ApiKeyOption | null }) {
       <Button className="mt-auto w-full" disabled={state.busy || !value.trim()} onClick={submit}>
         {state.busy ? t.onboarding.connecting : t.common.continue}
       </Button>
+    </div>
+  )
+}
+
+function OAuthPanel() {
+  const { t } = useI18n()
+  const state = useStore($onboarding)
+  const [code, setCode] = useState('')
+  const oauth = state.oauth
+  if (!oauth) {
+    return null
+  }
+
+  const providerName = oauth.provider.name
+  const copyCode = () => void navigator.clipboard?.writeText(oauth.userCode ?? '').catch(() => {})
+
+  return (
+    <div className="flex flex-1 flex-col">
+      <button className="-ml-1 mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground" onClick={() => backToPicker()} type="button">
+        <ChevronLeft className="size-4" />
+        {t.onboarding.pickDifferentProvider}
+      </button>
+
+      <div className="text-base font-medium text-foreground">{t.onboarding.signInWith(providerName)}</div>
+
+      {oauth.flow === 'device_code' ? (
+        <>
+          <p className="mt-3 text-sm text-muted-foreground">{t.onboarding.deviceCodeOpened(providerName)}</p>
+          {oauth.userCode && (
+            <div className="mt-2 flex items-center gap-2">
+              <code className="flex-1 rounded-lg bg-muted px-3 py-2 text-center font-mono text-lg tracking-widest text-foreground">
+                {oauth.userCode}
+              </code>
+              <Button onClick={copyCode} size="sm" variant="outline">
+                {t.onboarding.copy}
+              </Button>
+            </div>
+          )}
+          <p className="mt-3 text-xs text-muted-foreground">{t.onboarding.waitingAuthorize}</p>
+        </>
+      ) : (
+        <>
+          <p className="mt-3 text-sm text-muted-foreground">{t.onboarding.openedBrowser(providerName)}</p>
+          <p className="text-sm text-muted-foreground">{t.onboarding.copyAuthCode}</p>
+          <Input className="mt-3" onChange={e => setCode(e.target.value)} placeholder={t.onboarding.pasteAuthCode} value={code} />
+        </>
+      )}
+
+      {state.error && <p className="mt-2 text-xs text-destructive">{state.error}</p>}
+
+      <Button className="mt-3 w-fit" onClick={() => void openExternalLink(oauth.url)} size="sm" variant="ghost">
+        {oauth.flow === 'device_code' ? t.onboarding.reopenVerification : t.onboarding.reopenAuthPage}
+      </Button>
+
+      {oauth.flow === 'pkce' && (
+        <Button className="mt-auto w-full" disabled={state.busy || !code.trim()} onClick={() => void submitOnboardingCode(code)}>
+          {state.busy ? t.onboarding.connecting : t.common.continue}
+        </Button>
+      )}
     </div>
   )
 }
