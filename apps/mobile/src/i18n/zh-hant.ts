@@ -56,7 +56,8 @@ export const zhHant = defineLocale({
     commandCenter: '指揮中心',
     profiles: '設定檔',
     settings: '設定',
-    files: '檔案'
+    files: '檔案',
+    review: '審查'
   },
 
   shortcuts: {
@@ -76,6 +77,15 @@ export const zhHant = defineLocale({
     parent: '上一層',
     previewFailed: '無法開啟此檔案。',
     binaryFile: '二進位檔案 — 無預覽。'
+  },
+
+  review: {
+    title: '程式碼審查',
+    loading: '正在載入變更…',
+    noRepo: '不是 Git 儲存庫。',
+    noChanges: '沒有變更。',
+    loadFailed: '無法載入變更。',
+    changed: count => `${count} 處變更`
   },
 
   fileMenu: {

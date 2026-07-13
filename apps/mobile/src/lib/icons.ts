@@ -51,5 +51,6 @@ export {
   IconEyeOff as EyeOff,
   IconKeyboard as Keyboard,
   IconFolder as Folder,
-  IconFile as File
+  IconFile as File,
+  IconGitBranch as GitBranch
 } from '@tabler/icons-react'

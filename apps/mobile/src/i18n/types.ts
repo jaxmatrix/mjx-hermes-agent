@@ -104,6 +104,17 @@ export interface Translations {
     profiles: string
     settings: string
     files: string
+    review: string
+  }
+
+  // Mobile-only: the read-only code-review / git-diff view (K14).
+  review: {
+    title: string
+    loading: string
+    noRepo: string
+    noChanges: string
+    loadFailed: string
+    changed: (count: number) => string
   }
 
   // Mobile-only: the keyboard-shortcuts reference (hardware keyboards).

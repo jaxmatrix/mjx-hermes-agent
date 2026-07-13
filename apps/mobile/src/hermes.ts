@@ -6,6 +6,7 @@ import type {
   DefaultCwdResult,
   ReadDirResult,
   ReadFileTextResult,
+  RepoStatus,
   ActionResponse,
   ActionStatusResponse,
   AnalyticsResponse,
@@ -1223,4 +1224,16 @@ export function readFileText(path: string): Promise<ReadFileTextResult> {
 
 export function getDefaultCwd(): Promise<DefaultCwdResult> {
   return api<DefaultCwdResult>({ ...profileScoped(), path: '/api/fs/default-cwd' })
+}
+
+// ── Remote git status + diffs (K14, read-only) ──────────────────────────────
+export function getRepoStatus(path: string): Promise<RepoStatus | null> {
+  return api<RepoStatus | null>({ ...profileScoped(), path: `/api/git/status?path=${encodeURIComponent(path)}` })
+}
+
+export function getFileDiff(repoRoot: string, file: string): Promise<{ diff: string }> {
+  return api<{ diff: string }>({
+    ...profileScoped(),
+    path: `/api/git/file-diff?path=${encodeURIComponent(repoRoot)}&file=${encodeURIComponent(file)}`
+  })
 }

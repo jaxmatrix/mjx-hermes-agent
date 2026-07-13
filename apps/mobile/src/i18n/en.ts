@@ -56,7 +56,8 @@ export const en: Translations = {
     commandCenter: 'Command Center',
     profiles: 'Profiles',
     settings: 'Settings',
-    files: 'Files'
+    files: 'Files',
+    review: 'Review'
   },
 
   shortcuts: {
@@ -76,6 +77,15 @@ export const en: Translations = {
     parent: 'Up',
     previewFailed: 'Could not open this file.',
     binaryFile: 'Binary file — no preview.'
+  },
+
+  review: {
+    title: 'Code review',
+    loading: 'Loading changes…',
+    noRepo: 'Not a git repository.',
+    noChanges: 'No changes.',
+    loadFailed: 'Could not load changes.',
+    changed: count => `${count} changed`
   },
 
   fileMenu: {

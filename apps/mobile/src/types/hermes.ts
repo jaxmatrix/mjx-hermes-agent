@@ -1093,3 +1093,28 @@ export interface DefaultCwdResult {
   branch: string
   cwd: string
 }
+
+// Remote git status + diffs (Track K14) — read-only; no git binary on Android.
+export interface RepoStatusFile {
+  path: string
+  staged: boolean
+  unstaged: boolean
+  untracked: boolean
+  conflicted: boolean
+}
+
+export interface RepoStatus {
+  branch: string | null
+  defaultBranch: string | null
+  detached: boolean
+  ahead: number
+  behind: number
+  staged: number
+  unstaged: number
+  untracked: number
+  conflicted: number
+  changed: number
+  added: number
+  removed: number
+  files: RepoStatusFile[]
+}

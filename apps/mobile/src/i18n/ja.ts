@@ -56,7 +56,8 @@ export const ja = defineLocale({
     commandCenter: 'コマンドセンター',
     profiles: 'プロファイル',
     settings: '設定',
-    files: 'ファイル'
+    files: 'ファイル',
+    review: 'レビュー'
   },
 
   shortcuts: {
@@ -76,6 +77,15 @@ export const ja = defineLocale({
     parent: '上へ',
     previewFailed: 'このファイルを開けませんでした。',
     binaryFile: 'バイナリファイル — プレビューなし。'
+  },
+
+  review: {
+    title: 'コードレビュー',
+    loading: '変更を読み込み中…',
+    noRepo: 'Git リポジトリではありません。',
+    noChanges: '変更はありません。',
+    loadFailed: '変更を読み込めませんでした。',
+    changed: count => `${count} 件の変更`
   },
 
   fileMenu: {

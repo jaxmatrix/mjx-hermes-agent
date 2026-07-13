@@ -11,6 +11,7 @@ import { FilesScreen } from '@/app/files/files-screen'
 import { MessagingScreen } from '@/app/messaging/messaging-screen'
 import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
 import { ProfilesScreen } from '@/app/profiles/profiles-screen'
+import { ReviewScreen } from '@/app/review/review-screen'
 import { SkillsScreen } from '@/app/skills/skills-screen'
 import { StarmapScreen } from '@/app/starmap/starmap-screen'
 import { SettingsIndex } from '@/app/settings/settings-index'
@@ -74,6 +75,7 @@ export function MobileController() {
           <Route element={<AgentsScreen />} path="/agents" />
           <Route element={<StarmapScreen />} path="/starmap" />
           <Route element={<FilesScreen />} path="/files" />
+          <Route element={<ReviewScreen />} path="/review" />
           {/* Session ids (and anything else) resolve to chat, per routes.ts */}
           <Route element={<ChatScreen />} path="*" />
         </Routes>

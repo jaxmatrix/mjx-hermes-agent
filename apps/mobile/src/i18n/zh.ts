@@ -56,7 +56,8 @@ export const zh: Translations = {
     commandCenter: '指挥中心',
     profiles: '配置',
     settings: '设置',
-    files: '文件'
+    files: '文件',
+    review: '审查'
   },
 
   shortcuts: {
@@ -76,6 +77,15 @@ export const zh: Translations = {
     parent: '上一级',
     previewFailed: '无法打开此文件。',
     binaryFile: '二进制文件 — 无预览。'
+  },
+
+  review: {
+    title: '代码审查',
+    loading: '正在加载更改…',
+    noRepo: '不是 Git 仓库。',
+    noChanges: '没有更改。',
+    loadFailed: '无法加载更改。',
+    changed: count => `${count} 处更改`
   },
 
   fileMenu: {
