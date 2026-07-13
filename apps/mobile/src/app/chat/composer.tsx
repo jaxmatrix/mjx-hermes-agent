@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { pickAttachment, type StagedAttachment } from '@/app/chat/attachments'
 import {
   applyCompletion,
   type CompletionEntry,
@@ -16,6 +17,7 @@ export function Composer() {
   const busy = useStore($busy)
   const history = useStore($history)
   const [text, setText] = useState('')
+  const [staged, setStaged] = useState<StagedAttachment[]>([])
   const [items, setItems] = useState<CompletionEntry[]>([])
   const [replaceFrom, setReplaceFrom] = useState(0)
   const [histIndex, setHistIndex] = useState(-1)
@@ -79,16 +81,29 @@ export function Composer() {
     requestAnimationFrame(() => areaRef.current?.focus())
   }
 
+  const attach = () => {
+    void pickAttachment()
+      .then(a => {
+        if (a) setStaged(prev => [...prev, a])
+      })
+      .catch(() => {
+        /* picker cancelled / unavailable */
+      })
+  }
+
   const submit = () => {
     const value = text.trim()
-    if (!value) return
+    if (!value && staged.length === 0) return
+    // Attachment refs (@file:/@image:) are spliced into the prompt text.
+    const full = [...staged.map(a => a.ref), value].filter(Boolean).join(' ')
     void triggerHaptic('submit')
-    pushHistory(value)
+    if (value) pushHistory(value)
     setText('')
+    setStaged([])
     setHistIndex(-1)
     closeDrawer()
-    if (busy) enqueue(value)
-    else void sendPrompt(value)
+    if (busy) enqueue(full)
+    else void sendPrompt(full)
     requestAnimationFrame(() => {
       if (areaRef.current) areaRef.current.style.height = 'auto'
     })
@@ -131,7 +146,26 @@ export function Composer() {
           ))}
         </ul>
       )}
+      {staged.length > 0 && (
+        <div className="attach-chips">
+          {staged.map((a, i) => (
+            <span className="attach-chip" key={`${a.ref}-${i}`}>
+              {a.name}
+              <button
+                aria-label={`Remove ${a.name}`}
+                onClick={() => setStaged(prev => prev.filter((_, j) => j !== i))}
+                type="button"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="composer">
+        <button aria-label="Attach file" className="composer-attach" onClick={attach} type="button">
+          ＋
+        </button>
         <textarea
           ref={areaRef}
           className="composer-input"
@@ -141,7 +175,12 @@ export function Composer() {
           rows={1}
           value={text}
         />
-        <button aria-label="Send" className="composer-send" disabled={!text.trim()} onClick={submit}>
+        <button
+          aria-label="Send"
+          className="composer-send"
+          disabled={!text.trim() && staged.length === 0}
+          onClick={submit}
+        >
           ↑
         </button>
       </div>

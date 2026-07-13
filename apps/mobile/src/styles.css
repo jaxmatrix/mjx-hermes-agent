@@ -422,6 +422,50 @@ body {
   background: var(--ui-surface-2);
 }
 
+/* ── Attachments ── */
+.composer-attach {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid var(--ui-stroke-primary);
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+  font-size: 20px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.attach-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 999px;
+  background: var(--ui-surface-2);
+  color: var(--ui-text-secondary);
+  max-width: 220px;
+}
+.attach-chip > span,
+.attach-chip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach-chip button {
+  background: none;
+  border: none;
+  color: var(--ui-text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
 .approval {
   border: 1px solid var(--ui-stroke-primary);
   border-radius: var(--radius);

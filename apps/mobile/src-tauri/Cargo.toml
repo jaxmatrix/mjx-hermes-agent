@@ -35,6 +35,10 @@ tauri-plugin-opener = "2"
 # Haptic feedback on send/approval (Gc10/R9).
 tauri-plugin-haptics = "2"
 
+# File attachments (Gc8/R7): native picker + read the picked file to a data-URL.
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+
 # Transport core (Step 2a): all HTTP + WS traffic runs here, not in the webview,
 # so there is no CORS constraint and we can talk to any backend on the LAN.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }

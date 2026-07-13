@@ -260,6 +260,17 @@ export function handleGatewayEvent(event: GatewayEvent): void {
   }
 }
 
+/** Lazily create the session (needed before prompt.submit or file.attach). */
+export async function ensureSession(): Promise<string> {
+  let sessionId = $sessionId.get()
+  if (!sessionId) {
+    const created = await requestGateway<{ session_id: string }>('session.create', { cols: 96 })
+    sessionId = created.session_id
+    $sessionId.set(sessionId)
+  }
+  return sessionId
+}
+
 export async function sendPrompt(text: string): Promise<void> {
   const trimmed = text.trim()
   if (!trimmed || $busy.get()) return
@@ -269,12 +280,7 @@ export async function sendPrompt(text: string): Promise<void> {
   $statusLine.set('')
 
   try {
-    let sessionId = $sessionId.get()
-    if (!sessionId) {
-      const created = await requestGateway<{ session_id: string }>('session.create', { cols: 96 })
-      sessionId = created.session_id
-      $sessionId.set(sessionId)
-    }
+    const sessionId = await ensureSession()
     await requestGateway('prompt.submit', { session_id: sessionId, text: trimmed }, PROMPT_SUBMIT_TIMEOUT_MS)
   } catch (err) {
     $busy.set(false)

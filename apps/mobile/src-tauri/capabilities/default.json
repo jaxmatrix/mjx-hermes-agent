@@ -11,6 +11,8 @@
     "keyring:allow-set-password",
     "keyring:allow-delete-password",
     "opener:allow-open-url",
-    "haptics:default"
+    "haptics:default",
+    "dialog:allow-open",
+    "fs:allow-read-file"
   ]
 }
