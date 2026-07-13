@@ -5,6 +5,7 @@ import {
   ARTIFACTS_ROUTE,
   COMMAND_CENTER_ROUTE,
   CRON_ROUTE,
+  FILES_ROUTE,
   MESSAGING_ROUTE,
   NEW_CHAT_ROUTE,
   PROFILES_ROUTE,
@@ -15,7 +16,7 @@ import {
 } from '@/app/routes'
 import { useI18n } from '@/i18n'
 import type { Translations } from '@/i18n'
-import { Box, Clock, Cpu, LayoutGrid, MessageCircle, Send, Settings, Sparkles, Stars, Users } from '@/lib/icons'
+import { Box, Clock, Cpu, Folder, LayoutGrid, MessageCircle, Send, Settings, Sparkles, Stars, Users } from '@/lib/icons'
 
 export interface NavItem {
   view: AppView
@@ -36,6 +37,7 @@ export const NAV_ITEMS: NavItem[] = [
   { view: 'cron', path: CRON_ROUTE, labelKey: 'routines', label: 'Routines', icon: Clock },
   { view: 'messaging', path: MESSAGING_ROUTE, labelKey: 'messaging', label: 'Messaging', icon: Send },
   { view: 'artifacts', path: ARTIFACTS_ROUTE, labelKey: 'artifacts', label: 'Artifacts', icon: Box },
+  { view: 'files', path: FILES_ROUTE, labelKey: 'files', label: 'Files', icon: Folder },
   { view: 'starmap', path: STARMAP_ROUTE, labelKey: 'starmap', label: 'Starmap', icon: Stars },
   {
     view: 'command-center',

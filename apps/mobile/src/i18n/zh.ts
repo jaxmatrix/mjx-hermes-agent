@@ -55,7 +55,8 @@ export const zh: Translations = {
     starmap: '星图',
     commandCenter: '指挥中心',
     profiles: '配置',
-    settings: '设置'
+    settings: '设置',
+    files: '文件'
   },
 
   shortcuts: {
@@ -65,6 +66,16 @@ export const zh: Translations = {
     newLine: '换行',
     history: '上一条 / 下一条消息',
     dismiss: '关闭建议'
+  },
+
+  files: {
+    title: '文件',
+    loading: '正在加载…',
+    empty: '此文件夹为空。',
+    loadFailed: '无法加载此文件夹。',
+    parent: '上一级',
+    previewFailed: '无法打开此文件。',
+    binaryFile: '二进制文件 — 无预览。'
   },
 
   fileMenu: {

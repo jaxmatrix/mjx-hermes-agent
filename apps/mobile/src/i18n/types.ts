@@ -103,6 +103,7 @@ export interface Translations {
     commandCenter: string
     profiles: string
     settings: string
+    files: string
   }
 
   // Mobile-only: the keyboard-shortcuts reference (hardware keyboards).
@@ -113,6 +114,17 @@ export interface Translations {
     newLine: string
     history: string
     dismiss: string
+  }
+
+  // Mobile-only: the remote workspace file browser (K13).
+  files: {
+    title: string
+    loading: string
+    empty: string
+    loadFailed: string
+    parent: string
+    previewFailed: string
+    binaryFile: string
   }
 
   fileMenu: {

@@ -55,7 +55,8 @@ export const en: Translations = {
     starmap: 'Starmap',
     commandCenter: 'Command Center',
     profiles: 'Profiles',
-    settings: 'Settings'
+    settings: 'Settings',
+    files: 'Files'
   },
 
   shortcuts: {
@@ -65,6 +66,16 @@ export const en: Translations = {
     newLine: 'New line',
     history: 'Previous / next message',
     dismiss: 'Dismiss suggestions'
+  },
+
+  files: {
+    title: 'Files',
+    loading: 'Loading…',
+    empty: 'This folder is empty.',
+    loadFailed: 'Could not load this folder.',
+    parent: 'Up',
+    previewFailed: 'Could not open this file.',
+    binaryFile: 'Binary file — no preview.'
   },
 
   fileMenu: {

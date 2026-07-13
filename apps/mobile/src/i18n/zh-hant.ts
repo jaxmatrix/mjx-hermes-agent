@@ -55,7 +55,8 @@ export const zhHant = defineLocale({
     starmap: '星圖',
     commandCenter: '指揮中心',
     profiles: '設定檔',
-    settings: '設定'
+    settings: '設定',
+    files: '檔案'
   },
 
   shortcuts: {
@@ -65,6 +66,16 @@ export const zhHant = defineLocale({
     newLine: '換行',
     history: '上一則 / 下一則訊息',
     dismiss: '關閉建議'
+  },
+
+  files: {
+    title: '檔案',
+    loading: '正在載入…',
+    empty: '此資料夾是空的。',
+    loadFailed: '無法載入此資料夾。',
+    parent: '上一層',
+    previewFailed: '無法開啟此檔案。',
+    binaryFile: '二進位檔案 — 無預覽。'
   },
 
   fileMenu: {

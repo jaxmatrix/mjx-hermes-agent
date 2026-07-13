@@ -7,6 +7,7 @@ import { ChatScreen } from '@/app/chat/chat-screen'
 import { CommandCenterScreen } from '@/app/command-center/command-center-screen'
 import { ConnectScreen } from '@/app/connect-screen'
 import { CronScreen } from '@/app/cron/cron-screen'
+import { FilesScreen } from '@/app/files/files-screen'
 import { MessagingScreen } from '@/app/messaging/messaging-screen'
 import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
 import { ProfilesScreen } from '@/app/profiles/profiles-screen'
@@ -72,6 +73,7 @@ export function MobileController() {
           <Route element={<ProfilesScreen />} path="/profiles" />
           <Route element={<AgentsScreen />} path="/agents" />
           <Route element={<StarmapScreen />} path="/starmap" />
+          <Route element={<FilesScreen />} path="/files" />
           {/* Session ids (and anything else) resolve to chat, per routes.ts */}
           <Route element={<ChatScreen />} path="*" />
         </Routes>

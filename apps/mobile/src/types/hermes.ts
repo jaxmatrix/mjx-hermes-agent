@@ -1066,3 +1066,30 @@ export interface ModelAssignmentResponse {
   stale_aux?: StaleAuxAssignment[]
   tasks?: string[]
 }
+
+// Remote workspace filesystem (Track K13). The gateway exposes a read-only
+// listing/preview API; there's no local FS on Android.
+export interface FsEntry {
+  name: string
+  path: string
+  isDirectory: boolean
+}
+
+export interface ReadDirResult {
+  entries: FsEntry[]
+  error?: string
+}
+
+export interface ReadFileTextResult {
+  path: string
+  text: string
+  binary?: boolean
+  byteSize?: number
+  language?: string
+  mimeType?: string
+}
+
+export interface DefaultCwdResult {
+  branch: string
+  cwd: string
+}

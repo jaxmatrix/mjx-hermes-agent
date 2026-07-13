@@ -3,6 +3,9 @@ import { JsonRpcGatewayClient } from '@/gateway'
 import { api } from '@/lib/api'
 
 import type {
+  DefaultCwdResult,
+  ReadDirResult,
+  ReadFileTextResult,
   ActionResponse,
   ActionStatusResponse,
   AnalyticsResponse,
@@ -1207,4 +1210,17 @@ export function runDebugShare(): Promise<DebugShareResponse> {
     // Synchronous upload of report + logs to the paste service.
     timeoutMs: 120_000
   })
+}
+
+// ── Remote workspace filesystem (K13) ───────────────────────────────────────
+export function readDir(path: string): Promise<ReadDirResult> {
+  return api<ReadDirResult>({ ...profileScoped(), path: `/api/fs/list?path=${encodeURIComponent(path)}` })
+}
+
+export function readFileText(path: string): Promise<ReadFileTextResult> {
+  return api<ReadFileTextResult>({ ...profileScoped(), path: `/api/fs/read-text?path=${encodeURIComponent(path)}` })
+}
+
+export function getDefaultCwd(): Promise<DefaultCwdResult> {
+  return api<DefaultCwdResult>({ ...profileScoped(), path: '/api/fs/default-cwd' })
 }

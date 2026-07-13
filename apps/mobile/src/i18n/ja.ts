@@ -55,7 +55,8 @@ export const ja = defineLocale({
     starmap: 'スターマップ',
     commandCenter: 'コマンドセンター',
     profiles: 'プロファイル',
-    settings: '設定'
+    settings: '設定',
+    files: 'ファイル'
   },
 
   shortcuts: {
@@ -65,6 +66,16 @@ export const ja = defineLocale({
     newLine: '改行',
     history: '前 / 次のメッセージ',
     dismiss: '候補を閉じる'
+  },
+
+  files: {
+    title: 'ファイル',
+    loading: '読み込み中…',
+    empty: 'このフォルダは空です。',
+    loadFailed: 'このフォルダを読み込めませんでした。',
+    parent: '上へ',
+    previewFailed: 'このファイルを開けませんでした。',
+    binaryFile: 'バイナリファイル — プレビューなし。'
   },
 
   fileMenu: {

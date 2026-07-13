@@ -49,5 +49,7 @@ export {
   IconRefresh as Refresh,
   IconEye as Eye,
   IconEyeOff as EyeOff,
-  IconKeyboard as Keyboard
+  IconKeyboard as Keyboard,
+  IconFolder as Folder,
+  IconFile as File
 } from '@tabler/icons-react'
