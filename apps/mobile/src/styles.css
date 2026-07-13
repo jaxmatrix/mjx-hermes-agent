@@ -386,6 +386,42 @@ body {
   opacity: 0.4;
 }
 
+/* ── Composer completion drawer (slash / @) ── */
+.composer-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.completion-drawer {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-stroke-primary);
+  border-radius: var(--radius);
+}
+.completion-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--ui-text-primary);
+  padding: 9px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.completion-item:hover,
+.completion-item:active {
+  background: var(--ui-surface-2);
+}
+
 .approval {
   border: 1px solid var(--ui-stroke-primary);
   border-radius: var(--radius);
