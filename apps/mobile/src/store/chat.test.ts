@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
 
-import { $approval, $clarify, $messages, handleGatewayEvent, resetChat } from './chat'
+vi.mock('@/store/gateway', () => ({ requestGateway: vi.fn().mockResolvedValue({}) }))
+import { requestGateway } from '@/store/gateway'
+
+import { $approval, $clarify, $messages, $secret, $sudo, handleGatewayEvent, resetChat, respondSudo } from './chat'
 
 const ev = (type: string, payload: Record<string, unknown>): GatewayEvent =>
   ({ type, payload } as unknown as GatewayEvent)
@@ -49,10 +52,21 @@ describe('chat reducer (parts model)', () => {
     expect(reasoning[0]).toMatchObject({ text: 'final' })
   })
 
-  it('routes approval + clarify to their atoms', () => {
+  it('routes approval / clarify / sudo / secret to their atoms with request_id', () => {
     handleGatewayEvent(ev('approval.request', { command: 'rm', description: 'danger' }))
     expect($approval.get()).toMatchObject({ command: 'rm', description: 'danger' })
-    handleGatewayEvent(ev('clarify.request', { prompt: 'which file?' }))
-    expect($clarify.get()).toMatchObject({ prompt: 'which file?' })
+    handleGatewayEvent(ev('clarify.request', { request_id: 'c1', prompt: 'which file?' }))
+    expect($clarify.get()).toMatchObject({ requestId: 'c1', prompt: 'which file?' })
+    handleGatewayEvent(ev('sudo.request', { request_id: 's1', prompt: 'password?' }))
+    expect($sudo.get()).toMatchObject({ requestId: 's1', prompt: 'password?' })
+    handleGatewayEvent(ev('secret.request', { request_id: 'x1', env_var: 'API_KEY', prompt: 'key?' }))
+    expect($secret.get()).toMatchObject({ requestId: 'x1', envVar: 'API_KEY' })
+  })
+
+  it('respondSudo posts sudo.respond with the request_id + password and clears the atom', async () => {
+    handleGatewayEvent(ev('sudo.request', { request_id: 's9', prompt: 'pw' }))
+    await respondSudo('hunter2')
+    expect(requestGateway).toHaveBeenCalledWith('sudo.respond', { request_id: 's9', password: 'hunter2' })
+    expect($sudo.get()).toBeNull()
   })
 })

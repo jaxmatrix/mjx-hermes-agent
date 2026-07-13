@@ -1,16 +1,22 @@
 import { ApprovalBar } from '@/app/chat/approval-bar'
+import { ClarifyBar } from '@/app/chat/clarify-bar'
 import { Composer } from '@/app/chat/composer'
 import { ChatRuntimeProvider } from '@/app/chat/runtime'
+import { SecretBar } from '@/app/chat/secret-bar'
+import { SudoBar } from '@/app/chat/sudo-bar'
 import { SidebarTrigger } from '@/app/shell/sidebar'
 import { Thread } from '@/components/assistant-ui/thread/thread'
 import { useStore } from '@/store/atom'
-import { $approval, $busy, $statusLine, resetChat } from '@/store/chat'
+import { $approval, $busy, $clarify, $secret, $statusLine, $sudo, resetChat } from '@/store/chat'
 import { $connection, disconnect } from '@/store/connection'
 
 export function ChatScreen() {
   const busy = useStore($busy)
   const statusLine = useStore($statusLine)
   const approval = useStore($approval)
+  const clarify = useStore($clarify)
+  const sudo = useStore($sudo)
+  const secret = useStore($secret)
   const connection = useStore($connection)
 
   const host = connection ? new URL(connection.baseUrl).host : ''
@@ -41,6 +47,9 @@ export function ChatScreen() {
       <footer className="chat-footer">
         {busy && statusLine && <div className="status-line">{statusLine}</div>}
         {approval && <ApprovalBar request={approval} />}
+        {clarify && <ClarifyBar request={clarify} />}
+        {sudo && <SudoBar request={sudo} />}
+        {secret && <SecretBar request={secret} />}
         <Composer />
       </footer>
     </div>

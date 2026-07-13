@@ -48,6 +48,12 @@ export interface ApprovalRequest {
   allowPermanent: boolean
 }
 export interface ClarifyRequest {
+  requestId: string
+  prompt: string
+}
+// Sudo is a password-entry flow (not an allow/deny choice).
+export interface SudoRequest {
+  requestId: string
   prompt: string
 }
 export interface SecretRequest {
@@ -65,7 +71,7 @@ export const $busy = atom(false)
 export const $statusLine = atom('')
 export const $approval = atom<ApprovalRequest | null>(null)
 export const $clarify = atom<ClarifyRequest | null>(null)
-export const $sudo = atom<ApprovalRequest | null>(null)
+export const $sudo = atom<SudoRequest | null>(null)
 export const $secret = atom<SecretRequest | null>(null)
 export const $sessionId = atom<string | null>(null)
 
@@ -218,14 +224,16 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       break
 
     case 'clarify.request':
-      $clarify.set({ prompt: coerceText(payload.prompt) || coerceText(payload.message) })
+      $clarify.set({
+        requestId: coerceText(payload.request_id),
+        prompt: coerceText(payload.prompt) || coerceText(payload.message)
+      })
       break
 
     case 'sudo.request':
       $sudo.set({
-        command: coerceText(payload.command),
-        description: coerceText(payload.description) || 'sudo command',
-        allowPermanent: payload.allow_permanent !== false
+        requestId: coerceText(payload.request_id),
+        prompt: coerceText(payload.prompt) || coerceText(payload.command) || 'Enter your sudo password'
       })
       break
 
@@ -282,16 +290,37 @@ export async function respondApproval(choice: ApprovalChoice): Promise<void> {
   }
 }
 
-// FIXME(G): wire the real RPCs (clarify.respond / sudo.respond / secret.respond)
-// once their UIs land; for now they just clear the prompt.
-export function respondClarify(): void {
+export async function respondClarify(answer: string): Promise<void> {
+  const req = $clarify.get()
   $clarify.set(null)
+  if (!req) return
+  try {
+    await requestGateway('clarify.respond', { request_id: req.requestId, answer })
+  } catch {
+    /* turn may have moved on */
+  }
 }
-export function respondSudo(): void {
+
+export async function respondSudo(password: string): Promise<void> {
+  const req = $sudo.get()
   $sudo.set(null)
+  if (!req) return
+  try {
+    await requestGateway('sudo.respond', { request_id: req.requestId, password })
+  } catch {
+    /* turn may have moved on */
+  }
 }
-export function respondSecret(): void {
+
+export async function respondSecret(value: string): Promise<void> {
+  const req = $secret.get()
   $secret.set(null)
+  if (!req) return
+  try {
+    await requestGateway('secret.respond', { request_id: req.requestId, value })
+  } catch {
+    /* turn may have moved on */
+  }
 }
 
 export function resetChat(): void {
