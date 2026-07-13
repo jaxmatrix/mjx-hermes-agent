@@ -1,57 +1,35 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
-/* Dark variant is class-based (matches desktop). Mobile is dark-by-default via
-   :root below; `.dark` toggling lands with the theme engine (Track I3). The
-   variant is declared now so ported `dark:` utilities compile. */
+/* Class-based dark variant (matches desktop). `.dark` is toggled on <html> by
+   the ThemeProvider (Ic7); the mode-appropriate `--theme-*` seeds are injected
+   inline per skin by applyTheme(). Declared here so `dark:` utilities compile. */
 @custom-variant dark (&:is(.dark *));
 
-/* Design tokens — mobile-first, dark by default (mirrors the desktop token
-   families: --ui-* surfaces/strokes/text, one accent). Light mode is layered on
-   at the bottom. Components reference tokens only — never raw hex. */
-:root {
-  color-scheme: dark;
-  --ui-bg: #0b0c0e;
-  --ui-surface: #16181d;
-  --ui-surface-2: #1d2026;
-  --ui-user-bubble: #24303f;
-  --ui-stroke-primary: #2c313a;
-  --ui-stroke-tertiary: #24272e;
-  --ui-text-primary: #f5f6f7;
-  --ui-text-secondary: #c3c8cf;
-  --ui-text-tertiary: #9aa0a6;
-  --ui-accent: #7c9cff;
-  --ui-accent-ink: #0b0c0e;
-  --ui-danger: #ff6b6b;
-  --ui-good: #4ade80;
-  --radius: 12px;
-}
-
-/* Tailwind named-token contract (shadcn). Sourced from the --ui-* palette above
-   so light/dark (prefers-color-scheme) flows through automatically. This is what
-   makes ported shadcn primitives — bg-primary, text-foreground, rounded-lg,
-   border-border, ring-ring — resolve to mobile colors. `inline` keeps the
-   var() references intact so they resolve at runtime. The fuller desktop --ui-*
-   vocabulary + --theme-* engine remain deferred to Track I3. */
+/* Tailwind named-token contract (shadcn). Sourced from the derived `--dt-*`
+   chrome tokens (see @layer base below) so bg-primary / text-foreground /
+   border-border / ring-ring resolve through the full theme engine. `inline`
+   keeps the var() references intact so they resolve at runtime. Radius + fonts
+   stay mobile's own (touch-tuned px radii, system font stacks). */
 @theme inline {
-  --color-background: var(--ui-bg);
-  --color-foreground: var(--ui-text-primary);
-  --color-card: var(--ui-surface);
-  --color-card-foreground: var(--ui-text-primary);
-  --color-popover: var(--ui-surface);
-  --color-popover-foreground: var(--ui-text-primary);
-  --color-muted: var(--ui-surface-2);
-  --color-muted-foreground: var(--ui-text-tertiary);
-  --color-primary: var(--ui-accent);
-  --color-primary-foreground: var(--ui-accent-ink);
-  --color-secondary: var(--ui-surface-2);
-  --color-secondary-foreground: var(--ui-text-primary);
-  --color-accent: var(--ui-surface-2);
-  --color-accent-foreground: var(--ui-text-primary);
-  --color-border: var(--ui-stroke-primary);
-  --color-input: var(--ui-stroke-primary);
-  --color-ring: var(--ui-accent);
-  --color-destructive: var(--ui-danger);
-  --color-destructive-foreground: var(--ui-accent-ink);
+  --color-background: var(--dt-background);
+  --color-foreground: var(--dt-foreground);
+  --color-card: var(--dt-card);
+  --color-card-foreground: var(--dt-card-foreground);
+  --color-popover: var(--dt-popover);
+  --color-popover-foreground: var(--dt-popover-foreground);
+  --color-muted: var(--dt-muted);
+  --color-muted-foreground: var(--dt-muted-foreground);
+  --color-primary: var(--dt-primary);
+  --color-primary-foreground: var(--dt-primary-foreground);
+  --color-secondary: var(--dt-secondary);
+  --color-secondary-foreground: var(--dt-secondary-foreground);
+  --color-accent: var(--dt-accent);
+  --color-accent-foreground: var(--dt-accent-foreground);
+  --color-border: var(--dt-border);
+  --color-input: var(--dt-input);
+  --color-ring: var(--dt-ring);
+  --color-destructive: var(--dt-destructive);
+  --color-destructive-foreground: var(--dt-destructive-foreground);
 
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
@@ -61,6 +39,121 @@
   --radius-lg: var(--radius); /* 12px, matches --radius */
   --radius-xl: 16px;
   --radius-2xl: 20px;
+}
+
+/* ── Theme engine (ported from apps/desktop/src/styles.css) ──────────────────
+   Three-layer chain: `--theme-*` seeds (set inline per skin by applyTheme) →
+   `--ui-*` color-mix derivations → `--dt-*` shadcn tokens (mapped into Tailwind
+   above). The :root defaults render the light `nous` skin; `.dark` overrides the
+   per-mode mix knobs + neutrals so the same derivations re-resolve for dark.
+   The desktop chrome/layout vocabulary (titlebar, composer geometry, sidebar,
+   context-usage, ANSI) is intentionally dropped — mobile references only the
+   subset below. A bridge at the end aliases mobile's own `--ui-*` names
+   (`--ui-bg`, `--ui-surface`, …) onto the derived chain. */
+@layer base {
+  :root {
+    color-scheme: light;
+
+    --theme-foreground: #17171a;
+    --theme-primary: #0053fd;
+    --theme-secondary: color-mix(in srgb, #0053fd 7%, #ffffff);
+    --theme-accent-soft: color-mix(in srgb, #0053fd 10%, #ffffff);
+    --theme-midground: #0053fd;
+    --theme-background-seed: #f8faff;
+    --theme-card-seed: #ffffff;
+    --theme-elevated-seed: #ffffff;
+    --theme-bubble-seed: color-mix(in srgb, #0053fd 6%, #ffffff);
+    --theme-neutral-chrome: #f3f3f3;
+    --theme-neutral-card: #fcfcfc;
+    --theme-mix-chrome: 92%;
+    --theme-mix-card: 22%;
+    --theme-mix-elevated: 28%;
+    --theme-mix-bubble: 0%;
+    --theme-fill-tertiary-accent-mix: 8%;
+    --theme-stroke-primary-accent-mix: 24%;
+    --theme-stroke-secondary-accent-mix: 16%;
+    --theme-stroke-tertiary-accent-mix: 10%;
+
+    --ui-base: var(--theme-foreground);
+    --ui-accent: var(--theme-midground);
+    --ui-green: #1f8a65;
+
+    --ui-bg-chrome: color-mix(in srgb, var(--theme-background-seed) var(--theme-mix-chrome), var(--theme-neutral-chrome));
+    --ui-bg-editor: color-mix(in srgb, var(--theme-card-seed) var(--theme-mix-card), var(--theme-neutral-card));
+    --ui-bg-elevated: color-mix(in srgb, var(--theme-elevated-seed) var(--theme-mix-elevated), var(--theme-neutral-card));
+    --ui-bg-tertiary: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-fill-tertiary-accent-mix),
+      color-mix(in srgb, var(--ui-base) 5%, transparent)
+    );
+    --ui-text-primary: color-mix(in srgb, var(--ui-base) 94%, transparent);
+    --ui-text-secondary: color-mix(in srgb, var(--ui-base) 74%, transparent);
+    --ui-text-tertiary: color-mix(in srgb, var(--ui-base) 54%, transparent);
+    --ui-stroke-primary: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-stroke-primary-accent-mix),
+      color-mix(in srgb, var(--ui-base) 10%, transparent)
+    );
+    --ui-stroke-secondary: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-stroke-secondary-accent-mix),
+      color-mix(in srgb, var(--ui-base) 7%, transparent)
+    );
+    --ui-stroke-tertiary: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-stroke-tertiary-accent-mix),
+      color-mix(in srgb, var(--ui-base) 5%, transparent)
+    );
+    --ui-chat-surface-background: var(--ui-bg-chrome);
+    --ui-chat-bubble-background: color-mix(in srgb, var(--theme-bubble-seed) var(--theme-mix-bubble), var(--theme-neutral-card));
+
+    --dt-background: var(--ui-bg-chrome);
+    --dt-foreground: var(--ui-text-primary);
+    --dt-card: var(--ui-bg-editor);
+    --dt-card-foreground: var(--ui-text-primary);
+    --dt-muted: var(--ui-bg-tertiary);
+    --dt-muted-foreground: var(--ui-text-tertiary);
+    --dt-popover: color-mix(in srgb, var(--ui-bg-elevated) 96%, transparent);
+    --dt-popover-foreground: var(--ui-text-primary);
+    --dt-primary: var(--theme-primary);
+    --dt-primary-foreground: #fcfcfc;
+    --dt-secondary: var(--theme-secondary);
+    --dt-secondary-foreground: var(--ui-text-secondary);
+    --dt-accent: var(--theme-accent-soft);
+    --dt-accent-foreground: var(--ui-text-primary);
+    --dt-border: var(--ui-stroke-secondary);
+    --dt-input: var(--ui-stroke-primary);
+    --dt-ring: var(--ui-stroke-primary);
+    --dt-destructive: #cf2d56;
+    --dt-destructive-foreground: #ffffff;
+
+    --radius: 12px;
+
+    /* Bridge: mobile's own `--ui-*` names (referenced across the custom CSS
+       below) aliased onto the derived chain. `--ui-accent` / `--ui-stroke-*` /
+       `--ui-text-*` already carry the desktop derivation names, so only these
+       seven mobile-only aliases need wiring. */
+    --ui-bg: var(--ui-chat-surface-background);
+    --ui-surface: var(--ui-bg-editor);
+    --ui-surface-2: var(--ui-bg-tertiary);
+    --ui-user-bubble: var(--ui-chat-bubble-background);
+    --ui-accent-ink: var(--dt-primary-foreground);
+    --ui-danger: var(--dt-destructive);
+    --ui-good: var(--ui-green);
+  }
+
+  :root.dark {
+    color-scheme: dark;
+    /* Per-mode mix knobs + neutrals — overridden inline by applyTheme() per
+       skin; these are the built-in dark `nous` fallback. */
+    --theme-mix-chrome: 74%;
+    --theme-mix-card: 38%;
+    --theme-mix-elevated: 46%;
+    --theme-mix-bubble: 46%;
+    --theme-neutral-chrome: #0d0d0e;
+    --theme-neutral-card: #161618;
+    --ui-green: #55a583;
+  }
 }
 
 * {
@@ -502,21 +595,4 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color-scheme: light;
-    --ui-bg: #ffffff;
-    --ui-surface: #f4f5f7;
-    --ui-surface-2: #eaecef;
-    --ui-user-bubble: #dbe6ff;
-    --ui-stroke-primary: #d9dce1;
-    --ui-stroke-tertiary: #e6e8eb;
-    --ui-text-primary: #14161a;
-    --ui-text-secondary: #40454d;
-    --ui-text-tertiary: #6b7178;
-    --ui-accent: #3b5bdb;
-    --ui-accent-ink: #ffffff;
-  }
 }
