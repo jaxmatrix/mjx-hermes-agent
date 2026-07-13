@@ -142,6 +142,13 @@ export function Composer() {
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Hardware-keyboard send: ⌘/Ctrl+Enter. Plain Enter stays a newline so the
+    // soft keyboard's Return key doesn't fire messages mid-compose.
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      submit()
+      return
+    }
     if (e.key === 'Escape' && items.length > 0) {
       e.preventDefault()
       closeDrawer()

@@ -105,6 +105,16 @@ export interface Translations {
     settings: string
   }
 
+  // Mobile-only: the keyboard-shortcuts reference (hardware keyboards).
+  shortcuts: {
+    title: string
+    intro: string
+    sendMessage: string
+    newLine: string
+    history: string
+    dismiss: string
+  }
+
   fileMenu: {
     revealFinder: string
     revealExplorer: string

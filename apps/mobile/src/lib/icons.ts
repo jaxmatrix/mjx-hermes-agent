@@ -48,5 +48,6 @@ export {
   IconKey as Key,
   IconRefresh as Refresh,
   IconEye as Eye,
-  IconEyeOff as EyeOff
+  IconEyeOff as EyeOff,
+  IconKeyboard as Keyboard
 } from '@tabler/icons-react'

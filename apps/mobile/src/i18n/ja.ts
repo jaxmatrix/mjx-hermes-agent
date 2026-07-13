@@ -58,6 +58,15 @@ export const ja = defineLocale({
     settings: '設定'
   },
 
+  shortcuts: {
+    title: 'キーボードショートカット',
+    intro: 'ハードウェアキーボード向け。ソフトキーボードでは送信ボタンを使用します。',
+    sendMessage: 'メッセージを送信',
+    newLine: '改行',
+    history: '前 / 次のメッセージ',
+    dismiss: '候補を閉じる'
+  },
+
   fileMenu: {
     revealFinder: 'Finder で表示',
     revealExplorer: 'エクスプローラーで表示',

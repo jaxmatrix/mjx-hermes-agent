@@ -58,6 +58,15 @@ export const zh: Translations = {
     settings: '设置'
   },
 
+  shortcuts: {
+    title: '键盘快捷键',
+    intro: '适用于硬件键盘。使用软键盘时请用发送按钮。',
+    sendMessage: '发送消息',
+    newLine: '换行',
+    history: '上一条 / 下一条消息',
+    dismiss: '关闭建议'
+  },
+
   fileMenu: {
     revealFinder: '在访达中显示',
     revealExplorer: '在文件资源管理器中显示',

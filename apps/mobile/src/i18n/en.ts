@@ -58,6 +58,15 @@ export const en: Translations = {
     settings: 'Settings'
   },
 
+  shortcuts: {
+    title: 'Keyboard shortcuts',
+    intro: 'For a hardware keyboard. On the touch keyboard, use the Send button.',
+    sendMessage: 'Send message',
+    newLine: 'New line',
+    history: 'Previous / next message',
+    dismiss: 'Dismiss suggestions'
+  },
+
   fileMenu: {
     revealFinder: 'Reveal in Finder',
     revealExplorer: 'Reveal in File Explorer',

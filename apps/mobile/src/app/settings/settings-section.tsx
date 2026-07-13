@@ -11,6 +11,7 @@ import { voiceFieldVisible } from './helpers'
 import { KeysSection } from './keys-section'
 import { ModelSection } from './model-section'
 import { NotificationsSection } from './notifications-section'
+import { ShortcutsSection } from './shortcuts-section'
 import { EmptyState, SettingsContent } from './primitives'
 import { useSettingsNav } from './settings-nav'
 
@@ -54,6 +55,10 @@ function SectionBody({ section }: { section: string }) {
     // Keys/credentials (Jc10): env-var management. Provider OAuth connect is D2.
     case 'keys':
       return <KeysSection />
+
+    // Keyboard shortcuts reference (K16).
+    case 'shortcuts':
+      return <ShortcutsSection />
 
     // Archived chats (Jc11).
     case 'archived':
