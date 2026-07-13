@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useI18n } from '@/i18n'
 import { ChevronLeft } from '@/lib/icons'
 
+import { AboutSection } from './about-section'
 import { AppearanceSection } from './appearance-section'
 import { ArchivedSection } from './archived-section'
 import { ConfigSection } from './config-section'
@@ -57,6 +58,10 @@ function SectionBody({ section }: { section: string }) {
     // Archived chats (Jc11).
     case 'archived':
       return <ArchivedSection />
+
+    // About (Jc12): version + release notes. self-update/uninstall omitted.
+    case 'about':
+      return <AboutSection />
 
     default:
       // FIXME(J): placeholder until this section's renderer lands.
