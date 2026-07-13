@@ -23,9 +23,10 @@ import {
   setToolsetEnabled
 } from '@/store/skills'
 
+import { HubTab } from './hub-tab'
 import { McpCatalogSheet } from './mcp-catalog-sheet'
 
-type Tab = 'skills' | 'toolsets' | 'mcp'
+type Tab = 'skills' | 'toolsets' | 'mcp' | 'hub'
 
 // computer_use is a desktop macOS-permission concept — hidden on mobile. FIXME(K5).
 const HIDDEN_TOOLSETS = new Set(['computer_use'])
@@ -80,6 +81,9 @@ export function SkillsScreen() {
   )
 
   const body = () => {
+    if (tab === 'hub') {
+      return <HubTab />
+    }
     if (loading && skills.length === 0 && toolsets.length === 0) {
       return <LoadingState label={s.loading} />
     }
@@ -219,9 +223,12 @@ export function SkillsScreen() {
             <TabsTrigger className="flex-1" value="mcp">
               {s.tabMcp}
             </TabsTrigger>
+            <TabsTrigger className="flex-1" value="hub">
+              {s.tabHub}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
-        {tab !== 'mcp' && (
+        {tab !== 'mcp' && tab !== 'hub' && (
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
