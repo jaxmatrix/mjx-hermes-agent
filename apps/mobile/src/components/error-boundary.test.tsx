@@ -26,7 +26,8 @@ describe('ErrorBoundary', () => {
         <Boom />
       </ErrorBoundary>
     )
-    expect(screen.getByText('Something went wrong')).toBeInTheDocument()
+    // Boundary is above I18nProvider, so the fallback uses the default (English) catalog.
+    expect(screen.getByText('Something broke in the interface')).toBeInTheDocument()
     expect(screen.getByText('kaboom')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })

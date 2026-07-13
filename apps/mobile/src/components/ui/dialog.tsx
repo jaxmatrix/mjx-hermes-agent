@@ -2,6 +2,7 @@ import { Dialog as DialogPrimitive } from 'radix-ui'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
+import { useI18n } from '@/i18n'
 import { X } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
@@ -9,9 +10,7 @@ import { cn } from '@/lib/utils'
 // (showCloseButton / fitContent / banner / bannerTone) so ported desktop dialogs
 // are drop-in. Differences: keyed to the A2 named-token contract (bg-card /
 // border-border / text-muted-foreground) instead of the desktop conversation/
-// chrome tokens, and mobile-width sizing.
-// FIXME(I1): the close label is a literal 'Close' — wire it to i18n (desktop
-// uses t.common.close) once the i18n runtime is ported.
+// chrome tokens, and mobile-width sizing. The close label is i18n'd (t.common.close).
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -67,18 +66,19 @@ function DialogContent({
   banner?: React.ReactNode
   bannerTone?: DialogBannerTone
 }) {
+  const { t } = useI18n()
   const widthClass = fitContent ? 'w-auto max-w-[92vw]' : 'w-full max-w-[calc(100%-2rem)] sm:max-w-lg'
 
   const closeButton = showCloseButton ? (
     <DialogPrimitive.Close asChild data-slot="dialog-close-button">
       <Button
-        aria-label="Close"
+        aria-label={t.common.close}
         className="absolute right-2 top-2 z-20 text-muted-foreground hover:bg-accent hover:text-foreground"
         size="icon-sm"
         variant="ghost"
       >
         <X className="size-4" />
-        <span className="sr-only">Close</span>
+        <span className="sr-only">{t.common.close}</span>
       </Button>
     </DialogPrimitive.Close>
   ) : null

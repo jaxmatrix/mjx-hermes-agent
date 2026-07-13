@@ -45,6 +45,19 @@ export const zh: Translations = {
     off: '关'
   },
 
+  nav: {
+    chat: '对话',
+    agents: '智能体',
+    skills: '技能',
+    routines: '例程',
+    messaging: '消息',
+    artifacts: '产物',
+    starmap: '星图',
+    commandCenter: '指挥中心',
+    profiles: '配置',
+    settings: '设置'
+  },
+
   fileMenu: {
     revealFinder: '在访达中显示',
     revealExplorer: '在文件资源管理器中显示',

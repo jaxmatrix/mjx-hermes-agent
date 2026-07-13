@@ -45,6 +45,19 @@ export const ja = defineLocale({
     off: 'オフ'
   },
 
+  nav: {
+    chat: 'チャット',
+    agents: 'エージェント',
+    skills: 'スキル',
+    routines: 'ルーティン',
+    messaging: 'メッセージング',
+    artifacts: 'アーティファクト',
+    starmap: 'スターマップ',
+    commandCenter: 'コマンドセンター',
+    profiles: 'プロファイル',
+    settings: '設定'
+  },
+
   fileMenu: {
     revealFinder: 'Finder で表示',
     revealExplorer: 'エクスプローラーで表示',

@@ -6,7 +6,7 @@ import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { Menu } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
-import { NAV_ITEMS } from './nav-items'
+import { useNavItems } from './nav-items'
 
 // Nav is a deliberate shared-content / two-presentations split (responsive
 // discipline #5): the SAME SidebarNav renders as a persistent rail on md+ and a
@@ -48,10 +48,11 @@ export function SidebarTrigger({ className }: { className?: string }) {
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const { pathname } = useLocation()
+  const navItems = useNavItems()
   return (
     <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
       <div className="px-3 py-3 text-sm font-bold tracking-[0.18em] text-primary uppercase">Hermes</div>
-      {NAV_ITEMS.map(item => {
+      {navItems.map(item => {
         const active = item.path === '/' ? pathname === '/' : pathname.startsWith(item.path)
         const Icon = item.icon
         return (

@@ -45,6 +45,19 @@ export const en: Translations = {
     off: 'Off'
   },
 
+  nav: {
+    chat: 'Chat',
+    agents: 'Agents',
+    skills: 'Skills',
+    routines: 'Routines',
+    messaging: 'Messaging',
+    artifacts: 'Artifacts',
+    starmap: 'Starmap',
+    commandCenter: 'Command Center',
+    profiles: 'Profiles',
+    settings: 'Settings'
+  },
+
   fileMenu: {
     revealFinder: 'Reveal in Finder',
     revealExplorer: 'Reveal in File Explorer',

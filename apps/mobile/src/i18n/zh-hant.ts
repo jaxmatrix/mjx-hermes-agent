@@ -45,6 +45,19 @@ export const zhHant = defineLocale({
     off: '關閉'
   },
 
+  nav: {
+    chat: '對話',
+    agents: '智能體',
+    skills: '技能',
+    routines: '例程',
+    messaging: '訊息',
+    artifacts: '成品',
+    starmap: '星圖',
+    commandCenter: '指揮中心',
+    profiles: '設定檔',
+    settings: '設定'
+  },
+
   fileMenu: {
     revealFinder: '在 Finder 中顯示',
     revealExplorer: '在檔案總管中顯示',

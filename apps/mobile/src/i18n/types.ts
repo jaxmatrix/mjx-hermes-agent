@@ -90,6 +90,21 @@ export interface Translations {
     off: string
   }
 
+  // Mobile-only: the shared primary-nav (hamburger sidebar) item labels. Desktop
+  // has no equivalent surface, so these keys live only in the mobile catalogs.
+  nav: {
+    chat: string
+    agents: string
+    skills: string
+    routines: string
+    messaging: string
+    artifacts: string
+    starmap: string
+    commandCenter: string
+    profiles: string
+    settings: string
+  }
+
   fileMenu: {
     revealFinder: string
     revealExplorer: string

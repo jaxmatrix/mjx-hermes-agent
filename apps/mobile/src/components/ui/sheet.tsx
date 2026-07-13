@@ -1,13 +1,13 @@
 import { Dialog as SheetPrimitive } from 'radix-ui'
 import * as React from 'react'
 
+import { useI18n } from '@/i18n'
 import { X } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
 // Adapted from apps/desktop/src/components/ui/sheet.tsx: a radix-Dialog side
 // drawer. Keyed to the A2 named tokens (bg-card/border-border), Codicon→Tabler,
-// and the close label is a literal.
-// FIXME(I1): i18n the close label.
+// and the close label is i18n'd (t.common.close).
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
@@ -48,6 +48,7 @@ function SheetContent({
   side?: 'top' | 'right' | 'bottom' | 'left'
   showCloseButton?: boolean
 }) {
+  const { t } = useI18n()
   return (
     <SheetPortal>
       <SheetOverlay />
@@ -70,11 +71,11 @@ function SheetContent({
         {children}
         {showCloseButton && (
           <SheetPrimitive.Close
-            aria-label="Close"
+            aria-label={t.common.close}
             className="absolute top-3 right-3 rounded-md p-1 text-muted-foreground opacity-70 transition-opacity hover:bg-accent hover:text-foreground hover:opacity-100 focus:ring-2 focus:ring-ring focus:outline-hidden"
           >
             <X className="size-4" />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{t.common.close}</span>
           </SheetPrimitive.Close>
         )}
       </SheetPrimitive.Content>
