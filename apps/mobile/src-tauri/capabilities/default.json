@@ -10,6 +10,7 @@
     "keyring:allow-get-password",
     "keyring:allow-set-password",
     "keyring:allow-delete-password",
-    "opener:allow-open-url"
+    "opener:allow-open-url",
+    "haptics:default"
   ]
 }

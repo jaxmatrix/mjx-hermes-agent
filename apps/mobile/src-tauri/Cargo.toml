@@ -32,6 +32,9 @@ tauri-plugin-keyring = "0.1"
 # Open external links in the system browser (Gc6/R11).
 tauri-plugin-opener = "2"
 
+# Haptic feedback on send/approval (Gc10/R9).
+tauri-plugin-haptics = "2"
+
 # Transport core (Step 2a): all HTTP + WS traffic runs here, not in the webview,
 # so there is no CORS constraint and we can talk to any backend on the LAN.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }

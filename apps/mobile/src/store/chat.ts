@@ -1,6 +1,7 @@
 import type { GatewayEvent } from '@/gateway'
 import { atom } from '@/store/atom'
 import { requestGateway } from '@/store/gateway'
+import { triggerHaptic } from '@/store/haptics'
 
 // Chat model over the assistant-ui parts vocabulary. The gateway-event reducer
 // mutates a plain ChatMessage[] (decoupled from assistant-ui); the runtime
@@ -221,6 +222,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         description: coerceText(payload.description) || 'dangerous command',
         allowPermanent: payload.allow_permanent !== false
       })
+      void triggerHaptic('warning')
       break
 
     case 'clarify.request':

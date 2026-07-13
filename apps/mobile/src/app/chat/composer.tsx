@@ -10,6 +10,7 @@ import {
 import { useStore } from '@/store/atom'
 import { $busy, sendPrompt } from '@/store/chat'
 import { $history, dequeue, enqueue, pushHistory } from '@/store/composer'
+import { triggerHaptic } from '@/store/haptics'
 
 export function Composer() {
   const busy = useStore($busy)
@@ -81,6 +82,7 @@ export function Composer() {
   const submit = () => {
     const value = text.trim()
     if (!value) return
+    void triggerHaptic('submit')
     pushHistory(value)
     setText('')
     setHistIndex(-1)
