@@ -1,16 +1,21 @@
+import { useState } from 'react'
+
 import { ApprovalBar } from '@/app/chat/approval-bar'
 import { ClarifyBar } from '@/app/chat/clarify-bar'
 import { Composer } from '@/app/chat/composer'
 import { ChatRuntimeProvider } from '@/app/chat/runtime'
 import { SecretBar } from '@/app/chat/secret-bar'
+import { SessionSheet } from '@/app/chat/session-sheet'
 import { SudoBar } from '@/app/chat/sudo-bar'
 import { SidebarTrigger } from '@/app/shell/sidebar'
 import { Thread } from '@/components/assistant-ui/thread/thread'
 import { useStore } from '@/store/atom'
-import { $approval, $busy, $clarify, $secret, $statusLine, $sudo, resetChat } from '@/store/chat'
+import { $approval, $busy, $clarify, $secret, $statusLine, $sudo } from '@/store/chat'
 import { $connection, disconnect } from '@/store/connection'
+import { newSession } from '@/store/session'
 
 export function ChatScreen() {
+  const [historyOpen, setHistoryOpen] = useState(false)
   const busy = useStore($busy)
   const statusLine = useStore($statusLine)
   const approval = useStore($approval)
@@ -30,7 +35,10 @@ export function ChatScreen() {
           {host}
         </div>
         <div className="chat-actions">
-          <button className="btn btn-text" onClick={resetChat}>
+          <button className="btn btn-text" onClick={() => setHistoryOpen(true)}>
+            History
+          </button>
+          <button className="btn btn-text" onClick={newSession}>
             New
           </button>
           <button className="btn btn-text" onClick={disconnect}>
@@ -38,6 +46,8 @@ export function ChatScreen() {
           </button>
         </div>
       </header>
+
+      <SessionSheet onOpenChange={setHistoryOpen} open={historyOpen} />
 
       {/* assistant-ui runtime hosts the streaming thread (markdown/reasoning/tools). */}
       <ChatRuntimeProvider>
