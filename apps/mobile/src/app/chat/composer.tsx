@@ -8,6 +8,7 @@ import {
   displayText,
   fetchCompletions
 } from '@/app/chat/composer-completions'
+import { useVoiceRecorder } from '@/app/chat/use-voice-recorder'
 import { useStore } from '@/store/atom'
 import { $busy, sendPrompt } from '@/store/chat'
 import { $history, dequeue, enqueue, pushHistory } from '@/store/composer'
@@ -24,6 +25,11 @@ export function Composer() {
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const nextCursor = useRef<number | null>(null)
   const fetchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  const voice = useVoiceRecorder(transcript => {
+    setText(prev => (prev ? `${prev.trimEnd()} ${transcript}` : transcript))
+    requestAnimationFrame(() => areaRef.current?.focus())
+  })
 
   // Auto-send the next queued prompt once the turn frees up.
   useEffect(() => {
@@ -165,6 +171,15 @@ export function Composer() {
       <div className="composer">
         <button aria-label="Attach file" className="composer-attach" onClick={attach} type="button">
           ＋
+        </button>
+        <button
+          aria-label={voice.recording ? 'Stop recording' : 'Voice input'}
+          className={`composer-mic${voice.recording ? ' recording' : ''}`}
+          disabled={voice.transcribing}
+          onClick={voice.toggle}
+          type="button"
+        >
+          {voice.transcribing ? '…' : voice.recording ? '■' : '🎙'}
         </button>
         <textarea
           ref={areaRef}

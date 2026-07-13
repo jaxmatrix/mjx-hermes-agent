@@ -423,16 +423,28 @@ body {
 }
 
 /* ── Attachments ── */
-.composer-attach {
+.composer-attach,
+.composer-mic {
   width: 42px;
   height: 42px;
   border-radius: 50%;
   border: 1px solid var(--ui-stroke-primary);
   background: var(--ui-surface);
   color: var(--ui-text-secondary);
-  font-size: 20px;
+  font-size: 18px;
   flex-shrink: 0;
   cursor: pointer;
+}
+.composer-attach {
+  font-size: 20px;
+}
+.composer-mic.recording {
+  background: var(--ui-danger);
+  color: var(--ui-accent-ink);
+  border-color: var(--ui-danger);
+}
+.composer-mic:disabled {
+  opacity: 0.5;
 }
 .attach-chips {
   display: flex;
