@@ -9,13 +9,13 @@ import { CronScreen } from '@/app/cron/cron-screen'
 import { MessagingScreen } from '@/app/messaging/messaging-screen'
 import { ProfilesScreen } from '@/app/profiles/profiles-screen'
 import { SkillsScreen } from '@/app/skills/skills-screen'
+import { StarmapScreen } from '@/app/starmap/starmap-screen'
 import { SettingsIndex } from '@/app/settings/settings-index'
 import { SettingsSection } from '@/app/settings/settings-section'
 import { NotificationStack } from '@/components/notifications'
 import { useStore } from '@/store/atom'
 import { $connectionPhase } from '@/store/connection'
 
-import { PlaceholderView } from './shell/placeholder-view'
 import { AppShell, SidebarProvider } from './shell/sidebar'
 
 // Connected-guard + routing. Until a gateway connection is ready we show the
@@ -51,8 +51,7 @@ export function MobileController() {
           {/* Profile switching/projects gated (FIXME(E)); this is the CRUD/soul view. */}
           <Route element={<ProfilesScreen />} path="/profiles" />
           <Route element={<AgentsScreen />} path="/agents" />
-          {/* FIXME(K8): port Starmap */}
-          <Route element={<PlaceholderView title="Starmap" />} path="/starmap" />
+          <Route element={<StarmapScreen />} path="/starmap" />
           {/* Session ids (and anything else) resolve to chat, per routes.ts */}
           <Route element={<ChatScreen />} path="*" />
         </Routes>
