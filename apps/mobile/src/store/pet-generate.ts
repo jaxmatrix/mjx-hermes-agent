@@ -272,7 +272,7 @@ export async function adoptHatched(name?: string): Promise<boolean> {
     if (finalName && finalName !== preview.displayName) {
       const renamed = await requestGateway<{ ok: boolean; slug: string }>('pet.rename', {
         slug: preview.slug,
-        displayName: finalName
+        name: finalName
       }).catch(() => null)
       if (renamed?.slug) {
         adoptSlug = renamed.slug
