@@ -5,6 +5,7 @@ import { HashRouter } from 'react-router-dom'
 import { App } from './app'
 import { ErrorBoundary } from './components/error-boundary'
 import { queryClient } from './lib/query-client'
+import 'katex/dist/katex.min.css'
 import './styles.css'
 
 const container = document.getElementById('root')
