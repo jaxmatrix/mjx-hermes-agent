@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Route, Routes } from 'react-router-dom'
 
 import { AgentsScreen } from '@/app/agents/agents-screen'
@@ -7,6 +8,7 @@ import { CommandCenterScreen } from '@/app/command-center/command-center-screen'
 import { ConnectScreen } from '@/app/connect-screen'
 import { CronScreen } from '@/app/cron/cron-screen'
 import { MessagingScreen } from '@/app/messaging/messaging-screen'
+import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
 import { ProfilesScreen } from '@/app/profiles/profiles-screen'
 import { SkillsScreen } from '@/app/skills/skills-screen'
 import { StarmapScreen } from '@/app/starmap/starmap-screen'
@@ -15,21 +17,39 @@ import { SettingsSection } from '@/app/settings/settings-section'
 import { NotificationStack } from '@/components/notifications'
 import { useStore } from '@/store/atom'
 import { $connectionPhase } from '@/store/connection'
+import { $onboardingActive, checkConfigured } from '@/store/onboarding'
 
 import { AppShell, SidebarProvider } from './shell/sidebar'
 
 // Connected-guard + routing. Until a gateway connection is ready we show the
-// full-screen ConnectScreen (no nav); once ready, the sidebar shell hosts the
-// routed views. Non-chat views are placeholders until their track ports them.
-// The toast stack (portaled to <body>) floats over both phases.
+// full-screen ConnectScreen (no nav). Once ready, the first-run onboarding
+// wizard shows if no provider is configured (K11); otherwise the sidebar shell
+// hosts the routed views. The toast stack (portaled to <body>) floats over all.
 export function MobileController() {
   const phase = useStore($connectionPhase)
+  const onboarding = useStore($onboardingActive)
+
+  // On reaching a live connection, check whether a provider is configured.
+  useEffect(() => {
+    if (phase === 'ready') {
+      void checkConfigured()
+    }
+  }, [phase])
 
   if (phase !== 'ready') {
     return (
       <>
         <NotificationStack />
         <ConnectScreen />
+      </>
+    )
+  }
+
+  if (onboarding) {
+    return (
+      <>
+        <NotificationStack />
+        <OnboardingScreen />
       </>
     )
   }
