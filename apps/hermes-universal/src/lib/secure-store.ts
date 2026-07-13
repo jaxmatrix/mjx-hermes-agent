@@ -1,14 +1,19 @@
-import { deletePassword, getPassword, setPassword } from 'tauri-plugin-keyring-api'
+import { invoke } from '@tauri-apps/api/core'
 
 import { IS_MOBILE } from '@/lib/platform'
 
-// Secure credential storage (D1). Isolates the OS keyring
-// (tauri-plugin-keyring, Android Keystore-backed) behind a small typed API so
-// the rest of the app never touches the plugin directly. Silent (no biometric
-// prompt) — chosen over the biometric keystore plugin, whose only published
-// build was broken.
+// Secure credential storage (D1). Isolates the OS keystore behind a small typed
+// API so the rest of the app never touches the plugin directly. Silent (no
+// biometric prompt) — the session token/password aren't kept in plaintext.
 //
-// FIXME(D): keyring is silent; if we later want biometric-gated retrieval, wrap
+// Backed by charlesportwoodii/tauri-plugin-keyring (keyring-core 1.0): Android
+// SharedPreferences encrypted by the Android Keystore, iOS/macOS Keychain,
+// Windows Credential Manager, Linux Secret Service. Its JS bindings aren't on npm
+// under this name (the published `tauri-plugin-keyring-api` is a different, broken
+// plugin), so the thin `invoke('plugin:keyring|…')` layer is vendored here — it
+// mirrors the plugin's guest-js/index.ts exactly.
+//
+// FIXME(D): storage is silent; if we later want biometric-gated retrieval, wrap
 // these reads with tauri-plugin-biometric authenticate() first.
 
 const SERVICE = 'hermes'
@@ -18,13 +23,48 @@ export interface Secrets {
   password?: string
 }
 
-// keyring stores one string per (service, user). We keep token and password as
-// two named entries under the shared service.
+// The keystore keys one credential per username under the shared service. We keep
+// token and password as two named entries.
 type SecretKey = 'token' | 'password'
 
-// keyring calls reject when there is no Tauri runtime (browser dev / vitest) or
-// no OS keyring available; treat any failure as "unavailable" so callers can
-// degrade to no-persistence rather than crashing (never fall back to plaintext).
+// The plugin's service name is set once per process (a Rust OnceLock), so init is
+// memoized. On failure the cached promise is cleared so a later call can retry.
+let initPromise: Promise<void> | null = null
+function ensureInit(): Promise<void> {
+  if (!initPromise) {
+    initPromise = invoke<void>('plugin:keyring|initialize_keyring', { serviceName: SERVICE }).catch(err => {
+      initPromise = null
+      throw err
+    })
+  }
+  return initPromise
+}
+
+async function kHas(username: SecretKey): Promise<boolean> {
+  await ensureInit()
+  return invoke<boolean>('plugin:keyring|has_password', { username })
+}
+
+// get_password rejects when the entry is missing, so gate on has_password and
+// return null for "not set" (matching the old contract).
+async function kGet(username: SecretKey): Promise<string | null> {
+  await ensureInit()
+  if (!(await kHas(username))) return null
+  return invoke<string>('plugin:keyring|get_password', { username })
+}
+
+async function writeKey(key: SecretKey, value: string | undefined): Promise<void> {
+  await ensureInit()
+  if (value) {
+    await invoke<void>('plugin:keyring|set_password', { username: key, password: value })
+  } else {
+    await invoke<void>('plugin:keyring|delete_password', { username: key }).catch(() => {})
+  }
+}
+
+// Keystore calls reject when there is no Tauri runtime (browser dev / vitest) or
+// no keystore available; treat any failure as "unavailable" so callers degrade to
+// no-persistence rather than crashing (never fall back to plaintext).
 async function safe<T>(op: () => Promise<T>, fallback: T): Promise<T> {
   if (!IS_MOBILE) return fallback
   try {
@@ -34,23 +74,15 @@ async function safe<T>(op: () => Promise<T>, fallback: T): Promise<T> {
   }
 }
 
-async function writeKey(key: SecretKey, value: string | undefined): Promise<void> {
-  if (value) {
-    await setPassword(SERVICE, key, value)
-  } else {
-    await deletePassword(SERVICE, key).catch(() => {})
-  }
-}
-
-/** True when the OS keyring is reachable (mobile + a successful probe write). */
+/** True when the OS keystore is reachable (mobile + a successful probe). */
 export async function secureStoreAvailable(): Promise<boolean> {
   return safe(async () => {
-    await getPassword(SERVICE, 'token') // reachable if this resolves (value may be null)
+    await kHas('token') // reachable if this resolves
     return true
   }, false)
 }
 
-/** Persist secrets. Returns false if the keyring is unavailable (nothing stored). */
+/** Persist secrets. Returns false if the keystore is unavailable (nothing stored). */
 export async function saveSecrets(secrets: Secrets): Promise<boolean> {
   return safe(async () => {
     await writeKey('token', secrets.token)
@@ -59,10 +91,10 @@ export async function saveSecrets(secrets: Secrets): Promise<boolean> {
   }, false)
 }
 
-/** Read secrets, or null when the keyring is unavailable / nothing saved. */
+/** Read secrets, or null when the keystore is unavailable / nothing saved. */
 export async function loadSecrets(): Promise<Secrets | null> {
   return safe(async () => {
-    const [token, password] = await Promise.all([getPassword(SERVICE, 'token'), getPassword(SERVICE, 'password')])
+    const [token, password] = await Promise.all([kGet('token'), kGet('password')])
     if (!token && !password) return null
     return { token: token ?? undefined, password: password ?? undefined }
   }, null)

@@ -1,15 +1,17 @@
 {
   "$schema": "https://schema.tauri.app/config/2/capability",
   "identifier": "default",
-  "description": "Default capabilities for Hermes Mobile. The webview makes no network calls itself — all HTTP/WS traffic runs in Rust and is surfaced via events + IPC commands.",
+  "description": "Default capabilities for Hermes Universal. The webview makes no network calls itself — all HTTP/WS traffic runs in Rust and is surfaced via events + IPC commands.",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "core:event:default",
     "os:allow-platform",
+    "keyring:allow-initialize-keyring",
     "keyring:allow-get-password",
     "keyring:allow-set-password",
     "keyring:allow-delete-password",
+    "keyring:allow-has-password",
     "opener:allow-open-url",
     "haptics:default",
     "dialog:allow-open",
