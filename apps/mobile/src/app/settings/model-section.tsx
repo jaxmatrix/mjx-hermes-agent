@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 
+import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { getGlobalModelInfo, getGlobalModelOptions, setGlobalModel } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { notifyError } from '@/store/notifications'
+import { openOnboarding } from '@/store/onboarding'
 
 import { ConfigSection } from './config-section'
 import { ListRow } from './primitives'
@@ -71,8 +73,21 @@ function ModelPicker() {
   )
 }
 
+function ModelHeader() {
+  const { t } = useI18n()
+  return (
+    <>
+      <ModelPicker />
+      {/* Re-open the onboarding wizard to add another provider (K11.c). */}
+      <Button className="mt-2 w-full" onClick={() => openOnboarding()} variant="outline">
+        {t.onboarding.setUpProvider}
+      </Button>
+    </>
+  )
+}
+
 export function ModelSection() {
-  // The picker renders above the schema fields (context length, fallback
-  // providers) inside the section's single scroll container.
-  return <ConfigSection headerSlot={<ModelPicker />} sectionId="model" />
+  // The picker + "set up a provider" render above the schema fields (context
+  // length, fallback providers) inside the section's single scroll container.
+  return <ConfigSection headerSlot={<ModelHeader />} sectionId="model" />
 }

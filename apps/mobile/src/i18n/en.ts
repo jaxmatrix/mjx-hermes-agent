@@ -2023,7 +2023,8 @@ export const en: Translations = {
     price: (input, output) => `${input} in / ${output} out per Mtok`,
     change: 'Change',
     startChatting: 'Begin',
-    docs: provider => `${provider} docs`
+    docs: provider => `${provider} docs`,
+    setUpProvider: 'Set up a provider'
   },
 
   modelPicker: {

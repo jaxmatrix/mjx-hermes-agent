@@ -1658,6 +1658,7 @@ export interface Translations {
     change: string
     startChatting: string
     docs: (provider: string) => string
+    setUpProvider: string
   }
 
   modelPicker: {

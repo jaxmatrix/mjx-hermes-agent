@@ -1968,7 +1968,8 @@ export const ja = defineLocale({
     price: (input, output) => `${input} 入力 / ${output} 出力 per Mtok`,
     change: '変更',
     startChatting: '始める',
-    docs: provider => `${provider} ドキュメント`
+    docs: provider => `${provider} ドキュメント`,
+    setUpProvider: 'プロバイダーを設定'
   },
 
   modelPicker: {
