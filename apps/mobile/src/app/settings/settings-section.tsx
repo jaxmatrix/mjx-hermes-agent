@@ -10,6 +10,8 @@ import { ConfigSection } from './config-section'
 import { voiceFieldVisible } from './helpers'
 import { KeysSection } from './keys-section'
 import { ModelSection } from './model-section'
+import { PetSection } from '@/app/pet/pet-section'
+
 import { NotificationsSection } from './notifications-section'
 import { ShortcutsSection } from './shortcuts-section'
 import { EmptyState, SettingsContent } from './primitives'
@@ -59,6 +61,10 @@ function SectionBody({ section }: { section: string }) {
     // Keyboard shortcuts reference (K16).
     case 'shortcuts':
       return <ShortcutsSection />
+
+    // Pet gallery (K10).
+    case 'pet':
+      return <PetSection />
 
     // Archived chats (Jc11).
     case 'archived':
