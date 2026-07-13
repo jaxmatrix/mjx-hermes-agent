@@ -1,0 +1,32 @@
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Conventional Commit — <type>(<scope>): <description>   (<= ~72 chars, imperative)
+#
+#   TYPE      fix | feat | refactor | docs | test | chore | perf | ci | build | style | revert
+#   SCOPE     cli gateway tools skills agent install web cron secrets whatsapp
+#             security  (or nested, e.g. apps/mobile, error-classifier, tui_gateway)
+#   BREAKING  add "!" after type/scope  ->  feat(api)!: ...   (+ BREAKING CHANGE: footer)
+#
+# Type cheatsheet:
+#   feat      new capability            fix       something was broken, now fixed
+#   refactor  restructure, NO behavior  perf      makes it faster
+#   docs      docs only                 test      tests only
+#   chore     deps/tooling/maintenance  ci/build  pipeline / build system
+#
+# Body (optional) — leave a blank line, then wrap at 72 cols. Explain WHAT & WHY,
+# not how. Bullet multiple changes. Link issues:  Closes #NNN / Refs #NNN
+#
+# DISCIPLINE (see CONTRIBUTING.md):
+#   * One logical change per commit. Don't mix fix + refactor + feat.
+#   * "refactor" ONLY when behavior is unchanged — else it's feat/fix.
+#   * Description is specific: "drop interrupt sentinel before delivery",
+#     not "fix bug".
+#
+# BEFORE YOU PUSH / PR:
+#   * Branch name mirrors type:  feat/desc  fix/desc  docs/desc  refactor/desc
+#   * Keep history connected to main (History Check rejects orphan branches —
+#     never `git checkout --orphan` / re-init .git; rebase onto upstream/main).
+#   * Upstreaming to Nous? Your commit email must be in scripts/release.py
+#     AUTHOR_MAP, or use a GitHub +...@users.noreply.github.com address.
+#   * Push target: `origin` = your fork, `upstream` = NousResearch (pull-only).
+# ─────────────────────────────────────────────────────────────────────────────
