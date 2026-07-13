@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router-dom'
 
 import { ChatScreen } from '@/app/chat/chat-screen'
 import { ConnectScreen } from '@/app/connect-screen'
+import { NotificationStack } from '@/components/notifications'
 import { useStore } from '@/store/atom'
 import { $connectionPhase } from '@/store/connection'
 
@@ -11,15 +12,22 @@ import { AppShell, SidebarProvider } from './shell/sidebar'
 // Connected-guard + routing. Until a gateway connection is ready we show the
 // full-screen ConnectScreen (no nav); once ready, the sidebar shell hosts the
 // routed views. Non-chat views are placeholders until their track ports them.
+// The toast stack (portaled to <body>) floats over both phases.
 export function MobileController() {
   const phase = useStore($connectionPhase)
 
   if (phase !== 'ready') {
-    return <ConnectScreen />
+    return (
+      <>
+        <NotificationStack />
+        <ConnectScreen />
+      </>
+    )
   }
 
   return (
     <SidebarProvider>
+      <NotificationStack />
       <AppShell>
         <Routes>
           <Route element={<ChatScreen />} path="/" />

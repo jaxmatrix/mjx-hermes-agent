@@ -32,5 +32,10 @@ export {
   IconHistory as History,
   // Language switcher / theme picker (Track I)
   IconWorld as Globe,
-  IconPalette as Palette
+  IconPalette as Palette,
+  // Notification toasts (Track I)
+  IconAlertCircle as AlertCircle,
+  IconAlertTriangle as AlertTriangle,
+  IconCircleCheck as CheckCircle2,
+  IconInfoCircle as Info
 } from '@tabler/icons-react'

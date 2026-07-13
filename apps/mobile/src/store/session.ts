@@ -3,6 +3,7 @@ import { toChatMessages } from '@/lib/session-history'
 import { atom } from '@/store/atom'
 import { $busy, $messages, $sessionId, $statusLine, resetChat } from '@/store/chat'
 import { requestGateway } from '@/store/gateway'
+import { notifyError } from '@/store/notifications'
 import type { SessionInfo, SessionResumeResponse, SessionSearchResult } from '@/types/hermes'
 
 // Session history + switching (Hc2). Lean adaptation of desktop store/session.ts —
@@ -77,8 +78,9 @@ export async function renameSessionLocal(id: string, title: string): Promise<voi
   $sessions.set(prev.map(s => (s.id === id ? { ...s, title } : s)))
   try {
     await renameSession(id, title)
-  } catch {
+  } catch (err) {
     $sessions.set(prev)
+    notifyError(err, 'Rename failed')
   }
 }
 
@@ -89,8 +91,10 @@ export async function deleteSessionLocal(id: string): Promise<void> {
   if ($activeStoredSessionId.get() === id) newSession()
   try {
     await deleteSession(id)
-  } catch {
+  } catch (err) {
     $sessions.set(prev)
+    $sessionsTotal.set($sessionsTotal.get() + 1)
+    notifyError(err, 'Delete failed')
   }
 }
 
@@ -100,8 +104,9 @@ export async function archiveSessionLocal(id: string): Promise<void> {
   if ($activeStoredSessionId.get() === id) newSession()
   try {
     await setSessionArchived(id, true)
-  } catch {
+  } catch (err) {
     $sessions.set(prev)
+    notifyError(err, 'Archive failed')
   }
 }
 

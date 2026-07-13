@@ -2,6 +2,7 @@ import type { GatewayEvent } from '@/gateway'
 import { atom } from '@/store/atom'
 import { requestGateway } from '@/store/gateway'
 import { triggerHaptic } from '@/store/haptics'
+import { notifyError } from '@/store/notifications'
 
 // Chat model over the assistant-ui parts vocabulary. The gateway-event reducer
 // mutates a plain ChatMessage[] (decoupled from assistant-ui); the runtime
@@ -285,6 +286,7 @@ export async function sendPrompt(text: string): Promise<void> {
   } catch (err) {
     $busy.set(false)
     $statusLine.set(err instanceof Error ? err.message : String(err))
+    notifyError(err, 'Message failed to send')
   }
 }
 
