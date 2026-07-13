@@ -1,5 +1,6 @@
 import { QueryClientProvider } from '@tanstack/react-query'
 import { createRoot } from 'react-dom/client'
+import { HashRouter } from 'react-router-dom'
 
 import { App } from './app'
 import { queryClient } from './lib/query-client'
@@ -11,6 +12,8 @@ if (!container) {
 }
 createRoot(container).render(
   <QueryClientProvider client={queryClient}>
-    <App />
+    <HashRouter>
+      <App />
+    </HashRouter>
   </QueryClientProvider>
 )

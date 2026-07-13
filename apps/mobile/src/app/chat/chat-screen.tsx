@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { ApprovalBar } from '@/app/chat/approval-bar'
 import { Composer } from '@/app/chat/composer'
 import { MessageItem } from '@/app/chat/message-item'
+import { SidebarTrigger } from '@/app/shell/sidebar'
 import { useStore } from '@/store/atom'
 import { $approval, $busy, $messages, $statusLine, resetChat } from '@/store/chat'
 import { $connection, disconnect } from '@/store/connection'
@@ -28,6 +29,7 @@ export function ChatScreen() {
     <div className="chat">
       <header className="chat-header">
         <div className="chat-host">
+          <SidebarTrigger className="md:hidden" />
           <span className="dot dot-ok" />
           {host}
         </div>

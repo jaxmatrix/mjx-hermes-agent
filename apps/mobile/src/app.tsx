@@ -1,9 +1,5 @@
-import { ChatScreen } from '@/app/chat/chat-screen'
-import { ConnectScreen } from '@/app/connect-screen'
-import { useStore } from '@/store/atom'
-import { $connectionPhase } from '@/store/connection'
+import { MobileController } from '@/app/mobile-controller'
 
 export function App() {
-  const phase = useStore($connectionPhase)
-  return phase === 'ready' ? <ChatScreen /> : <ConnectScreen />
+  return <MobileController />
 }
