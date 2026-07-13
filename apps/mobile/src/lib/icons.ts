@@ -37,5 +37,11 @@ export {
   IconAlertCircle as AlertCircle,
   IconAlertTriangle as AlertTriangle,
   IconCircleCheck as CheckCircle2,
-  IconInfoCircle as Info
+  IconInfoCircle as Info,
+  // Settings section icons (Track J)
+  IconBrain as Brain,
+  IconLock as Lock,
+  IconMicrophone as Mic,
+  IconDeviceDesktop as Monitor,
+  IconTool as Wrench
 } from '@tabler/icons-react'
