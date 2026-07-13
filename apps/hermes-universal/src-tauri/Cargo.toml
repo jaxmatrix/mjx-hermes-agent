@@ -1,7 +1,7 @@
 [package]
-name = "hermes-mobile"
+name = "hermes-universal"
 version = "0.0.1"
-description = "Hermes Mobile — Tauri v2 Android client (remote-only chat)."
+description = "Hermes Universal — Tauri v2 client (desktop + Android + iOS from one codebase)."
 authors = ["Nous Research <info@nousresearch.com>"]
 edition = "2021"
 rust-version = "1.77"
@@ -10,7 +10,7 @@ rust-version = "1.77"
 # cdylib/staticlib crate-types are mandatory for the mobile targets. The name
 # must match what src/main.rs (desktop) and the generated mobile entry call.
 [lib]
-name = "hermes_mobile_lib"
+name = "hermes_universal_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

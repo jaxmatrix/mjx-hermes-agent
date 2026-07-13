@@ -37,7 +37,7 @@ pub struct TransportState {
 impl TransportState {
     pub fn new() -> Self {
         let http = reqwest::Client::builder()
-            .user_agent(concat!("hermes-mobile/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("hermes-universal/", env!("CARGO_PKG_VERSION")))
             // Retain the login session cookie across http_request calls so the
             // subsequent POST /api/auth/ws-ticket is authenticated (gated mode).
             .cookie_store(true)
