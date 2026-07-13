@@ -1,0 +1,69 @@
+import { fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import { ThemeProvider, useTheme } from './context'
+
+function Harness() {
+  const { themeName, resolvedMode, setMode, setTheme } = useTheme()
+  return (
+    <div>
+      <span data-testid="state">{`${themeName}:${resolvedMode}`}</span>
+      <button onClick={() => setMode('dark')}>dark</button>
+      <button onClick={() => setMode('light')}>light</button>
+      <button onClick={() => setTheme('ember')}>ember</button>
+    </div>
+  )
+}
+
+const root = () => document.documentElement
+
+describe('ThemeProvider', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    root().className = ''
+    root().removeAttribute('style')
+  })
+  afterEach(() => localStorage.clear())
+
+  it('paints seeds onto :root and defaults to the nous skin', () => {
+    render(
+      <ThemeProvider>
+        <Harness />
+      </ThemeProvider>
+    )
+    // jsdom has no matchMedia, so system resolves to light.
+    expect(screen.getByTestId('state')).toHaveTextContent('nous:light')
+    expect(root().style.getPropertyValue('--theme-primary').toLowerCase()).toBe('#0053fd')
+    expect(root().classList.contains('dark')).toBe(false)
+  })
+
+  it('toggles the .dark class and repaints seeds on mode change', () => {
+    render(
+      <ThemeProvider>
+        <Harness />
+      </ThemeProvider>
+    )
+
+    fireEvent.click(screen.getByText('dark'))
+    expect(root().classList.contains('dark')).toBe(true)
+    expect(root().dataset.hermesMode).toBe('dark')
+    // Dark nous foreground is a light color (not the light-mode #17171a).
+    expect(root().style.getPropertyValue('--theme-foreground')).not.toBe('#17171a')
+    expect(localStorage.getItem('hermes.mobile.mode')).toBe('dark')
+
+    fireEvent.click(screen.getByText('light'))
+    expect(root().classList.contains('dark')).toBe(false)
+  })
+
+  it('switches skin and persists it', () => {
+    render(
+      <ThemeProvider>
+        <Harness />
+      </ThemeProvider>
+    )
+    fireEvent.click(screen.getByText('ember'))
+    expect(screen.getByTestId('state')).toHaveTextContent('ember:')
+    expect(localStorage.getItem('hermes.mobile.skin')).toBe('ember')
+    expect(root().dataset.hermesTheme).toBe('ember')
+  })
+})

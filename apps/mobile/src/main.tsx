@@ -6,6 +6,7 @@ import { App } from './app'
 import { ErrorBoundary } from './components/error-boundary'
 import { I18nProvider } from './i18n'
 import { queryClient } from './lib/query-client'
+import { ThemeProvider } from './themes'
 import 'katex/dist/katex.min.css'
 import './styles.css'
 
@@ -13,15 +14,16 @@ const container = document.getElementById('root')
 if (!container) {
   throw new Error('root container missing')
 }
-// FIXME(I): mount ThemeProvider here when Track I's theme engine lands (Ic7).
 createRoot(container).render(
   <ErrorBoundary>
     <I18nProvider>
-      <QueryClientProvider client={queryClient}>
-        <HashRouter>
-          <App />
-        </HashRouter>
-      </QueryClientProvider>
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          <HashRouter>
+            <App />
+          </HashRouter>
+        </QueryClientProvider>
+      </ThemeProvider>
     </I18nProvider>
   </ErrorBoundary>
 )
