@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom'
 import { AgentsScreen } from '@/app/agents/agents-screen'
 import { ArtifactsScreen } from '@/app/artifacts/artifacts-screen'
 import { ChatScreen } from '@/app/chat/chat-screen'
+import { CommandCenterScreen } from '@/app/command-center/command-center-screen'
 import { ConnectScreen } from '@/app/connect-screen'
 import { CronScreen } from '@/app/cron/cron-screen'
 import { MessagingScreen } from '@/app/messaging/messaging-screen'
@@ -41,8 +42,7 @@ export function MobileController() {
           <Route element={<ChatScreen />} path="/" />
           <Route element={<SettingsIndex />} path="/settings" />
           <Route element={<SettingsSection />} path="/settings/:section" />
-          {/* FIXME(K4): port Command Center */}
-          <Route element={<PlaceholderView title="Command Center" />} path="/command-center" />
+          <Route element={<CommandCenterScreen />} path="/command-center" />
           {/* Skills + Toolsets; MCP/Hub tabs land in Kc7/Kc8. */}
           <Route element={<SkillsScreen />} path="/skills" />
           <Route element={<MessagingScreen />} path="/messaging" />
