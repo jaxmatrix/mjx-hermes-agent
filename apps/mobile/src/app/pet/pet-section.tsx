@@ -17,6 +17,7 @@ import {
   TOGGLE
 } from '@/store/pet-gallery'
 
+import { PetSprite } from './pet-sprite'
 import { PetThumb } from './pet-thumb'
 
 // Pet gallery (K10.a): adopt / enable / disable pets. Lives under Settings → Pet.
@@ -58,6 +59,12 @@ export function PetSection() {
 
   return (
     <SettingsContent>
+      {gallery?.enabled && (
+        <div className="grid min-h-24 place-items-center py-4">
+          <PetSprite zoom={2.4} />
+        </div>
+      )}
+
       <ListRow
         action={<Switch checked={Boolean(gallery?.enabled)} disabled={busy === TOGGLE} onCheckedChange={on => void setPetEnabled(on)} />}
         description={gallery?.enabled ? p.turnOff : p.turnOn}

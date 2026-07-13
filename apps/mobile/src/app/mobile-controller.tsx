@@ -20,6 +20,7 @@ import { NotificationStack } from '@/components/notifications'
 import { useStore } from '@/store/atom'
 import { $connectionPhase } from '@/store/connection'
 import { $onboardingActive, checkConfigured } from '@/store/onboarding'
+import { syncPetInfo } from '@/store/pet-gallery'
 
 import { AppShell, SidebarProvider } from './shell/sidebar'
 
@@ -31,10 +32,12 @@ export function MobileController() {
   const phase = useStore($connectionPhase)
   const onboarding = useStore($onboardingActive)
 
-  // On reaching a live connection, check whether a provider is configured.
+  // On reaching a live connection, check whether a provider is configured and
+  // pull the active pet's sprite (K10.b) so the in-app pet can render in chat.
   useEffect(() => {
     if (phase === 'ready') {
       void checkConfigured()
+      void syncPetInfo()
     }
   }, [phase])
 

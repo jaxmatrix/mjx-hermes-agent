@@ -7,6 +7,7 @@ import { ChatRuntimeProvider } from '@/app/chat/runtime'
 import { SecretBar } from '@/app/chat/secret-bar'
 import { SessionSheet } from '@/app/chat/session-sheet'
 import { SudoBar } from '@/app/chat/sudo-bar'
+import { FloatingPet } from '@/app/pet/floating-pet'
 import { SidebarTrigger } from '@/app/shell/sidebar'
 import { Thread } from '@/components/assistant-ui/thread/thread'
 import { useStore } from '@/store/atom'
@@ -48,6 +49,8 @@ export function ChatScreen() {
       </header>
 
       <SessionSheet onOpenChange={setHistoryOpen} open={historyOpen} />
+
+      <FloatingPet />
 
       {/* assistant-ui runtime hosts the streaming thread (markdown/reasoning/tools). */}
       <ChatRuntimeProvider>
