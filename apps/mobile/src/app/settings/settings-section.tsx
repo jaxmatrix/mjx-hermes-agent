@@ -3,15 +3,23 @@ import { Link, useParams } from 'react-router-dom'
 import { useI18n } from '@/i18n'
 import { ChevronLeft } from '@/lib/icons'
 
+import { ConfigSection } from './config-section'
 import { EmptyState, SettingsContent } from './primitives'
 import { useSettingsNav } from './settings-nav'
 
 // The per-section body. Each Track-J chunk replaces its placeholder case with a
-// real renderer (Jc4 schema sections, Jc8 appearance, Jc9 notifications, …).
+// real renderer (Jc8 appearance, Jc9 notifications, Jc10 keys, …).
 function SectionBody({ section }: { section: string }) {
   const { t } = useI18n()
 
   switch (section) {
+    // Schema-driven config sections (Jc4).
+    case 'chat':
+    case 'workspace':
+    case 'safety':
+    case 'advanced':
+      return <ConfigSection sectionId={section} />
+
     default:
       // FIXME(J): placeholder until this section's renderer lands.
       return (
