@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@plugin '@tailwindcss/typography';
 /* Dark variant is class-based (matches desktop). Mobile is dark-by-default via
    :root below; `.dark` toggling lands with the theme engine (Track I3). The
    variant is declared now so ported `dark:` utilities compile. */
