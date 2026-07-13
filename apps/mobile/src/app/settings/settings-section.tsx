@@ -27,6 +27,11 @@ function SectionBody({ section }: { section: string }) {
     case 'voice':
       return <ConfigSection fieldFilter={voiceFieldVisible} sectionId="voice" />
 
+    // Memory (Jc6): schema fields only. FIXME(D2): the memory-provider OAuth
+    // connect panel + per-provider config panel are deferred to the auth track.
+    case 'memory':
+      return <ConfigSection sectionId="memory" />
+
     default:
       // FIXME(J): placeholder until this section's renderer lands.
       return (
