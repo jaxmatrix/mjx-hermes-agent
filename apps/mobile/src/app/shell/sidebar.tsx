@@ -2,6 +2,7 @@ import { createContext, type ReactNode, useContext, useMemo, useState } from 're
 import { Link, useLocation } from 'react-router-dom'
 
 import { LanguageSwitcher } from '@/components/language-switcher'
+import { ThemePicker } from '@/components/theme-picker'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { Menu } from '@/lib/icons'
@@ -74,7 +75,8 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
           )
         })}
       </nav>
-      <div className="shrink-0 border-t border-border p-2">
+      <div className="flex shrink-0 flex-col gap-2 border-t border-border p-2">
+        <ThemePicker className="w-full" />
         <LanguageSwitcher className="w-full" />
       </div>
     </>

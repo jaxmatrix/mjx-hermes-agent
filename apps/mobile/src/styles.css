@@ -485,6 +485,18 @@ body {
   flex-direction: column;
   gap: 6px;
 }
+/* Transient result line for client-side slash commands (e.g. /skin). */
+.composer-notice {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--ui-surface-2);
+  border: 1px solid var(--ui-stroke-tertiary);
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
 .completion-drawer {
   list-style: none;
   margin: 0;

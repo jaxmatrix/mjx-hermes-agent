@@ -30,6 +30,7 @@ export {
   IconSearch as Search,
   IconDotsVertical as MoreVertical,
   IconHistory as History,
-  // Language switcher (Track I)
-  IconWorld as Globe
+  // Language switcher / theme picker (Track I)
+  IconWorld as Globe,
+  IconPalette as Palette
 } from '@tabler/icons-react'

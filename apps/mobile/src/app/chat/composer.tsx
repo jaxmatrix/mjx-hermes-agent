@@ -13,6 +13,7 @@ import { useStore } from '@/store/atom'
 import { $busy, sendPrompt } from '@/store/chat'
 import { $history, dequeue, enqueue, pushHistory } from '@/store/composer'
 import { triggerHaptic } from '@/store/haptics'
+import { useSkinCommand } from '@/themes'
 
 export function Composer() {
   const busy = useStore($busy)
@@ -22,9 +23,12 @@ export function Composer() {
   const [items, setItems] = useState<CompletionEntry[]>([])
   const [replaceFrom, setReplaceFrom] = useState(0)
   const [histIndex, setHistIndex] = useState(-1)
+  const [notice, setNotice] = useState('')
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const nextCursor = useRef<number | null>(null)
   const fetchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const runSkin = useSkinCommand()
 
   const voice = useVoiceRecorder(transcript => {
     setText(prev => (prev ? `${prev.trimEnd()} ${transcript}` : transcript))
@@ -97,9 +101,31 @@ export function Composer() {
       })
   }
 
+  const showNotice = (message: string) => {
+    clearTimeout(noticeTimer.current)
+    setNotice(message)
+    noticeTimer.current = setTimeout(() => setNotice(''), 4000)
+  }
+
   const submit = () => {
     const value = text.trim()
     if (!value && staged.length === 0) return
+
+    // Client-side slash commands, intercepted before the gateway. `/skin` cycles
+    // or sets the theme locally (no attachments in play).
+    const skin = value.match(/^\/skin(?:\s+(.*))?$/i)
+    if (skin && staged.length === 0) {
+      showNotice(runSkin(skin[1] ?? ''))
+      void triggerHaptic('success')
+      setText('')
+      setHistIndex(-1)
+      closeDrawer()
+      requestAnimationFrame(() => {
+        if (areaRef.current) areaRef.current.style.height = 'auto'
+      })
+      return
+    }
+
     // Attachment refs (@file:/@image:) are spliced into the prompt text.
     const full = [...staged.map(a => a.ref), value].filter(Boolean).join(' ')
     void triggerHaptic('submit')
@@ -139,8 +165,18 @@ export function Composer() {
     }
   }
 
+  // Clear pending timers on unmount.
+  useEffect(
+    () => () => {
+      clearTimeout(fetchTimer.current)
+      clearTimeout(noticeTimer.current)
+    },
+    []
+  )
+
   return (
     <div className="composer-wrap">
+      {notice && <div className="composer-notice">{notice}</div>}
       {items.length > 0 && (
         <ul className="completion-drawer">
           {items.slice(0, 8).map((entry, i) => (
