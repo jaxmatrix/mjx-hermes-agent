@@ -4,6 +4,7 @@ import { useI18n } from '@/i18n'
 import { ChevronLeft } from '@/lib/icons'
 
 import { AppearanceSection } from './appearance-section'
+import { ArchivedSection } from './archived-section'
 import { ConfigSection } from './config-section'
 import { voiceFieldVisible } from './helpers'
 import { KeysSection } from './keys-section'
@@ -52,6 +53,10 @@ function SectionBody({ section }: { section: string }) {
     // Keys/credentials (Jc10): env-var management. Provider OAuth connect is D2.
     case 'keys':
       return <KeysSection />
+
+    // Archived chats (Jc11).
+    case 'archived':
+      return <ArchivedSection />
 
     default:
       // FIXME(J): placeholder until this section's renderer lands.
