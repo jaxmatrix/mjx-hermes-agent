@@ -5,6 +5,7 @@ import { requestGateway } from '@/store/gateway'
 import { triggerHaptic } from '@/store/haptics'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notifyError } from '@/store/notifications'
+import { $subagentsBySession, upsertSubagent } from '@/store/subagents'
 
 // Chat model over the assistant-ui parts vocabulary. The gateway-event reducer
 // mutates a plain ChatMessage[] (decoupled from assistant-ui); the runtime
@@ -275,8 +276,15 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       break
 
     default:
-      // gateway.ready, session.info, thinking.delta, moa.aggregating, subagent.*
-      // FIXME(K3): subagent UI. FIXME(G): richer status/session handling.
+      // Subagent lifecycle (spawn/start/thinking/tool/progress/complete) feeds
+      // the Agents view's spawn tree, keyed by the active runtime session.
+      if (event.type.startsWith('subagent.')) {
+        const sid = $sessionId.get() ?? 'active'
+        const createIfMissing = event.type === 'subagent.spawn_requested' || event.type === 'subagent.start'
+        upsertSubagent(sid, payload, createIfMissing, event.type)
+      }
+      // gateway.ready, session.info, thinking.delta, moa.aggregating handled elsewhere.
+      // FIXME(G): richer status/session handling.
       break
   }
 }
@@ -362,4 +370,5 @@ export function resetChat(): void {
   $clarify.set(null)
   $sudo.set(null)
   $secret.set(null)
+  $subagentsBySession.set({})
 }

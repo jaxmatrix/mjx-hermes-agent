@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom'
 
+import { AgentsScreen } from '@/app/agents/agents-screen'
 import { ArtifactsScreen } from '@/app/artifacts/artifacts-screen'
 import { ChatScreen } from '@/app/chat/chat-screen'
 import { ConnectScreen } from '@/app/connect-screen'
@@ -49,8 +50,7 @@ export function MobileController() {
           <Route element={<CronScreen />} path="/cron" />
           {/* Profile switching/projects gated (FIXME(E)); this is the CRUD/soul view. */}
           <Route element={<ProfilesScreen />} path="/profiles" />
-          {/* FIXME(K3): port Agents */}
-          <Route element={<PlaceholderView title="Agents" />} path="/agents" />
+          <Route element={<AgentsScreen />} path="/agents" />
           {/* FIXME(K8): port Starmap */}
           <Route element={<PlaceholderView title="Starmap" />} path="/starmap" />
           {/* Session ids (and anything else) resolve to chat, per routes.ts */}
