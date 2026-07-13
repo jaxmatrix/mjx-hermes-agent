@@ -7,6 +7,7 @@ import { AppearanceSection } from './appearance-section'
 import { ConfigSection } from './config-section'
 import { voiceFieldVisible } from './helpers'
 import { ModelSection } from './model-section'
+import { NotificationsSection } from './notifications-section'
 import { EmptyState, SettingsContent } from './primitives'
 import { useSettingsNav } from './settings-nav'
 
@@ -42,6 +43,10 @@ function SectionBody({ section }: { section: string }) {
     // Appearance (Jc8): theme mode + skin + language.
     case 'appearance':
       return <AppearanceSection />
+
+    // Notifications (Jc9): native-notification prefs + haptics.
+    case 'notifications':
+      return <NotificationsSection />
 
     default:
       // FIXME(J): placeholder until this section's renderer lands.
