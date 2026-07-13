@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useI18n } from '@/i18n'
 import { ChevronLeft } from '@/lib/icons'
 
+import { AppearanceSection } from './appearance-section'
 import { ConfigSection } from './config-section'
 import { voiceFieldVisible } from './helpers'
 import { ModelSection } from './model-section'
@@ -37,6 +38,10 @@ function SectionBody({ section }: { section: string }) {
     // local-endpoint onboarding deferred FIXME(J7).
     case 'model':
       return <ModelSection />
+
+    // Appearance (Jc8): theme mode + skin + language.
+    case 'appearance':
+      return <AppearanceSection />
 
     default:
       // FIXME(J): placeholder until this section's renderer lands.
