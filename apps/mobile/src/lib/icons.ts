@@ -29,5 +29,7 @@ export {
   IconArchive as Archive,
   IconSearch as Search,
   IconDotsVertical as MoreVertical,
-  IconHistory as History
+  IconHistory as History,
+  // Language switcher (Track I)
+  IconWorld as Globe
 } from '@tabler/icons-react'

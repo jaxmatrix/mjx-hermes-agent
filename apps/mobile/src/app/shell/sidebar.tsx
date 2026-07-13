@@ -1,6 +1,7 @@
 import { createContext, type ReactNode, useContext, useMemo, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 
+import { LanguageSwitcher } from '@/components/language-switcher'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { Menu } from '@/lib/icons'
@@ -50,28 +51,33 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const { pathname } = useLocation()
   const navItems = useNavItems()
   return (
-    <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
-      <div className="px-3 py-3 text-sm font-bold tracking-[0.18em] text-primary uppercase">Hermes</div>
-      {navItems.map(item => {
-        const active = item.path === '/' ? pathname === '/' : pathname.startsWith(item.path)
-        const Icon = item.icon
-        return (
-          <Link
-            key={item.view}
-            aria-current={active ? 'page' : undefined}
-            className={cn(
-              'flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground',
-              active && 'bg-accent text-foreground'
-            )}
-            onClick={onNavigate}
-            to={item.path}
-          >
-            <Icon className="size-5 shrink-0" />
-            {item.label}
-          </Link>
-        )
-      })}
-    </nav>
+    <>
+      <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
+        <div className="px-3 py-3 text-sm font-bold tracking-[0.18em] text-primary uppercase">Hermes</div>
+        {navItems.map(item => {
+          const active = item.path === '/' ? pathname === '/' : pathname.startsWith(item.path)
+          const Icon = item.icon
+          return (
+            <Link
+              key={item.view}
+              aria-current={active ? 'page' : undefined}
+              className={cn(
+                'flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground',
+                active && 'bg-accent text-foreground'
+              )}
+              onClick={onNavigate}
+              to={item.path}
+            >
+              <Icon className="size-5 shrink-0" />
+              {item.label}
+            </Link>
+          )
+        })}
+      </nav>
+      <div className="shrink-0 border-t border-border p-2">
+        <LanguageSwitcher className="w-full" />
+      </div>
+    </>
   )
 }
 
