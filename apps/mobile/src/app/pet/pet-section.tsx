@@ -1,10 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 import { EmptyState, ListRow, LoadingState, Pill, SettingsContent } from '@/app/settings/primitives'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/i18n'
-import { Check } from '@/lib/icons'
+import { Check, Sparkles } from '@/lib/icons'
 import { useStore } from '@/store/atom'
 import {
   $petBusy,
@@ -17,6 +17,7 @@ import {
   TOGGLE
 } from '@/store/pet-gallery'
 
+import { PetGenerateSheet } from './pet-generate-sheet'
 import { PetSprite } from './pet-sprite'
 import { PetThumb } from './pet-thumb'
 
@@ -29,6 +30,7 @@ export function PetSection() {
   const status = useStore($petGalleryStatus)
   const error = useStore($petGalleryError)
   const busy = useStore($petBusy)
+  const [generateOpen, setGenerateOpen] = useState(false)
 
   useEffect(() => void loadPetGallery(), [])
 
@@ -70,6 +72,15 @@ export function PetSection() {
         description={gallery?.enabled ? p.turnOff : p.turnOn}
         title={p.title}
       />
+
+      <div className="px-1 py-2">
+        <Button className="w-full" onClick={() => setGenerateOpen(true)} variant="outline">
+          <Sparkles className="size-4" />
+          {t.commandCenter.generatePet.title}
+        </Button>
+      </div>
+
+      <PetGenerateSheet onOpenChange={setGenerateOpen} open={generateOpen} />
 
       {pets.length === 0 ? (
         <EmptyState title={p.noneAvailable} />

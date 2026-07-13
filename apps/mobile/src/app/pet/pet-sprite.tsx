@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 
 import { useStore } from '@/store/atom'
-import { $petInfo } from '@/store/pet'
+import { $petInfo, type PetInfo } from '@/store/pet'
 
 const DEFAULT_FRAME_W = 192
 const DEFAULT_FRAME_H = 208
@@ -14,8 +14,9 @@ const DEFAULT_ROWS = ['idle', 'running-right', 'running-left', 'waving', 'jumpin
 // pet-sprite.tsx). Draws the row for `state` (idle / run), stepping frames
 // across loopMs. The desktop's full activity-driven state machine + roam
 // physics are dropped — mobile shows idle, or the run row while a turn is busy.
-export function PetSprite({ state = 'idle', zoom = 1 }: { state?: 'idle' | 'run'; zoom?: number }) {
-  const info = useStore($petInfo)
+export function PetSprite({ state = 'idle', zoom = 1, info: infoProp }: { state?: 'idle' | 'run'; zoom?: number; info?: PetInfo }) {
+  const stored = useStore($petInfo)
+  const info = infoProp ?? stored
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stateRef = useRef(state)
   stateRef.current = state

@@ -64,3 +64,11 @@ export function requestGateway<T = unknown>(
   if (!client) return Promise.reject(new Error('Hermes gateway is not connected'))
   return client.request<T>(method, params, timeoutMs)
 }
+
+// Subscribe to a single server-push event type (e.g. streaming progress events
+// that don't flow through the chat reducer). Returns an unsubscribe fn; a no-op
+// when no client is live. Used by the pet-generate flow (pet.*.progress).
+export function subscribeGateway<P = unknown>(type: string, handler: (payload: P) => void): () => void {
+  if (!client) return () => {}
+  return client.on<P>(type, event => handler(event.payload as P))
+}
