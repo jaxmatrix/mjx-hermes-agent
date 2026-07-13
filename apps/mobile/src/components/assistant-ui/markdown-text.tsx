@@ -1,6 +1,7 @@
 import { StreamdownTextPrimitive } from '@assistant-ui/react-streamdown'
 import { code } from '@streamdown/code'
 import { createMathPlugin } from '@streamdown/math'
+import { mermaid } from '@streamdown/mermaid'
 
 import { cn } from '@/lib/utils'
 
@@ -10,7 +11,7 @@ import { cn } from '@/lib/utils'
 // palette. Rendered inside the assistant-ui part context (reads the part text).
 //
 // FIXME(R11): open links externally via tauri-plugin-opener; FIXME(G7): media /
-// generated-image embeds; FIXME(Gc3): add the mermaid plugin.
+// generated-image embeds.
 
 // Passing a plugins object replaces streamdown's default set, so `code` must be
 // re-supplied. singleDollarTextMath enables inline `$x^2$` (the LLM convention).
@@ -27,5 +28,5 @@ const MARKDOWN_CLASS = cn(
 )
 
 export function MarkdownText() {
-  return <StreamdownTextPrimitive className={MARKDOWN_CLASS} plugins={{ code, math }} />
+  return <StreamdownTextPrimitive className={MARKDOWN_CLASS} plugins={{ code, math, mermaid }} />
 }
