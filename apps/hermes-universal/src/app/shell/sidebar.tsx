@@ -93,12 +93,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <Sheet onOpenChange={setOpenMobile} open={openMobile}>
-        <SheetContent className="w-72 gap-0 p-0" side="left">
+        <SheetContent className="w-72 gap-0 p-0 pt-[env(safe-area-inset-top)]" side="left">
           <SidebarNav onNavigate={() => setOpenMobile(false)} />
         </SheetContent>
       </Sheet>
 
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</main>
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col pt-[env(safe-area-inset-top)]">{children}</main>
     </div>
   )
 }
