@@ -22,5 +22,12 @@ export {
   IconStars as Stars,
   IconLayoutGrid as LayoutGrid,
   IconUsers as Users,
-  IconPlus as Plus
+  IconPlus as Plus,
+  // Session actions (Track H)
+  IconTrash as Trash,
+  IconPencil as Pencil,
+  IconArchive as Archive,
+  IconSearch as Search,
+  IconDotsVertical as MoreVertical,
+  IconHistory as History
 } from '@tabler/icons-react'
