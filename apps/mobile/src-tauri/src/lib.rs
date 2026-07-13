@@ -15,6 +15,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_keyring::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(TransportState::new())
         .invoke_handler(tauri::generate_handler![
             http_request,
