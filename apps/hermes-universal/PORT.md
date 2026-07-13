@@ -173,7 +173,7 @@ Each step: `id [TAG] description — target file(s)`. Tick the box on landing; n
 
 ### Track D — Auth + secure storage + OAuth
 
-- [x] D1 [RUST] Secure storage via `tauri-plugin-keyring` (silent, Android Keystore-backed) + `src/lib/secure-store.ts` seam. NOTE: pivoted from `tauri-plugin-keystore` (biometric) — its only published build was a broken alpha; `FIXME(D)` tracks re-adding biometric via `tauri-plugin-biometric`. Android runtime path verified on-device (deferred). [R2]
+- [x] D1 [RUST] Secure storage via `tauri-plugin-keyring` (silent, Android Keystore-backed) + `src/lib/secure-store.ts` seam. NOTE: pivoted from `tauri-plugin-keystore` (biometric) — its only published build was a broken alpha; `FIXME(D)` tracks re-adding biometric via `tauri-plugin-biometric`. **Android runtime crash found + fixed (2026-07-14):** the earlier "verified on-device" claim was false — on device the app **aborted on launch (SIGABRT)** with a Rust panic `android context was not initialized` (`ndk-context-0.1.1/src/lib.rs:72`). `android-native-keyring-store` reads its Context from the global `ndk-context`, which **Tauri/wry never initializes** (it's the only dep on that crate — see Cargo.lock), so `Store::new()` (eager, in plugin `setup()`) panicked. Fixed with 4 edits in `plugins/tauri-plugin-keyring/`: (1) new `android/.../io/crates/keyring/Keyring.kt` binding the store crate's JNI `initializeNdkContext`; (2) `KeyringPlugin.kt` `load()` now calls it; (3) `mobile.rs` no longer builds the store eagerly; (4) `implementation.rs` `ensure_android_store()` creates the store lazily on first command (after the WebView + `load()` exist). Verified on x86_64 emulator AND the Nokia G42 (arm64) physical device — no crash, keyring path exercised via `connect-screen` mount. [R2]
 - [x] D2 [JS] Credentials off plaintext → keyring (token/password); url/username stay in localStorage; silent prefill on mount — `src/store/connection.ts`, `connect-screen.tsx`
 - [ ] D3 [RUST] `tauri-plugin-deep-link` + `hermes://` (AndroidManifest intent-filter) [R3/R13] — **OAuth half (D3–D6) deferred to its own session**
 - [ ] D4 [RUST] `oauth_login/oauth_status/oauth_logout` (system browser → deep-link → cookie jar) — `src-tauri/src/oauth.rs` [R3/R4]
@@ -419,17 +419,23 @@ cookie jar, manual WS ping/pong keepalive). CSP restricts the webview to `ipc:` 
 - **Vendored keyring plugin** (`src-tauri/plugins/tauri-plugin-keyring/`, path dep): a git-branch-tip snapshot
   of `charlesportwoodii/tauri-plugin-keyring @ b0a137b`, **no upstream LICENSE**, with `tauri-specta`/`specta`
   manually stripped (specta `2.0.0-rc.25` uses nightly-only `fmt::from_fn`). Depends on six ~`1.0.0`
-  keyring-core store crates on caret ranges; `KeyringPlugin.kt` is an empty bridge (storage is Rust via
-  `keyring-core`) that assumes Tauri initialized `ndk_context` globally. Any bump requires re-vetting the
-  whole tree + re-stripping specta + re-confirming license.
+  keyring-core store crates on caret ranges; `KeyringPlugin.kt` used to be an empty bridge (storage is Rust
+  via `keyring-core`) that **wrongly assumed Tauri initialized `ndk_context` globally — it does not, which
+  crashed the app on launch (SIGABRT, see D1; fixed 2026-07-14)**. `KeyringPlugin.kt` now initializes
+  `ndk_context` in `load()` via the `io.crates.keyring.Keyring` JNI binding, and the store is built lazily.
+  Any bump requires re-vetting the whole tree + re-stripping specta + re-confirming license + keeping the
+  `ndk_context` init (the `Keyring.kt` class name / JNI symbol are load-bearing).
 - **`gen/android` is gitignored** → the Android app's identifier, `minSdk=24`, `AndroidManifest` permissions
   (**`RECORD_AUDIO` for voice and `POST_NOTIFICATIONS`, added only on-device, are in NO committed file**),
   signing config, and plugin Gradle wiring are ephemeral — regenerated/overwritten by `tauri android init`
   and invisible to review.
 
-**Verification gaps:** Android verified by `cargo check --target aarch64-linux-android` only — **never a full
-APK / device run**. **iOS is never built** (no `gen/apple`). The NDK cross-compile is a hand-run env, not
-automated.
+**Verification gaps:** Android was long verified by `cargo check --target aarch64-linux-android` only, which
+**hid the `ndk_context` launch crash** (D1) — a full APK/device run surfaced it. As of 2026-07-14 the debug
+APK builds, installs, and launches without crashing on both the x86_64 emulator and the Nokia G42 (arm64)
+physical device. **iOS is still never built** (no `gen/apple`). The NDK cross-compile is a hand-run env, not
+automated. Lesson: `cargo check` is necessary but not sufficient for Android — JNI/`ndk_context` init only
+fails at runtime.
 
 ### 2. Web application (React/TS) — pending & simplified
 
