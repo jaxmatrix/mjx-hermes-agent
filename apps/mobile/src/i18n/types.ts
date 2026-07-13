@@ -763,6 +763,28 @@ export interface Translations {
     archive: string
     skillArchivedTitle: string
     skillArchivedMessage: string
+    mcp: {
+      loading: string
+      loadFailed: string
+      noServers: string
+      noServersDesc: string
+      tools: (count: number) => string
+      test: string
+      testOk: (name: string, count: number) => string
+      testFailed: (name: string) => string
+      reloadApplied: string
+      reloadFailed: string
+      browseCatalog: string
+      install: string
+      installing: string
+      installed: string
+      installedOk: (name: string) => string
+      installFailed: (name: string) => string
+      needsEnv: string
+      authNote: string
+      noCatalog: string
+      catalogFailed: string
+    }
     hub: {
       searchPlaceholder: string
       search: string

@@ -919,7 +919,29 @@ export const ja = defineLocale({
     edit: '編集',
     archive: 'アーカイブ',
     skillArchivedTitle: 'スキルをアーカイブしました',
-    skillArchivedMessage: 'hermes curator restore で復元できます。'
+    skillArchivedMessage: 'hermes curator restore で復元できます。',
+    mcp: {
+      loading: 'MCP サーバーを読み込み中…',
+      loadFailed: 'MCP サーバーの読み込みに失敗しました',
+      noServers: 'MCP サーバーがありません',
+      noServersDesc: 'カタログからインストールしてツールを追加します。',
+      tools: count => `${count} 個のツール`,
+      test: 'テスト',
+      testOk: (name, count) => `${name}: ${count} 個のツールが利用可能`,
+      testFailed: name => `${name} のテストに失敗しました`,
+      reloadApplied: 'MCP ツールを再読み込みしました',
+      reloadFailed: 'MCP の再読み込みに失敗しました',
+      browseCatalog: 'カタログを見る',
+      install: 'インストール',
+      installing: 'インストール中…',
+      installed: 'インストール済み',
+      installedOk: name => `${name} をインストールしました`,
+      installFailed: name => `${name} のインストールに失敗しました`,
+      needsEnv: '必要な認証情報',
+      authNote: 'このサーバーは OAuth サインインが必要です。デスクトップアプリで完了してください。',
+      noCatalog: '利用可能なカタログエントリがありません。',
+      catalogFailed: 'カタログの読み込みに失敗しました'
+    }
   },
 
   starmap: {

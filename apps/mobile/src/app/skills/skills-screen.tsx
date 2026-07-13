@@ -8,9 +8,11 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useI18n } from '@/i18n'
-import { Search } from '@/lib/icons'
+import { Plus, Search } from '@/lib/icons'
 import { includesQuery } from '@/lib/text'
 import { useStore } from '@/store/atom'
+import { $mcpError, $mcpLoading, $mcpServers, refreshMcp, setMcpEnabled, testMcp } from '@/store/mcp'
+import { notify } from '@/store/notifications'
 import {
   $capsError,
   $capsLoading,
@@ -21,7 +23,9 @@ import {
   setToolsetEnabled
 } from '@/store/skills'
 
-type Tab = 'skills' | 'toolsets'
+import { McpCatalogSheet } from './mcp-catalog-sheet'
+
+type Tab = 'skills' | 'toolsets' | 'mcp'
 
 // computer_use is a desktop macOS-permission concept — hidden on mobile. FIXME(K5).
 const HIDDEN_TOOLSETS = new Set(['computer_use'])
@@ -33,10 +37,34 @@ export function SkillsScreen() {
   const toolsets = useStore($toolsets)
   const loading = useStore($capsLoading)
   const error = useStore($capsError)
+  const mcpServers = useStore($mcpServers)
+  const mcpLoading = useStore($mcpLoading)
+  const mcpError = useStore($mcpError)
   const [tab, setTab] = useState<Tab>('skills')
   const [query, setQuery] = useState('')
+  const [catalogOpen, setCatalogOpen] = useState(false)
+  const [testing, setTesting] = useState<string | null>(null)
 
   useEffect(() => void refreshCapabilities(), [])
+  // MCP list is fetched lazily the first time its tab opens.
+  useEffect(() => {
+    if (tab === 'mcp' && mcpServers.length === 0) {
+      void refreshMcp()
+    }
+  }, [tab, mcpServers.length])
+
+  const runTest = async (name: string) => {
+    setTesting(name)
+    try {
+      const res = await testMcp(name)
+      notify({
+        kind: res.ok ? 'success' : 'warning',
+        message: res.ok ? s.mcp.testOk(name, res.tools.length) : (res.error ?? s.mcp.testFailed(name))
+      })
+    } finally {
+      setTesting(null)
+    }
+  }
 
   const q = query.trim().toLowerCase()
   const shownSkills = useMemo(
@@ -94,6 +122,53 @@ export function SkillsScreen() {
       )
     }
 
+    if (tab === 'mcp') {
+      if (mcpLoading && mcpServers.length === 0) {
+        return <LoadingState label={s.mcp.loading} />
+      }
+      if (mcpError && mcpServers.length === 0) {
+        return (
+          <SettingsContent>
+            <div className="flex flex-col items-center gap-3 py-16 text-center">
+              <span className="text-sm text-muted-foreground">{s.mcp.loadFailed}</span>
+              <Button onClick={() => void refreshMcp()} size="sm">
+                {t.common.retry}
+              </Button>
+            </div>
+          </SettingsContent>
+        )
+      }
+      return (
+        <SettingsContent>
+          {mcpServers.length === 0 ? (
+            <EmptyState description={s.mcp.noServersDesc} title={s.mcp.noServers} />
+          ) : (
+            <div className="pt-1">
+              {mcpServers.map(server => (
+                <ListRow
+                  key={server.name}
+                  description={`${server.transport}${server.tools ? ` · ${s.mcp.tools(server.tools.length)}` : ''}`}
+                  title={<span className="truncate">{server.name}</span>}
+                  action={
+                    <div className="flex items-center gap-2">
+                      <Button disabled={testing === server.name} onClick={() => void runTest(server.name)} size="sm" variant="ghost">
+                        {s.mcp.test}
+                      </Button>
+                      <Switch checked={server.enabled} onCheckedChange={on => void setMcpEnabled(server.name, on, s.mcp.reloadFailed)} />
+                    </div>
+                  }
+                />
+              ))}
+            </div>
+          )}
+          <Button className="mt-4 w-full" onClick={() => setCatalogOpen(true)} variant="outline">
+            <Plus className="size-4" />
+            {s.mcp.browseCatalog}
+          </Button>
+        </SettingsContent>
+      )
+    }
+
     return shownToolsets.length === 0 ? (
       <SettingsContent>
         <EmptyState description={s.noToolsetsDesc} title={s.noToolsetsTitle} />
@@ -141,20 +216,27 @@ export function SkillsScreen() {
             <TabsTrigger className="flex-1" value="toolsets">
               {s.tabToolsets}
             </TabsTrigger>
+            <TabsTrigger className="flex-1" value="mcp">
+              {s.tabMcp}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="pl-9"
-            onChange={e => setQuery(e.target.value)}
-            placeholder={tab === 'skills' ? s.searchSkills : s.searchToolsets}
-            value={query}
-          />
-        </div>
+        {tab !== 'mcp' && (
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="pl-9"
+              onChange={e => setQuery(e.target.value)}
+              placeholder={tab === 'skills' ? s.searchSkills : s.searchToolsets}
+              value={query}
+            />
+          </div>
+        )}
       </div>
 
       {body()}
+
+      <McpCatalogSheet onInstalled={() => void refreshMcp()} onOpenChange={setCatalogOpen} open={catalogOpen} />
     </div>
   )
 }

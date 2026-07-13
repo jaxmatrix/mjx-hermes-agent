@@ -891,7 +891,29 @@ export const zhHant = defineLocale({
     edit: '編輯',
     archive: '封存',
     skillArchivedTitle: '技能已封存',
-    skillArchivedMessage: '可透過 hermes curator restore 還原。'
+    skillArchivedMessage: '可透過 hermes curator restore 還原。',
+    mcp: {
+      loading: '正在載入 MCP 伺服器…',
+      loadFailed: 'MCP 伺服器載入失敗',
+      noServers: '尚未設定 MCP 伺服器',
+      noServersDesc: '從目錄安裝一個以新增工具。',
+      tools: count => `${count} 個工具`,
+      test: '測試',
+      testOk: (name, count) => `${name}：可用 ${count} 個工具`,
+      testFailed: name => `${name} 測試失敗`,
+      reloadApplied: '已重新載入 MCP 工具',
+      reloadFailed: 'MCP 重新載入失敗',
+      browseCatalog: '瀏覽目錄',
+      install: '安裝',
+      installing: '正在安裝…',
+      installed: '已安裝',
+      installedOk: name => `已安裝 ${name}`,
+      installFailed: name => `安裝 ${name} 失敗`,
+      needsEnv: '所需憑證',
+      authNote: '此伺服器需要 OAuth 登入，請在桌面應用程式中完成。',
+      noCatalog: '沒有可用的目錄項目。',
+      catalogFailed: '目錄載入失敗'
+    }
   },
 
   starmap: {
