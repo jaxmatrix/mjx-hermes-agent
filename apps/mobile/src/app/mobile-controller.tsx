@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom'
 
+import { ArtifactsScreen } from '@/app/artifacts/artifacts-screen'
 import { ChatScreen } from '@/app/chat/chat-screen'
 import { ConnectScreen } from '@/app/connect-screen'
 import { CronScreen } from '@/app/cron/cron-screen'
@@ -43,8 +44,7 @@ export function MobileController() {
           {/* FIXME(K2): port Skills */}
           <Route element={<PlaceholderView title="Skills" />} path="/skills" />
           <Route element={<MessagingScreen />} path="/messaging" />
-          {/* FIXME(K7): port Artifacts */}
-          <Route element={<PlaceholderView title="Artifacts" />} path="/artifacts" />
+          <Route element={<ArtifactsScreen />} path="/artifacts" />
           <Route element={<CronScreen />} path="/cron" />
           {/* Profile switching/projects gated (FIXME(E)); this is the CRUD/soul view. */}
           <Route element={<ProfilesScreen />} path="/profiles" />
