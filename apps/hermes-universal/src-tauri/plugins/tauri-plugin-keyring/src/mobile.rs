@@ -17,12 +17,16 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 ) -> crate::Result<Keyring<R>> {
   #[cfg(target_os = "android")]
   {
-    // keyring-core 1.0 store. The Android context/JavaVM are read from the global
-    // `ndk_context`, which Tauri's Android runtime initializes for us, so no extra
-    // JNI setup (the crate's `initializeNdkContext`) is required here.
-    use android_native_keyring_store::Store as AndroidStore;
-    let store = AndroidStore::new().map_err(|e| crate::Error::PlatformError(e.to_string()))?;
-    keyring_core::set_default_store(store);
+    // `android-native-keyring-store` reads the Android Context/JavaVM from the global
+    // `ndk_context` crate. Tauri/wry does NOT populate `ndk_context` (nothing else in
+    // the tree depends on it), so the app must initialize it itself before creating a
+    // store, or the first Keystore call panics with "android context was not initialized"
+    // and aborts the process. We do that from the Kotlin side: registering the Android
+    // plugin below runs `KeyringPlugin.load()`, which calls the store crate's
+    // `initializeNdkContext` JNI entry point. Because `load()` may be deferred until the
+    // WebView is created, we do NOT build the keyring_core store here — it is created
+    // lazily on first use (see `implementation.rs::ensure_android_store`), by which point
+    // `ndk_context` is guaranteed to be initialized.
     let handle = api.register_android_plugin("com.charlesportwoodii.tauri.plugin.keyring", "KeyringPlugin")?;
     Ok(Keyring(handle))
   }

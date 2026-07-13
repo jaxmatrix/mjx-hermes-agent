@@ -5,6 +5,30 @@ use crate::models::{CredentialType, CredentialValue};
 
 static SERVICE_NAME: OnceLock<String> = OnceLock::new();
 
+/// Lazily create the Android-native keyring_core store and register it as the default.
+///
+/// This must run *after* `ndk_context` has been initialized (which happens in
+/// `KeyringPlugin.load()` on the Kotlin side once the WebView exists) — otherwise
+/// `Store::new()` reads an uninitialized `ndk_context` and panics/aborts the process.
+/// Keyring commands only run in response to a JS `invoke`, i.e. well after the WebView
+/// (and thus `load()`/`initializeNdkContext`) exists, so calling this from `create_entry`
+/// is safe. It is guarded so the store is created exactly once, and is retried on failure
+/// (so a spurious early failure does not permanently poison the store).
+#[cfg(target_os = "android")]
+fn ensure_android_store() -> crate::Result<()> {
+    use std::sync::Mutex;
+    static INITIALIZED: Mutex<bool> = Mutex::new(false);
+    let mut done = INITIALIZED.lock().unwrap();
+    if *done {
+        return Ok(());
+    }
+    let store = android_native_keyring_store::Store::new()
+        .map_err(|e| crate::Error::PlatformError(e.to_string()))?;
+    keyring_core::set_default_store(store);
+    *done = true;
+    Ok(())
+}
+
 pub struct KeyringImplementation;
 
 impl KeyringImplementation {
@@ -24,6 +48,11 @@ impl KeyringImplementation {
 
     /// Create a keyring entry with the format: service_name/username/credential_type
     fn create_entry(username: &str, credential_type: &CredentialType) -> crate::Result<Entry> {
+        // On Android the keyring_core store is created lazily on first use, once
+        // `ndk_context` is available (see `ensure_android_store`). On desktop the store
+        // is set eagerly in `desktop::init`, so this is Android-only.
+        #[cfg(target_os = "android")]
+        ensure_android_store()?;
         let service = Self::get_service_name()?;
         let entry_username = format!("{}/{}/{}", service, username, credential_type);
         tauri_plugin_log::log::debug!("Creating keyring entry for: {}", entry_username);
