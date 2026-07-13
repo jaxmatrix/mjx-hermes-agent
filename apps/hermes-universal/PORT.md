@@ -364,3 +364,143 @@ so no collision.
 - **Review mobile-only assumptions** in scope/architecture (the reason for the fresh session): features that
   were gated, simplified, or shaped as "mobile-only" that should be reconsidered now that desktop is also a
   target of this same app.
+
+---
+
+## Pending work, patches & lean-implementation notes — full audit (2026-07-13)
+
+> **Appended review — nothing above this line was changed.** A top-to-bottom audit of the universal app:
+> what "lean" means here, and every Tauri/native, web, and cross-cutting item that is incomplete, deferred,
+> or a deliberate patch that may need revisiting. The live deferral index remains
+> `grep -rn "FIXME(" apps/hermes-universal/src`. Every claim below traces to a file:line in the tree.
+
+**Current commit state** (fresh note; does not edit the stale HEAD in the handoff above): on `main`, sequence
+`7b63393c5` rename → `acdc500e0` de-mobile storage keys → `1d697e72a` lib.rs strings → `e6ccfd47b` merge
+upstream/main → `0479d21e8` keyring/Android fix. Local-only beyond `origin/main`'s PR #2 merge; unpushed.
+
+### 0. Lean implementation — what "lean" means here
+
+This is a **mobile-first, remote-only** port. Where the desktop feature was large or desktop-shaped, we built
+a deliberately smaller version that covers the common path and **tracked the parity gap as a `FIXME(<track>)`**
+rather than porting the whole thing. These are **intentional scope cuts, not bugs**. Confirmed lean modules:
+
+- **Tool-call rendering** — `components/assistant-ui/thread/tool-part.tsx`: humanized title + status dot +
+  collapsible `<pre>` + raw JSON args. No inline file diffs / ANSI colors / search-hit grouping / image
+  results vs desktop `buildToolView` (`FIXME(G4)`).
+- **Starmap** — `app/starmap/{starmap-canvas.tsx,graph-sim.ts}`: plain d3-force 2D canvas with pan/pinch/tap.
+  Desktop's ring/recency choreography, share-code, timeline dropped (`FIXME(K8)`).
+- **Pet** — `app/pet/{pet-sprite.tsx,floating-pet.tsx}` + `store/pet-generate.ts`: idle/run sprite only; roam
+  physics + pop-out overlay dropped; single-variation generation flow.
+- **Streaming reducer** — `store/chat.ts:17`: no cross-channel coalescing vs desktop `appendStreamPart`
+  (`FIXME(G)`).
+- **Others:** notifications toast stack (`components/notifications.tsx:12`, dual-placement dropped), Command
+  Center (sessions tab omitted), composer completions (`Gc7`), cron store (optimistic), session-history
+  hydration (`lib/session-history.ts`), language switcher (no cmdk), media resolver (remote-only,
+  `lib/media.ts`), and **single-profile** throughout.
+- Also vendored (copied, not imported): the gateway client under `src/gateway/*` (see §3).
+
+### 1. Tauri / native (Rust) — pending & patched
+
+**Implemented:** plugins `os` / `keyring` (vendored) / `opener` / `haptics` / `dialog`+`fs` (read-only) /
+`notification`, plus the custom `src-tauri/src/transport.rs` HTTP+WS IPC proxy (reqwest+rustls, in-memory
+cookie jar, manual WS ping/pong keepalive). CSP restricts the webview to `ipc:` only.
+
+**Missing / deferred native features** (no Rust source exists for these yet):
+- **Deep-link `hermes://` (D3)** — no `tauri-plugin-deep-link`, no intent-filter in the manifest.
+- **Gateway OAuth `oauth.rs` (D4)** — unbuilt; the transport cookie jar is the only pre-wiring. (Per-provider
+  OAuth **D2 is done** in JS via K11 — this is the separate "sign in to the gateway" half.)
+- **`local_backend.rs` (E3, gated)**, **`cloud.rs` portal (E4)**, **updater (K12, gated)**, **terminal (K15,
+  gated)**, **biometric** (dropped when we left `tauri-plugin-keystore`; `FIXME(D)` to re-add via
+  `tauri-plugin-biometric`), **push notifications**, **background tasks**.
+- **Cookie persistence across launches (R2b)** — the reqwest jar is in-memory only, so the gateway login
+  session is lost on app restart.
+
+**Patches that may backfire:**
+- **Vendored keyring plugin** (`src-tauri/plugins/tauri-plugin-keyring/`, path dep): a git-branch-tip snapshot
+  of `charlesportwoodii/tauri-plugin-keyring @ b0a137b`, **no upstream LICENSE**, with `tauri-specta`/`specta`
+  manually stripped (specta `2.0.0-rc.25` uses nightly-only `fmt::from_fn`). Depends on six ~`1.0.0`
+  keyring-core store crates on caret ranges; `KeyringPlugin.kt` is an empty bridge (storage is Rust via
+  `keyring-core`) that assumes Tauri initialized `ndk_context` globally. Any bump requires re-vetting the
+  whole tree + re-stripping specta + re-confirming license.
+- **`gen/android` is gitignored** → the Android app's identifier, `minSdk=24`, `AndroidManifest` permissions
+  (**`RECORD_AUDIO` for voice and `POST_NOTIFICATIONS`, added only on-device, are in NO committed file**),
+  signing config, and plugin Gradle wiring are ephemeral — regenerated/overwritten by `tauri android init`
+  and invisible to review.
+
+**Verification gaps:** Android verified by `cargo check --target aarch64-linux-android` only — **never a full
+APK / device run**. **iOS is never built** (no `gen/apple`). The NDK cross-compile is a hand-run env, not
+automated.
+
+### 2. Web application (React/TS) — pending & simplified
+
+**FIXME index by track** (authoritative via `grep -rn "FIXME(" src`):
+- **G4** `tool-part.tsx:12` (rich tool views) · **G7** `markdown-text.tsx:15` (media/image embeds) ·
+  **G** `chat.ts:19,298` + `runtime.tsx:35` (lean reducer, `onNew` no-op).
+- **Gc7** `composer-completions.ts:7` · **Gc8** `attachments.ts:10` (base64 blocks main thread; Android SAF) ·
+  **Gc9** `use-voice-recorder.ts:9,11` (RECORD_AUDIO; auto-speak — *this one is stale/resolved*).
+- **H** `session-history.ts:10` (context-marker strip) + `session.ts:38` (no true offset pagination).
+- **E** `api.ts:16` + `profiles.ts:8` + `mobile-controller.tsx:76` (single-profile; switching gated).
+- **D** `secure-store.ts:16` (silent; biometric later) · **D2** `settings-section.tsx:39` (*stale — resolved
+  via K11*).
+- **J** `settings-index.tsx:25` (config export/import) + `settings-section.tsx:78` (default placeholder) ·
+  **J5** `settings-section.tsx:34` (ElevenLabs static) · **J7** `model-section.tsx:20` (MoA/local endpoint) ·
+  **J8** `appearance-section.tsx:10` · **J9** `notifications-section.tsx:20` (completion sound).
+- **K2** `mcp-catalog-sheet.tsx:13` (MCP OAuth) · **K4** `maintenance-panel.tsx:95` (debug-share),
+  `artifacts-screen.tsx:15` (paginate), `media.ts:8` (cookie/ticket media) · **K5** `skills-screen.tsx:31`
+  (computer_use hidden) · **K8** `starmap-canvas.tsx:9` · **K11** `api-key-options.ts:53` (CLI providers) ·
+  **I3** `user-themes.ts:9` (theme import dropped).
+- **Stale FIXMEs to ignore** (resolved but comment not removed): `FIXME(D2)` (K11) and the `FIXME(Gc9)`
+  auto-speak line.
+
+**Deferred / gated UI:** command palette (F5 — `app/command-palette/` was **never created**), session export
+(H4), branch tree (H5), ElevenLabs voice list (J5, free-text), gateway-mode picker + profile switching (E),
+theme marketplace/import (I3), `computer_use` toolset (K5), MCP OAuth (K2), debug-share (K4).
+
+**Secure-store scope gap:** `lib/secure-store.ts` `safe()` short-circuits `if (!IS_MOBILE) return fallback`, so
+`saveSecrets`/`loadSecrets`/`clearSecrets` are **no-ops on desktop** — desktop secrets are never persisted even
+though the app now targets desktop. (The `invoke('plugin:keyring|…')` JS layer is hand-vendored, stringly-typed
+against the vendored Rust `commands.rs`, no type-checked binding.)
+
+**Tests:** 53 `*.test.ts(x)` files, **store-unit-heavy**, **no e2e/integration**. Key untested UI: the chat
+thread / composer / runtime / approval-clarify-sudo-secret bars, `starmap-canvas`, pet rendering,
+`markdown-text`, `onboarding-screen`, `connect-screen`, and `mobile-controller` routing.
+
+**Dead code:** `app/shell/placeholder-view.tsx` (`PlaceholderView`) is defined but never imported — every route
+now maps to a real screen. **Good news (not gaps):** mermaid is actually wired (`@streamdown/mermaid`, done);
+sudo/secret/clarify are **fully wired** (real responders in `store/chat.ts`, not stubs); i18n's 4 locales stay
+TS-type-synced with **no** placeholder/untranslated strings.
+
+### 3. Build / infra / cross-cutting — patches that may backfire
+
+- **npm-vs-pnpm split.** Root is npm-workspaces (`package.json:6` `apps/*`) but the app is pnpm-managed
+  (`pnpm-lock.yaml`, no per-app `package-lock.json`). A root `npm install` descends in and clobbers the app's
+  `node_modules/.bin` (tsc/vitest vanish) → recover with `rm -rf node_modules && pnpm install`. The root
+  `package-lock.json` was **hand-edited** during the rename (a manual patch to a generated file).
+- **App absent from CI.** `.github/workflows/typecheck.yml` matrix is `[ui-tui, web, apps/bootstrap-installer,
+  apps/desktop, apps/shared]` — **not** `apps/hermes-universal`. No CI gate for its typecheck / vitest /
+  `vite build` / Cargo / Android build; all green signals are local only. (CI also installs via `npm ci`,
+  which the pnpm split would break anyway.)
+- **Vendored gateway has already drifted.** `src/gateway/json-rpc-gateway.ts` is a hand-copy of
+  `apps/shared/src` and is now **missing the `profile?: string` field** that the upstream merge `e6ccfd47b`
+  added to `apps/shared`. The header's "keep in sync" instruction has lapsed; upstream gateway fixes
+  (deterministic WS close, dedup, profile tagging) do not propagate.
+- **`gen/android` not version-controlled** (see §1) — no committed source describes the Android
+  manifest/permissions/signing; lost on regen.
+- **2.2 MB monolithic JS bundle.** `vite.config.ts` sets no `manualChunks` / `chunkSizeWarningLimit`; the
+  single `index-*.js` is ~2.2 MB (plus 600–780 KB syntax-grammar chunks from streamdown) — the Android
+  WebView cold-start payload.
+- **Minor:** 4 `eslint-disable react-hooks/exhaustive-deps` (`config-section.tsx:243`,
+  `archived-section.tsx:48`, `keys-section.tsx:60`, `files-screen.tsx:48`) with no CI lint gate; toolchain
+  pinned to very new majors (TS 6 / Vite 8 / Vitest 4) ahead of the rest of the monorepo, reproducible only
+  via the app's `pnpm-lock.yaml` that no CI installs.
+
+### 4. "Might backfire" priority hotlist
+
+1. **Keyring vendoring** — no license (legal), git-branch-tip source, ~days-old `1.0` RC-era supply chain, a
+   local de-specta patch to re-apply on every bump. Highest blast radius if it needs updating.
+2. **`gen/android` unversioned** — manifest, runtime permissions (RECORD_AUDIO / POST_NOTIFICATIONS), and
+   signing exist only on one machine and are silently lost on `tauri android init`.
+3. **Vendored-gateway drift** — already diverged from `apps/shared`; future upstream gateway fixes won't reach
+   the app, and no test catches it.
+4. **No CI** — every regression (TS, test, build, Cargo, Android) surfaces only on a developer's machine.
+5. **npm/pnpm split** — a stray root `npm install` breaks the app's toolchain until a manual pnpm reinstall.
