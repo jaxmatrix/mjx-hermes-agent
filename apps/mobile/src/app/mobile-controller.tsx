@@ -6,6 +6,7 @@ import { ConnectScreen } from '@/app/connect-screen'
 import { CronScreen } from '@/app/cron/cron-screen'
 import { MessagingScreen } from '@/app/messaging/messaging-screen'
 import { ProfilesScreen } from '@/app/profiles/profiles-screen'
+import { SkillsScreen } from '@/app/skills/skills-screen'
 import { SettingsIndex } from '@/app/settings/settings-index'
 import { SettingsSection } from '@/app/settings/settings-section'
 import { NotificationStack } from '@/components/notifications'
@@ -41,8 +42,8 @@ export function MobileController() {
           <Route element={<SettingsSection />} path="/settings/:section" />
           {/* FIXME(K4): port Command Center */}
           <Route element={<PlaceholderView title="Command Center" />} path="/command-center" />
-          {/* FIXME(K2): port Skills */}
-          <Route element={<PlaceholderView title="Skills" />} path="/skills" />
+          {/* Skills + Toolsets; MCP/Hub tabs land in Kc7/Kc8. */}
+          <Route element={<SkillsScreen />} path="/skills" />
           <Route element={<MessagingScreen />} path="/messaging" />
           <Route element={<ArtifactsScreen />} path="/artifacts" />
           <Route element={<CronScreen />} path="/cron" />
