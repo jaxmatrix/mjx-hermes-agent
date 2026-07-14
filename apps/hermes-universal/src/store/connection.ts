@@ -184,6 +184,33 @@ export async function connectLocal(profile?: null | string): Promise<void> {
   }
 }
 
+/**
+ * Cloud mode (E5): connect to a portal-discovered agent's gateway. The agent
+ * session cookie is already in the shared jar (portal_agent_sign_in ran first),
+ * so this is an OAuth-style connect — the WS mints a ticket from that cookie.
+ */
+export async function connectCloud(baseUrl: string, profile?: null | string): Promise<void> {
+  $connectionError.set(null)
+  $connectionPhase.set('connecting')
+  try {
+    const conn: Connection = {
+      baseUrl: normalizeBaseUrl(baseUrl),
+      mode: 'cloud',
+      authMode: 'oauth',
+      profile: profile ?? null,
+    }
+    $connection.set(conn)
+    await connectGateway(conn)
+    $connectionPhase.set('ready')
+    await persistSessionCookies()
+  } catch (err) {
+    $connectionError.set(err instanceof Error ? err.message : String(err))
+    $connectionPhase.set('error')
+    $connection.set(null)
+    throw err
+  }
+}
+
 export function disconnect(): void {
   // If we were on a local-spawned backend, stop the child too.
   if ($connection.get()?.mode === 'local') {

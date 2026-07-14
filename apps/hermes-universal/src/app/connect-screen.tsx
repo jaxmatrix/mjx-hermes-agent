@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { CloudAgents } from '@/app/gateway/cloud-agents'
 import { ModePicker } from '@/app/gateway/mode-picker'
 import { fetchAuthProviders } from '@/lib/auth'
 import { useStore } from '@/store/atom'
@@ -97,11 +98,7 @@ export function ConnectScreen() {
           </>
         )}
 
-        {mode === 'cloud' && (
-          <p className="connect-sub">
-            Cloud — sign in to the Nous portal and pick an agent. {/* E5 wires the agent list */}
-          </p>
-        )}
+        {mode === 'cloud' && <CloudAgents />}
 
         {mode === 'remote' && step === 'url' && (
           <>
