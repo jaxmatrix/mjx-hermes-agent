@@ -1,8 +1,8 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useEffect, useState } from 'react'
 
+import { Codicon } from '@/components/ui/codicon'
 import { useI18n } from '@/i18n'
-import { Minus, Square, Squares, X } from '@/lib/icons'
 
 import { TitlebarButton } from './titlebar-button'
 
@@ -39,20 +39,20 @@ export function WindowControls() {
   return (
     <div className="flex items-center gap-0.5">
       <TitlebarButton label={t.titlebar.minimize} onClick={() => void win.minimize()}>
-        <Minus className="size-3.5" />
+        <Codicon name="chrome-minimize" />
       </TitlebarButton>
       <TitlebarButton
         label={maximized ? t.titlebar.restore : t.titlebar.maximize}
         onClick={() => void win.toggleMaximize()}
       >
-        {maximized ? <Squares className="size-3.5" /> : <Square className="size-3.5" />}
+        <Codicon name={maximized ? 'chrome-restore' : 'chrome-maximize'} />
       </TitlebarButton>
       <TitlebarButton
         className="hover:bg-destructive hover:text-destructive-foreground"
         label={t.titlebar.close}
         onClick={() => void win.close()}
       >
-        <X className="size-3.5" />
+        <Codicon name="chrome-close" />
       </TitlebarButton>
     </div>
   )

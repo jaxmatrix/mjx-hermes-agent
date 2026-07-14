@@ -9,6 +9,7 @@ import { queryClient } from './lib/query-client'
 import { restoreSessionCookies } from './lib/session-persist'
 import { ThemeProvider } from './themes'
 import 'katex/dist/katex.min.css'
+import '@vscode/codicons/dist/codicon.css'
 import './styles.css'
 
 // Rehydrate a persisted gateway/cloud session into the Rust cookie jar (R2b)

@@ -9,3 +9,11 @@ export const $panesFlipped = persistentAtom<boolean>('hermes.panesFlipped', fals
 export function togglePanesFlipped(): void {
   $panesFlipped.set(!$panesFlipped.get())
 }
+
+// Right-sidebar visibility. The titlebar's right-sidebar toggle (parity with
+// desktop) drives it now; the right-sidebar pane (a later step) reads it.
+export const $rightSidebarOpen = persistentAtom<boolean>('hermes.rightSidebarOpen', false, Codecs.bool)
+
+export function toggleRightSidebar(): void {
+  $rightSidebarOpen.set(!$rightSidebarOpen.get())
+}
