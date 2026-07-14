@@ -20,6 +20,14 @@ use transport::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Install a rustls CryptoProvider process-wide before any TLS handshake.
+    // reqwest builds its own config, but tokio-tungstenite's wss:// path calls
+    // ClientConfig::builder(), which resolves the process-default provider and
+    // panics if the crate features ever expose more than one (or none). Pin ring
+    // explicitly so public wss:// gateways (VPS/VPC with a real cert) work. This
+    // is idempotent — ignore the Err when something already installed one.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_keyring::init())
