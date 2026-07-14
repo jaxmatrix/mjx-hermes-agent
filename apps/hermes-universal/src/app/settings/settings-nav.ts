@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react'
 
 import { useI18n } from '@/i18n'
-import { Archive, Bell, Info, Key, Keyboard, Paw } from '@/lib/icons'
+import { Archive, Bell, Globe, Info, Key, Keyboard, Paw } from '@/lib/icons'
 
 import { SECTIONS } from './constants'
 
@@ -26,6 +26,7 @@ export function useSettingsNav(): SettingsNavEntry[] {
   }))
 
   const customEntries: SettingsNavEntry[] = [
+    { id: 'gateway', icon: Globe, label: t.settings.nav.gateway },
     { id: 'notifications', icon: Bell, label: t.settings.nav.notifications },
     { id: 'keys', icon: Key, label: t.settings.nav.apiKeys },
     { id: 'shortcuts', icon: Keyboard, label: t.shortcuts.title },
