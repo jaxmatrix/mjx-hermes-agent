@@ -259,6 +259,11 @@
     --dt-midground: var(--theme-midground);
     --dt-midground-foreground: #fcfcfc;
     --dt-composer-ring: var(--ui-base);
+    /* Input chrome knobs (desktop parity) — a near-invisible hairline border + a
+       recessed inset over the translucent fill (.desktop-input-chrome). */
+    --dt-input-bg: 0%;
+    --dt-input-border: 7%;
+    --dt-input-inset: inset 0 1px 1px color-mix(in srgb, #000 10%, transparent);
     --dt-destructive: #cf2d56;
     --dt-destructive-foreground: #ffffff;
     --dt-sidebar-bg: var(--ui-bg-sidebar);
@@ -266,9 +271,13 @@
     --dt-user-bubble: var(--ui-chat-bubble-background);
     --dt-user-bubble-border: var(--ui-stroke-tertiary);
 
+    /* Inter Variable is self-hosted (@fontsource-variable/inter, imported in
+       main.tsx) so every platform renders the same thin, correctly-weighted sans
+       instead of falling through to Roboto/GTK (which reads as "Material"). The
+       Segoe/SF/system families stay as fallbacks. */
     --dt-font-sans:
-      'Segoe WPC', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif,
-      'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', emoji;
+      'Inter Variable', 'Inter', 'Segoe WPC', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
+      sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', emoji;
     /* Key caps always use the native UI face — never theme typography overrides. */
     --dt-font-kbd: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
     /* JetBrains Mono first — the bundled face (@font-face above) — so code/diff
@@ -366,6 +375,8 @@ body {
   color: var(--ui-text-primary);
   font-family: var(--dt-font-sans);
   font-size: 0.8125rem;
+  line-height: var(--dt-line-height, 1.5);
+  letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
 }
