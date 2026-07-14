@@ -53,3 +53,9 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"] 
 # rustls so we don't need OpenSSL/NDK-cross OpenSSL on the Android build.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+
+# Explicit, serializable cookie jar (D3.a/D4): replaces reqwest's private default
+# jar so the OAuth flow (oauth.rs) can share one store across a redirect-following
+# and a redirect-disabled client, and so session cookies can be serialized to the
+# keyring and rehydrated across launches (R2b).
+reqwest_cookie_store = "0.8"
