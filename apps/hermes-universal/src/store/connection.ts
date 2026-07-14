@@ -3,8 +3,14 @@ import { loadString, saveString } from '@/lib/persist'
 import { clearSecrets, loadSecrets, saveSecrets, type Secrets } from '@/lib/secure-store'
 import { persistSessionCookies } from '@/lib/session-persist'
 import { atom } from '@/store/atom'
+import type { Connection } from '@/store/gateway-config'
 import { closeGateway, connectGateway } from '@/store/gateway'
 import { httpRequest } from '@/transport/http'
+
+// AuthMode / Connection are now defined in store/gateway-config (the reconciled
+// model incl. 'oauth' + gateway mode). Re-exported here so existing importers of
+// '@/store/connection' keep working.
+export type { AuthMode, Connection } from '@/store/gateway-config'
 
 // The RemoteProvider: resolve a LAN/remote Hermes backend URL + auth, then hold
 // the live connection descriptor. All chat traffic then runs over the gateway
@@ -17,15 +23,7 @@ import { httpRequest } from '@/transport/http'
 //                      session cookie (held in Rust), and the WS uses a fresh
 //                      single-use ?ticket= minted per connect (store/gateway.ts).
 
-export type AuthMode = 'none' | 'token' | 'ticket'
 export type ConnectionPhase = 'idle' | 'probing' | 'connecting' | 'ready' | 'error'
-
-export interface Connection {
-  baseUrl: string
-  authMode: AuthMode
-  /** Present only in token mode. */
-  token?: string
-}
 
 export interface StatusInfo {
   version?: string
