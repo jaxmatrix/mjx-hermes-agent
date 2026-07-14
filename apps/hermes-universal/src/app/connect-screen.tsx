@@ -8,6 +8,7 @@ import {
   $connectionError,
   $connectionPhase,
   connect,
+  connectLocal,
   lastUrl,
   lastUsername,
   loadSavedLogin,
@@ -87,9 +88,13 @@ export function ConnectScreen() {
         </div>
 
         {mode === 'local' && (
-          <p className="connect-sub">
-            Local backend — starting a bundled Hermes runtime on this device. {/* E3.b wires spawn/status */}
-          </p>
+          <>
+            <p className="connect-sub">Start a bundled Hermes backend on this device.</p>
+            {connectError && <div className="error-line">{connectError}</div>}
+            <button className="btn btn-primary" disabled={connecting} onClick={() => void connectLocal()}>
+              {phase === 'connecting' ? 'Starting…' : 'Start local backend'}
+            </button>
+          </>
         )}
 
         {mode === 'cloud' && (

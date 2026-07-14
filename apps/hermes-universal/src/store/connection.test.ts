@@ -17,12 +17,18 @@ vi.mock('@/lib/secure-store', () => ({
   clearSecrets: vi.fn().mockResolvedValue(undefined)
 }))
 vi.mock('@/lib/session-persist', () => ({ persistSessionCookies: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('@/store/local-backend', () => ({
+  spawnLocalBackend: vi.fn(),
+  stopLocalBackend: vi.fn().mockResolvedValue(undefined)
+}))
 
 import { fetchAuthProviders, oauthLogin, oauthStatus, passwordLogin } from '@/lib/auth'
 import { saveSecrets } from '@/lib/secure-store'
+import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
+import { connectGateway } from '@/store/gateway'
 import { httpRequest } from '@/transport/http'
 
-import { $connection, connect, loadSavedLogin } from './connection'
+import { $connection, connect, connectLocal, disconnect, loadSavedLogin } from './connection'
 
 const mockHttp = vi.mocked(httpRequest)
 const mockProviders = vi.mocked(fetchAuthProviders)
@@ -79,6 +85,36 @@ describe('connect — gated auth path selection', () => {
 
     expect(mockProviders).not.toHaveBeenCalled()
     expect($connection.get()).toMatchObject({ mode: 'remote', authMode: 'token', token: 'TOK' })
+  })
+})
+
+describe('connectLocal — desktop local spawn', () => {
+  it('spawns a backend and connects in token mode', async () => {
+    vi.mocked(spawnLocalBackend).mockResolvedValue({
+      baseUrl: 'http://127.0.0.1:5051',
+      token: 'LT',
+      wsUrl: 'ws://127.0.0.1:5051/api/ws?token=LT'
+    })
+
+    await connectLocal()
+
+    expect(spawnLocalBackend).toHaveBeenCalled()
+    expect(vi.mocked(connectGateway)).toHaveBeenCalled()
+    expect($connection.get()).toMatchObject({ mode: 'local', authMode: 'token', token: 'LT' })
+  })
+
+  it('stops the child if the spawn/connect fails', async () => {
+    vi.mocked(spawnLocalBackend).mockRejectedValue(new Error('hermes not found'))
+    await expect(connectLocal()).rejects.toThrow('hermes not found')
+    expect(stopLocalBackend).toHaveBeenCalled()
+  })
+
+  it('disconnect stops the local child when in local mode', async () => {
+    vi.mocked(spawnLocalBackend).mockResolvedValue({ baseUrl: 'http://127.0.0.1:5051', token: 'LT', wsUrl: 'ws://x' })
+    await connectLocal()
+    vi.mocked(stopLocalBackend).mockClear()
+    disconnect()
+    expect(stopLocalBackend).toHaveBeenCalled()
   })
 })
 

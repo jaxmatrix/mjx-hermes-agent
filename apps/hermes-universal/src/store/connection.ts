@@ -6,6 +6,7 @@ import { persistSessionCookies } from '@/lib/session-persist'
 import { atom } from '@/store/atom'
 import { chooseGatedAuth, type Connection } from '@/store/gateway-config'
 import { closeGateway, connectGateway } from '@/store/gateway'
+import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import { httpRequest } from '@/transport/http'
 
 // AuthMode / Connection are now defined in store/gateway-config (the reconciled
@@ -154,7 +155,40 @@ export async function connect(input: ConnectInput): Promise<void> {
   }
 }
 
+/**
+ * Local mode (E3.b, desktop-only): spawn a bundled backend and connect to it in
+ * token mode. The Rust command resolves only once the backend is HTTP-ready.
+ */
+export async function connectLocal(profile?: null | string): Promise<void> {
+  $connectionError.set(null)
+  $connectionPhase.set('connecting')
+  try {
+    const backend = await spawnLocalBackend(profile)
+    const conn: Connection = {
+      baseUrl: backend.baseUrl,
+      mode: 'local',
+      authMode: 'token',
+      token: backend.token,
+      profile: profile ?? null,
+    }
+    $connection.set(conn)
+    await connectGateway(conn)
+    $connectionPhase.set('ready')
+  } catch (err) {
+    // Tear the child down so a failed connect doesn't leave an orphan process.
+    void stopLocalBackend().catch(() => {})
+    $connectionError.set(err instanceof Error ? err.message : String(err))
+    $connectionPhase.set('error')
+    $connection.set(null)
+    throw err
+  }
+}
+
 export function disconnect(): void {
+  // If we were on a local-spawned backend, stop the child too.
+  if ($connection.get()?.mode === 'local') {
+    void stopLocalBackend().catch(() => {})
+  }
   closeGateway()
   $connection.set(null)
   $connectionPhase.set('idle')
