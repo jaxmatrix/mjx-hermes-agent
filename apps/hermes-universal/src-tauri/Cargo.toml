@@ -48,7 +48,9 @@ tauri-plugin-notification = "2"
 
 # Transport core (Step 2a): all HTTP + WS traffic runs here, not in the webview,
 # so there is no CORS constraint and we can talk to any backend on the LAN.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "io-util", "time"] }
+# Random session token for the local-spawn backend (E3.a, desktop-only).
+getrandom = "0.2"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 # rustls so we don't need OpenSSL/NDK-cross OpenSSL on the Android build.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies"] }

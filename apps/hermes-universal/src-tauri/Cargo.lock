@@ -1745,6 +1745,7 @@ version = "0.0.1"
 dependencies = [
  "cookie_store 0.21.1",
  "futures-util",
+ "getrandom 0.2.17",
  "reqwest 0.12.28",
  "reqwest_cookie_store",
  "serde",
@@ -4813,6 +4814,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

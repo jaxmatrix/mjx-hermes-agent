@@ -6,9 +6,11 @@
 //! `transport.rs`. The frontend drives it over IPC and reuses the JS
 //! `JsonRpcGatewayClient` via an IPC-backed WebSocket.
 
+mod local_backend;
 mod oauth;
 mod transport;
 
+use local_backend::{local_backend_spawn, local_backend_status, local_backend_stop, LocalBackendState};
 use oauth::{oauth_login, oauth_logout, oauth_status};
 use transport::{
     cookies_export, cookies_import, http_request, ws_close, ws_open, ws_send, TransportState,
@@ -25,6 +27,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
         .manage(TransportState::new())
+        .manage(LocalBackendState::default())
         .invoke_handler(tauri::generate_handler![
             http_request,
             ws_open,
@@ -34,7 +37,10 @@ pub fn run() {
             oauth_status,
             oauth_logout,
             cookies_export,
-            cookies_import
+            cookies_import,
+            local_backend_spawn,
+            local_backend_status,
+            local_backend_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hermes Universal");
