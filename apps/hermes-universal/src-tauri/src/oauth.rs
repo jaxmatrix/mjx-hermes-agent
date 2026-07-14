@@ -29,6 +29,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use serde::Serialize;
 use tauri::{AppHandle, Manager, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tokio::sync::oneshot;
 
@@ -179,5 +180,73 @@ pub async fn oauth_login(
         return Err(format!("OAuth callback rejected (HTTP {status}): {body}"));
     }
 
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OauthStatus {
+    signed_in: bool,
+    email: Option<String>,
+    display_name: Option<String>,
+}
+
+/// Whether the shared jar currently holds a live gateway session, via the
+/// auth-required `GET /api/auth/me` probe (401 ⇒ signed out). Used on connect to
+/// decide between a silent reconnect and re-opening the sign-in window.
+#[tauri::command]
+pub async fn oauth_status(
+    state: State<'_, TransportState>,
+    base: String,
+) -> Result<OauthStatus, String> {
+    let base = normalize_base(&base);
+    let resp = state
+        .client()
+        .get(format!("{base}/api/auth/me"))
+        .header(reqwest::header::ORIGIN, &base)
+        .send()
+        .await
+        .map_err(|e| format!("auth/me request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Ok(OauthStatus {
+            signed_in: false,
+            email: None,
+            display_name: None,
+        });
+    }
+
+    let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    Ok(OauthStatus {
+        signed_in: true,
+        email: body
+            .get("email")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        display_name: body
+            .get("display_name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    })
+}
+
+/// Sign out of the gateway session. `POST /auth/logout` revokes the refresh token
+/// server-side and responds with max-age=0 Set-Cookie headers, which reqwest's
+/// shared cookie jar applies — clearing the local session in the same round trip.
+#[tauri::command]
+pub async fn oauth_logout(
+    state: State<'_, TransportState>,
+    base: String,
+) -> Result<(), String> {
+    let base = normalize_base(&base);
+    // redirects OFF: the logout 302 -> /login is irrelevant; we only need the
+    // clearing Set-Cookie on the 302 response itself.
+    state
+        .no_redirect_client()
+        .post(format!("{base}/auth/logout"))
+        .header(reqwest::header::ORIGIN, &base)
+        .send()
+        .await
+        .map_err(|e| format!("auth/logout request failed: {e}"))?;
     Ok(())
 }

@@ -9,7 +9,7 @@
 mod oauth;
 mod transport;
 
-use oauth::oauth_login;
+use oauth::{oauth_login, oauth_logout, oauth_status};
 use transport::{http_request, ws_close, ws_open, ws_send, TransportState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -28,7 +28,9 @@ pub fn run() {
             ws_open,
             ws_send,
             ws_close,
-            oauth_login
+            oauth_login,
+            oauth_status,
+            oauth_logout
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hermes Universal");
