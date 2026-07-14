@@ -1354,8 +1354,10 @@ export interface Translations {
       ideaGenerate: string
       ideaGenerating: string
       ideaShuffle: string
+      ideaFailed: string
       noFolders: string
       addFolder: string
+      folderPath: string
       primaryBadge: string
       removeFolder: string
       create: string

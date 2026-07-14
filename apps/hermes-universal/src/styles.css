@@ -300,6 +300,19 @@
     --sidebar-border: var(--dt-sidebar-border);
     --sidebar-ring: var(--dt-ring);
 
+    /* Left-sidebar chrome tokens (desktop parity) — the open/closed surface,
+       the edge border that draws the sidebar↔main division, the pane resize
+       sash, quaternary text, active-row fill, and the docked width/inset. */
+    --ui-sidebar-surface-background: var(--ui-bg-sidebar);
+    --ui-text-quaternary: color-mix(in srgb, var(--ui-base) 36%, transparent);
+    --ui-row-active-background: color-mix(in srgb, var(--ui-accent) 6%, color-mix(in srgb, var(--ui-base) 5%, transparent));
+    --ui-row-hover-background: var(--ui-control-hover-background);
+    --ui-sash-hover-border: color-mix(in srgb, var(--ui-accent) 18%, var(--ui-stroke-tertiary));
+    --chrome-action-hover: var(--ui-control-hover-background);
+    --sidebar-edge-border: color-mix(in srgb, var(--ui-base) 7.5%, transparent);
+    --sidebar-width: 14.8125rem;
+    --sidebar-content-inline-padding: 1rem;
+
     /* Bridge: mobile's own `--ui-*` names (referenced across the custom CSS
        below) aliased onto the derived chain. `--ui-accent` / `--ui-stroke-*` /
        `--ui-text-*` already carry the desktop derivation names, so only these
@@ -325,6 +338,11 @@
     --theme-neutral-sidebar: #0a0a0b;
     --theme-neutral-card: #161618;
     --ui-green: #55a583;
+    /* Division line reads stronger against the dark surface. */
+    --sidebar-edge-border: color-mix(in srgb, var(--ui-base) 12%, transparent);
+    /* Input chrome: softer hairline, deeper inset on dark surfaces. */
+    --dt-input-border: 4%;
+    --dt-input-inset: inset 0 1px 1px color-mix(in srgb, #000 38%, transparent);
   }
 }
 
@@ -364,6 +382,161 @@ body {
 .muted {
   color: var(--ui-text-tertiary);
   font-weight: 400;
+}
+
+/* ── Sidebar row visual states (ported from desktop styles.css) ──
+   .dither  = the textured section-label dot.
+   row-hover = shared instant-in / 100ms-out list-row highlight.
+   .arc-border = animated running-turn border on a working session row.
+   .quest-glow = amber "needs your input" pulse on a clarify-blocked dot. */
+.dither {
+  background: repeating-conic-gradient(currentColor 0% 25%, transparent 0% 50%) 0 0 / 0.125rem 0.125rem;
+}
+
+@utility row-hover {
+  cursor: pointer;
+  transition:
+    color 100ms ease-out,
+    background-color 100ms ease-out;
+
+  &:hover {
+    background-color: var(--ui-row-hover-background);
+    transition: none;
+  }
+}
+
+@keyframes arc-border {
+  0% {
+    background-position: 15% 15%;
+  }
+  100% {
+    background-position: 75% 75%;
+  }
+}
+
+.arc-border {
+  --arc-c0: color-mix(in srgb, var(--dt-foreground) 0%, transparent);
+  --arc-c1: var(--dt-midground);
+  --arc-c2: var(--dt-background);
+  --arc-angle: 160deg;
+  --arc-width: 0.078125rem;
+  --arc-inset: -0.125rem;
+  --arc-duration: 2.23s;
+
+  pointer-events: none;
+  position: absolute;
+  overflow: hidden;
+  border-radius: inherit;
+  inset: var(--arc-inset);
+  padding: var(--arc-width);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+:root.dark .arc-border {
+  --arc-c1: var(--dt-foreground);
+}
+
+.arc-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    var(--arc-angle),
+    transparent 0%,
+    var(--arc-c0) 15%,
+    var(--arc-c1) 20%,
+    var(--arc-c2) 25%,
+    transparent 35%,
+    transparent 40%,
+    var(--arc-c0) 55%,
+    var(--arc-c1) 60%,
+    var(--arc-c2) 65%,
+    transparent 75%,
+    transparent 80%,
+    var(--arc-c0) 95%,
+    var(--arc-c1) 100%
+  );
+  background-size: 300% 300%;
+  animation: arc-border var(--arc-duration) linear infinite;
+}
+
+@keyframes quest-glow {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow:
+      0 0 0.1875rem color-mix(in srgb, var(--color-amber-500, #f59e0b) 70%, transparent),
+      0 0 0.5rem color-mix(in srgb, var(--color-amber-500, #f59e0b) 45%, transparent);
+  }
+  50% {
+    transform: scale(1.18);
+    box-shadow:
+      0 0 0.3125rem color-mix(in srgb, var(--color-amber-500, #f59e0b) 90%, transparent),
+      0 0 0.875rem color-mix(in srgb, var(--color-amber-500, #f59e0b) 65%, transparent);
+  }
+}
+
+.quest-glow {
+  animation: quest-glow 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quest-glow {
+    animation: none;
+    box-shadow:
+      0 0 0.25rem color-mix(in srgb, var(--color-amber-500, #f59e0b) 80%, transparent),
+      0 0 0.625rem color-mix(in srgb, var(--color-amber-500, #f59e0b) 55%, transparent);
+  }
+
+  .arc-border::before {
+    animation: none;
+  }
+}
+
+/* Glassy overlay surfaces (dialog / dropdown / select / context menu) — ported
+   from desktop styles.css. Attribute selectors out-specify the Tailwind bg/border
+   utilities, giving every floating panel one consistent frosted look. */
+[data-slot='dialog-content'],
+[data-slot='dropdown-menu-content'],
+[data-slot='select-content'],
+[data-slot='context-menu-content'] {
+  border-color: var(--ui-stroke-secondary);
+  background: color-mix(in srgb, var(--ui-bg-elevated) 96%, transparent);
+  backdrop-filter: blur(0.75rem) saturate(1.08);
+  -webkit-backdrop-filter: blur(0.75rem) saturate(1.08);
+}
+
+/* Thin form-control chrome (ported from desktop) — Input / Textarea / SelectTrigger
+   share it via controlVariants. Translucent fill + a near-invisible hairline that
+   doubles on hover and goes full on focus; a recessed inset instead of a Material
+   focus ring. */
+.desktop-input-chrome {
+  background: color-mix(in srgb, var(--dt-card) var(--dt-input-bg), transparent);
+  border-color: color-mix(in srgb, var(--dt-composer-ring) var(--dt-input-border), transparent);
+  box-shadow: var(--dt-input-inset);
+  transition: border-color 200ms ease-out;
+}
+
+.desktop-input-chrome:hover {
+  border-color: color-mix(in srgb, var(--dt-composer-ring) calc(var(--dt-input-border) * 2), transparent);
+}
+
+/* `[data-state='open']` keeps a select trigger looking focused while its list is
+   open (Radix moves focus into the list). */
+.desktop-input-chrome:focus,
+.desktop-input-chrome[data-state='open'] {
+  border-color: var(--dt-composer-ring);
+  box-shadow: none;
+  outline: none;
+}
+
+.desktop-input-chrome[aria-invalid='true'] {
+  border-color: var(--dt-destructive);
 }
 
 /* ── Buttons (one primitive, variants by class) ── */

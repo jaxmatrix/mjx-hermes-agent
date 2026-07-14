@@ -1,0 +1,126 @@
+import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+
+import { appViewForPath, ARTIFACTS_ROUTE, MESSAGING_ROUTE, NEW_CHAT_ROUTE, SKILLS_ROUTE, type AppView } from '@/app/routes'
+import { Codicon } from '@/components/ui/codicon'
+import { KbdGroup } from '@/components/ui/kbd'
+import { useI18n } from '@/i18n'
+import { comboTokens } from '@/lib/kbd'
+import { cn } from '@/lib/utils'
+import { openCommandMenu } from '@/store/command-menu'
+import { NEW_SESSION_FLASH_EVENT } from '@/store/layout'
+import { newSession } from '@/store/session'
+
+// The transparent top nav rail — the SAME four items desktop shows: New session
+// (an action, with a ⌘N hint), Capabilities (skills), Messaging, Artifacts. Sits
+// under the frameless titlebar (its top padding clears it). Every other view is
+// reached through the command menu (opened from the titlebar on desktop, or the
+// in-drawer button on phones).
+
+const NEW_SESSION_KBD = comboTokens('mod+n')
+
+type NavId = 'new-session' | 'skills' | 'messaging' | 'artifacts'
+
+interface RailItem {
+  id: NavId
+  icon: string
+  route?: string
+  view?: AppView
+}
+
+const NAV: RailItem[] = [
+  { id: 'new-session', icon: 'robot' },
+  { id: 'skills', icon: 'symbol-misc', route: SKILLS_ROUTE, view: 'skills' },
+  { id: 'messaging', icon: 'comment', route: MESSAGING_ROUTE, view: 'messaging' },
+  { id: 'artifacts', icon: 'files', route: ARTIFACTS_ROUTE, view: 'artifacts' }
+]
+
+const ROW_BASE =
+  'flex h-7 w-full items-center justify-start gap-2 rounded-md border border-transparent px-2 text-left text-[0.8125rem] font-medium text-(--ui-text-secondary) transition-colors duration-100 ease-out hover:bg-(--ui-control-hover-background) hover:text-foreground hover:transition-none'
+
+const ROW_ACTIVE =
+  'border-(--ui-stroke-tertiary) bg-(--ui-control-active-background) text-foreground shadow-none hover:border-(--ui-stroke-tertiary)!'
+
+export function SidebarNavRail({ variant, onNavigate }: { variant: 'pane' | 'sheet'; onNavigate?: () => void }) {
+  const { t } = useI18n()
+  const { pathname } = useLocation()
+  const navigate = useNavigate()
+  const currentView = appViewForPath(pathname)
+  const [kbdFlash, setKbdFlash] = useState(false)
+
+  // Flash the ⌘N hint when the shortcut fires from anywhere.
+  useEffect(() => {
+    const onFlash = () => {
+      setKbdFlash(true)
+      const timer = window.setTimeout(() => setKbdFlash(false), 140)
+      return () => window.clearTimeout(timer)
+    }
+    window.addEventListener(NEW_SESSION_FLASH_EVENT, onFlash)
+    return () => window.removeEventListener(NEW_SESSION_FLASH_EVENT, onFlash)
+  }, [])
+
+  const handle = (item: RailItem) => {
+    if (item.id === 'new-session') {
+      newSession()
+      navigate(NEW_CHAT_ROUTE)
+    } else if (item.route) {
+      navigate(item.route)
+    }
+
+    onNavigate?.()
+  }
+
+  return (
+    <div
+      className={cn(
+        'shrink-0 px-2.5 pb-2',
+        variant === 'pane' ? 'pt-[calc(var(--titlebar-height)+0.375rem)]' : 'pt-[env(safe-area-inset-top)]'
+      )}
+    >
+      <div className="flex flex-col gap-px">
+        {NAV.map(item => {
+          const active = Boolean(item.view) && currentView === item.view
+          const label = t.sidebar.nav[item.id]
+          const isNewSession = item.id === 'new-session'
+
+          return (
+            <button
+              aria-current={active ? 'page' : undefined}
+              className={cn(ROW_BASE, active && ROW_ACTIVE)}
+              key={item.id}
+              onClick={() => handle(item)}
+              title={label}
+              type="button"
+            >
+              <Codicon
+                className="size-4 shrink-0 text-[color-mix(in_srgb,currentColor_72%,transparent)]"
+                name={item.icon}
+              />
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+              {isNewSession && (
+                <KbdGroup className={cn('ml-auto opacity-55', kbdFlash && 'opacity-100!')} keys={NEW_SESSION_KBD} size="sm" />
+              )}
+            </button>
+          )
+        })}
+
+        {/* Phones have no titlebar, so the command menu (other views) needs an
+            in-drawer entry point. Desktop reaches it from the titlebar. */}
+        {variant === 'sheet' && (
+          <button
+            className={cn(ROW_BASE, 'mt-1')}
+            onClick={() => {
+              openCommandMenu()
+              onNavigate?.()
+            }}
+            title={t.titlebar.search}
+            type="button"
+          >
+            <Codicon className="size-4 shrink-0 text-[color-mix(in_srgb,currentColor_72%,transparent)]" name="search" />
+            <span className="min-w-0 flex-1 truncate">{t.titlebar.search}</span>
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}

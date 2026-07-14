@@ -1,9 +1,23 @@
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { NAV_ITEMS } from './nav-items'
 import { AppShell, SidebarProvider } from './sidebar'
+
+// jsdom has no matchMedia; stub it per-test so we can exercise both the docked
+// pane (wide) and the drawer (narrow) branches of the responsive AppShell.
+function mockViewport(wide: boolean) {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: wide,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false
+  })) as unknown as typeof window.matchMedia
+}
 
 function renderShell(initial = '/') {
   return render(
@@ -17,24 +31,24 @@ function renderShell(initial = '/') {
   )
 }
 
+afterEach(() => {
+  // @ts-expect-error — remove the stub between tests
+  delete window.matchMedia
+})
+
 describe('sidebar shell', () => {
-  it('renders every nav item as a link with its route (rail is always mounted)', () => {
-    renderShell()
-    for (const item of NAV_ITEMS) {
-      const links = screen.getAllByRole('link', { name: new RegExp(item.label, 'i') })
-      expect(links.length).toBeGreaterThan(0)
-      expect(links[0]).toHaveAttribute('href', item.path) // MemoryRouter → plain path (HashRouter adds #)
-    }
-  })
-
-  it('marks the active route with aria-current', () => {
-    renderShell('/settings')
-    const settings = screen.getAllByRole('link', { name: /settings/i })[0]
-    expect(settings).toHaveAttribute('aria-current', 'page')
-  })
-
-  it('renders the routed content', () => {
+  it('renders the routed content in the drawer (narrow) layout', () => {
+    mockViewport(false)
     renderShell()
     expect(screen.getByText('content')).toBeInTheDocument()
+  })
+
+  it('mounts the docked chat sidebar alongside content on wide viewports', () => {
+    mockViewport(true)
+    renderShell()
+    expect(screen.getByText('content')).toBeInTheDocument()
+    // The docked pane is open by default, so the sidebar nav rail is present.
+    expect(screen.getByText('New session')).toBeInTheDocument()
+    expect(screen.getByText('Capabilities')).toBeInTheDocument()
   })
 })

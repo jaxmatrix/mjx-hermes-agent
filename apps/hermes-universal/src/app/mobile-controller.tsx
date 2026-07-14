@@ -24,8 +24,10 @@ import { $connectionPhase } from '@/store/connection'
 import { $onboardingActive, checkConfigured } from '@/store/onboarding'
 import { syncPetInfo } from '@/store/pet-gallery'
 
+import { CommandMenu } from './shell/command-menu'
 import { AppShell, SidebarProvider } from './shell/sidebar'
 import { Titlebar } from './shell/titlebar'
+import { useSidebarKeybinds } from './shell/use-sidebar-keybinds'
 
 // Connected-guard + routing. Until a gateway connection is ready we show the
 // full-screen ConnectScreen (no nav). Once ready, the first-run onboarding
@@ -37,6 +39,9 @@ export function MobileController() {
 
   // Draw custom (WebKitGTK-safe) scrollbars on desktop; no-op on mobile/web.
   useThemedScrollbars()
+
+  // Sidebar shortcuts (mod+b / mod+shift+f / mod+n).
+  useSidebarKeybinds()
 
   // On reaching a live connection, check whether a provider is configured and
   // pull the active pet's sprite (K10.b) so the in-app pet can render in chat.
@@ -68,6 +73,9 @@ export function MobileController() {
     content = (
       <>
         <NotificationStack />
+        {/* Global command menu — ⌘K, titlebar search, and the in-drawer button
+            all open it; reaches every view not on the 4-item sidebar rail. */}
+        <CommandMenu />
         <AppShell>
           <Routes>
             <Route element={<ChatScreen />} path="/" />
@@ -99,9 +107,12 @@ export function MobileController() {
   // top inset and per-screen headers.
   return (
     <SidebarProvider>
-      <div className="flex h-full min-h-0 flex-col">
-        {IS_DESKTOP && <Titlebar connected={connected} />}
+      <div className="relative flex h-full min-h-0 flex-col">
         <div className="min-h-0 flex-1">{content}</div>
+        {/* Frameless chrome floats as a transparent overlay above the content so
+            the sidebar/main panes extend to y=0 and their division shows through
+            the titlebar band (Requirement #1). Desktop Tauri only. */}
+        {IS_DESKTOP && <Titlebar connected={connected} />}
       </div>
     </SidebarProvider>
   )

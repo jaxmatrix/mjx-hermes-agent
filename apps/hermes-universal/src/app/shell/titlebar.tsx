@@ -3,10 +3,17 @@ import { useNavigate } from 'react-router-dom'
 import { Codicon } from '@/components/ui/codicon'
 import { useI18n } from '@/i18n'
 import { $hapticsMuted } from '@/store/haptics'
+import { openCommandMenu } from '@/store/command-menu'
 import { useStore } from '@/store/atom'
-import { $panesFlipped, $rightSidebarOpen, togglePanesFlipped, toggleRightSidebar } from '@/store/layout'
+import {
+  $panesFlipped,
+  $rightSidebarOpen,
+  $sidebarOpen,
+  toggleSidebarOpen,
+  togglePanesFlipped,
+  toggleRightSidebar
+} from '@/store/layout'
 
-import { useSidebar } from './sidebar'
 import { TitlebarButton } from './titlebar-button'
 import { WindowControls } from './window-controls'
 
@@ -19,24 +26,31 @@ import { WindowControls } from './window-controls'
 // Desktop-Tauri only (mounted behind IS_DESKTOP in MobileController).
 export function Titlebar({ connected }: { connected: boolean }) {
   const { t } = useI18n()
-  const { openMobile, toggle } = useSidebar()
   const navigate = useNavigate()
   const hapticsMuted = useStore($hapticsMuted)
   const panesFlipped = useStore($panesFlipped)
   const rightSidebarOpen = useStore($rightSidebarOpen)
+  const sidebarOpen = useStore($sidebarOpen)
 
   return (
     <div
-      className="flex h-(--titlebar-height) w-full shrink-0 items-center gap-0.5 bg-transparent px-2 select-none"
+      className="absolute inset-x-0 top-0 z-40 flex h-(--titlebar-height) w-full shrink-0 items-center gap-0.5 bg-transparent px-2 select-none"
       data-tauri-drag-region
     >
       {connected && (
         <div className="flex items-center gap-0.5">
-          <TitlebarButton label={openMobile ? t.titlebar.hideSidebar : t.titlebar.showSidebar} onClick={toggle}>
+          <TitlebarButton
+            active={sidebarOpen}
+            label={sidebarOpen ? t.titlebar.hideSidebar : t.titlebar.showSidebar}
+            onClick={toggleSidebarOpen}
+          >
             <Codicon name="layout-sidebar-left" />
           </TitlebarButton>
           <TitlebarButton active={panesFlipped} label={t.titlebar.swapSidebarSides} onClick={togglePanesFlipped}>
             <Codicon name="arrow-swap" />
+          </TitlebarButton>
+          <TitlebarButton label={t.titlebar.searchTitle} onClick={openCommandMenu}>
+            <Codicon name="search" />
           </TitlebarButton>
         </div>
       )}

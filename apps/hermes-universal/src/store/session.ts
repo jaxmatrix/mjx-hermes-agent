@@ -1,7 +1,15 @@
-import { deleteSession, getSessionMessages, listSessions, renameSession, searchSessions, setSessionArchived } from '@/hermes'
+import {
+  deleteSession,
+  getSessionMessages,
+  listAllProfileSessions,
+  listSessions,
+  renameSession,
+  searchSessions,
+  setSessionArchived
+} from '@/hermes'
 import { toChatMessages } from '@/lib/session-history'
-import { atom } from '@/store/atom'
-import { $busy, $messages, $sessionId, $statusLine, resetChat } from '@/store/chat'
+import { atom, computed } from '@/store/atom'
+import { $busy, $clarify, $messages, $sessionId, $statusLine, resetChat } from '@/store/chat'
 import { requestGateway } from '@/store/gateway'
 import { notifyError } from '@/store/notifications'
 import type { SessionInfo, SessionResumeResponse, SessionSearchResult } from '@/types/hermes'
@@ -20,6 +28,88 @@ export const $sessionsLimit = atom(PAGE)
 export const $activeStoredSessionId = atom<null | string>(null)
 export const $sessionSearch = atom<SessionSearchResult[]>([])
 export const $searchLoading = atom(false)
+
+// Sidebar row state. Universal drives a single active session, so "working" =
+// the active row while a turn streams, and "needs input" = the active row while
+// a clarify prompt is pending. (Desktop tracks these across many sessions via
+// gateway events; the sidebar row API is the same Set/array shape.)
+export const $workingSessionIds = computed(
+  [$busy, $activeStoredSessionId],
+  (busy, activeId) => (busy && activeId ? new Set([activeId]) : new Set<string>())
+)
+export const $attentionSessionIds = computed([$clarify, $activeStoredSessionId], (clarify, activeId) =>
+  clarify && activeId ? [activeId] : []
+)
+
+/** Functional setter for optimistic row edits (rename dialog etc.). */
+export function setSessions(updater: (prev: SessionInfo[]) => SessionInfo[]): void {
+  $sessions.set(updater($sessions.get()))
+}
+
+/** Durable pin key: the lineage-root id survives auto-compression's id rotation. */
+export function sessionPinId(session: SessionInfo): string {
+  return session._lineage_root_id ?? session.id
+}
+
+// ── Messaging-platform sessions (Discord, Telegram, …) ──────────────────────
+const MESSAGING_SOURCES = new Set([
+  'api_server',
+  'bluebubbles',
+  'discord',
+  'email',
+  'homeassistant',
+  'matrix',
+  'mattermost',
+  'qqbot',
+  'signal',
+  'slack',
+  'sms',
+  'telegram',
+  'webhook',
+  'weixin',
+  'whatsapp',
+  'yuanbao'
+])
+
+export function isMessagingSource(source: null | string): boolean {
+  return !!source && MESSAGING_SOURCES.has(source.toLowerCase())
+}
+
+const MESSAGING_SOURCE_LABELS: Record<string, string> = {
+  api_server: 'API',
+  bluebubbles: 'iMessage',
+  discord: 'Discord',
+  email: 'Email',
+  homeassistant: 'Home Assistant',
+  matrix: 'Matrix',
+  mattermost: 'Mattermost',
+  qqbot: 'QQ',
+  signal: 'Signal',
+  slack: 'Slack',
+  sms: 'SMS',
+  telegram: 'Telegram',
+  webhook: 'Webhook',
+  weixin: 'WeChat',
+  whatsapp: 'WhatsApp',
+  yuanbao: 'Yuanbao'
+}
+
+export function messagingSourceLabel(source: string): string {
+  return MESSAGING_SOURCE_LABELS[source.toLowerCase()] ?? source.charAt(0).toUpperCase() + source.slice(1)
+}
+
+export const $messagingSessions = atom<SessionInfo[]>([])
+
+// Cross-platform messaging sessions, kept in their own slice so a busy platform
+// doesn't crowd out the recents page (they're excluded from the recents fetch).
+export async function refreshMessagingSessions(): Promise<void> {
+  try {
+    const res = await listAllProfileSessions(100, 1, 'exclude', 'recent', 'all', { excludeSources: ['cron'] })
+    $messagingSessions.set((res.sessions ?? []).filter(session => isMessagingSource(session.source)))
+  } catch {
+    // Best-effort; keep the last known slice.
+  }
+}
 
 export async function refreshSessions(): Promise<void> {
   $sessionsLoading.set(true)
