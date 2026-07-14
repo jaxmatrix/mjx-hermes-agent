@@ -91,9 +91,9 @@ export const nousTheme: DesktopTheme = {
     userBubbleBorder: '#3A63BD'
   },
   typography: {
+    // Courier Prime is self-hosted (@font-face in styles.css) — no fontUrl.
     fontSans: SYSTEM_SANS,
-    fontMono: `"Courier Prime", ${SYSTEM_MONO}`,
-    fontUrl: 'https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap'
+    fontMono: `"Courier Prime", ${SYSTEM_MONO}`
   }
 }
 
@@ -129,8 +129,8 @@ export const midnightTheme: DesktopTheme = {
     userBubbleBorder: '#242466'
   },
   typography: {
-    fontMono: `"JetBrains Mono", ${SYSTEM_MONO}`,
-    fontUrl: 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap'
+    // JetBrains Mono is bundled (@font-face in styles.css) — no fontUrl.
+    fontMono: `"JetBrains Mono", ${SYSTEM_MONO}`
   }
 }
 
@@ -166,8 +166,8 @@ export const emberTheme: DesktopTheme = {
     userBubbleBorder: '#4a2010'
   },
   typography: {
-    fontMono: `"IBM Plex Mono", ${SYSTEM_MONO}`,
-    fontUrl: 'https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap'
+    // IBM Plex Mono is self-hosted (@font-face in styles.css) — no fontUrl.
+    fontMono: `"IBM Plex Mono", ${SYSTEM_MONO}`
   }
 }
 

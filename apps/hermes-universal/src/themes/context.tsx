@@ -20,7 +20,7 @@ import { Codecs, persistentAtom } from '@/lib/persisted'
 import { useStore } from '@/store/atom'
 
 import { hexToRgb, mix, readableOn } from './color'
-import { BUILTIN_THEME_LIST, BUILTIN_THEMES, DEFAULT_SKIN_NAME, nousTheme } from './presets'
+import { BUILTIN_THEME_LIST, BUILTIN_THEMES, DEFAULT_SKIN_NAME, DEFAULT_TYPOGRAPHY, nousTheme } from './presets'
 import type { DesktopTheme, DesktopThemeColors } from './types'
 import { $userThemes, resolveTheme } from './user-themes'
 
@@ -138,6 +138,9 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark') {
 
   const root = document.documentElement
   const c = theme.colors
+  // nous typography is the shared base, so every skin inherits its Courier Prime
+  // mono unless it overrides — matches desktop.
+  const typo = { ...DEFAULT_TYPOGRAPHY, ...nousTheme.typography, ...theme.typography }
   const rendered = renderedModeFor(c, mode)
   const isDark = rendered === 'dark'
   const midground = c.midground ?? c.ring
@@ -155,7 +158,9 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark') {
     '--theme-secondary': c.secondary,
     '--theme-accent-soft': c.accent,
     '--theme-midground': midground,
+    '--theme-warm': c.primary,
     '--theme-background-seed': c.background,
+    '--theme-sidebar-seed': c.sidebarBackground ?? c.background,
     '--theme-card-seed': c.card,
     '--theme-elevated-seed': c.popover,
     '--theme-bubble-seed': c.userBubble ?? c.popover
@@ -170,8 +175,14 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark') {
     '--dt-input': c.input,
     '--dt-ring': c.ring,
     '--dt-muted': c.muted,
+    '--dt-midground-foreground': c.midgroundForeground ?? readableOn(midground),
+    '--dt-composer-ring': c.composerRing ?? midground,
     '--dt-destructive': c.destructive,
-    '--dt-destructive-foreground': c.destructiveForeground
+    '--dt-destructive-foreground': c.destructiveForeground,
+    '--dt-sidebar-border': c.sidebarBorder ?? c.border,
+    '--dt-user-bubble-border': c.userBubbleBorder ?? c.border,
+    '--dt-font-sans': typo.fontSans,
+    '--dt-font-mono': typo.fontMono
   }
 
   for (const [k, v] of Object.entries({ ...seeds, ...mixesFor(isDark), ...palette })) {

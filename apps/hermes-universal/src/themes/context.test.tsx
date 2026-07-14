@@ -10,6 +10,7 @@ function Harness() {
       <span data-testid="state">{`${themeName}:${resolvedMode}`}</span>
       <button onClick={() => setMode('dark')}>dark</button>
       <button onClick={() => setMode('light')}>light</button>
+      <button onClick={() => setTheme('nous')}>nous</button>
       <button onClick={() => setTheme('ember')}>ember</button>
     </div>
   )
@@ -65,5 +66,34 @@ describe('ThemeProvider', () => {
     expect(screen.getByTestId('state')).toHaveTextContent('ember:')
     expect(localStorage.getItem('hermes.skin')).toBe('ember')
     expect(root().dataset.hermesTheme).toBe('ember')
+  })
+
+  it('writes the skin font tokens onto :root', () => {
+    render(
+      <ThemeProvider>
+        <Harness />
+      </ThemeProvider>
+    )
+    // nous inherits Courier Prime for mono; the bundled Segoe/JetBrains stacks
+    // seed sans + the mono fallback. (Click nous explicitly — the persistent
+    // skin atom carries the prior test's selection across cases.)
+    fireEvent.click(screen.getByText('nous'))
+    expect(root().style.getPropertyValue('--dt-font-sans')).toContain('Segoe WPC')
+    expect(root().style.getPropertyValue('--dt-font-mono')).toContain('Courier Prime')
+
+    fireEvent.click(screen.getByText('ember'))
+    expect(root().style.getPropertyValue('--dt-font-mono')).toContain('IBM Plex Mono')
+  })
+
+  it('never injects an external web-font stylesheet (all faces are bundled)', () => {
+    render(
+      <ThemeProvider>
+        <Harness />
+      </ThemeProvider>
+    )
+    fireEvent.click(screen.getByText('ember'))
+    fireEvent.click(screen.getByText('nous'))
+    // Every mono face is self-hosted via @font-face; no runtime <link> fetch.
+    expect(document.querySelector('link[data-hermes-theme-font]')).toBeNull()
   })
 })
