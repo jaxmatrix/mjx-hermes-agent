@@ -11,7 +11,7 @@ mod local_backend;
 mod oauth;
 mod transport;
 
-use cloud::{portal_discover_agents, portal_login, portal_status};
+use cloud::{portal_agent_sign_in, portal_discover_agents, portal_login, portal_status};
 use local_backend::{local_backend_spawn, local_backend_status, local_backend_stop, LocalBackendState};
 use oauth::{oauth_login, oauth_logout, oauth_status};
 use transport::{
@@ -45,7 +45,8 @@ pub fn run() {
             local_backend_stop,
             portal_login,
             portal_status,
-            portal_discover_agents
+            portal_discover_agents,
+            portal_agent_sign_in
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hermes Universal");

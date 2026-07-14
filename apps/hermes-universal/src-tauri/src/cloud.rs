@@ -12,12 +12,16 @@
 //! can't authenticate portal calls on Android. Cloud is desktop-working; the
 //! Android fallback (an eval'd fetch inside the portal webview) is deferred.
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
 use tauri::webview::cookie::Cookie;
-use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tokio::sync::oneshot;
+
+use crate::transport::TransportState;
 
 const PORTAL_WINDOW_LABEL: &str = "hermes-portal";
 const DEFAULT_PORTAL: &str = "https://portal.nousresearch.com";
@@ -274,4 +278,126 @@ pub async fn portal_status(app: AppHandle) -> Result<PortalStatus, String> {
         signed_in: portal_signed_in(&app, &portal_url),
         portal_base_url: base,
     })
+}
+
+// ---------------------------------------------------------------------------
+// E4.c — silent per-agent SSO.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSignInResult {
+    connected: bool,
+    base_url: String,
+}
+
+/// Silently sign in to an agent's gateway using the live portal session. Same
+/// reqwest-driven exchange as oauth.rs, but the interactive leg runs in the
+/// PORTAL webview (which holds the Privy cookie), so the gateway's OAuth
+/// `authorize` step auto-approves for org members with no prompt. The PKCE +
+/// session cookies land in the shared gateway (transport) jar, so the subsequent
+/// ws-ticket mint is authenticated exactly like a manual OAuth login.
+#[tauri::command]
+pub async fn portal_agent_sign_in(
+    app: AppHandle,
+    state: State<'_, TransportState>,
+    dashboard_url: String,
+) -> Result<AgentSignInResult, String> {
+    let base = dashboard_url.trim().trim_end_matches('/').to_string();
+
+    // 1. Bootstrap the agent gateway's /auth/login (redirects OFF): PKCE cookie
+    //    into the shared gateway jar + the portal authorize URL.
+    let resp = state
+        .no_redirect_client()
+        .get(format!("{base}/auth/login?provider=nous"))
+        .header(reqwest::header::ORIGIN, &base)
+        .send()
+        .await
+        .map_err(|e| format!("agent auth/login failed: {e}"))?;
+    if !resp.status().is_redirection() {
+        return Err(format!("expected a redirect from agent /auth/login, got {}", resp.status()));
+    }
+    let authorize = resp
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| "no Location on agent /auth/login".to_string())?
+        .to_string();
+    let authorize_url = Url::parse(&authorize).map_err(|e| format!("bad authorize URL: {e}"))?;
+    let callback_prefix = format!("{base}/auth/callback");
+
+    // 2. Drive the authorize URL in the portal webview (same data_directory → the
+    //    Privy session auto-approves). Rebuild it hidden with a callback intercept.
+    let (tx, rx) = oneshot::channel::<Result<String, String>>();
+    let tx = Arc::new(Mutex::new(Some(tx)));
+    let tx_nav = tx.clone();
+    let tx_close = tx.clone();
+    let app_build = app.clone();
+    let data_dir = portal_data_dir(&app);
+
+    app.run_on_main_thread(move || {
+        if let Some(existing) = app_build.get_webview_window(PORTAL_WINDOW_LABEL) {
+            let _ = existing.close();
+        }
+        let mut builder =
+            WebviewWindowBuilder::new(&app_build, PORTAL_WINDOW_LABEL, WebviewUrl::External(authorize_url))
+                .title("Nous Portal")
+                .inner_size(520.0, 720.0)
+                .visible(false)
+                .on_navigation(move |url| {
+                    if url.as_str().starts_with(&callback_prefix) {
+                        if let Some(tx) = tx_nav.lock().ok().and_then(|mut g| g.take()) {
+                            let _ = tx.send(Ok(url.to_string()));
+                        }
+                        return false;
+                    }
+                    true
+                });
+        if let Some(dir) = data_dir {
+            builder = builder.data_directory(dir);
+        }
+        match builder.build() {
+            Ok(win) => {
+                win.on_window_event(move |event| {
+                    if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+                        if let Some(tx) = tx_close.lock().ok().and_then(|mut g| g.take()) {
+                            let _ = tx.send(Err("Portal window closed before SSO completed".to_string()));
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                if let Some(tx) = tx_close.lock().ok().and_then(|mut g| g.take()) {
+                    let _ = tx.send(Err(format!("could not open portal window: {e}")));
+                }
+            }
+        }
+    })
+    .map_err(|e| format!("failed to schedule portal window: {e}"))?;
+
+    // FIXME(E4.c): no reveal-on-stall fallback — if the silent cascade needs
+    // interaction (session expired) the window stays hidden until this timeout.
+    let callback_url = tokio::time::timeout(Duration::from_secs(45), rx)
+        .await
+        .map_err(|_| "silent SSO timed out — the portal session may have expired".to_string())?
+        .map_err(|_| "silent SSO was cancelled".to_string())??;
+
+    // Hide the portal window again (keep it for the persisted session).
+    let app_hide = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(w) = app_hide.get_webview_window(PORTAL_WINDOW_LABEL) {
+            let _ = w.hide();
+        }
+    });
+
+    // 3. Complete the exchange via reqwest → agent session cookie in the shared jar.
+    let done = state
+        .no_redirect_client()
+        .get(&callback_url)
+        .header(reqwest::header::ORIGIN, &base)
+        .send()
+        .await
+        .map_err(|e| format!("agent auth/callback failed: {e}"))?;
+    let connected = done.status().is_redirection() || done.status().is_success();
+    Ok(AgentSignInResult { connected, base_url: base })
 }
