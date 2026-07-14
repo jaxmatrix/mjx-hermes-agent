@@ -95,3 +95,8 @@ export async function oauthLogout(base: string): Promise<void> {
 export async function portalLogout(): Promise<void> {
   await invoke('portal_logout')
 }
+
+/** Silent SSO into a cloud agent's gateway using the live portal session. */
+export async function portalAgentSignIn(dashboardUrl: string): Promise<{ connected: boolean; baseUrl: string }> {
+  return invoke<{ connected: boolean; baseUrl: string }>('portal_agent_sign_in', { dashboardUrl })
+}

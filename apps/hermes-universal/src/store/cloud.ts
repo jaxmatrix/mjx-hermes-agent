@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
+import { portalAgentSignIn } from '@/lib/auth'
 import { atom } from '@/store/atom'
 import { connectCloud } from '@/store/connection'
 
@@ -52,8 +53,6 @@ const portalStatus = () => invoke<PortalStatus>('portal_status')
 const portalLogin = () => invoke<PortalStatus>('portal_login')
 const portalDiscover = (org?: string | null) =>
   invoke<DiscoverResult>('portal_discover_agents', { org: org ?? null })
-const portalAgentSignIn = (dashboardUrl: string) =>
-  invoke<{ connected: boolean; baseUrl: string }>('portal_agent_sign_in', { dashboardUrl })
 
 function applyDiscover(result: DiscoverResult): void {
   if (result.needsLogin) {

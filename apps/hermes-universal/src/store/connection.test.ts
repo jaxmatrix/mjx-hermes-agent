@@ -7,12 +7,17 @@ vi.mock('@/lib/auth', () => ({
   oauthLogout: vi.fn().mockResolvedValue(undefined),
   oauthStatus: vi.fn().mockResolvedValue({ signedIn: false }),
   fetchAuthProviders: vi.fn().mockResolvedValue([]),
-  portalLogout: vi.fn().mockResolvedValue(undefined)
+  portalLogout: vi.fn().mockResolvedValue(undefined),
+  portalAgentSignIn: vi.fn().mockResolvedValue({ connected: true, baseUrl: 'https://a1' })
 }))
-vi.mock('@/store/gateway', () => ({
-  connectGateway: vi.fn().mockResolvedValue(undefined),
-  closeGateway: vi.fn()
-}))
+vi.mock('@/store/gateway', async () => {
+  const { atom } = await import('@/store/atom')
+  return {
+    connectGateway: vi.fn().mockResolvedValue(undefined),
+    closeGateway: vi.fn(),
+    $gatewayState: atom('idle')
+  }
+})
 vi.mock('@/lib/secure-store', () => ({
   saveSecrets: vi.fn().mockResolvedValue(true),
   loadSecrets: vi.fn().mockResolvedValue({ token: 'T', password: 'P' }),
@@ -24,13 +29,13 @@ vi.mock('@/store/local-backend', () => ({
   stopLocalBackend: vi.fn().mockResolvedValue(undefined)
 }))
 
-import { fetchAuthProviders, oauthLogin, oauthLogout, oauthStatus, passwordLogin, portalLogout } from '@/lib/auth'
+import { fetchAuthProviders, oauthLogin, oauthLogout, oauthStatus, passwordLogin, portalAgentSignIn, portalLogout } from '@/lib/auth'
 import { clearSecrets, saveSecrets } from '@/lib/secure-store'
 import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
-import { connectGateway } from '@/store/gateway'
+import { $gatewayState, connectGateway } from '@/store/gateway'
 import { httpRequest } from '@/transport/http'
 
-import { $connection, connect, connectLocal, disconnect, loadSavedLogin, signOut } from './connection'
+import { $connection, connect, connectCloud, connectLocal, disconnect, loadSavedLogin, signOut } from './connection'
 
 const mockHttp = vi.mocked(httpRequest)
 const mockProviders = vi.mocked(fetchAuthProviders)
@@ -135,6 +140,43 @@ describe('signOut', () => {
     await signOut()
     expect(oauthLogout).toHaveBeenCalledWith('https://a1')
     expect(portalLogout).toHaveBeenCalled()
+  })
+})
+
+describe('connectCloud — reauth', () => {
+  it('retries via silent SSO when the agent session already expired', async () => {
+    vi.mocked(connectGateway).mockRejectedValueOnce({ needsOauthLogin: true }).mockResolvedValueOnce(undefined)
+    await connectCloud('https://a1')
+    expect(portalAgentSignIn).toHaveBeenCalledWith('https://a1')
+    expect(connectGateway).toHaveBeenCalledTimes(2)
+    expect($connection.get()).toMatchObject({ mode: 'cloud' })
+  })
+})
+
+describe('auto-reconnect', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    disconnect()
+    $gatewayState.set('idle')
+    vi.useRealTimers()
+  })
+
+  it('re-dials on an unexpected close', async () => {
+    await connectCloud('https://gw')
+    vi.mocked(connectGateway).mockClear()
+    $gatewayState.set('closed')
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(connectGateway).toHaveBeenCalled()
+  })
+
+  it('does not re-dial after an intentional disconnect', async () => {
+    await connectCloud('https://gw')
+    disconnect()
+    $connection.set({ baseUrl: 'https://gw', mode: 'remote', authMode: 'oauth' })
+    vi.mocked(connectGateway).mockClear()
+    $gatewayState.set('closed')
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(connectGateway).not.toHaveBeenCalled()
   })
 })
 
