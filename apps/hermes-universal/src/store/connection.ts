@@ -1,5 +1,5 @@
 import { isGatewayReauthRequired } from '@/gateway'
-import { fetchAuthProviders, oauthLogin, oauthStatus, passwordLogin } from '@/lib/auth'
+import { fetchAuthProviders, oauthLogin, oauthLogout, oauthStatus, passwordLogin, portalLogout } from '@/lib/auth'
 import { loadString, saveString } from '@/lib/persist'
 import { clearSecrets, loadSecrets, saveSecrets, type Secrets } from '@/lib/secure-store'
 import { persistSessionCookies } from '@/lib/session-persist'
@@ -220,4 +220,18 @@ export function disconnect(): void {
   $connection.set(null)
   $connectionPhase.set('idle')
   $connectionError.set(null)
+}
+
+/**
+ * Sign out: unlike disconnect() (which only drops the socket), this invalidates
+ * the session — revokes the gateway OAuth cookie, clears the portal (Privy)
+ * session for cloud, forgets stored secrets (incl. the persisted cookie jar),
+ * then disconnects.
+ */
+export async function signOut(): Promise<void> {
+  const conn = $connection.get()
+  if (conn?.authMode === 'oauth') await oauthLogout(conn.baseUrl).catch(() => {})
+  if (conn?.mode === 'cloud') await portalLogout().catch(() => {})
+  await forgetSavedLogin().catch(() => {})
+  disconnect()
 }

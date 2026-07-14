@@ -90,3 +90,8 @@ export async function oauthStatus(base: string): Promise<OauthStatus> {
 export async function oauthLogout(base: string): Promise<void> {
   await invoke('oauth_logout', { base })
 }
+
+/** Clear the Nous portal (Privy) session held in the portal webview. Best-effort. */
+export async function portalLogout(): Promise<void> {
+  await invoke('portal_logout')
+}

@@ -255,6 +255,21 @@ pub async fn portal_discover_agents(
     Ok(DiscoverResult { agents, org, ..Default::default() })
 }
 
+/// Sign out of the portal: clear the portal webview's stored browsing data (the
+/// Privy session cookie in its data_directory). Best-effort — a missing window
+/// means there's nothing to clear.
+#[tauri::command]
+pub async fn portal_logout(app: AppHandle) -> Result<(), String> {
+    let app_clear = app.clone();
+    app.run_on_main_thread(move || {
+        if let Some(w) = app_clear.get_webview_window(PORTAL_WINDOW_LABEL) {
+            let _ = w.clear_all_browsing_data();
+        }
+    })
+    .map_err(|e| format!("failed to clear portal session: {e}"))?;
+    Ok(())
+}
+
 /// Whether a live portal session exists, without prompting. Ensures a hidden
 /// portal webview exists (to hold/read the persisted session), then reads its
 /// cookies.

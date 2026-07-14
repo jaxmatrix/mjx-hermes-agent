@@ -4,8 +4,10 @@ vi.mock('@/transport/http', () => ({ httpRequest: vi.fn() }))
 vi.mock('@/lib/auth', () => ({
   passwordLogin: vi.fn().mockResolvedValue(undefined),
   oauthLogin: vi.fn().mockResolvedValue(undefined),
+  oauthLogout: vi.fn().mockResolvedValue(undefined),
   oauthStatus: vi.fn().mockResolvedValue({ signedIn: false }),
-  fetchAuthProviders: vi.fn().mockResolvedValue([])
+  fetchAuthProviders: vi.fn().mockResolvedValue([]),
+  portalLogout: vi.fn().mockResolvedValue(undefined)
 }))
 vi.mock('@/store/gateway', () => ({
   connectGateway: vi.fn().mockResolvedValue(undefined),
@@ -22,13 +24,13 @@ vi.mock('@/store/local-backend', () => ({
   stopLocalBackend: vi.fn().mockResolvedValue(undefined)
 }))
 
-import { fetchAuthProviders, oauthLogin, oauthStatus, passwordLogin } from '@/lib/auth'
-import { saveSecrets } from '@/lib/secure-store'
+import { fetchAuthProviders, oauthLogin, oauthLogout, oauthStatus, passwordLogin, portalLogout } from '@/lib/auth'
+import { clearSecrets, saveSecrets } from '@/lib/secure-store'
 import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import { connectGateway } from '@/store/gateway'
 import { httpRequest } from '@/transport/http'
 
-import { $connection, connect, connectLocal, disconnect, loadSavedLogin } from './connection'
+import { $connection, connect, connectLocal, disconnect, loadSavedLogin, signOut } from './connection'
 
 const mockHttp = vi.mocked(httpRequest)
 const mockProviders = vi.mocked(fetchAuthProviders)
@@ -115,6 +117,24 @@ describe('connectLocal — desktop local spawn', () => {
     vi.mocked(stopLocalBackend).mockClear()
     disconnect()
     expect(stopLocalBackend).toHaveBeenCalled()
+  })
+})
+
+describe('signOut', () => {
+  it('remote oauth: revokes the gateway cookie, forgets secrets, disconnects', async () => {
+    $connection.set({ baseUrl: 'https://gw', mode: 'remote', authMode: 'oauth' })
+    await signOut()
+    expect(oauthLogout).toHaveBeenCalledWith('https://gw')
+    expect(portalLogout).not.toHaveBeenCalled()
+    expect(clearSecrets).toHaveBeenCalled()
+    expect($connection.get()).toBeNull()
+  })
+
+  it('cloud: also clears the portal session', async () => {
+    $connection.set({ baseUrl: 'https://a1', mode: 'cloud', authMode: 'oauth' })
+    await signOut()
+    expect(oauthLogout).toHaveBeenCalledWith('https://a1')
+    expect(portalLogout).toHaveBeenCalled()
   })
 })
 
