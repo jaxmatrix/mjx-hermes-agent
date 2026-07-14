@@ -11,15 +11,23 @@ export interface ApiRequest {
   method?: string
   body?: unknown
   timeoutMs?: number
-  // Present so the ported desktop REST client (src/hermes.ts) — whose
-  // profileScoped() merges a { profile } into every call — compiles unchanged.
-  // FIXME(E): mobile is single-profile today, so this is accepted and ignored;
-  // thread it into backend selection / a ?profile= query when multi-profile
-  // (Track E) lands.
+  // Threaded into a `?profile=` query (E7.a). The ported desktop REST client
+  // (src/hermes.ts) merges { profile } into every profileScoped() call; the
+  // backend scopes that request to the named profile's HERMES_HOME
+  // (web_server.py _profile_scope). null/"current" = the gateway's own profile.
   profile?: string | null
 }
 
-export async function api<T = unknown>({ path, method = 'GET', body, timeoutMs }: ApiRequest): Promise<T> {
+// Append ?profile= to the request path when a non-default profile is set,
+// merging with any existing query string.
+function withProfile(path: string, profile?: string | null): string {
+  const p = profile?.trim()
+  if (!p || p === 'current') return path
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}profile=${encodeURIComponent(p)}`
+}
+
+export async function api<T = unknown>({ path, method = 'GET', body, timeoutMs, profile }: ApiRequest): Promise<T> {
   const conn = $connection.get()
   if (!conn) throw new Error('Not connected to a Hermes backend')
 
@@ -27,7 +35,7 @@ export async function api<T = unknown>({ path, method = 'GET', body, timeoutMs }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (conn.token) headers['X-Hermes-Session-Token'] = conn.token
 
-  const res = await httpRequest(method, `${conn.baseUrl}${path}`, { headers, body, timeoutMs })
+  const res = await httpRequest(method, `${conn.baseUrl}${withProfile(path, profile)}`, { headers, body, timeoutMs })
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`${method} ${path} → HTTP ${res.status}: ${res.body.slice(0, 200)}`)
   }

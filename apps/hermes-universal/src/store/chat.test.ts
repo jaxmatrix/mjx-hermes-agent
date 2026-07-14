@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
 
-vi.mock('@/store/gateway', () => ({ requestGateway: vi.fn().mockResolvedValue({}) }))
+vi.mock('@/store/gateway', async () => {
+  const { atom } = await import('@/store/atom')
+  return { requestGateway: vi.fn().mockResolvedValue({}), $gatewayState: atom('idle') }
+})
 import { requestGateway } from '@/store/gateway'
 
 import { $approval, $clarify, $messages, $secret, $sudo, handleGatewayEvent, resetChat, respondSudo } from './chat'

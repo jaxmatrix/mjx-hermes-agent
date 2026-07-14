@@ -19,14 +19,18 @@ vi.mock('@/hermes', () => ({
   })),
   createProfile: vi.fn(async () => ({ name: 'new', ok: true, path: '/p/new' })),
   renameProfile: vi.fn(async () => ({ name: 'renamed', ok: true, path: '/p/renamed' })),
-  deleteProfile: vi.fn(async () => ({ ok: true, path: '/p/x' }))
+  deleteProfile: vi.fn(async () => ({ ok: true, path: '/p/x' })),
+  setApiRequestProfile: vi.fn()
 }))
+vi.mock('@/lib/query-client', () => ({ queryClient: { invalidateQueries: vi.fn() } }))
 
-import { deleteProfile } from '@/hermes'
+import { deleteProfile, setApiRequestProfile } from '@/hermes'
+import { queryClient } from '@/lib/query-client'
 
-import { $profiles, isValidProfileName, refreshProfiles, removeProfile } from './profiles'
+import { $activeProfile, $profiles, isValidProfileName, refreshProfiles, removeProfile, setActiveProfile } from './profiles'
 
 const del = vi.mocked(deleteProfile)
+const setScope = vi.mocked(setApiRequestProfile)
 
 describe('profiles store', () => {
   beforeEach(() => {
@@ -53,5 +57,26 @@ describe('profiles store', () => {
     expect(isValidProfileName('-bad')).toBe(false)
     expect(isValidProfileName('Bad Caps')).toBe(false)
     expect(isValidProfileName('')).toBe(false)
+  })
+})
+
+describe('setActiveProfile', () => {
+  beforeEach(() => {
+    setScope.mockClear()
+    vi.mocked(queryClient.invalidateQueries).mockClear()
+    $activeProfile.set(null)
+  })
+
+  it('re-scopes REST + invalidates queries + updates the atom', () => {
+    setActiveProfile('research')
+    expect(setScope).toHaveBeenCalledWith('research')
+    expect(queryClient.invalidateQueries).toHaveBeenCalled()
+    expect($activeProfile.get()).toBe('research')
+  })
+
+  it('is a no-op when unchanged', () => {
+    setActiveProfile(null)
+    expect(setScope).not.toHaveBeenCalled()
+    expect(queryClient.invalidateQueries).not.toHaveBeenCalled()
   })
 })

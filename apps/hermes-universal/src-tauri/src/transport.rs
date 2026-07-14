@@ -12,14 +12,18 @@
 //! which drives this via an IPC-backed `WebSocketLike`.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use reqwest_cookie_store::CookieStoreMutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
+
+const USER_AGENT: &str = concat!("hermes-universal/", env!("CARGO_PKG_VERSION"));
 
 /// A live raw WebSocket: `tx` feeds the writer task; the two task handles are
 /// aborted on close.
@@ -30,23 +34,60 @@ pub struct SocketHandle {
 }
 
 pub struct TransportState {
+    /// Redirect-following client — the default for `http_request` and every
+    /// REST call the webview drives.
     http: reqwest::Client,
+    /// Redirect-DISABLED client sharing the same cookie jar. The OAuth flow
+    /// (oauth.rs) needs to read the 302 `Location` off `/auth/login` rather than
+    /// auto-following it into the IDP, while still landing every Set-Cookie in
+    /// the shared jar.
+    http_no_redirect: reqwest::Client,
+    /// The one cookie jar both clients (and the WS ticket mint) share. Held
+    /// explicitly (vs reqwest's private default) so OAuth can span two clients
+    /// and D4 can serialize/rehydrate it across launches.
+    cookies: Arc<CookieStoreMutex>,
     sockets: Mutex<HashMap<String, SocketHandle>>,
 }
 
 impl TransportState {
     pub fn new() -> Self {
+        // One jar, shared by both clients via `.cookie_provider`, so the login
+        // session cookie is retained across http_request calls and the
+        // subsequent POST /api/auth/ws-ticket is authenticated (gated + oauth).
+        let cookies = Arc::new(CookieStoreMutex::default());
         let http = reqwest::Client::builder()
-            .user_agent(concat!("hermes-universal/", env!("CARGO_PKG_VERSION")))
-            // Retain the login session cookie across http_request calls so the
-            // subsequent POST /api/auth/ws-ticket is authenticated (gated mode).
-            .cookie_store(true)
+            .user_agent(USER_AGENT)
+            .cookie_provider(cookies.clone())
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        let http_no_redirect = reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .cookie_provider(cookies.clone())
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             http,
+            http_no_redirect,
+            cookies,
             sockets: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The redirect-following REST client (shared cookie jar).
+    pub fn client(&self) -> &reqwest::Client {
+        &self.http
+    }
+
+    /// The redirect-disabled client (shared cookie jar) — OAuth bootstrap legs.
+    pub fn no_redirect_client(&self) -> &reqwest::Client {
+        &self.http_no_redirect
+    }
+
+    /// The shared cookie jar — used by oauth.rs (post-callback inspection) and
+    /// D4 persistence.
+    pub fn cookies(&self) -> &Arc<CookieStoreMutex> {
+        &self.cookies
     }
 }
 
@@ -204,5 +245,35 @@ pub async fn ws_close(state: State<'_, TransportState>, id: String) -> Result<()
         handle.reader.abort();
         handle.writer.abort();
     }
+    Ok(())
+}
+
+/// Serialize the shared cookie jar to JSON so the JS layer can persist it in the
+/// OS keyring (R2b). Captures unexpired, persistent cookies — which includes the
+/// gateway session (`hermes_session_at/_rt`) and any portal (Privy) cookie — so a
+/// gateway/cloud login survives an app restart. The refresh-token cookie alone is
+/// enough: the gateway transparently re-mints the short-lived access cookie.
+#[tauri::command]
+pub fn cookies_export(state: State<'_, TransportState>) -> Result<String, String> {
+    let store = state
+        .cookies()
+        .lock()
+        .map_err(|_| "cookie jar poisoned".to_string())?;
+    let mut buf: Vec<u8> = Vec::new();
+    cookie_store::serde::json::save(&store, &mut buf).map_err(|e| e.to_string())?;
+    String::from_utf8(buf).map_err(|e| e.to_string())
+}
+
+/// Rehydrate the shared cookie jar from a previously-exported JSON blob (skipping
+/// any expired cookies). Called once on launch before the first connect so a saved
+/// gateway/cloud session is restored without a fresh sign-in.
+#[tauri::command]
+pub fn cookies_import(state: State<'_, TransportState>, json: String) -> Result<(), String> {
+    let loaded = cookie_store::serde::json::load(json.as_bytes()).map_err(|e| e.to_string())?;
+    let mut store = state
+        .cookies()
+        .lock()
+        .map_err(|_| "cookie jar poisoned".to_string())?;
+    *store = loaded;
     Ok(())
 }

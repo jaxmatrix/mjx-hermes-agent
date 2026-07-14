@@ -7,6 +7,7 @@ import { AboutSection } from './about-section'
 import { AppearanceSection } from './appearance-section'
 import { ArchivedSection } from './archived-section'
 import { ConfigSection } from './config-section'
+import { GatewaySection } from './gateway-section'
 import { voiceFieldVisible } from './helpers'
 import { KeysSection } from './keys-section'
 import { ModelSection } from './model-section'
@@ -57,6 +58,10 @@ function SectionBody({ section }: { section: string }) {
     // Keys/credentials (Jc10): env-var management. Provider OAuth connect is D2.
     case 'keys':
       return <KeysSection />
+
+    // Gateway (J10): mode picker + current connection + disconnect/sign-out.
+    case 'gateway':
+      return <GatewaySection />
 
     // Keyboard shortcuts reference (K16).
     case 'shortcuts':

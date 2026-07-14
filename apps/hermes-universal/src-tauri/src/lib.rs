@@ -6,12 +6,30 @@
 //! `transport.rs`. The frontend drives it over IPC and reuses the JS
 //! `JsonRpcGatewayClient` via an IPC-backed WebSocket.
 
+mod cloud;
+mod local_backend;
+mod oauth;
 mod transport;
 
-use transport::{http_request, ws_close, ws_open, ws_send, TransportState};
+use cloud::{
+    portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
+};
+use local_backend::{local_backend_spawn, local_backend_status, local_backend_stop, LocalBackendState};
+use oauth::{oauth_login, oauth_logout, oauth_status};
+use transport::{
+    cookies_export, cookies_import, http_request, ws_close, ws_open, ws_send, TransportState,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Install a rustls CryptoProvider process-wide before any TLS handshake.
+    // reqwest builds its own config, but tokio-tungstenite's wss:// path calls
+    // ClientConfig::builder(), which resolves the process-default provider and
+    // panics if the crate features ever expose more than one (or none). Pin ring
+    // explicitly so public wss:// gateways (VPS/VPC with a real cert) work. This
+    // is idempotent — ignore the Err when something already installed one.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_keyring::init())
@@ -21,11 +39,25 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
         .manage(TransportState::new())
+        .manage(LocalBackendState::default())
         .invoke_handler(tauri::generate_handler![
             http_request,
             ws_open,
             ws_send,
-            ws_close
+            ws_close,
+            oauth_login,
+            oauth_status,
+            oauth_logout,
+            cookies_export,
+            cookies_import,
+            local_backend_spawn,
+            local_backend_status,
+            local_backend_stop,
+            portal_login,
+            portal_status,
+            portal_discover_agents,
+            portal_agent_sign_in,
+            portal_logout
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hermes Universal");

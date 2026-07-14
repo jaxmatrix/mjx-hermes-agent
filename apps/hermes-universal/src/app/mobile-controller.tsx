@@ -73,7 +73,7 @@ export function MobileController() {
           <Route element={<MessagingScreen />} path="/messaging" />
           <Route element={<ArtifactsScreen />} path="/artifacts" />
           <Route element={<CronScreen />} path="/cron" />
-          {/* Profile switching/projects gated (FIXME(E)); this is the CRUD/soul view. */}
+          {/* CRUD/soul view; active-profile switching lives in Settings → Gateway (E7). */}
           <Route element={<ProfilesScreen />} path="/profiles" />
           <Route element={<AgentsScreen />} path="/agents" />
           <Route element={<StarmapScreen />} path="/starmap" />

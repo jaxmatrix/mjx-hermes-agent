@@ -48,8 +48,22 @@ tauri-plugin-notification = "2"
 
 # Transport core (Step 2a): all HTTP + WS traffic runs here, not in the webview,
 # so there is no CORS constraint and we can talk to any backend on the LAN.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "io-util", "time"] }
+# Random session token for the local-spawn backend (E3.a, desktop-only).
+getrandom = "0.2"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 # rustls so we don't need OpenSSL/NDK-cross OpenSSL on the Android build.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+# Pin the rustls crypto provider explicitly (see lib.rs): tokio-tungstenite's
+# wss:// path calls ClientConfig::builder(), which needs a process-default provider.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+# Explicit, serializable cookie jar (D3.a/D4): replaces reqwest's private default
+# jar so the OAuth flow (oauth.rs) can share one store across a redirect-following
+# and a redirect-disabled client, and so session cookies can be serialized to the
+# keyring and rehydrated across launches (R2b).
+reqwest_cookie_store = "0.8"
+# Direct handle on the cookie store's JSON (de)serialization (D4/R2b) — reqwest_cookie_store
+# re-exports the store type but not its serde helpers.
+cookie_store = "0.21"

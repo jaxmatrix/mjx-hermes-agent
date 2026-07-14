@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
-import { IS_MOBILE } from '@/lib/platform'
+import { IS_TAURI } from '@/lib/platform'
 
 // Secure credential storage (D1). Isolates the OS keystore behind a small typed
 // API so the rest of the app never touches the plugin directly. Silent (no
@@ -24,8 +24,9 @@ export interface Secrets {
 }
 
 // The keystore keys one credential per username under the shared service. We keep
-// token and password as two named entries.
-type SecretKey = 'token' | 'password'
+// token and password as two named entries; `cookies` holds the serialized gateway
+// session jar (R2b) so an OAuth/cloud login survives an app restart.
+type SecretKey = 'token' | 'password' | 'cookies'
 
 // The plugin's service name is set once per process (a Rust OnceLock), so init is
 // memoized. On failure the cached promise is cleared so a later call can retry.
@@ -65,8 +66,13 @@ async function writeKey(key: SecretKey, value: string | undefined): Promise<void
 // Keystore calls reject when there is no Tauri runtime (browser dev / vitest) or
 // no keystore available; treat any failure as "unavailable" so callers degrade to
 // no-persistence rather than crashing (never fall back to plaintext).
+//
+// D6: gated on IS_TAURI (any native target) rather than IS_MOBILE — the vendored
+// keyring plugin also backs desktop (Linux Secret Service / macOS Keychain /
+// Windows Credential Manager), so OAuth/cloud sessions now persist on desktop too.
+// A missing Secret Service daemon on Linux simply throws → caught → no-persistence.
 async function safe<T>(op: () => Promise<T>, fallback: T): Promise<T> {
-  if (!IS_MOBILE) return fallback
+  if (!IS_TAURI) return fallback
   try {
     return await op()
   } catch {
@@ -105,6 +111,24 @@ export async function clearSecrets(): Promise<void> {
   await safe(async () => {
     await writeKey('token', undefined)
     await writeKey('password', undefined)
+    await writeKey('cookies', undefined)
     return undefined
   }, undefined)
+}
+
+/**
+ * Persist the serialized gateway session cookie jar (R2b). Kept separate from
+ * {@link saveSecrets} because it round-trips through the Rust transport
+ * (`cookies_export`/`cookies_import`), not the connection form.
+ */
+export async function saveSessionCookies(json: string): Promise<boolean> {
+  return safe(async () => {
+    await writeKey('cookies', json)
+    return true
+  }, false)
+}
+
+/** Read the persisted cookie jar blob, or null when unavailable / none saved. */
+export async function loadSessionCookies(): Promise<string | null> {
+  return safe(async () => kGet('cookies'), null)
 }

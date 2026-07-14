@@ -6,7 +6,7 @@
 > historically called "mobile"). Update the status table as steps land.
 >
 > **Naming note:** this app was originally scaffolded as `apps/mobile` and many steps below say "mobile".
-> It is really a *universal* rewrite, not a mobile-only client — see the handoff summary at the bottom for
+> It is really a _universal_ rewrite, not a mobile-only client — see the handoff summary at the bottom for
 > the rename and the deferred "de-mobile" cleanup.
 
 Status legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[-]` gated/skipped for this platform.
@@ -175,18 +175,60 @@ Each step: `id [TAG] description — target file(s)`. Tick the box on landing; n
 
 - [x] D1 [RUST] Secure storage via `tauri-plugin-keyring` (silent, Android Keystore-backed) + `src/lib/secure-store.ts` seam. NOTE: pivoted from `tauri-plugin-keystore` (biometric) — its only published build was a broken alpha; `FIXME(D)` tracks re-adding biometric via `tauri-plugin-biometric`. **Android runtime crash found + fixed (2026-07-14):** the earlier "verified on-device" claim was false — on device the app **aborted on launch (SIGABRT)** with a Rust panic `android context was not initialized` (`ndk-context-0.1.1/src/lib.rs:72`). `android-native-keyring-store` reads its Context from the global `ndk-context`, which **Tauri/wry never initializes** (it's the only dep on that crate — see Cargo.lock), so `Store::new()` (eager, in plugin `setup()`) panicked. Fixed with 4 edits in `plugins/tauri-plugin-keyring/`: (1) new `android/.../io/crates/keyring/Keyring.kt` binding the store crate's JNI `initializeNdkContext`; (2) `KeyringPlugin.kt` `load()` now calls it; (3) `mobile.rs` no longer builds the store eagerly; (4) `implementation.rs` `ensure_android_store()` creates the store lazily on first command (after the WebView + `load()` exist). Verified on x86_64 emulator AND the Nokia G42 (arm64) physical device — no crash, keyring path exercised via `connect-screen` mount. [R2]
 - [x] D2 [JS] Credentials off plaintext → keyring (token/password); url/username stay in localStorage; silent prefill on mount — `src/store/connection.ts`, `connect-screen.tsx`
-- [ ] D3 [RUST] `tauri-plugin-deep-link` + `hermes://` (AndroidManifest intent-filter) [R3/R13] — **OAuth half (D3–D6) deferred to its own session**
-- [ ] D4 [RUST] `oauth_login/oauth_status/oauth_logout` (system browser → deep-link → cookie jar) — `src-tauri/src/oauth.rs` [R3/R4]
-- [ ] D5 [JS] Pure `connection-config` model (auth-mode enum incl. `oauth`, cookie-liveness via ws-ticket) — `src/store/gateway-config.ts`
-- [ ] D6 [JS] Wire `authMode:'oauth'` into `connect()` — `src/store/connection.ts`
+- **D3 [RUST] gateway OAuth — mechanism CORRECTED (branch `port/hermes-universal/2`).** The ledger's
+  original `hermes://auth/callback` deep-link design (R3) is **not viable**: the gateway's `_redirect_uri()`
+  (`hermes_cli/dashboard_auth/routes.py:56`) is **always** a same-origin `{base}/auth/callback` https URL —
+  it can never be a custom scheme, and there's no loopback/token-exchange endpoint. So `tauri-plugin-deep-link`
+  is **not used for OAuth** (it stays a separate R13 "send to app" concern, deferred). Instead: reqwest drives
+  both gateway legs (so the PKCE + session cookies land in the shared jar automatically) and a webview handles
+  only the interactive IDP portion.
+  - [x] D3.a [RUST] Explicit serializable reqwest cookie store (`reqwest_cookie_store`, shared by a
+    redirect-following + a redirect-disabled client) — `transport.rs`, `Cargo.toml`. `9d8532107`
+  - [x] D3.b [RUST] `oauth_login(base, provider?)`: reqwest `/auth/login` (redirects off) → `WebviewWindow`
+    authorize → `on_navigation` intercept `{base}/auth/callback` (cancel, capture) → reqwest callback → session
+    cookie in jar — `src-tauri/src/oauth.rs`. Android multi-webview `FIXME(D3)` (device-only). `d0735ebe8`
+  - [x] D3.c [RUST] `oauth_status` (GET /api/auth/me) + `oauth_logout` (POST /auth/logout, clears via
+    Set-Cookie) — `src-tauri/src/oauth.rs`. `b4c9a30fc`
+- [x] D4 [RUST/R2b] Persist session cookies across launches: `cookies_export`/`cookies_import` (cookie_store
+  JSON) round-tripped through the keyring (`lib/session-persist.ts`, `secure-store` `cookies` entry); restore
+  on startup, persist after connect — `transport.rs`, `main.tsx`, `connection.ts`. `7828e9629`
+- [x] D5.a [JS] Reconciled `gateway-config` model: unified `AuthMode` (adds `oauth`) + `GatewayMode` +
+  `authModeFromStatus`/`modeIsRemoteLike`; `resolveWsUrl` consumes the vendored `resolveGatewayWsUrl` (oauth
+  path) + threads `profile` — `src/store/gateway-config.ts`, `gateway.ts`, `connection.ts`. `6d4eaa538`
+- [x] D5.b [JS] OAuth glue: `oauthLogin/oauthStatus/oauthLogout` + `fetchAuthProviders` bindings; pure
+  `chooseGatedAuth` (ticket vs oauth) — `src/lib/auth.ts`, `gateway-config.ts`. `be0f5a205`
+- [x] D6 [JS] Wire `authMode:'oauth'` into `connect()` (provider-driven ticket/oauth choice, silent-session
+  reuse, reauth retry) + `connect-screen` SSO button; **secure-store gate flipped `IS_MOBILE`→`IS_TAURI`** so
+  the keyring/persistence works on desktop too — `connection.ts`, `secure-store.ts`, `connect-screen.tsx`,
+  `lib/platform.ts`. `2afdb432d`
 
 ### Track E — Gateway modes (local / remote / cloud)
 
-- [ ] E1 [PORT] Gateway-mode model + `gateway-switch` — `src/store/gateway.ts`, `gateway-switch.ts`
-- [ ] E2 [JS/GATE] 3-card mode picker; Local hidden unless `LOCAL_MODE_SUPPORTED` — `src/app/gateway/mode-picker.tsx`
-- [ ] E3 [RUST/GATE] `local_backend_{spawn,status,stop}` (android→unsupported) — `src-tauri/src/local_backend.rs` [R6]
-- [ ] E4 [RUST] `portal_login`, `portal_discover_agents`, `portal_agent_sign_in` — `src-tauri/src/cloud.rs` [R5]
-- [ ] E5 [PORT] Cloud UI: discovery list + connect — `src/app/gateway/cloud-agents.tsx`
+- [x] E1 [JS] Gateway-mode model + `gateway-switch` (`$gatewayMode` persisted, `switchGatewayMode` tears down
+  the live connection) — `src/store/gateway-switch.ts`. `25e8df69c`
+- [x] E2 [JS/GATE] 3-card mode picker; Local hidden unless `LOCAL_MODE_SUPPORTED`; mounted in `connect-screen`
+  which gates its body by mode — `src/app/gateway/mode-picker.tsx`. `9438626b8`
+- [x] E3.a [RUST/GATE] `local_backend_{spawn,status,stop}` via `tokio::process` (not shell plugin): `hermes
+  serve --port 0`, random token, stdout `HERMES_*_READY port=` regex + `/api/status` poll; `cfg(mobile)`→
+  unsupported — `src-tauri/src/local_backend.rs`. `HERMES_BIN` override; full runtime resolution `FIXME(E3)`.
+  `6fa3229a6`
+- [x] E3.b [JS/GATE] `connectLocal` → `Connection{mode:'local', authMode:'token'}`; disconnect stops the child;
+  `connect-screen` "Start local backend" button — `src/store/local-backend.ts`, `connection.ts`. `9a5510517`
+- [x] E4.a [RUST] Persistent portal `WebviewWindow` (`data_directory`) + `portal_login`/`portal_status`
+  (750ms Privy-cookie poll) — `src-tauri/src/cloud.rs`. `1bda9c3d1`
+- [x] E4.b [RUST] `portal_discover_agents(org?)` via the **reqwest cookie bridge** (`cookies_for_url` → Cookie
+  header → `GET /api/agents`); 401→needsLogin, 409→orgs — `cloud.rs`. **Android gap `FIXME(E4)`:
+  `cookies_for_url` empty + HttpOnly Privy cookie ⇒ desktop-only; eval-fetch fallback deferred.** `8de2dfd9a`
+- [x] E4.c [RUST] `portal_agent_sign_in(dashboardUrl)` silent SSO: reqwest `/auth/login` → authorize in the
+  portal webview (auto-approves) → intercept callback → reqwest completes — `cloud.rs`. `6fc1971c8`
+- [x] E5 [PORT/JS] Cloud UI: `store/cloud.ts` (status/login/discover/org-select/connect) + `cloud-agents.tsx`
+  (sign-in / org picker / agent list) → `connectCloud` `Connection{mode:'cloud', authMode:'oauth'}`. `9c53c5f1e`
+
+**TLS/WSS for public gateways (VPS/VPC):** audited end-to-end — REST (reqwest rustls+webpki) and WSS
+(tokio-tungstenite rustls+native-roots) both validate real CA certs, Origin derived as `https://host` for wss.
+Pinned the ring `CryptoProvider` at startup (`lib.rs`) so tungstenite's `ClientConfig::builder()` wss path can't
+panic on provider ambiguity. Self-signed/custom-CA not trusted (no insecure toggle); users enter `https://` for
+TLS (bare hosts default to http for LAN). `048d14cbf`
 
 ### Track F — Navigation / app shell
 
@@ -261,8 +303,11 @@ model, export/import config, embeds/tool-view, completion-sound).
 - [x] J6 [PORT] Safety / Advanced / Workspace — schema `ConfigSection`. `c9c083f80`
 - [x] J7 [JS] Memory — schema `ConfigSection`; provider OAuth connect deferred `FIXME(D2)`. `e2ec5e5c1`
 - [x] J8 [JS] Notifications — native-notif prefs (master + per-kind) + send-test + haptics toggle; completion-sound `FIXME(J9)`. `e94d7ccc5`
-- [~] J9 [PORT] Providers — API-keys covered by J11; account OAuth deferred `FIXME(D2)`.
-- [-] J10 Gateway modes — deferred to Track E.
+- [x] J9 [PORT] Providers — API-keys covered by J11; account/provider OAuth resolved by K11 (device-code +
+  PKCE). The old `FIXME(D2)` is stale — no further work.
+- [x] J10 [JS] Gateway settings section — `settings/gateway-section.tsx`: mode picker + live-connection card +
+  profile selector + Disconnect + **Sign out** (revokes the OAuth/portal session, not just the socket, via a new
+  `portal_logout` command + `signOut()`). Registered in the settings nav + router. `f241a6a6d` `341d991cb`
 - [x] J11 [PORT] Keys / credentials — `keys-section.tsx` env-var list (grouped/search/set/reveal/clear). `35d37fff8`
 - [-] J12 Computer-use — omitted (no mobile analog).
 - [-] J13 Pet — deferred to K10.
@@ -274,7 +319,9 @@ model, export/import config, embeds/tool-view, completion-sound).
 
 Built as lean drill-in screens reusing the Track-J list primitives. Large items carry `.a/.b` sub-steps.
 
-- [~] K1 [PORT] Profiles / workspaces — Profiles view (list + create/rename/delete + SOUL.md editor, `store/profiles.ts`) `92569b400`; app-wide switching + projects/cwd gated `FIXME(E)`.
+- [x] K1 [PORT] Profiles / workspaces — Profiles view (list + create/rename/delete + SOUL.md editor,
+  `store/profiles.ts`) `92569b400`; **active-profile switching landed (E7)** — REST re-scoped via `?profile=`
+  with a mode-aware refresh prompt (local respawns, remote/cloud re-scopes REST only). projects/cwd still gated.
 - [x] K2 [PORT] Skills + Toolsets + MCP + Hub —
   - [x] K2.a Skills + Toolsets (`/skills` tabbed toggle lists, `store/skills.ts`); computer_use hidden `FIXME(K5)`. `efa47fc5f`
   - [x] K2.b MCP servers — MCP tab (list + enable/test + catalog-install sheet) + `store/mcp.ts` (+test) + `skills.mcp` i18n (4 locales); `reload.mcp` RPC; MCP-OAuth finish-on-desktop `FIXME(K2)`. `f4c414017`
@@ -313,17 +360,19 @@ above has the per-step detail, and `grep -rn "FIXME(" apps/hermes-universal/src`
 deferral index.
 
 ### Current state
+
 - **Branch:** `port/hermes-mobile/1` · **HEAD:** `f23e1c0af` · **83 commits ahead of `origin/main`**, all
   confined to the app folder. Remotes: `origin` = jaxmatrix/mjx-hermes-agent (fork), `upstream` = NousResearch.
 - **The app folder is now `apps/hermes-universal`** (renamed from `apps/mobile` — see "Rename" below). Run all
   tooling as `pnpm -C apps/hermes-universal <typecheck|test|build>`. Latest: **230 tests green**, typecheck +
   Vite build clean. (Rust/Android build is device-side, verified manually.)
-- **The name "mobile" is a misnomer.** This is a *universal* Tauri client (desktop + Android + iOS from one
+- **The name "mobile" is a misnomer.** This is a _universal_ Tauri client (desktop + Android + iOS from one
   codebase, meant to eventually supersede the Electron `apps/desktop`). Much of the ledger and some code still
   say "mobile"; treat that as historical. Some feature/scope decisions were made under a mobile-only
   assumption and should be revisited (see "Deferred: de-mobile pass").
 
 ### Track roll-up
+
 - **Done (essentially complete):** A (foundation), C (REST client), F (nav/shell), G (chat rendering — a few
   polish FIXMEs open), H (sessions — export/branch deferred), I (themes/i18n/notify/haptics), J (settings —
   J9 provider-OAuth partial), and **K (feature views) — all landed**, including **K10 Pet (a: gallery ·
@@ -340,12 +389,14 @@ deferral index.
   E3 local backend on Android, D local-runtime boot.
 
 ### Open FIXME shortlist (polish/parity deferrals)
+
 G4 (rich `buildToolView`: inline diffs/ansi/search/images) · G7 (inline images / rich unfurl) · H4 (session
 export — needs save/share transport) · H5 (branch tree UI) · J5 (ElevenLabs voice list is free-text, no
 fetch) · plus assorted K4/K5/K8 polish. Some FIXMEs are stale (e.g. `FIXME(D2)`, `FIXME(Gc9)` were resolved
 by K11/K9) — trust the grep, not old inline notes.
 
 ### Rename + de-mobile (this session)
+
 `apps/mobile` → **`apps/hermes-universal`** via a forward `git mv` (history preserved; use `git log --follow`).
 Build identity updated to match: npm package `@hermes/universal`, Rust crate `hermes-universal` / lib
 `hermes_universal_lib`, Tauri identifier **`com.nousresearch.hermes.universal`**, user-agent `hermes-universal/`.
@@ -357,7 +408,8 @@ cross-package imports needed updating.
 data (re-login / re-pick theme once) — acceptable pre-release. Legacy Electron desktop uses `hermes.desktop.*`,
 so no collision.
 
-### Deferred: de-mobile pass (next session)
+### Deferred: de-mobile pass (done)
+
 - **Regenerate `src-tauri/gen/android`** (`tauri android init`) so the Android package + `System.loadLibrary`
   pick up the new identifier (`com.nousresearch.hermes.universal`) and lib name (`hermes_universal_lib`).
   `gen/` is gitignored — device-side, user-run.
@@ -406,6 +458,7 @@ rather than porting the whole thing. These are **intentional scope cuts, not bug
 cookie jar, manual WS ping/pong keepalive). CSP restricts the webview to `ipc:` only.
 
 **Missing / deferred native features** (no Rust source exists for these yet):
+
 - **Deep-link `hermes://` (D3)** — no `tauri-plugin-deep-link`, no intent-filter in the manifest.
 - **Gateway OAuth `oauth.rs` (D4)** — unbuilt; the transport cookie jar is the only pre-wiring. (Per-provider
   OAuth **D2 is done** in JS via K11 — this is the separate "sign in to the gateway" half.)
@@ -416,6 +469,7 @@ cookie jar, manual WS ping/pong keepalive). CSP restricts the webview to `ipc:` 
   session is lost on app restart.
 
 **Patches that may backfire:**
+
 - **Vendored keyring plugin** (`src-tauri/plugins/tauri-plugin-keyring/`, path dep): a git-branch-tip snapshot
   of `charlesportwoodii/tauri-plugin-keyring @ b0a137b`, **no upstream LICENSE**, with `tauri-specta`/`specta`
   manually stripped (specta `2.0.0-rc.25` uses nightly-only `fmt::from_fn`). Depends on six ~`1.0.0`
@@ -440,14 +494,15 @@ fails at runtime.
 ### 2. Web application (React/TS) — pending & simplified
 
 **FIXME index by track** (authoritative via `grep -rn "FIXME(" src`):
+
 - **G4** `tool-part.tsx:12` (rich tool views) · **G7** `markdown-text.tsx:15` (media/image embeds) ·
   **G** `chat.ts:19,298` + `runtime.tsx:35` (lean reducer, `onNew` no-op).
 - **Gc7** `composer-completions.ts:7` · **Gc8** `attachments.ts:10` (base64 blocks main thread; Android SAF) ·
-  **Gc9** `use-voice-recorder.ts:9,11` (RECORD_AUDIO; auto-speak — *this one is stale/resolved*).
+  **Gc9** `use-voice-recorder.ts:9,11` (RECORD_AUDIO; auto-speak — _this one is stale/resolved_).
 - **H** `session-history.ts:10` (context-marker strip) + `session.ts:38` (no true offset pagination).
 - **E** `api.ts:16` + `profiles.ts:8` + `mobile-controller.tsx:76` (single-profile; switching gated).
-- **D** `secure-store.ts:16` (silent; biometric later) · **D2** `settings-section.tsx:39` (*stale — resolved
-  via K11*).
+- **D** `secure-store.ts:16` (silent; biometric later) · **D2** `settings-section.tsx:39` (_stale — resolved
+  via K11_).
 - **J** `settings-index.tsx:25` (config export/import) + `settings-section.tsx:78` (default placeholder) ·
   **J5** `settings-section.tsx:34` (ElevenLabs static) · **J7** `model-section.tsx:20` (MoA/local endpoint) ·
   **J8** `appearance-section.tsx:10` · **J9** `notifications-section.tsx:20` (completion sound).
@@ -483,7 +538,7 @@ TS-type-synced with **no** placeholder/untranslated strings.
   `node_modules/.bin` (tsc/vitest vanish) → recover with `rm -rf node_modules && pnpm install`. The root
   `package-lock.json` was **hand-edited** during the rename (a manual patch to a generated file).
 - **App absent from CI.** `.github/workflows/typecheck.yml` matrix is `[ui-tui, web, apps/bootstrap-installer,
-  apps/desktop, apps/shared]` — **not** `apps/hermes-universal`. No CI gate for its typecheck / vitest /
+apps/desktop, apps/shared]` — **not** `apps/hermes-universal`. No CI gate for its typecheck / vitest /
   `vite build` / Cargo / Android build; all green signals are local only. (CI also installs via `npm ci`,
   which the pnpm split would break anyway.)
 - **Vendored gateway has already drifted.** `src/gateway/json-rpc-gateway.ts` is a hand-copy of
@@ -510,3 +565,69 @@ TS-type-synced with **no** placeholder/untranslated strings.
    the app, and no test catches it.
 4. **No CI** — every regression (TS, test, build, Cargo, Android) surfaces only on a developer's machine.
 5. **npm/pnpm split** — a stray root `npm install` breaks the app's toolchain until a manual pnpm reinstall.
+
+---
+
+## Progress summary — session handoff (2026-07-14): Tracks D + E landed
+
+Branch **`port/hermes-universal/2`** (off `main`), 17 commits. **Tracks D (gateway OAuth) and E (gateway modes:
+local/remote/cloud) — the two remaining greenfield tracks — are now complete.** 269 JS tests green, typecheck +
+Vite build clean; `cargo check` + Rust unit tests green. Native flows are **desktop-reasoned, device-unverified**
+(see gaps). All ledger boxes for D3–D6 and E1–E5 above are ticked with commit refs.
+
+### What shipped
+- **Gateway OAuth (D3–D6).** reqwest-driven code exchange + a navigation-intercepted webview — chosen after
+  discovering the gateway's OAuth `redirect_uri` is **always** same-origin https (`routes.py:56`), so the
+  ledger's original `hermes://` deep-link design was impossible. Session cookies persist across launches via the
+  keyring (D4). The two auth-mode enums are reconciled in `store/gateway-config.ts`, finally consuming the
+  vendored `resolveGatewayWsUrl`. Secure-store now works on desktop (`IS_MOBILE`→`IS_TAURI`).
+- **Gateway modes (E1–E5).** `$gatewayMode` + `switchGatewayMode`; a 3-card picker (Local hidden on mobile);
+  desktop local-spawn via `tokio::process` (`cfg(mobile)`→unsupported); cloud portal login + agent discovery
+  (reqwest cookie bridge) + silent per-agent SSO + the cloud-agents UI.
+- **TLS** pinned the rustls provider for robust public `wss://`.
+
+### Open gaps / FIXMEs from this work
+- **Everything native is device-unverified.** cargo check passed but no APK/desktop run exercised OAuth, local
+  spawn, or cloud. Per D1's lesson, `cargo check` hid a launch crash before — a real run is required.
+- **`FIXME(D3)`** — the interactive OAuth/portal flows create a **second `WebviewWindow`**; Tauri mobile
+  multi-webview is limited. Verify on Android/iOS; may need an in-page auth route fallback.
+- **`FIXME(E4)`** — cloud discovery uses `cookies_for_url`, which is **empty on Android** (and the Privy cookie
+  is HttpOnly), so cloud is **desktop-only** until an eval-fetch-in-webview fallback is built.
+- **`FIXME(E4.c)`** — silent SSO has no reveal-on-stall fallback (hidden window waits out a 45s timeout if the
+  session expired).
+- **`FIXME(E3)`** — local spawn resolves only `hermes`/`$HERMES_BIN`, not desktop's full venv/python runtime
+  resolution.
+- **`deep-link` deferred** — `tauri-plugin-deep-link` / `hermes://` was intentionally NOT added (not needed for
+  OAuth); the R13 "send to app" use still wants it on a later branch.
+- Pre-existing infra caveats still apply (app absent from CI, gen/android unversioned, vendored-gateway drift).
+
+---
+
+## Progress summary — session handoff (2026-07-14b): D/E dependent items
+
+Branch **`port/hermes-universal/2`** continued. With Tracks D + E landed, the items that were gated behind them
+are now done. 279 JS tests green; typecheck + Vite build + `cargo check` clean. Still desktop-reasoned,
+device-unverified (see the D/E handoff above).
+
+### What shipped
+- **J10 Gateway settings section (E6)** — `settings/gateway-section.tsx`: mode picker, live-connection card,
+  profile selector, Disconnect, and a real **Sign out** that revokes the OAuth cookie + clears the portal
+  (Privy) session (new `portal_logout` Rust command) + forgets stored secrets, vs Disconnect's socket-drop.
+  `f241a6a6d` `341d991cb`
+- **Multi-profile (E7)** — `?profile=` threaded into REST (`lib/api.ts`), activating the dormant `hermes.ts`
+  `profileScoped()`; `$activeProfile` + `setActiveProfile` (re-scope + query-invalidate); a profile selector
+  with a **mode-aware refresh prompt** — local respawns the backend as the chosen profile (full switch incl.
+  chat), remote/cloud re-scope settings/skills only. `b118be75a` `bd4c06a40` `8c7bf52d1`
+- **Auto-reconnect + reauth (D7)** — a supervisor watches `$gatewayState` and, on an unexpected close, re-dials
+  with capped backoff via `connectGateway` (fresh ws-ticket each attempt), re-driving OAuth/silent-SSO on an
+  expired session; `connectCloud` gains the same reauth retry as `connect()`. `ae1452f04`
+
+### Deliberately NOT done (backend-gated / out of app scope)
+- **Per-profile chat on a shared remote/cloud gateway** — the gateway WS (`tui_gateway/ws.py handle_ws`)
+  ignores `profile`, so a shared gateway can't run the agent as a different profile. Local mode sidesteps this
+  by respawning per profile (desktop's model). Remote/cloud profile switching re-scopes REST only, and the UI
+  says so. True shared-gateway chat-profile needs a **backend WS-scoping change**.
+- **`FIXME(D7)`** — reconnect re-opens the socket but does not respawn a local backend whose process actually
+  died, nor replay an interrupted streaming turn.
+- **`FIXME(E4)` (Android cloud)**, **`FIXME(D3)` (mobile multi-webview)**, **deep-link / R13** — unchanged from
+  the D/E handoff.
