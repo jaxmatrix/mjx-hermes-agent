@@ -1,6 +1,7 @@
 import { passwordLogin } from '@/lib/auth'
 import { loadString, saveString } from '@/lib/persist'
 import { clearSecrets, loadSecrets, saveSecrets, type Secrets } from '@/lib/secure-store'
+import { persistSessionCookies } from '@/lib/session-persist'
 import { atom } from '@/store/atom'
 import { closeGateway, connectGateway } from '@/store/gateway'
 import { httpRequest } from '@/transport/http'
@@ -114,6 +115,9 @@ export async function connect(input: ConnectInput): Promise<void> {
     saveString(URL_KEY, input.url.trim())
     saveString(USER_KEY, input.username ?? '')
     await saveSecrets({ token: input.token?.trim() || undefined, password: input.password || undefined })
+    // Persist the session cookie jar (R2b) so a cookie-backed login (ticket now,
+    // oauth/cloud once D6/E land) survives an app restart. No-op in token/none mode.
+    await persistSessionCookies()
   } catch (err) {
     $connectionError.set(err instanceof Error ? err.message : String(err))
     $connectionPhase.set('error')

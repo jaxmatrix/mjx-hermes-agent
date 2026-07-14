@@ -247,3 +247,33 @@ pub async fn ws_close(state: State<'_, TransportState>, id: String) -> Result<()
     }
     Ok(())
 }
+
+/// Serialize the shared cookie jar to JSON so the JS layer can persist it in the
+/// OS keyring (R2b). Captures unexpired, persistent cookies — which includes the
+/// gateway session (`hermes_session_at/_rt`) and any portal (Privy) cookie — so a
+/// gateway/cloud login survives an app restart. The refresh-token cookie alone is
+/// enough: the gateway transparently re-mints the short-lived access cookie.
+#[tauri::command]
+pub fn cookies_export(state: State<'_, TransportState>) -> Result<String, String> {
+    let store = state
+        .cookies()
+        .lock()
+        .map_err(|_| "cookie jar poisoned".to_string())?;
+    let mut buf: Vec<u8> = Vec::new();
+    cookie_store::serde::json::save(&store, &mut buf).map_err(|e| e.to_string())?;
+    String::from_utf8(buf).map_err(|e| e.to_string())
+}
+
+/// Rehydrate the shared cookie jar from a previously-exported JSON blob (skipping
+/// any expired cookies). Called once on launch before the first connect so a saved
+/// gateway/cloud session is restored without a fresh sign-in.
+#[tauri::command]
+pub fn cookies_import(state: State<'_, TransportState>, json: String) -> Result<(), String> {
+    let loaded = cookie_store::serde::json::load(json.as_bytes()).map_err(|e| e.to_string())?;
+    let mut store = state
+        .cookies()
+        .lock()
+        .map_err(|_| "cookie jar poisoned".to_string())?;
+    *store = loaded;
+    Ok(())
+}

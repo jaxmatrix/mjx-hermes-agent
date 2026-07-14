@@ -24,8 +24,9 @@ export interface Secrets {
 }
 
 // The keystore keys one credential per username under the shared service. We keep
-// token and password as two named entries.
-type SecretKey = 'token' | 'password'
+// token and password as two named entries; `cookies` holds the serialized gateway
+// session jar (R2b) so an OAuth/cloud login survives an app restart.
+type SecretKey = 'token' | 'password' | 'cookies'
 
 // The plugin's service name is set once per process (a Rust OnceLock), so init is
 // memoized. On failure the cached promise is cleared so a later call can retry.
@@ -105,6 +106,24 @@ export async function clearSecrets(): Promise<void> {
   await safe(async () => {
     await writeKey('token', undefined)
     await writeKey('password', undefined)
+    await writeKey('cookies', undefined)
     return undefined
   }, undefined)
+}
+
+/**
+ * Persist the serialized gateway session cookie jar (R2b). Kept separate from
+ * {@link saveSecrets} because it round-trips through the Rust transport
+ * (`cookies_export`/`cookies_import`), not the connection form.
+ */
+export async function saveSessionCookies(json: string): Promise<boolean> {
+  return safe(async () => {
+    await writeKey('cookies', json)
+    return true
+  }, false)
+}
+
+/** Read the persisted cookie jar blob, or null when unavailable / none saved. */
+export async function loadSessionCookies(): Promise<string | null> {
+  return safe(async () => kGet('cookies'), null)
 }
