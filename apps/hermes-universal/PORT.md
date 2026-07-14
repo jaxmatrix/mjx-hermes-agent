@@ -303,8 +303,11 @@ model, export/import config, embeds/tool-view, completion-sound).
 - [x] J6 [PORT] Safety / Advanced / Workspace — schema `ConfigSection`. `c9c083f80`
 - [x] J7 [JS] Memory — schema `ConfigSection`; provider OAuth connect deferred `FIXME(D2)`. `e2ec5e5c1`
 - [x] J8 [JS] Notifications — native-notif prefs (master + per-kind) + send-test + haptics toggle; completion-sound `FIXME(J9)`. `e94d7ccc5`
-- [~] J9 [PORT] Providers — API-keys covered by J11; account OAuth deferred `FIXME(D2)`.
-- [-] J10 Gateway modes — deferred to Track E.
+- [x] J9 [PORT] Providers — API-keys covered by J11; account/provider OAuth resolved by K11 (device-code +
+  PKCE). The old `FIXME(D2)` is stale — no further work.
+- [x] J10 [JS] Gateway settings section — `settings/gateway-section.tsx`: mode picker + live-connection card +
+  profile selector + Disconnect + **Sign out** (revokes the OAuth/portal session, not just the socket, via a new
+  `portal_logout` command + `signOut()`). Registered in the settings nav + router. `f241a6a6d` `341d991cb`
 - [x] J11 [PORT] Keys / credentials — `keys-section.tsx` env-var list (grouped/search/set/reveal/clear). `35d37fff8`
 - [-] J12 Computer-use — omitted (no mobile analog).
 - [-] J13 Pet — deferred to K10.
@@ -316,7 +319,9 @@ model, export/import config, embeds/tool-view, completion-sound).
 
 Built as lean drill-in screens reusing the Track-J list primitives. Large items carry `.a/.b` sub-steps.
 
-- [~] K1 [PORT] Profiles / workspaces — Profiles view (list + create/rename/delete + SOUL.md editor, `store/profiles.ts`) `92569b400`; app-wide switching + projects/cwd gated `FIXME(E)`.
+- [x] K1 [PORT] Profiles / workspaces — Profiles view (list + create/rename/delete + SOUL.md editor,
+  `store/profiles.ts`) `92569b400`; **active-profile switching landed (E7)** — REST re-scoped via `?profile=`
+  with a mode-aware refresh prompt (local respawns, remote/cloud re-scopes REST only). projects/cwd still gated.
 - [x] K2 [PORT] Skills + Toolsets + MCP + Hub —
   - [x] K2.a Skills + Toolsets (`/skills` tabbed toggle lists, `store/skills.ts`); computer_use hidden `FIXME(K5)`. `efa47fc5f`
   - [x] K2.b MCP servers — MCP tab (list + enable/test + catalog-install sheet) + `store/mcp.ts` (+test) + `skills.mcp` i18n (4 locales); `reload.mcp` RPC; MCP-OAuth finish-on-desktop `FIXME(K2)`. `f4c414017`
@@ -595,3 +600,34 @@ Vite build clean; `cargo check` + Rust unit tests green. Native flows are **desk
 - **`deep-link` deferred** — `tauri-plugin-deep-link` / `hermes://` was intentionally NOT added (not needed for
   OAuth); the R13 "send to app" use still wants it on a later branch.
 - Pre-existing infra caveats still apply (app absent from CI, gen/android unversioned, vendored-gateway drift).
+
+---
+
+## Progress summary — session handoff (2026-07-14b): D/E dependent items
+
+Branch **`port/hermes-universal/2`** continued. With Tracks D + E landed, the items that were gated behind them
+are now done. 279 JS tests green; typecheck + Vite build + `cargo check` clean. Still desktop-reasoned,
+device-unverified (see the D/E handoff above).
+
+### What shipped
+- **J10 Gateway settings section (E6)** — `settings/gateway-section.tsx`: mode picker, live-connection card,
+  profile selector, Disconnect, and a real **Sign out** that revokes the OAuth cookie + clears the portal
+  (Privy) session (new `portal_logout` Rust command) + forgets stored secrets, vs Disconnect's socket-drop.
+  `f241a6a6d` `341d991cb`
+- **Multi-profile (E7)** — `?profile=` threaded into REST (`lib/api.ts`), activating the dormant `hermes.ts`
+  `profileScoped()`; `$activeProfile` + `setActiveProfile` (re-scope + query-invalidate); a profile selector
+  with a **mode-aware refresh prompt** — local respawns the backend as the chosen profile (full switch incl.
+  chat), remote/cloud re-scope settings/skills only. `b118be75a` `bd4c06a40` `8c7bf52d1`
+- **Auto-reconnect + reauth (D7)** — a supervisor watches `$gatewayState` and, on an unexpected close, re-dials
+  with capped backoff via `connectGateway` (fresh ws-ticket each attempt), re-driving OAuth/silent-SSO on an
+  expired session; `connectCloud` gains the same reauth retry as `connect()`. `ae1452f04`
+
+### Deliberately NOT done (backend-gated / out of app scope)
+- **Per-profile chat on a shared remote/cloud gateway** — the gateway WS (`tui_gateway/ws.py handle_ws`)
+  ignores `profile`, so a shared gateway can't run the agent as a different profile. Local mode sidesteps this
+  by respawning per profile (desktop's model). Remote/cloud profile switching re-scopes REST only, and the UI
+  says so. True shared-gateway chat-profile needs a **backend WS-scoping change**.
+- **`FIXME(D7)`** — reconnect re-opens the socket but does not respawn a local backend whose process actually
+  died, nor replay an interrupted streaming turn.
+- **`FIXME(E4)` (Android cloud)**, **`FIXME(D3)` (mobile multi-webview)**, **deep-link / R13** — unchanged from
+  the D/E handoff.
