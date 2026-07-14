@@ -41,6 +41,15 @@ export function useThemedScrollbars(): void {
         if (OverlayScrollbars(el)) {
           return
         }
+        // Skip portaled overlay boxes (dialog / sheet content): they are
+        // `position: fixed` + `translate(-50%,-50%)`-centered, and initializing
+        // OverlayScrollbars on that positioned box breaks its centering (the
+        // dialog drops down the screen). Their inner scrollers stay static and
+        // are still themed; genuine scrollers (sidebar, thread, completion
+        // drawer) are static/relative/absolute, never fixed.
+        if (getComputedStyle(el).position === 'fixed') {
+          return
+        }
         instances.add(OverlayScrollbars({ target: el, elements: { viewport: el } }, OPTIONS))
       })
     }

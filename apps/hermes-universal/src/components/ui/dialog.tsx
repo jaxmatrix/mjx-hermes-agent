@@ -32,7 +32,7 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
   return (
     <DialogPrimitive.Overlay
       className={cn(
-        'fixed inset-0 z-[120] pointer-events-auto bg-black/40 backdrop-blur-[2px] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0',
+        'fixed inset-0 z-[120] pointer-events-auto bg-black/22 backdrop-blur-[0.125rem] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0',
         className
       )}
       data-slot="dialog-overlay"
@@ -89,7 +89,7 @@ function DialogContent({
         <DialogOverlay />
         <DialogPrimitive.Content
           className={cn(
-            'fixed left-1/2 top-1/2 z-[130] pointer-events-auto flex max-h-[85vh] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg bg-card text-sm text-foreground shadow-lg duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+            'fixed left-1/2 top-1/2 z-[130] pointer-events-auto flex max-h-[85vh] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl bg-card text-sm text-foreground shadow-lg duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
             widthClass,
             className,
             'gap-0'
@@ -97,12 +97,12 @@ function DialogContent({
           data-slot="dialog-content"
           {...props}
         >
-          <div className="relative z-10 overflow-hidden rounded-lg border border-b-0 border-border bg-card">
+          <div className="relative z-10 overflow-hidden rounded-xl border border-b-0 border-border bg-card">
             <div className="grid max-h-[calc(85vh-5rem)] min-h-0 gap-3 overflow-y-auto p-4">{children}</div>
           </div>
           <div
             className={cn(
-              'relative z-0 -mt-[var(--radius-lg)] px-4 pb-2.5 pt-[calc(var(--radius-lg)+0.625rem)] text-center text-sm leading-relaxed',
+              'relative z-0 -mt-[var(--radius-xl)] px-4 pb-2.5 pt-[calc(var(--radius-xl)+0.625rem)] text-center text-sm leading-relaxed',
               DIALOG_BANNER_TONES[bannerTone]
             )}
             data-slot="dialog-banner"
@@ -121,7 +121,7 @@ function DialogContent({
       <DialogOverlay />
       <DialogPrimitive.Content
         className={cn(
-          'fixed left-1/2 top-1/2 z-[130] pointer-events-auto grid max-h-[85vh] -translate-x-1/2 -translate-y-1/2 gap-3 overflow-y-auto rounded-lg border border-border bg-card p-4 text-sm text-foreground shadow-lg duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+          'fixed left-1/2 top-1/2 z-[130] pointer-events-auto grid max-h-[85vh] -translate-x-1/2 -translate-y-1/2 gap-3 overflow-y-auto rounded-xl border border-border bg-card p-4 text-sm text-foreground shadow-lg duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
           widthClass,
           className
         )}
