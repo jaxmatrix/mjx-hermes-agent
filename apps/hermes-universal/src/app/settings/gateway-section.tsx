@@ -1,5 +1,6 @@
 import { CloudAgents } from '@/app/gateway/cloud-agents'
 import { ModePicker } from '@/app/gateway/mode-picker'
+import { ProfileSelector } from '@/app/gateway/profile-selector'
 import { Button } from '@/components/ui/button'
 import { Globe } from '@/lib/icons'
 import { useStore } from '@/store/atom'
@@ -45,6 +46,11 @@ export function GatewaySection() {
           <ListRow title="Backend" description={hostOf(connection.baseUrl)} />
           <ListRow title="Mode" description={connection.mode ?? 'remote'} />
           <ListRow title="Auth" description={connection.authMode} />
+          <ListRow
+            title="Profile"
+            description="Scopes settings, skills & sessions"
+            action={<ProfileSelector />}
+          />
         </>
       )}
 
