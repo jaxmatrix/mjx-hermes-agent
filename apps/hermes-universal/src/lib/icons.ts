@@ -43,6 +43,7 @@ export {
   IconLock as Lock,
   IconMicrophone as Mic,
   IconDeviceDesktop as Monitor,
+  IconCloud as Cloud,
   IconTool as Wrench,
   IconBell as Bell,
   IconKey as Key,

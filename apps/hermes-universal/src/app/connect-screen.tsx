@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 
+import { ModePicker } from '@/app/gateway/mode-picker'
 import { fetchAuthProviders } from '@/lib/auth'
 import { useStore } from '@/store/atom'
+import { $gatewayMode } from '@/store/gateway-switch'
 import {
   $connectionError,
   $connectionPhase,
@@ -21,6 +23,7 @@ import {
 export function ConnectScreen() {
   const phase = useStore($connectionPhase)
   const connectError = useStore($connectionError)
+  const mode = useStore($gatewayMode)
 
   const [step, setStep] = useState<'url' | 'auth'>('url')
   const [gated, setGated] = useState(false)
@@ -79,7 +82,23 @@ export function ConnectScreen() {
         <div className="brand">Hermes</div>
         <h1 className="connect-title">Connect to Hermes</h1>
 
-        {step === 'url' && (
+        <div className="mb-4">
+          <ModePicker />
+        </div>
+
+        {mode === 'local' && (
+          <p className="connect-sub">
+            Local backend — starting a bundled Hermes runtime on this device. {/* E3.b wires spawn/status */}
+          </p>
+        )}
+
+        {mode === 'cloud' && (
+          <p className="connect-sub">
+            Cloud — sign in to the Nous portal and pick an agent. {/* E5 wires the agent list */}
+          </p>
+        )}
+
+        {mode === 'remote' && step === 'url' && (
           <>
             <p className="connect-sub">Point the app at a Hermes backend on your network.</p>
             <label className="field-label" htmlFor="url">
@@ -103,7 +122,7 @@ export function ConnectScreen() {
           </>
         )}
 
-        {step === 'auth' && (
+        {mode === 'remote' && step === 'auth' && (
           <>
             <p className="connect-sub">
               {gated
