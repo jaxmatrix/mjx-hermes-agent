@@ -283,6 +283,12 @@
     --radius: 0.75rem;
     --radius-scalar: 0.6;
 
+    /* Custom window chrome (frameless titlebar). Band + control sizing ported
+       from desktop's titlebar tokens. */
+    --titlebar-height: 2.125rem;
+    --titlebar-control-size: 1.25rem;
+    --titlebar-control-height: 1.375rem;
+
     /* Sidebar tokens (desktop parity) — consumed by the upcoming left/right
        sidebar chrome; mapped onto the derived chain here so they're live. */
     --sidebar: var(--dt-sidebar-bg);

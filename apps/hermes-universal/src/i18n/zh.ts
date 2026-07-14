@@ -223,7 +223,11 @@ export const zh: Translations = {
     unmuteHaptics: '开启触感反馈',
     openSettings: '打开设置',
     openStarmap: '打开记忆图谱',
-    openKeybinds: '键盘快捷键'
+    openKeybinds: '键盘快捷键',
+    minimize: '最小化',
+    maximize: '最大化',
+    restore: '还原',
+    close: '关闭'
   },
 
   keybinds: {

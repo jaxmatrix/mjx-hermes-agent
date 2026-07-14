@@ -4,6 +4,14 @@
 // desktop names and re-exported; grow this list as more get referenced.
 export {
   IconX as X,
+  // Window chrome (titlebar controls + top-bar toolbar)
+  IconMinus as Minus,
+  IconSquare as Square,
+  IconSquares as Squares,
+  IconLayoutSidebar as LayoutSidebar,
+  IconArrowsExchange2 as ArrowsExchange,
+  IconVolume as Volume,
+  IconVolumeOff as VolumeOff,
   IconCheck as Check,
   IconChevronRight as ChevronRight,
   IconChevronDown as ChevronDown,

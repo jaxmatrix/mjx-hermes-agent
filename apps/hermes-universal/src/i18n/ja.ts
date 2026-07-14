@@ -228,7 +228,11 @@ export const ja = defineLocale({
     muteHaptics: '触覚フィードバックをオフ',
     unmuteHaptics: '触覚フィードバックをオン',
     openSettings: '設定を開く',
-    openStarmap: 'メモリグラフを開く'
+    openStarmap: 'メモリグラフを開く',
+    minimize: '最小化',
+    maximize: '最大化',
+    restore: '元のサイズに戻す',
+    close: '閉じる'
   },
 
   language: {

@@ -276,6 +276,10 @@ export interface Translations {
     openSettings: string
     openStarmap: string
     openKeybinds: string
+    minimize: string
+    maximize: string
+    restore: string
+    close: string
   }
 
   keybinds: {
