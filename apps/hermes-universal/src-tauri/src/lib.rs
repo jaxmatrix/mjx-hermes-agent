@@ -6,8 +6,10 @@
 //! `transport.rs`. The frontend drives it over IPC and reuses the JS
 //! `JsonRpcGatewayClient` via an IPC-backed WebSocket.
 
+mod oauth;
 mod transport;
 
+use oauth::oauth_login;
 use transport::{http_request, ws_close, ws_open, ws_send, TransportState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -25,7 +27,8 @@ pub fn run() {
             http_request,
             ws_open,
             ws_send,
-            ws_close
+            ws_close,
+            oauth_login
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hermes Universal");
