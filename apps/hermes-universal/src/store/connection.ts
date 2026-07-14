@@ -1,9 +1,10 @@
-import { passwordLogin } from '@/lib/auth'
+import { isGatewayReauthRequired } from '@/gateway'
+import { fetchAuthProviders, oauthLogin, oauthStatus, passwordLogin } from '@/lib/auth'
 import { loadString, saveString } from '@/lib/persist'
 import { clearSecrets, loadSecrets, saveSecrets, type Secrets } from '@/lib/secure-store'
 import { persistSessionCookies } from '@/lib/session-persist'
 import { atom } from '@/store/atom'
-import type { Connection } from '@/store/gateway-config'
+import { chooseGatedAuth, type Connection } from '@/store/gateway-config'
 import { closeGateway, connectGateway } from '@/store/gateway'
 import { httpRequest } from '@/transport/http'
 
@@ -88,24 +89,53 @@ export async function connect(input: ConnectInput): Promise<void> {
     $status.set(status)
 
     let conn: Connection
+    let oauthProvider: string | undefined
     if (status.auth_required) {
-      // Gated: password-login first (sets the session cookie in Rust), then the
-      // WS authorizes with a per-connect ?ticket= (built in connectGateway).
-      if (!input.username || !input.password) {
-        throw new Error('This backend requires a username and password')
-      }
+      // Gated: pick the concrete path from the advertised providers. Password
+      // login (→ ticket) wins only when the operator supplied credentials AND a
+      // provider supports it; otherwise the interactive OAuth path.
       $connectionPhase.set('connecting')
-      await passwordLogin(base, input.username, input.password)
-      conn = { baseUrl: base, authMode: 'ticket' }
+      const providers = await fetchAuthProviders(base)
+      const choice = chooseGatedAuth(providers, Boolean(input.username && input.password))
+
+      if (choice.authMode === 'ticket') {
+        if (!input.username || !input.password) {
+          throw new Error('This backend requires a username and password')
+        }
+        // password-login sets the session cookie in Rust; the WS authorizes with
+        // a per-connect ?ticket= (built in connectGateway).
+        await passwordLogin(base, input.username, input.password, choice.provider)
+        conn = { baseUrl: base, mode: 'remote', authMode: 'ticket' }
+      } else {
+        oauthProvider = choice.provider
+        // Reuse a still-live session (e.g. a restored cookie jar, R2b) rather than
+        // forcing an interactive sign-in; only open the webview when signed out.
+        const live = await oauthStatus(base).catch(() => ({ signedIn: false }))
+        if (!live.signedIn) {
+          await oauthLogin(base, oauthProvider)
+        }
+        conn = { baseUrl: base, mode: 'remote', authMode: 'oauth' }
+      }
     } else if (input.token && input.token.trim()) {
-      conn = { baseUrl: base, authMode: 'token', token: input.token.trim() }
+      conn = { baseUrl: base, mode: 'remote', authMode: 'token', token: input.token.trim() }
     } else {
-      conn = { baseUrl: base, authMode: 'none' }
+      conn = { baseUrl: base, mode: 'remote', authMode: 'none' }
     }
 
     $connection.set(conn)
     $connectionPhase.set('connecting')
-    await connectGateway(conn)
+    try {
+      await connectGateway(conn)
+    } catch (err) {
+      // An OAuth session that expired between the status check and the ws-ticket
+      // mint surfaces as GatewayReauthRequiredError — re-run sign-in once.
+      if (conn.authMode === 'oauth' && isGatewayReauthRequired(err)) {
+        await oauthLogin(base, oauthProvider)
+        await connectGateway(conn)
+      } else {
+        throw err
+      }
+    }
 
     $connectionPhase.set('ready')
     // Non-secret prefill in localStorage; secrets in the keyring (best-effort —

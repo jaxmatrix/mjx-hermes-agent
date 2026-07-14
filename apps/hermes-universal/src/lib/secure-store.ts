@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
-import { IS_MOBILE } from '@/lib/platform'
+import { IS_TAURI } from '@/lib/platform'
 
 // Secure credential storage (D1). Isolates the OS keystore behind a small typed
 // API so the rest of the app never touches the plugin directly. Silent (no
@@ -66,8 +66,13 @@ async function writeKey(key: SecretKey, value: string | undefined): Promise<void
 // Keystore calls reject when there is no Tauri runtime (browser dev / vitest) or
 // no keystore available; treat any failure as "unavailable" so callers degrade to
 // no-persistence rather than crashing (never fall back to plaintext).
+//
+// D6: gated on IS_TAURI (any native target) rather than IS_MOBILE — the vendored
+// keyring plugin also backs desktop (Linux Secret Service / macOS Keychain /
+// Windows Credential Manager), so OAuth/cloud sessions now persist on desktop too.
+// A missing Secret Service daemon on Linux simply throws → caught → no-persistence.
 async function safe<T>(op: () => Promise<T>, fallback: T): Promise<T> {
-  if (!IS_MOBILE) return fallback
+  if (!IS_TAURI) return fallback
   try {
     return await op()
   } catch {

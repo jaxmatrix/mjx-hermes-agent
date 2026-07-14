@@ -17,6 +17,10 @@ export const PLATFORM = detectPlatform()
 export const IS_ANDROID = PLATFORM === 'android'
 export const IS_IOS = PLATFORM === 'ios'
 export const IS_MOBILE = IS_ANDROID || IS_IOS
+// True when a real Tauri runtime is present (any target). `platform()` only
+// returns 'unknown' when it throws for lack of a runtime (plain-browser dev /
+// vitest), so this cleanly distinguishes "native app" from "web/test".
+export const IS_TAURI = PLATFORM !== 'unknown'
 
 // Local-spawn gateway mode is a desktop-only capability: Tauri also builds
 // desktop targets, where a bundled backend could run, but a phone can't spawn
