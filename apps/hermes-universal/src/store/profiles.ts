@@ -1,14 +1,35 @@
-import { createProfile, deleteProfile, getProfiles, renameProfile } from '@/hermes'
+import { createProfile, deleteProfile, getProfiles, renameProfile, setApiRequestProfile } from '@/hermes'
+import { Codecs, persistentAtom } from '@/lib/persisted'
+import { queryClient } from '@/lib/query-client'
 import { atom } from '@/store/atom'
 import { notifyError } from '@/store/notifications'
 import type { ProfileCreatePayload, ProfileInfo } from '@/types/hermes'
 
-// Profiles store (view/CRUD only). App-wide profile *switching* is a desktop
-// spawn/pool concern that doesn't apply to mobile's single remote gateway —
-// FIXME(E): re-scope the one connection when multi-profile lands.
 export const $profiles = atom<ProfileInfo[]>([])
 export const $profilesLoading = atom(false)
 export const $profilesError = atom<string | null>(null)
+
+// The profile the app operates as (E7.b). Persisted; null = the gateway's own
+// (primary) profile, so single-profile users are unaffected. Switching re-scopes
+// all profileScoped() REST calls (config/skills/model/sessions…) via the
+// hermes.ts _apiProfile, then invalidates cached queries so views refetch under
+// the new scope — mirroring the dashboard's ?profile= re-scope. The live chat WS
+// is NOT re-profiled on a shared remote/cloud gateway (backend limit); local mode
+// applies it fully by respawning the backend (see the refresh prompt).
+export const $activeProfile = persistentAtom<null | string>('hermes.activeProfile', null, Codecs.nullableText)
+
+// Sync the REST scope to the persisted selection on load.
+setApiRequestProfile($activeProfile.get())
+
+/** Switch the active profile: re-scope REST + refetch. No-op if unchanged. Does
+ *  NOT reconnect — the caller decides whether to prompt a session refresh. */
+export function setActiveProfile(name: null | string): void {
+  const next = name || null
+  if (next === $activeProfile.get()) return
+  setApiRequestProfile(next)
+  $activeProfile.set(next)
+  void queryClient.invalidateQueries()
+}
 
 export async function refreshProfiles(): Promise<void> {
   $profilesLoading.set(true)
