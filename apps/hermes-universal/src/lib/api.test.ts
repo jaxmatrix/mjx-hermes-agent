@@ -33,6 +33,32 @@ describe('api', () => {
     )
   })
 
+  it('appends ?profile= when a non-default profile is set', async () => {
+    $connection.set({ baseUrl: 'http://host:1', authMode: 'none' })
+    mockHttp.mockResolvedValue({ status: 200, headers: {}, body: '{}' })
+
+    await api({ path: '/api/skills', profile: 'work' })
+    expect(mockHttp).toHaveBeenCalledWith('GET', 'http://host:1/api/skills?profile=work', expect.anything())
+  })
+
+  it('merges ?profile= into a path that already has a query', async () => {
+    $connection.set({ baseUrl: 'http://host:1', authMode: 'none' })
+    mockHttp.mockResolvedValue({ status: 200, headers: {}, body: '{}' })
+
+    await api({ path: '/api/model/options?refresh=1', profile: 'work' })
+    expect(mockHttp).toHaveBeenCalledWith('GET', 'http://host:1/api/model/options?refresh=1&profile=work', expect.anything())
+  })
+
+  it('omits ?profile= for the default profile (null/current)', async () => {
+    $connection.set({ baseUrl: 'http://host:1', authMode: 'none' })
+    mockHttp.mockResolvedValue({ status: 200, headers: {}, body: '{}' })
+
+    await api({ path: '/api/skills', profile: 'current' })
+    await api({ path: '/api/skills', profile: null })
+    expect(mockHttp).toHaveBeenCalledWith('GET', 'http://host:1/api/skills', expect.anything())
+    expect(mockHttp).not.toHaveBeenCalledWith('GET', expect.stringContaining('profile='), expect.anything())
+  })
+
   it('sets Content-Type on a body and throws on a non-2xx status', async () => {
     $connection.set({ baseUrl: 'http://host:1', authMode: 'none' })
     mockHttp.mockResolvedValue({ status: 500, headers: {}, body: 'boom' })
