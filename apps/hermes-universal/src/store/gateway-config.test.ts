@@ -5,7 +5,15 @@ vi.mock('@/lib/auth', () => ({ mintWsTicket: vi.fn() }))
 import { isGatewayReauthRequired } from '@/gateway'
 import { mintWsTicket } from '@/lib/auth'
 
-import { authModeFromStatus, type Connection, modeIsRemoteLike, resolveWsUrl } from './gateway-config'
+import type { AuthProvider } from '@/lib/auth'
+
+import { authModeFromStatus, chooseGatedAuth, type Connection, modeIsRemoteLike, resolveWsUrl } from './gateway-config'
+
+const provider = (name: string, supports_password: boolean): AuthProvider => ({
+  name,
+  display_name: name,
+  supports_password,
+})
 
 const mockMint = vi.mocked(mintWsTicket)
 
@@ -31,6 +39,23 @@ describe('modeIsRemoteLike', () => {
     expect(modeIsRemoteLike('cloud')).toBe(true)
     expect(modeIsRemoteLike(undefined)).toBe(true)
     expect(modeIsRemoteLike('local')).toBe(false)
+  })
+})
+
+describe('chooseGatedAuth', () => {
+  it('uses password-login (ticket) only when creds are given AND a provider supports it', () => {
+    const providers = [provider('basic', true), provider('nous', false)]
+    expect(chooseGatedAuth(providers, true)).toEqual({ authMode: 'ticket', provider: 'basic' })
+  })
+  it('falls back to oauth when creds are given but no provider supports password', () => {
+    expect(chooseGatedAuth([provider('nous', false)], true)).toEqual({ authMode: 'oauth', provider: 'nous' })
+  })
+  it('prefers a non-password provider for oauth', () => {
+    const providers = [provider('basic', true), provider('nous', false)]
+    expect(chooseGatedAuth(providers, false)).toEqual({ authMode: 'oauth', provider: 'nous' })
+  })
+  it('defaults the provider to nous when none advertised', () => {
+    expect(chooseGatedAuth([], false)).toEqual({ authMode: 'oauth', provider: 'nous' })
   })
 })
 

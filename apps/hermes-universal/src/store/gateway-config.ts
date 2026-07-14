@@ -3,7 +3,7 @@ import {
   type GatewayWsConnection,
   resolveGatewayWsUrl,
 } from '@/gateway'
-import { mintWsTicket } from '@/lib/auth'
+import { type AuthProvider, mintWsTicket } from '@/lib/auth'
 
 // Reconciled gateway model (D5.a) — the single source of truth for how the app
 // reaches a Hermes backend. It unifies two enums that had drifted: this app's
@@ -57,6 +57,25 @@ export interface StatusLike {
  *  a password-capable provider. */
 export function authModeFromStatus(status: StatusLike): AuthMode {
   return status.auth_required ? 'oauth' : 'none'
+}
+
+export interface GatedAuthChoice {
+  authMode: 'oauth' | 'ticket'
+  /** Provider name to pass to oauthLogin / passwordLogin. */
+  provider: string
+}
+
+/** Decide how to satisfy a gated backend. Password-login (→ ticket) wins only when
+ *  the operator actually supplied credentials AND a provider supports it; otherwise
+ *  we take the interactive OAuth path. Prefers a non-password provider for OAuth,
+ *  falling back to the first advertised, else the conventional `nous`. Pure. */
+export function chooseGatedAuth(providers: AuthProvider[], hasPasswordCreds: boolean): GatedAuthChoice {
+  const passwordProvider = providers.find(p => p.supports_password)
+  if (hasPasswordCreds && passwordProvider) {
+    return { authMode: 'ticket', provider: passwordProvider.name }
+  }
+  const oauthProvider = providers.find(p => !p.supports_password) ?? providers[0]
+  return { authMode: 'oauth', provider: oauthProvider?.name ?? 'nous' }
 }
 
 const WS_PATH = '/api/ws'
