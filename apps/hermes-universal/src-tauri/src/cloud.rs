@@ -15,6 +15,7 @@
 use std::time::Duration;
 
 use serde::Serialize;
+use serde_json::Value;
 use tauri::webview::cookie::Cookie;
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 
@@ -116,6 +117,138 @@ pub async fn portal_login(app: AppHandle) -> Result<PortalStatus, String> {
             return Err("Portal sign-in timed out".to_string());
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// E4.b — agent discovery via the reqwest cookie bridge.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudAgent {
+    id: String,
+    name: String,
+    status: String,
+    dashboard_url: Option<String>,
+    dashboard_gateway_state: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudOrg {
+    id: String,
+    slug: Option<String>,
+    name: String,
+    is_personal: bool,
+    role: String,
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverResult {
+    agents: Vec<CloudAgent>,
+    org: Option<CloudOrg>,
+    /// Present (with `needs_org_selection`) when the portal wants an org chosen.
+    orgs: Vec<CloudOrg>,
+    needs_login: bool,
+    needs_org_selection: bool,
+}
+
+fn parse_agent(v: &Value) -> Option<CloudAgent> {
+    Some(CloudAgent {
+        id: v.get("id")?.as_str()?.to_string(),
+        name: v.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
+        status: v.get("status").and_then(Value::as_str).unwrap_or("unknown").to_string(),
+        dashboard_url: v.get("dashboardUrl").and_then(Value::as_str).map(str::to_string),
+        dashboard_gateway_state: v
+            .get("dashboardGatewayState")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+    })
+}
+
+fn parse_org(v: &Value) -> Option<CloudOrg> {
+    Some(CloudOrg {
+        id: v.get("id")?.as_str()?.to_string(),
+        slug: v.get("slug").and_then(Value::as_str).map(str::to_string),
+        name: v.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
+        is_personal: v.get("isPersonal").and_then(Value::as_bool).unwrap_or(false),
+        role: v.get("role").and_then(Value::as_str).unwrap_or("MEMBER").to_string(),
+    })
+}
+
+fn parse_orgs(v: &Value) -> Vec<CloudOrg> {
+    v.get("orgs")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(parse_org).collect())
+        .unwrap_or_default()
+}
+
+/// Discover the cloud agents visible to the signed-in portal user. Bridges the
+/// portal webview's Privy cookie into a reqwest request (the portal is a
+/// different origin from any gateway, so we send an explicit Cookie header rather
+/// than pollute the shared gateway jar). 401 → needs re-login; 409 → the user
+/// belongs to multiple orgs and must pick one.
+#[tauri::command]
+pub async fn portal_discover_agents(
+    app: AppHandle,
+    org: Option<String>,
+) -> Result<DiscoverResult, String> {
+    let base = portal_base();
+    let portal_url = Url::parse(&base).map_err(|e| format!("bad portal URL: {e}"))?;
+
+    // Pull the portal cookies from the (persistent) portal webview.
+    let cookies = app
+        .get_webview_window(PORTAL_WINDOW_LABEL)
+        .and_then(|w| w.cookies_for_url(portal_url).ok())
+        .unwrap_or_default();
+    if !has_privy_cookie(&cookies) {
+        return Ok(DiscoverResult { needs_login: true, ..Default::default() });
+    }
+    let cookie_header = cookies
+        .iter()
+        .map(|c| format!("{}={}", c.name(), c.value()))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    let mut url = format!("{base}/api/agents");
+    if let Some(o) = org.as_deref().filter(|o| !o.is_empty()) {
+        url = format!("{url}?org={o}");
+    }
+
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .header(reqwest::header::COOKIE, cookie_header)
+        .header(reqwest::header::ORIGIN, &base)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("agent discovery request failed: {e}"))?;
+
+    let status = resp.status();
+    if status.as_u16() == 401 {
+        return Ok(DiscoverResult { needs_login: true, ..Default::default() });
+    }
+    let body: Value = resp.json().await.unwrap_or(Value::Null);
+    if status.as_u16() == 409 {
+        return Ok(DiscoverResult {
+            needs_org_selection: true,
+            orgs: parse_orgs(&body),
+            ..Default::default()
+        });
+    }
+    if !status.is_success() {
+        return Err(format!("agent discovery failed (HTTP {status})"));
+    }
+
+    let agents = body
+        .get("agents")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(parse_agent).collect())
+        .unwrap_or_default();
+    let org = body.get("org").and_then(parse_org);
+    Ok(DiscoverResult { agents, org, ..Default::default() })
 }
 
 /// Whether a live portal session exists, without prompting. Ensures a hidden
