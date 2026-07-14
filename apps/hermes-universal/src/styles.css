@@ -786,3 +786,28 @@ body {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* ── Scrollbars ──────────────────────────────────────────────────────────────
+   Desktop's `.scrollbar-dt` relies on `::-webkit-scrollbar`, which Tauri's Linux
+   webview (WebKitGTK) ignores — so we draw scrollbars with OverlayScrollbars
+   instead (initialized in src/lib/scrollbars.ts, desktop only). This theme maps
+   OverlayScrollbars' tokens onto the desktop look: thin, --dt-midground thumb
+   (18% idle / 40% hover), pill, transparent track, no arrows. */
+.os-theme-hermes {
+  --os-size: 0.5rem;
+  --os-padding-perpendicular: 0.0625rem;
+  --os-padding-axis: 0.125rem;
+  --os-handle-border-radius: 9999px;
+  --os-track-bg: transparent;
+  --os-handle-bg: color-mix(in srgb, var(--dt-midground) 18%, transparent);
+  --os-handle-bg-hover: color-mix(in srgb, var(--dt-midground) 40%, transparent);
+  --os-handle-bg-active: color-mix(in srgb, var(--dt-midground) 50%, transparent);
+  --os-handle-interactive-area-offset: 4px;
+}
+
+/* Pre-init / uncovered fallback (standard props — the only scrollbar CSS
+   WebKitGTK honors) so there's no flash of the chunky native bar before JS. */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--dt-midground) 18%, transparent) transparent;
+}
