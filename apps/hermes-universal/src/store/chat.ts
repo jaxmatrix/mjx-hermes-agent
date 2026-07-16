@@ -4,6 +4,7 @@ import { playCompletionSound } from '@/lib/completion-sound'
 import { speakNow, stopSpeaking } from '@/lib/tts'
 import { atom } from '@/store/atom'
 import { $autoSpeakReplies } from '@/store/voice-prefs'
+import { cwdForNewSession } from '@/store/default-project-dir'
 import { requestGateway } from '@/store/gateway'
 import { triggerHaptic } from '@/store/haptics'
 import { dispatchNativeNotification } from '@/store/native-notifications'
@@ -341,7 +342,13 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 export async function ensureSession(): Promise<string> {
   let sessionId = $sessionId.get()
   if (!sessionId) {
-    const created = await requestGateway<{ session_id: string }>('session.create', { cols: 96 })
+    // A configured default project directory pre-attaches new LOCAL chats to that
+    // folder (desktop parity); the gateway resolves its own default cwd otherwise.
+    const cwd = cwdForNewSession()
+    const created = await requestGateway<{ session_id: string }>('session.create', {
+      cols: 96,
+      ...(cwd && { cwd })
+    })
     sessionId = created.session_id
     $sessionId.set(sessionId)
     // Runtime session clock starts when we create the session (statusbar session

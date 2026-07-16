@@ -7,6 +7,7 @@ import { Tip } from '@/components/ui/tooltip'
 import { getLogs } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { LayoutDashboard, RefreshCw } from '@/lib/icons'
+import { LOG_NOISE_RE, trimLogLine } from '@/lib/log-format'
 import type { RuntimeReadinessResult } from '@/lib/runtime-readiness'
 import { cn } from '@/lib/utils'
 import { runGatewayRestart } from '@/store/system-status'
@@ -28,10 +29,6 @@ interface GatewayMenuPanelProps {
 const LOG_TAIL = 120
 const LOG_VISIBLE = 40
 const LOG_POLL_MS = 3_000
-
-// Per-connection WebSocket churn (accept/close/heartbeat) drowns out anything
-// useful — strip it so the tail reads as real gateway activity at a glance.
-const LOG_NOISE_RE = /\bws (?:accepted|closed|response sent|ping|pong)\b/i
 
 // Live tail while the popover is mounted (i.e. open): poll on a tight cadence
 // and stop on unmount, instead of a global always-on status poll.
@@ -79,12 +76,6 @@ const PLATFORM_TONE: Record<string, StatusTone> = {
 }
 
 const prettyState = (state: string) => state.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase())
-
-// Strip leading "YYYY-MM-DD HH:MM:SS,mmm " and "[runtime_id] " prefixes from
-// log lines so they don't dominate the display. Full text preserved on hover.
-const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}[,.\d]*\s+/
-const RUNTIME_BRACKET_RE = /^\[[^\]]+]\s+/
-const trimLogLine = (raw: string) => raw.trim().replace(TIMESTAMP_RE, '').replace(RUNTIME_BRACKET_RE, '')
 
 export function GatewayMenuPanel({
   gatewayState,

@@ -1,8 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
 
-import { portalAgentSignIn } from '@/lib/auth'
+import { portalAgentSignIn, portalLogout } from '@/lib/auth'
 import { atom } from '@/store/atom'
 import { connectCloud } from '@/store/connection'
+import { saveGatewayTarget } from '@/store/gateway-restore'
 
 // Nous Cloud store (E5). Portal login + agent discovery + connect. The Privy
 // portal session + per-agent SSO live in Rust (src-tauri/src/cloud.rs); this holds
@@ -114,6 +115,33 @@ export async function selectCloudOrg(org: CloudOrg): Promise<void> {
   await discoverCloud(org.id)
 }
 
+/**
+ * "Change org": clear the selected org + its agent list and re-discover with no
+ * org arg. A multi-org account gets the picker back; a single-org account simply
+ * auto-resolves to its one org (harmless). Mirrors desktop's changeCloudOrg.
+ */
+export async function changeCloudOrg(): Promise<void> {
+  $cloudOrg.set(null)
+  $cloudAgents.set([])
+  await discoverCloud()
+}
+
+/** Sign out of the Nous portal and clear all discovery state. */
+export async function cloudSignOut(): Promise<void> {
+  $cloudError.set(null)
+  try {
+    await portalLogout()
+  } catch (err) {
+    $cloudError.set(err instanceof Error ? err.message : String(err))
+  } finally {
+    $portalSignedIn.set(false)
+    $cloudAgents.set([])
+    $cloudOrgs.set([])
+    $cloudOrg.set(null)
+    $cloudDiscover.set('idle')
+  }
+}
+
 /** Silent SSO into the agent's gateway, then connect in cloud/oauth mode. */
 export async function connectCloudAgent(agent: CloudAgent): Promise<void> {
   if (!agent.dashboardUrl) {
@@ -126,6 +154,9 @@ export async function connectCloudAgent(agent: CloudAgent): Promise<void> {
     const result = await portalAgentSignIn(agent.dashboardUrl)
     if (!result.connected) throw new Error('Could not sign in to this agent')
     await connectCloud(result.baseUrl)
+    // Enrich the saved restore target (connectCloud persisted the baseUrl) with the
+    // agent id/name so the boot connecting screen can label it (D8).
+    saveGatewayTarget({ mode: 'cloud', cloudBaseUrl: result.baseUrl, cloudAgentId: agent.id, cloudAgentName: agent.name })
   } catch (err) {
     $cloudError.set(err instanceof Error ? err.message : String(err))
   } finally {

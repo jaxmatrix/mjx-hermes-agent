@@ -1,223 +1,76 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { deleteEnvVar, getEnvVars, revealEnvVar, setEnvVar } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { Eye, EyeOff, Search, Trash } from '@/lib/icons'
-import { includesQuery } from '@/lib/text'
-import { notify, notifyError } from '@/store/notifications'
-import type { EnvVarInfo } from '@/types/hermes'
 
-import { providerGroup as prefixGroup, redactedValue, withoutKey } from './helpers'
-import { ListRow, LoadingState, SettingsContent } from './primitives'
+import { CredentialKeyCard, credentialPlaceholder, credentialRowLabel } from './credential-key-ui'
+import { useEnvCredentials } from './env-credentials'
+import { LoadingState, SettingsContent } from './primitives'
 
-// Keys/credentials (Jc10): env-var list grouped by provider, with set / replace /
-// reveal / clear. Ported+leaned from desktop env-credentials.tsx + credential-key-ui.tsx;
-// window.confirm swapped for a mobile Dialog. OAuth provider connect is Track D2.
+// Settings → Tools & Keys. Ported to desktop parity (apps/desktop/src/app/settings/
+// keys-settings.tsx): the Tools (tool API keys) and Settings (server / webhook /
+// gateway env) split is surfaced as nav sub-entries (see settings-nav.ts), same as
+// Providers → Accounts / API keys, so this renders one `view` at a time — a
+// single-expand list of collapsible credential cards (status dot, description +
+// "Get a key" docs link, set/replace/reveal/clear). Provider LLM keys live on the
+// Providers page; messaging-platform creds (channel_managed) on the Messaging page.
+// Reuses the shared credential UI (useEnvCredentials + CredentialKeyCard).
 
-type Vars = Record<string, EnvVarInfo>
+export type KeysView = 'settings' | 'tools'
 
-function groupOf(key: string, info: EnvVarInfo): string {
-  return info.provider_label || prefixGroup(key)
+// Backend env categories that surface under each sub-tab. Platform creds use the
+// `messaging` category but are flagged channel_managed (Messaging page owns those);
+// only gateway-wide messaging rows (e.g. GATEWAY_PROXY) appear here with `setting`.
+const VIEW_CATEGORIES: Record<KeysView, readonly string[]> = {
+  settings: ['setting', 'messaging'],
+  tools: ['tool'],
 }
 
-export function KeysSection() {
+export function KeysSection({ view }: { view: KeysView }) {
   const { t } = useI18n()
-  const [vars, setVars] = useState<Vars | null>(null)
-  const [failed, setFailed] = useState(false)
-  const [edits, setEdits] = useState<Record<string, string>>({})
-  const [revealed, setRevealed] = useState<Record<string, string>>({})
-  const [busy, setBusy] = useState<string | null>(null)
-  const [confirmKey, setConfirmKey] = useState<string | null>(null)
-  const [query, setQuery] = useState('')
+  const { rowProps, vars } = useEnvCredentials()
+  const [openKey, setOpenKey] = useState<null | string>(null)
 
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const next = await getEnvVars()
-        if (!cancelled) {
-          setVars(next)
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setFailed(true)
-        }
-        notifyError(err, t.settings.keys.failedLoad)
-      }
-    })()
-    return () => void (cancelled = true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
-  }, [])
+  // Collapse any expanded card when the nav switches sub-tab (Tools ↔ Settings).
+  useEffect(() => setOpenKey(null), [view])
 
-  const patch = (key: string, next: Partial<EnvVarInfo>) =>
-    setVars(c => (c ? { ...c, [key]: { ...c[key], ...next } } : c))
+  const entries = useMemo(() => {
+    if (!vars) return []
+    const cats = VIEW_CATEGORIES[view]
+    return Object.entries(vars)
+      .filter(([, info]) => !info.channel_managed && cats.includes(info.category))
+      .sort(([a], [b]) => a.localeCompare(b))
+  }, [vars, view])
 
-  const save = async (key: string) => {
-    const value = edits[key]?.trim()
-    if (!value) {
-      return
-    }
-    setBusy(key)
-    try {
-      await setEnvVar(key, value)
-      patch(key, { is_set: true, redacted_value: redactedValue(value) })
-      setEdits(c => withoutKey(c, key))
-      setRevealed(c => withoutKey(c, key))
-    } catch (err) {
-      notifyError(err, t.settings.credentials.couldNotSave)
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const reveal = async (key: string) => {
-    if (revealed[key]) {
-      setRevealed(c => withoutKey(c, key))
-      return
-    }
-    try {
-      const result = await revealEnvVar(key)
-      setRevealed(c => ({ ...c, [key]: result.value }))
-    } catch (err) {
-      notifyError(err, t.settings.credentials.couldNotSave)
-    }
-  }
-
-  const clear = async (key: string) => {
-    setConfirmKey(null)
-    setBusy(key)
-    try {
-      await deleteEnvVar(key)
-      patch(key, { is_set: false, redacted_value: null })
-      setRevealed(c => withoutKey(c, key))
-      notify({ kind: 'success', message: t.settings.envActions.clear })
-    } catch (err) {
-      notifyError(err, t.settings.credentials.couldNotSave)
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const groups = useMemo(() => {
-    if (!vars) {
-      return []
-    }
-    const q = query.trim().toLowerCase()
-    const byGroup = new Map<string, [string, EnvVarInfo][]>()
-    for (const [key, info] of Object.entries(vars)) {
-      if (info.channel_managed) {
-        continue // Messaging page owns these.
-      }
-      if (q && !key.toLowerCase().includes(q) && !includesQuery(info.description, q)) {
-        continue
-      }
-      const name = groupOf(key, info)
-      const list = byGroup.get(name) ?? []
-      list.push([key, info])
-      byGroup.set(name, list)
-    }
-    return [...byGroup.entries()].sort(([a], [b]) =>
-      a === 'Other' ? 1 : b === 'Other' ? -1 : a.localeCompare(b)
-    )
-  }, [vars, query])
-
-  if (!vars && !failed) {
+  if (!vars) {
     return <LoadingState label={t.settings.keys.loading} />
   }
 
   return (
     <SettingsContent>
-      <div className="relative pt-3 pb-1">
-        <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-[calc(50%-0.375rem)] text-muted-foreground" />
-        <Input
-          className="pl-9"
-          onChange={e => setQuery(e.target.value)}
-          placeholder={t.settings.searchPlaceholder.keys}
-          value={query}
-        />
-      </div>
-
-      {groups.length === 0 ? (
-        <p className="px-1 py-10 text-center text-sm text-muted-foreground">{t.settings.keys.empty}</p>
+      {entries.length === 0 ? (
+        <div className="mt-4 rounded-lg border border-dashed border-(--ui-stroke-tertiary) px-4 py-8 text-center text-[length:var(--conversation-caption-font-size)] text-muted-foreground">
+          {t.settings.keys.empty}
+        </div>
       ) : (
-        groups.map(([name, entries]) => (
-          <div className="mt-4" key={name}>
-            <div className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">{name}</div>
-            {entries.map(([key, info]) => (
-              <ListRow
+        <div className="mt-3 grid gap-2">
+          {entries.map(([key, info]) => {
+            const label = credentialRowLabel(key, info)
+            return (
+              <CredentialKeyCard
+                expanded={openKey === key}
+                info={info}
                 key={key}
-                description={info.description}
-                hint={info.is_set ? (revealed[key] ?? info.redacted_value ?? '••••') : undefined}
-                title={<span className="font-mono text-xs">{key}</span>}
-                wide
-                action={
-                  <div className="flex items-center gap-2">
-                    <Input
-                      onChange={e => setEdits(c => ({ ...c, [key]: e.target.value }))}
-                      placeholder={info.is_set ? t.settings.envActions.replace : t.settings.credentials.pasteKey}
-                      type="password"
-                      value={edits[key] ?? ''}
-                    />
-                    <Button
-                      disabled={busy === key || !edits[key]?.trim()}
-                      onClick={() => void save(key)}
-                      size="sm"
-                    >
-                      {info.is_set ? t.settings.envActions.replace : t.settings.envActions.set}
-                    </Button>
-                    {info.is_set && (
-                      <>
-                        <Button aria-label={t.settings.envActions.revealValue} onClick={() => void reveal(key)} size="icon-sm" variant="ghost">
-                          {revealed[key] ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                        </Button>
-                        <Button
-                          aria-label={t.settings.envActions.clear}
-                          disabled={busy === key}
-                          onClick={() => setConfirmKey(key)}
-                          size="icon-sm"
-                          variant="ghost"
-                        >
-                          <Trash className="size-4" />
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                }
+                label={label}
+                onExpand={() => setOpenKey(key)}
+                onToggle={() => setOpenKey(prev => (prev === key ? null : key))}
+                placeholder={credentialPlaceholder(key, info, label)}
+                rowProps={rowProps}
+                varKey={key}
               />
-            ))}
-          </div>
-        ))
+            )
+          })}
+        </div>
       )}
-
-      <Dialog onOpenChange={open => !open && setConfirmKey(null)} open={confirmKey !== null}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t.settings.envActions.clear}</DialogTitle>
-            <DialogDescription>
-              <span className="font-mono text-xs">{confirmKey}</span>
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="ghost">{t.common.cancel}</Button>
-            </DialogClose>
-            <Button onClick={() => confirmKey && void clear(confirmKey)} variant="destructive">
-              {t.settings.envActions.clear}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </SettingsContent>
   )
 }

@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react'
 
 import { useI18n } from '@/i18n'
-import { Archive, Bell, Globe, Info, Key, Keyboard, Paw, Zap } from '@/lib/icons'
+import { Archive, Bell, Globe, Info, Key, Keyboard, Paw, Settings, Wrench, Zap } from '@/lib/icons'
 
 import { SECTIONS } from './constants'
 
@@ -81,7 +81,15 @@ export function useSettingsNavGroups(): SettingsNavGroupModel[] {
       ]
     },
     { id: 'gateway', icon: Globe, label: t.settings.nav.gateway },
-    { id: 'keys', icon: Key, label: t.settings.nav.apiKeys },
+    {
+      id: 'keys',
+      icon: Key,
+      label: t.settings.nav.apiKeys,
+      children: [
+        { id: 'keys', icon: Wrench, label: t.settings.nav.keysTools },
+        { id: 'keys/settings', icon: Settings, label: t.settings.nav.keysSettings }
+      ]
+    },
     { id: 'sessions', icon: Archive, label: t.settings.nav.archivedChats },
     { id: 'about', icon: Info, label: t.settings.nav.about, gapBefore: true }
   ]

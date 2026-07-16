@@ -13,8 +13,11 @@ vi.mock('@/hermes', () => ({
     offset: 0
   })),
   setSessionArchived: vi.fn(async () => ({ ok: true })),
-  deleteSession: vi.fn(async () => ({ ok: true }))
+  deleteSession: vi.fn(async () => ({ ok: true })),
+  getDefaultCwd: vi.fn(async () => ({ cwd: '/home/u', branch: null }))
 }))
+vi.mock('@/store/session', () => ({ refreshSessions: vi.fn(async () => undefined) }))
+vi.mock('@/store/projects', () => ({ pickProjectFolder: vi.fn(async () => null) }))
 
 import { setSessionArchived } from '@/hermes'
 import { I18nProvider } from '@/i18n'

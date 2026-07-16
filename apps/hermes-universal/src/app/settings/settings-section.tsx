@@ -65,9 +65,10 @@ export function SectionBody({ section }: { section: string }) {
     case 'notifications':
       return <NotificationsSection />
 
-    // Keys/credentials (Jc10): env-var management. Provider OAuth connect is D2.
+    // Tools & Keys (Jc10): env-var credentials, split into Tools + Settings
+    // sub-tabs surfaced as nav children (desktop parity). Provider OAuth is D2.
     case 'keys':
-      return <KeysSection />
+      return <KeysSection view={sub === 'settings' ? 'settings' : 'tools'} />
 
     // Gateway (J10): mode picker + current connection + disconnect/sign-out.
     case 'gateway':

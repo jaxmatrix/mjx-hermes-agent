@@ -198,3 +198,21 @@ describe('connect — secure credential storage', () => {
     expect(await loadSavedLogin()).toEqual({ token: 'T', password: 'P' })
   })
 })
+
+describe('connect — auto-reconnect target (D8)', () => {
+  it('remote connect persists the restore target', async () => {
+    status({ auth_required: false })
+    await connect({ url: 'host:9', token: 'TOK' })
+    const saved = JSON.parse(localStorage.getItem('hermes.connection.last') ?? 'null')
+    expect(saved).toMatchObject({ mode: 'remote', url: 'host:9' })
+  })
+
+  it('signOut does NOT clear the restore target (always reconnect on next launch)', async () => {
+    status({ auth_required: false })
+    await connect({ url: 'host:9', token: 'TOK' })
+    expect(localStorage.getItem('hermes.connection.last')).not.toBeNull()
+    $connection.set({ baseUrl: 'https://gw', mode: 'remote', authMode: 'oauth' })
+    await signOut()
+    expect(localStorage.getItem('hermes.connection.last')).not.toBeNull()
+  })
+})
