@@ -73,6 +73,14 @@ export {
   IconActivity as Activity,
   IconHash as Hash,
   IconLoader2 as Loader2,
+  // Chat message action bar / user bubble (Phase 4 chat-UI port) — aliased to
+  // the exact names desktop's assistant-message / user-message import.
+  IconLoader2 as Loader2Icon,
+  IconX as XIcon,
+  IconVolume as Volume2Icon,
+  IconVolumeOff as VolumeXIcon,
+  IconGitBranch as GitBranchIcon,
+  IconPlayerStopFilled as StopFilled,
   IconRefresh as RefreshCw,
   IconLayoutDashboard as LayoutDashboard,
   IconBolt as Zap,

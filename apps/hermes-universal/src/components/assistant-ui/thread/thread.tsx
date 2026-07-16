@@ -1,6 +1,7 @@
 import { ThreadPrimitive } from '@assistant-ui/react'
 
-import { AssistantMessage, UserMessage } from './message'
+import { AssistantMessage } from './assistant-message'
+import { UserMessage } from './user-message'
 
 // The chat thread. ThreadPrimitive.Viewport owns stick-to-bottom scrolling.
 export function Thread() {
