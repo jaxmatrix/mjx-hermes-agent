@@ -356,6 +356,56 @@
     --ui-accent-ink: var(--dt-primary-foreground);
     --ui-danger: var(--dt-destructive);
     --ui-good: var(--ui-green);
+
+    /* ── Chat conversation + composer layout tokens (desktop parity) ──────────
+       Ported 1:1 from apps/desktop/src/styles.css (~lines 331-383). These drive
+       message/tool/thinking spacing, the overlay-composer sizing chain, and the
+       thread viewport height. `--conversation-{text,caption}-*` already live
+       above; this block adds the rest. The `--composer-measured-height` /
+       `--status-stack-measured-height` vars are recomputed at runtime by the
+       composer + status-stack once those land (phases 6/7); the static values
+       here are the pre-measure fallbacks. */
+    --status-stack-measured-height: 0px;
+    --thread-last-message-clearance: calc(
+      var(--composer-measured-height) + var(--status-stack-measured-height) + 2rem
+    );
+    --composer-shell-pad-block-end: 0.625rem;
+    --message-text-indent: 0.75rem;
+    --conversation-tool-font-size: 0.6875rem;
+    --conversation-line-height: 1.125rem;
+    --conversation-turn-gap: 0.375rem;
+    /* Gap between top-level turn blocks (prose ↔ tools ↔ thinking). */
+    --turn-block-gap: 0.75rem;
+    /* Tight gap between tool rows inside a single action group. */
+    --tool-row-gap: 0.375rem;
+    /* Height of the bounded auto-scrolling window a long tool-call run collapses
+       into (see `.tool-group-scroll`, ported in the tool-call phase). */
+    --tool-group-scroll-max-h: 6.75rem;
+    /* Vertical gap between prose paragraphs (single knob). */
+    --paragraph-gap: 0.7rem;
+    --sticky-human-top: 0.23rem;
+    --composer-width: 48.75rem;
+    --composer-control-size: 1.5rem;
+    --composer-control-primary-size: 1.625rem;
+    --composer-control-gap: 0.25rem;
+    --composer-row-gap: 0.25rem;
+    --composer-ring-strength: 1;
+    --composer-surface-pad-x: 0.5rem;
+    --composer-surface-pad-y: 0.3125rem;
+    --composer-input-min-height: 1.625rem;
+    --composer-input-max-height: 9.375rem;
+    --composer-input-inline-min-width: 8rem;
+    --composer-fallback-height: 2.75rem;
+    --composer-measured-height: calc(0.5rem + var(--composer-shell-pad-block-end) + var(--composer-fallback-height));
+    --composer-surface-measured-height: var(--composer-fallback-height);
+    --thread-viewport-height: max(
+      0rem,
+      calc(100% - var(--composer-measured-height) + var(--composer-surface-measured-height))
+    );
+    --vsq: min(0.5vh, 0.5vw);
+    --image-preview-max-width: 34rem;
+    --image-preview-height: clamp(16.25rem, calc(var(--vsq) * 100), 26.25rem);
+    --chat-min-width: 28rem;
   }
 
   :root.dark {
@@ -375,6 +425,8 @@
     /* Input chrome: softer hairline, deeper inset on dark surfaces. */
     --dt-input-border: 4%;
     --dt-input-inset: inset 0 1px 1px color-mix(in srgb, #000 38%, transparent);
+    /* Composer focus ring reads stronger on dark (desktop parity). */
+    --composer-ring-strength: 1.3;
   }
 }
 

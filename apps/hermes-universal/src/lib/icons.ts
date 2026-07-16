@@ -85,5 +85,8 @@ export {
   IconPlayerPlay as Play,
   // Gateway settings (mode-card hint + sign-in buttons)
   IconHelpCircle as HelpCircle,
-  IconLogin as LogIn
+  IconLogin as LogIn,
+  // Chat rendering pipeline (chat-session UI port)
+  IconCopy as Copy,
+  IconArrowUpRight as ArrowUpRight
 } from '@tabler/icons-react'
