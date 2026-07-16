@@ -37,12 +37,60 @@ export function togglePanesFlipped(): void {
   $panesFlipped.set(!$panesFlipped.get())
 }
 
-// Right-sidebar visibility placeholder (the right pane rework is a later step);
-// the titlebar's right-sidebar toggle drives it.
+// Right sidebar = the file-tree + file viewer/editor panes (ported from desktop).
+// The titlebar's right-sidebar toggle drives this group gate.
 export const $rightSidebarOpen = persistentAtom<boolean>('hermes.rightSidebarOpen', false, Codecs.bool)
 
 export function toggleRightSidebar(): void {
   $rightSidebarOpen.set(!$rightSidebarOpen.get())
+}
+
+// ── Right pane geometry + terminal ──────────────────────────────────────────
+export const FILE_TREE_PANE_ID = 'file-tree'
+export const PREVIEW_PANE_ID = 'preview'
+export const TERMINAL_PANE_ID = 'terminal'
+
+export const FILE_TREE_DEFAULT_WIDTH = 260
+export const FILE_TREE_MIN_WIDTH = 180
+export const FILE_TREE_MAX_WIDTH = 420
+export const PREVIEW_DEFAULT_WIDTH = 440
+export const PREVIEW_MIN_WIDTH = 300
+export const PREVIEW_MAX_WIDTH = 760
+export const TERMINAL_DEFAULT_HEIGHT = 260
+export const TERMINAL_MIN_HEIGHT = 120
+export const TERMINAL_MAX_HEIGHT = 640
+// When both the file tree + editor are closed, the terminal becomes a full-height
+// right column of this (independently resizable) preset width.
+export const TERMINAL_COLUMN_PANE_ID = 'terminal-column'
+export const TERMINAL_COLUMN_DEFAULT_WIDTH = 480
+export const TERMINAL_COLUMN_MIN_WIDTH = 300
+export const TERMINAL_COLUMN_MAX_WIDTH = 900
+
+ensurePaneRegistered(FILE_TREE_PANE_ID, { open: true })
+ensurePaneRegistered(PREVIEW_PANE_ID, { open: true })
+ensurePaneRegistered(TERMINAL_PANE_ID, { open: true })
+ensurePaneRegistered(TERMINAL_COLUMN_PANE_ID, { open: true })
+
+// The integrated terminal is a full-width bottom dock, toggled fully
+// independently of the file/editor right sidebar (parity with desktop's separate
+// terminal takeover). It stays visible even when the right sidebar is closed.
+export const $terminalOpen = persistentAtom<boolean>('hermes.terminalOpen', false, Codecs.bool)
+
+export function toggleTerminalOpen(): void {
+  $terminalOpen.set(!$terminalOpen.get())
+}
+
+export function setTerminalOpen(open: boolean): void {
+  $terminalOpen.set(open)
+}
+
+// A request to reveal (expand ancestors + select) a path in the file tree. The
+// tree pane subscribes, drives arborist to the node, then resets to null.
+export const $revealInTreeRequest = atom<string | null>(null)
+
+export function revealFileInTree(path: string): void {
+  $rightSidebarOpen.set(true)
+  $revealInTreeRequest.set(path)
 }
 
 // ── Pinned sessions ─────────────────────────────────────────────────────────
