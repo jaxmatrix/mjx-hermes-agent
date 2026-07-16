@@ -3,6 +3,7 @@ import {
   cancelOAuthSession,
   getGlobalModelOptions,
   getRecommendedDefaultModel,
+  listOAuthProviders,
   pollOAuthSession,
   setEnvVar,
   setModelAssignment,
@@ -13,6 +14,7 @@ import {
 import { openExternalLink } from '@/lib/external-link'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { atom } from '@/store/atom'
+import { requestGateway } from '@/store/gateway'
 import type { RecommendedDefaultModel } from '@/hermes'
 import type { OAuthProvider } from '@/types/hermes'
 
@@ -23,14 +25,16 @@ import type { OAuthProvider } from '@/types/hermes'
 export type OnboardingStep = 'picker' | 'apikey' | 'oauth' | 'confirm'
 
 // Provider OAuth sub-flow. device_code → poll until approved; pkce → the user
-// pastes an authorization code back. `external` (CLI) providers are excluded.
+// pastes an authorization code back; external → a third-party CLI mints the creds
+// (Qwen/Copilot/Claude Code…), so we show the command to run + a recheck button
+// instead of an in-app browser flow.
 export interface OAuthFlowState {
   provider: OAuthProvider
   sessionId: string
-  flow: 'device_code' | 'pkce'
+  flow: 'device_code' | 'external' | 'pkce'
   url: string
   userCode?: string
-  status: 'pending' | 'awaiting_code' | 'submitting' | 'error'
+  status: 'awaiting_code' | 'error' | 'external_pending' | 'pending' | 'rechecking' | 'submitting'
 }
 
 export interface OnboardingState {
@@ -50,6 +54,12 @@ const INITIAL: OnboardingState = { step: 'picker', option: null, providerSlug: n
 export const $onboardingSeen = persistentAtom<boolean>('hermes.onboarded', false, Codecs.bool)
 export const $onboarding = atom<OnboardingState>(INITIAL)
 export const $onboardingActive = atom(false)
+
+// The provider-connect overlay (Settings → Providers → Accounts). Non-null ⇒ the
+// focused per-provider connect card is open. Kept SEPARATE from $onboardingActive
+// so a settings-triggered connect renders as an overlay ON TOP of the still-mounted
+// settings page instead of the full-screen first-run wizard takeover.
+export const $connectProvider = atom<OAuthProvider | null>(null)
 
 const patch = (next: Partial<OnboardingState>) => $onboarding.set({ ...$onboarding.get(), ...next })
 
@@ -159,6 +169,19 @@ export function backToPicker() {
 /** Begin a provider OAuth sign-in: start the session, open the browser, then
  *  either poll (device_code) or await a pasted code (pkce). */
 export async function startProviderOAuth(provider: OAuthProvider): Promise<void> {
+  // External (CLI-managed) providers — Qwen/Copilot/Claude Code, etc. — mint their
+  // creds through a third-party CLI, so there's no in-app browser OAuth. Show the
+  // command to run + a recheck button instead of calling the OAuth endpoints.
+  if (provider.flow === 'external') {
+    patch({
+      busy: false,
+      step: 'oauth',
+      error: null,
+      oauth: { provider, sessionId: '', flow: 'external', url: '', status: 'external_pending' }
+    })
+    return
+  }
+
   patch({ busy: true, error: null })
   try {
     const start = await startOAuthLogin(provider.id)
@@ -179,6 +202,66 @@ export async function startProviderOAuth(provider: OAuthProvider): Promise<void>
     }
   } catch (err) {
     patch({ busy: false, error: err instanceof Error ? err.message : 'Sign-in failed. Try again.' })
+  }
+}
+
+/** Open the focused per-provider connect overlay (Providers → Accounts) and jump
+ *  straight into that provider's OAuth flow — skipping the picker. Does NOT set
+ *  $onboardingActive, so the settings page stays mounted underneath (mirrors the
+ *  desktop "manual provider OAuth" overlay handoff). */
+export function beginProviderConnect(provider: OAuthProvider): void {
+  stopPolling()
+  $onboarding.set(INITIAL)
+  $connectProvider.set(provider)
+  void startProviderOAuth(provider)
+}
+
+/** Dismiss the connect overlay: cancel any live session, reset flow state. */
+export function cancelProviderConnect(): void {
+  stopPolling()
+  const oauth = $onboarding.get().oauth
+  if (oauth && oauth.sessionId) {
+    void cancelOAuthSession(oauth.sessionId).catch(() => {})
+  }
+  $onboarding.set(INITIAL)
+  $connectProvider.set(null)
+}
+
+/** Re-check whether an external (CLI-managed) provider is now authenticated after
+ *  the user ran its `cli_command` in a terminal. Reloads env, re-lists providers,
+ *  and advances to the confirm step on success — else surfaces the "run it first"
+ *  hint. Mirrors desktop `recheckExternalSignin`. */
+export async function recheckExternalSignin(): Promise<void> {
+  const oauth = $onboarding.get().oauth
+  if (!oauth || oauth.flow !== 'external') {
+    return
+  }
+
+  const provider = oauth.provider
+  patch({ busy: true, error: null, oauth: { ...oauth, status: 'rechecking' } })
+
+  try {
+    // Reload the backend env so freshly-written CLI creds are picked up (best-effort).
+    await requestGateway('reload.env').catch(() => {})
+    const { providers } = await listOAuthProviders()
+    const fresh = providers.find(p => p.id === provider.id)
+
+    if (fresh?.status.logged_in) {
+      await onProviderConnected(fresh)
+      return
+    }
+
+    patch({
+      busy: false,
+      error: `Hermes still can't reach ${provider.name}. Run \`${provider.cli_command}\` in a terminal first.`,
+      oauth: { ...oauth, status: 'external_pending' }
+    })
+  } catch (err) {
+    patch({
+      busy: false,
+      error: err instanceof Error ? err.message : 'Could not verify sign-in. Try again.',
+      oauth: { ...oauth, status: 'external_pending' }
+    })
   }
 }
 
