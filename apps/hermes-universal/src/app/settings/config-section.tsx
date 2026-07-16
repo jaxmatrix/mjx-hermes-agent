@@ -13,6 +13,7 @@ import { notifyError } from '@/store/notifications'
 import type { ConfigFieldSchema, HermesConfigRecord } from '@/types/hermes'
 
 import { EMPTY_SELECT_VALUE, FIELD_DESCRIPTIONS, FIELD_LABELS, SECTIONS } from './constants'
+import { FallbackModelsField } from './fallback-models-field'
 import { fieldCopyForSchemaKey } from './field-copy'
 import { enumOptionsFor, getNested, prettyName, setNested } from './helpers'
 import { EmptyState, ListRow, LoadingState, SettingsContent } from './primitives'
@@ -73,6 +74,12 @@ export function ConfigField({
   const row = (action: ReactNode, wide = false) => (
     <ListRow action={action} description={descriptionNode} title={label} wide={wide} />
   )
+
+  // Structured provider+model chain editor (replaces the generic comma-list input,
+  // which stringified the {provider,model} objects). Mirrors desktop config-settings.
+  if (schemaKey === 'fallback_providers') {
+    return row(<FallbackModelsField onChange={onChange} value={value} />, true)
+  }
 
   if (schema.type === 'boolean') {
     return row(
@@ -182,13 +189,23 @@ export function ConfigSection({
   sectionId,
   fieldFilter,
   renderExtra,
+  renderDescriptionExtra,
+  resolveEnumOptions,
+  resolveOptionLabels,
   headerSlot
 }: {
   sectionId: string
   // Optional per-key visibility filter (voice hides inactive-provider fields).
   fieldFilter?: (key: string, config: HermesConfigRecord) => boolean
-  // Optional extra content rendered under a field (memory provider connect).
+  // Optional block rendered UNDER a field's row (memory: ProviderConfigPanel).
   renderExtra?: (key: string, config: HermesConfigRecord) => ReactNode
+  // Optional inline extra appended to a field's description (memory: MemoryConnect).
+  renderDescriptionExtra?: (key: string, config: HermesConfigRecord) => ReactNode
+  // Optional enum-options override (voice: dynamic ElevenLabs voice ids). Defaults
+  // to enumOptionsFor.
+  resolveEnumOptions?: (key: string, value: unknown, config: HermesConfigRecord) => string[] | undefined
+  // Optional per-key option-label map (voice: ElevenLabs id → display name).
+  resolveOptionLabels?: (key: string) => Record<string, string> | undefined
   // Optional custom block rendered above the schema fields (model picker).
   headerSlot?: ReactNode
 }) {
@@ -289,13 +306,18 @@ export function ConfigSection({
       {visibleFields.length === 0 ? (
         headerSlot ? null : <EmptyState description={c.emptyDesc} title={c.emptyTitle} />
       ) : (
-        <div className="pt-1">
+        <div className="grid gap-1 pt-1">
           {visibleFields.map(([key, field]) => (
-            <div key={key}>
+            <div className="rounded-lg" key={key}>
               <ConfigField
-                descriptionExtra={undefined}
-                enumOptions={enumOptionsFor(key, getNested(config, key), config)}
+                descriptionExtra={renderDescriptionExtra?.(key, config)}
+                enumOptions={
+                  resolveEnumOptions
+                    ? resolveEnumOptions(key, getNested(config, key), config)
+                    : enumOptionsFor(key, getNested(config, key), config)
+                }
                 onChange={value => updateConfig(setNested(config, key, value))}
+                optionLabels={resolveOptionLabels?.(key)}
                 schema={field}
                 schemaKey={key}
                 value={getNested(config, key)}
