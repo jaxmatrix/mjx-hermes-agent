@@ -7,6 +7,7 @@ import { ErrorBoundary } from './components/error-boundary'
 import { I18nProvider } from './i18n'
 import { queryClient } from './lib/query-client'
 import { restoreSessionCookies } from './lib/session-persist'
+import { autoRestoreConnection } from './store/gateway-restore'
 import { ThemeProvider } from './themes'
 import '@fontsource-variable/inter/wght.css'
 import 'katex/dist/katex.min.css'
@@ -14,11 +15,15 @@ import '@vscode/codicons/dist/codicon.css'
 import 'overlayscrollbars/overlayscrollbars.css'
 import './styles.css'
 
-// Rehydrate a persisted gateway/cloud session into the Rust cookie jar (R2b)
-// before the user can reach the connect action. Fire-and-forget: the keyring read
-// completes long before any user-initiated connect, and a failure degrades to a
-// fresh sign-in rather than blocking startup.
-void restoreSessionCookies()
+// Rehydrate a persisted gateway/cloud session into the Rust cookie jar (R2b), THEN
+// auto-reconnect to the last-used gateway (D8). Cookies first so a cookie-backed
+// login (ticket/oauth/cloud) re-dials without an interactive sign-in; the restore
+// runs even if the cookie read fails (it degrades to a fresh sign-in). `$restoring`
+// is seeded true synchronously from the saved target, so the connecting screen —
+// not the picker — shows from the first paint while this resolves.
+void restoreSessionCookies().finally(() => {
+  void autoRestoreConnection()
+})
 
 const container = document.getElementById('root')
 if (!container) {

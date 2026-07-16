@@ -568,7 +568,7 @@ export const en: Translations = {
       title: 'Gateway Connection',
       envOverride: 'env override',
       intro:
-        'Hermes Desktop starts its own local gateway by default. Use a remote gateway when you want this app to control an already-running Hermes backend on another machine or behind a trusted proxy. Pick a profile below to give it its own remote host.',
+        'Choose how Hermes connects. Use a local backend on this device, sign in to Hermes Cloud, or point this app at an already-running Hermes backend on another machine or behind a trusted proxy.',
       appliesTo: 'Applies to',
       allProfiles: 'All profiles',
       defaultConnection: 'Default connection for every profile that has no override of its own.',
@@ -581,7 +581,7 @@ export const en: Translations = {
       localTitle: 'Local gateway',
       localDesc: 'Start a private Hermes backend on localhost. This is the default and works offline.',
       remoteTitle: 'Remote gateway',
-      remoteDesc: 'Connect this desktop shell to a remote Hermes backend.',
+      remoteDesc: 'Connect this app to a remote Hermes backend.',
       remoteAuthHint:
         'Hosted gateways use OAuth or a username and password; self-hosted ones may use a session token.',
       cloudTitle: 'Hermes Cloud',
@@ -627,8 +627,8 @@ export const en: Translations = {
       authSignedInPassword:
         'This gateway uses a username and password. You are signed in; the session refreshes automatically.',
       authSignedInOauth: 'This gateway uses OAuth. You are signed in; the session refreshes automatically.',
-      authNeedsPassword: 'This gateway uses a username and password. Sign in to authorize this desktop app.',
-      authNeedsOauth: provider => `This gateway uses OAuth. Sign in with ${provider} to authorize this desktop app.`,
+      authNeedsPassword: 'This gateway uses a username and password. Sign in to authorize this app.',
+      authNeedsOauth: provider => `This gateway uses OAuth. Sign in with ${provider} to authorize this app.`,
       tokenTitle: 'Session token',
       tokenDesc: 'The dashboard session token used for REST and WebSocket access. Leave blank to keep the saved token.',
       existingToken: value => `Existing token ${value}`,
@@ -638,7 +638,7 @@ export const en: Translations = {
       saveForRestart: 'Save for next restart',
       saveAndReconnect: 'Save and reconnect',
       diagnostics: 'Diagnostics',
-      diagnosticsDesc: 'Reveal desktop.log in your file manager — useful when the gateway fails to start.',
+      diagnosticsDesc: 'Connection status and recent gateway logs — useful when the gateway misbehaves.',
       openLogs: 'Open logs',
       incompleteTitle: 'Remote gateway incomplete',
       incompleteSignIn: 'Enter a remote URL and sign in before switching to remote.',
@@ -648,7 +648,7 @@ export const en: Translations = {
       enterUrlFirst: 'Enter a remote URL first.',
       restartingTitle: 'Gateway connection restarting',
       savedTitle: 'Gateway settings saved',
-      restartingMessage: 'Hermes Desktop will reconnect using the saved settings — the shell stays open.',
+      restartingMessage: 'Hermes will reconnect using these settings — the app stays open.',
       savedMessage: 'Saved for the next restart.',
       connectedTo: (baseUrl, version) => `Connected to ${baseUrl}${version ? ` · Hermes ${version}` : ''}`,
       reachableTitle: 'Remote gateway reachable',
@@ -659,7 +659,10 @@ export const en: Translations = {
       signOutFailed: 'Sign-out failed',
       testFailed: 'Remote gateway test failed',
       applyFailed: 'Could not apply gateway settings',
-      saveFailed: 'Could not save gateway settings'
+      saveFailed: 'Could not save gateway settings',
+      connectingTitle: 'Connecting to Hermes',
+      reconnectingTo: target => `Reconnecting to ${target}…`,
+      useDifferentGateway: 'Use a different gateway'
     },
     keys: {
       loading: 'Loading API keys and credentials...',

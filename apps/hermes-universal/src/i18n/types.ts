@@ -571,6 +571,9 @@ export interface Translations {
       testFailed: string
       applyFailed: string
       saveFailed: string
+      connectingTitle: string
+      reconnectingTo: (target: string) => string
+      useDifferentGateway: string
     }
     keys: {
       loading: string

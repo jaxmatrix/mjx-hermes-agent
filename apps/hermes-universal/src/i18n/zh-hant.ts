@@ -703,7 +703,7 @@ export const zhHant = defineLocale({
       saveForRestart: '儲存至下次重新啟動',
       saveAndReconnect: '儲存並重新連線',
       diagnostics: '診斷',
-      diagnosticsDesc: '在檔案管理員中顯示 desktop.log，閘道啟動失敗時很有用。',
+      diagnosticsDesc: '連線狀態和最近的閘道日誌 — 閘道異常時很有用。',
       openLogs: '開啟記錄',
       incompleteTitle: '遠端閘道設定不完整',
       incompleteSignIn: '切換至遠端前，請輸入遠端 URL 並完成登入。',
@@ -724,7 +724,10 @@ export const zhHant = defineLocale({
       signOutFailed: '登出失敗',
       testFailed: '遠端閘道測試失敗',
       applyFailed: '無法套用閘道設定',
-      saveFailed: '無法儲存閘道設定'
+      saveFailed: '無法儲存閘道設定',
+      connectingTitle: '正在連線 Hermes',
+      reconnectingTo: target => `正在重新連線至 ${target}…`,
+      useDifferentGateway: '使用其他閘道'
     },
     keys: {
       loading: '正在載入 API 金鑰和憑證...',

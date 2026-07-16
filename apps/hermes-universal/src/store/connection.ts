@@ -13,6 +13,7 @@ import { clearSecrets, loadSecrets, saveSecrets, type Secrets } from '@/lib/secu
 import { persistSessionCookies } from '@/lib/session-persist'
 import { atom } from '@/store/atom'
 import { chooseGatedAuth, type Connection } from '@/store/gateway-config'
+import { saveGatewayTarget } from '@/store/gateway-restore'
 import { $gatewayState, closeGateway, connectGateway } from '@/store/gateway'
 import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import { httpRequest } from '@/transport/http'
@@ -58,6 +59,17 @@ export const $connection = atom<Connection | null>(null)
 export const $connectionPhase = atom<ConnectionPhase>('idle')
 export const $connectionError = atom<string | null>(null)
 export const $status = atom<StatusInfo | null>(null)
+
+/**
+ * True once a live connection has been reached in this session (until an explicit
+ * disconnect). The root gate reads it so an in-session reconnect (a dropped socket
+ * or a settings "Save & reconnect") shows the connecting screen over the mounted
+ * shell/Settings instead of bouncing to the full-screen connect picker — the
+ * picker is reserved for a genuine first run. Reset by `disconnect()` (deliberate
+ * sign-out → back to the picker). Not persisted: a fresh launch starts false and
+ * the boot restore (`$restoring`) drives the connecting screen instead.
+ */
+export const $hasConnected = atom(false)
 
 export const lastUrl = (): string => loadString(URL_KEY)
 export const lastUsername = (): string => loadString(USER_KEY)
@@ -156,6 +168,8 @@ export async function connect(input: ConnectInput): Promise<void> {
     // Persist the session cookie jar (R2b) so a cookie-backed login (ticket now,
     // oauth/cloud once D6/E land) survives an app restart. No-op in token/none mode.
     await persistSessionCookies()
+    // Remember this target so the next launch auto-reconnects (D8).
+    saveGatewayTarget({ mode: 'remote', url: input.url.trim(), username: input.username || undefined })
   } catch (err) {
     $connectionError.set(err instanceof Error ? err.message : String(err))
     $connectionPhase.set('error')
@@ -184,6 +198,8 @@ export async function connectLocal(profile?: null | string): Promise<void> {
     $connection.set(conn)
     await connectGateway(conn)
     $connectionPhase.set('ready')
+    // Remember this target so the next launch auto-reconnects (D8).
+    saveGatewayTarget({ mode: 'local', profile: profile ?? null })
   } catch (err) {
     // Tear the child down so a failed connect doesn't leave an orphan process.
     void stopLocalBackend().catch(() => {})
@@ -225,6 +241,9 @@ export async function connectCloud(baseUrl: string, profile?: null | string): Pr
     }
     $connectionPhase.set('ready')
     await persistSessionCookies()
+    // Remember this target so the next launch auto-reconnects (D8). connectCloudAgent
+    // enriches it with the agent id/name afterwards (for the restore label).
+    saveGatewayTarget({ mode: 'cloud', cloudBaseUrl: conn.baseUrl, profile: profile ?? null })
   } catch (err) {
     $connectionError.set(err instanceof Error ? err.message : String(err))
     $connectionPhase.set('error')
@@ -236,6 +255,9 @@ export async function connectCloud(baseUrl: string, profile?: null | string): Pr
 export function disconnect(): void {
   // Mark this as a deliberate close so the reconnect supervisor stands down.
   intentionalClose = true
+  // A deliberate disconnect ends the session: the root gate falls back to the
+  // connect picker (not the reconnecting screen) next.
+  $hasConnected.set(false)
   // If we were on a local-spawned backend, stop the child too.
   if ($connection.get()?.mode === 'local') {
     void stopLocalBackend().catch(() => {})
@@ -327,4 +349,11 @@ $gatewayState.subscribe(state => {
   if (state === 'closed' && !intentionalClose && !reconnecting && $connection.get()) {
     void runReconnectLoop()
   }
+})
+
+// Latch "has connected this session" on every ready transition (initial connect,
+// local/cloud connect, and each successful auto-reconnect). One place covers them
+// all; `disconnect()` clears it.
+$connectionPhase.subscribe(phase => {
+  if (phase === 'ready') $hasConnected.set(true)
 })

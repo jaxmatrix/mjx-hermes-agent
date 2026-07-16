@@ -36,8 +36,9 @@ export {
   IconSearch as Search,
   IconDotsVertical as MoreVertical,
   IconHistory as History,
-  // Language switcher / theme picker (Track I)
-  IconWorld as Globe,
+  // Language switcher / theme picker (Track I). Globe = IconGlobe to match the
+  // desktop `@/lib/icons` alias exactly (the meridian globe, not IconWorld).
+  IconGlobe as Globe,
   IconPalette as Palette,
   // Notification toasts (Track I)
   IconAlertCircle as AlertCircle,
@@ -79,5 +80,8 @@ export {
   IconExternalLink as ExternalLink,
   IconDeviceFloppy as Save,
   // Notifications completion-sound preview
-  IconPlayerPlay as Play
+  IconPlayerPlay as Play,
+  // Gateway settings (mode-card hint + sign-in buttons)
+  IconHelpCircle as HelpCircle,
+  IconLogin as LogIn
 } from '@tabler/icons-react'
