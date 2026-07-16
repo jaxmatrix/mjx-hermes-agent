@@ -16,6 +16,9 @@ export {
   IconChevronLeft as ChevronLeft,
   IconChevronUp as ChevronUp,
   IconCircleFilled as Circle,
+  // Tool / clarify glyphs (chat-port phase 5)
+  IconMessageQuestion as MessageQuestion,
+  IconCircleLetterA as CircleLetterA,
   // Navigation glyphs (Track F sidebar)
   IconMenu2 as Menu,
   IconSettings as Settings,

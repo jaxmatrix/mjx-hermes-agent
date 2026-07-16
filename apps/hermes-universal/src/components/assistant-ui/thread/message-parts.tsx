@@ -1,25 +1,48 @@
 import {
   type ReasoningMessagePartComponent,
+  type ToolCallMessagePartProps,
   useAuiState,
   useMessagePartReasoning
 } from '@assistant-ui/react'
 import { type ComponentProps, type FC, type ReactNode, useEffect, useRef, useState } from 'react'
 
+import { ClarifyTool } from '@/components/assistant-ui/clarify-tool'
 import { MarkdownText, MarkdownTextContent } from '@/components/assistant-ui/markdown-text'
+import { ToolFallback, ToolGroupSlot } from '@/components/assistant-ui/tool/fallback'
 import { useElapsedSeconds } from '@/components/chat/activity-timer'
 import { ActivityTimerText } from '@/components/chat/activity-timer-text'
 import { DisclosureRow } from '@/components/chat/disclosure-row'
+import { GeneratedImage } from '@/components/chat/generated-image-result'
 import { useI18n } from '@/i18n'
 import { useEnterAnimation } from '@/lib/use-enter-animation'
 import { cn } from '@/lib/utils'
 
-import { ToolPart } from './tool-part'
+const ImageGenerateTool: FC<ToolCallMessagePartProps> = ({ args, result }) => {
+  const aspectRatio = typeof args?.aspect_ratio === 'string' ? args.aspect_ratio : undefined
 
-// Ported from apps/desktop/src/components/assistant-ui/thread/message-parts.tsx.
-// The reasoning machinery is a full port; the tool components (ToolFallback,
-// ToolGroupSlot, ClarifyTool, GeneratedImage, ImageGenerateTool,
-// ChainToolFallback) and the `ToolGroup` slot are a LATER phase — universal
-// keeps its existing lean `ToolPart` row and omits `ToolGroup` for now.
+  return (
+    <div className="mt-1.5">
+      <GeneratedImage aspectRatio={aspectRatio} result={result} />
+    </div>
+  )
+}
+
+const ChainToolFallback: FC<ToolCallMessagePartProps> = props => {
+  // todo parts are hoisted to a dedicated panel above the message content.
+  if (props.toolName === 'todo') {
+    return null
+  }
+
+  if (props.toolName === 'image_generate') {
+    return <ImageGenerateTool {...props} />
+  }
+
+  if (props.toolName === 'clarify') {
+    return <ClarifyTool {...props} />
+  }
+
+  return <ToolFallback {...props} />
+}
 
 const ThinkingDisclosure: FC<{
   children: ReactNode
@@ -177,10 +200,13 @@ const ReasoningTextPart: ReasoningMessagePartComponent = () => {
 // has a stable identity across renders. Without this every AssistantMessage
 // render would create a fresh `components` object, invalidating the memo on
 // `MessagePrimitivePartByIndex` and forcing every tool/reasoning child to
-// re-render on every streaming delta.
+// re-render on every streaming delta. Memo invalidation alone doesn't
+// remount, but combined with the previous ToolFallback group-swap it was a
+// big chunk of the per-delta work.
 export const MESSAGE_PARTS_COMPONENTS = {
   Reasoning: ReasoningTextPart,
   ReasoningGroup: ReasoningAccordionGroup,
   Text: MarkdownText,
-  tools: { Fallback: ToolPart }
+  ToolGroup: ToolGroupSlot,
+  tools: { Fallback: ChainToolFallback }
 } as const

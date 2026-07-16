@@ -2036,6 +2036,7 @@ export interface Translations {
       placeholder: string
       skip: string
       continueLabel: string
+      skipped: string
     }
     tool: {
       code: string

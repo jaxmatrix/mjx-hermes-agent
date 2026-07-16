@@ -85,6 +85,13 @@ export const $sudo = atom<SudoRequest | null>(null)
 export const $secret = atom<SecretRequest | null>(null)
 export const $sessionId = atom<string | null>(null)
 
+// FIXME(chat-port): universal has no live cwd atom (desktop's session store owns
+// $currentCwd, updated from session.info events). This is a minimal placeholder
+// so the tool renderer's path-shortening + preview-artifact recording can read a
+// cwd; it stays '' until a cwd feed is wired. Consumers must tolerate an empty
+// value (they do — path shortening falls back to the raw path).
+export const $currentCwd = atom<string>('')
+
 // --- Statusbar runtime signals (turn/session timers + live context usage) ---
 // Mirrors desktop's session-store $turnStartedAt/$sessionStartedAt/$currentUsage,
 // wired here since chat.ts owns the turn lifecycle. The statusbar reads these for

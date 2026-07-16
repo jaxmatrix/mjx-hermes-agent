@@ -1293,6 +1293,34 @@ html {
   opacity: 1;
 }
 
+/* Long adjacent tool-call run collapsed into a fixed, auto-scrolling window.
+   ToolGroupSlot pins the newest call to the bottom (unless the user scrolls
+   up), so a back-to-back run stays compact instead of pushing the reply off
+   screen. A thin scrollbar keeps the affordance discoverable. */
+.tool-group-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-stroke-tertiary) transparent;
+}
+
+/* Break out of the fixed window the moment any row inside is expanded: the
+   user is now reading a diff/output, so let it grow to full height instead of
+   peering at it through a ~2-row viewport. Collapsing the row drops it back
+   into the compact, auto-scrolling window. Beats a larger fixed cap since an
+   open row already bounds its own payload with an inner scroll. */
+.tool-group-scroll:has([data-tool-row][data-tool-open]) {
+  max-height: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/* Top gradient — only applied once the user is scrolled down off the top, so
+   the oldest visible call fades up under the fade while the first row stays
+   fully legible when scrolled all the way up. */
+.tool-group-scroll--faded {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 2rem, black 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, black 2rem, black 100%);
+}
+
 /* Conversation block rhythm. Scaffolding (tool / thinking) gets a roomy block
    gap; consecutive prose collapses to a tight paragraph rhythm. */
 [data-slot='aui_assistant-message-content']
