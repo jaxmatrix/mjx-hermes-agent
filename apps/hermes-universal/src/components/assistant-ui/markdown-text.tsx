@@ -16,6 +16,8 @@ import { normalizeExternalUrl, openExternalLink, PrettyLink } from '@/lib/extern
 import { preprocessMarkdown } from '@/lib/markdown-preprocess'
 import { cn } from '@/lib/utils'
 
+import { detectEmbed, extractAlert, MarkdownAlert, RichCodeBlock, UrlEmbed } from './embeds'
+
 // Math rendering plugin (KaTeX). `singleDollarTextMath: true` enables `$x^2$`
 // inline math (the de-facto LLM convention).
 //
@@ -79,10 +81,10 @@ function childrenToText(children: unknown): string {
   return ''
 }
 
-// FIXME(chat-port): media attachments (image/audio/video hrefs) and preview /
-// URL rich embeds are deferred to the preview/media phase — they need the
-// gateway-media RPCs universal doesn't expose yet. For now every link routes
-// through the system browser via PrettyLink / openExternalLink.
+// FIXME(chat-port): media attachments (image/audio/video hrefs) and preview
+// links are deferred to the preview/media phase — they need the gateway-media
+// RPCs universal doesn't expose yet. For now non-media links route through
+// PrettyLink / rich URL embeds.
 function MarkdownLink({ children, className, href, ...props }: ComponentProps<'a'>) {
   const target = href ? normalizeExternalUrl(href) : href
 
@@ -110,6 +112,18 @@ function MarkdownLink({ children, className, href, ...props }: ComponentProps<'a
   }
 
   const text = childrenToText(children)
+
+  // Bare autolink → inline rich embed when a provider matches. Labeled links
+  // (`[watch](url)`) stay plain. (Universal is a Tauri webview, so the iframe /
+  // widget renderers can run — no desktop-webview gate.)
+  if (text && normalizeExternalUrl(text) === target) {
+    const embed = detectEmbed(target)
+
+    if (embed) {
+      return <UrlEmbed descriptor={embed} />
+    }
+  }
+
   const fallbackLabel = text && normalizeExternalUrl(text) !== target ? text : undefined
 
   return (
@@ -216,16 +230,25 @@ function MarkdownTextSurface({ containerClassName, containerProps, defer }: Mark
         ),
         // `---` as quiet spacing, not a heavy full-width rule.
         hr: (_props: ComponentProps<'hr'>) => <div aria-hidden className="my-3" />,
-        // FIXME(chat-port): GFM alert callouts (> [!NOTE] …) land with the embeds phase.
-        blockquote: ({ children, className, ...props }: ComponentProps<'blockquote'>) => (
-          <blockquote
-            className={cn('border-s-2 border-border ps-3 text-muted-foreground italic', className)}
-            dir="auto"
-            {...props}
-          >
-            {children}
-          </blockquote>
-        ),
+        // A `> [!NOTE]`/`[!WARNING]`/... blockquote renders as a GFM alert
+        // callout; everything else stays a plain quote.
+        blockquote: ({ children, className, ...props }: ComponentProps<'blockquote'>) => {
+          const alert = extractAlert(children)
+
+          if (alert) {
+            return <MarkdownAlert type={alert.type}>{alert.body}</MarkdownAlert>
+          }
+
+          return (
+            <blockquote
+              className={cn('border-s-2 border-border ps-3 text-muted-foreground italic', className)}
+              dir="auto"
+              {...props}
+            >
+              {children}
+            </blockquote>
+          )
+        },
         ul: ({ className, ...props }: ComponentProps<'ul'>) => (
           <ul className={cn('my-1 gap-0', className)} dir="auto" {...props} />
         ),
@@ -262,10 +285,16 @@ function MarkdownTextSurface({ containerClassName, containerProps, defer }: Mark
           <td className={cn('px-2.5 py-1.5 align-top text-[0.8125rem] leading-snug', className)} {...props} />
         ),
         img: MarkdownImage,
-        // FIXME(chat-port): ```mermaid / ```svg fences route to lazy embed
-        // renderers in the embeds phase. For now every language falls back to
-        // the Shiki-highlighted code block.
-        SyntaxHighlighter: (props: SyntaxHighlighterProps) => <SyntaxHighlighter {...props} defer={isStreaming} />
+        // ```mermaid / ```svg fences route to their lazy renderers; every other
+        // language falls back to the Shiki-highlighted code block.
+        SyntaxHighlighter: (props: SyntaxHighlighterProps) => (
+          <RichCodeBlock
+            code={props.code}
+            fallback={<SyntaxHighlighter {...props} defer={isStreaming} />}
+            language={props.language}
+            streaming={isStreaming}
+          />
+        )
       }) as StreamdownTextComponents,
     [isStreaming]
   )

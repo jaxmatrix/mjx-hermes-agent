@@ -88,5 +88,9 @@ export {
   IconLogin as LogIn,
   // Chat rendering pipeline (chat-session UI port)
   IconCopy as Copy,
-  IconArrowUpRight as ArrowUpRight
+  IconArrowUpRight as ArrowUpRight,
+  // Zoomable viewer (embeds phase — mermaid/svg pan-zoom toolbar)
+  IconMaximize as Maximize,
+  IconZoomIn as ZoomIn,
+  IconZoomOut as ZoomOut
 } from '@tabler/icons-react'

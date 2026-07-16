@@ -17,3 +17,12 @@ export const $embedAllowed = persistentAtom<string[]>('hermes.embedAllowed', [],
 
 export const setEmbedMode = (mode: EmbedMode) => $embedMode.set(mode)
 export const clearEmbedAllowed = () => $embedAllowed.set([])
+
+/** Grant a provider a standing "always allow" (persisted allowlist). */
+export function allowProvider(provider: string) {
+  const current = $embedAllowed.get()
+
+  if (!current.includes(provider)) {
+    $embedAllowed.set([...current, provider])
+  }
+}
