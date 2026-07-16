@@ -15818,6 +15818,93 @@ async def pty_ws(ws: WebSocket) -> None:
 
 
 # ---------------------------------------------------------------------------
+# /api/shell-pty — interactive login-shell PTY over WebSocket.
+#
+# Unlike /api/pty (which spawns the Hermes TUI), this spawns the operator's
+# ``$SHELL`` so the Hermes Universal app's right-pane terminal is a general
+# shell on the backend/workspace host — cross-platform (the client renders
+# xterm.js over the WS, no local node-pty). Reuses the exact same auth gates,
+# PtyBridge, and 1:1 pump as /api/pty; the wire protocol is identical (raw
+# bytes in/out + the ``\x1b[RESIZE:cols;rows]`` escape, consumed by the pump).
+# ---------------------------------------------------------------------------
+@app.websocket("/api/shell-pty")
+async def shell_pty_ws(ws: WebSocket) -> None:
+    peer = ws.client.host if ws.client else "?"
+
+    if not _DASHBOARD_EMBEDDED_CHAT_ENABLED:
+        _log.info("shell-pty refused: embedded chat disabled peer=%s", peer)
+        await ws.close(code=4404, reason="embedded chat disabled")
+        return
+
+    # Same gate order + close codes as /api/pty (4401 auth, 4403 host/origin,
+    # 4408 peer) so the client's banner logic is shared.
+    auth_reason, cred = _ws_auth_reason(ws)
+    mode = _ws_auth_mode()
+    if auth_reason is not None:
+        _log.warning("shell-pty auth rejected reason=%s mode=%s peer=%s", auth_reason, mode, peer)
+        await ws.close(code=4401, reason=_ws_close_reason(f"auth: {auth_reason}"))
+        return
+
+    host_origin_reason = _ws_host_origin_reason(ws)
+    if host_origin_reason is not None:
+        _log.warning("shell-pty refused: %s peer=%s", host_origin_reason, peer)
+        await ws.close(code=4403, reason=_ws_close_reason(host_origin_reason))
+        return
+
+    client_reason = _ws_client_reason(ws)
+    if client_reason is not None:
+        _log.warning("shell-pty refused: %s", client_reason)
+        await ws.close(code=4408, reason=_ws_close_reason(client_reason))
+        return
+
+    await ws.accept()
+    _log.info("shell-pty accepted peer=%s mode=%s", peer, mode)
+
+    if not _PTY_BRIDGE_AVAILABLE:
+        await ws.send_text(
+            "\r\n\x1b[31mTerminal unavailable: the shell terminal requires a POSIX "
+            "PTY, which native Windows Python doesn't provide. Install Hermes inside "
+            "WSL2 to use it.\x1b[0m\r\n"
+        )
+        await ws.close(code=1011)
+        return
+
+    # Working directory: an optional (path-hardened) ?cwd=, else the backend's
+    # default workspace cwd, else $HOME.
+    cwd_param = (ws.query_params.get("cwd") or "").strip() or None
+    cwd = _fs_default_cwd()
+    if cwd_param:
+        try:
+            candidate = _fs_path(cwd_param)
+            if candidate.is_dir():
+                cwd = str(candidate)
+        except Exception:
+            pass
+    if not os.path.isdir(cwd):
+        cwd = os.path.expanduser("~")
+
+    shell = os.environ.get("SHELL") or "/bin/bash"
+    env = os.environ.copy()
+    env["TERM"] = "xterm-256color"
+    env["COLORTERM"] = "truecolor"
+    env["TERM_PROGRAM"] = "Hermes"
+    env["HERMES_UNIVERSAL_TERMINAL"] = "1"
+
+    try:
+        bridge = PtyBridge.spawn([shell], cwd=cwd, env=env)
+    except PtyUnavailableError as exc:
+        await ws.send_text(f"\r\n\x1b[31mTerminal unavailable: {exc}\x1b[0m\r\n")
+        await ws.close(code=1011)
+        return
+    except (FileNotFoundError, OSError) as exc:
+        await ws.send_text(f"\r\n\x1b[31mTerminal failed to start: {exc}\x1b[0m\r\n")
+        await ws.close(code=1011)
+        return
+
+    await _legacy_pump(ws, bridge)
+
+
+# ---------------------------------------------------------------------------
 # /api/ws — JSON-RPC WebSocket sidecar for the dashboard "Chat" tab.
 #
 # Drives the same `tui_gateway.dispatch` surface Ink uses over stdio, so the

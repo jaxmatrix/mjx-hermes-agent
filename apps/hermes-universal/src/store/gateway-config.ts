@@ -116,3 +116,29 @@ export async function resolveWsUrl(conn: Connection): Promise<string> {
       return build(['ticket', await mintWsTicket(conn.baseUrl)])
   }
 }
+
+const SHELL_PTY_PATH = '/api/shell-pty'
+
+/** Build the WS URL for the right-pane terminal (`/api/shell-pty`), reusing the
+ *  gateway's token/ticket/oauth auth exactly. `params` carries terminal query
+ *  args (e.g. `{ cwd }`). Mirrors `resolveWsUrl`. */
+export async function resolveTerminalWsUrl(conn: Connection, params: Record<string, string> = {}): Promise<string> {
+  const u = new URL(conn.baseUrl)
+  const build = (authParam?: readonly [string, string]): string =>
+    buildHermesWebSocketUrl({ protocol: u.protocol, host: u.host, path: SHELL_PTY_PATH, authParam, params })
+
+  switch (conn.authMode) {
+    case 'none':
+      return build()
+    case 'token':
+      return conn.token ? build(['token', conn.token]) : build()
+    case 'oauth': {
+      const mint = { getGatewayWsUrl: async () => build(['ticket', await mintWsTicket(conn.baseUrl)]) }
+      const wsConn: GatewayWsConnection = { authMode: 'oauth', profile: conn.profile ?? null, wsUrl: build() }
+      return resolveGatewayWsUrl(mint, wsConn)
+    }
+    case 'ticket':
+    default:
+      return build(['ticket', await mintWsTicket(conn.baseUrl)])
+  }
+}

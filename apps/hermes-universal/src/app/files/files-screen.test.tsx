@@ -11,7 +11,10 @@ vi.mock('@/hermes', () => ({
     // Intentionally unsorted; the screen sorts dirs-first then alpha.
     entries: [entry('readme.md', false), entry('src', true), entry('assets', true)]
   })),
-  readFileText: vi.fn(async () => ({ path: '', text: '' }))
+  readFileText: vi.fn(async () => ({ path: '', text: '' })),
+  // The sidebar (pulled via SidebarProvider) transitively loads store/profiles,
+  // which calls setApiRequestProfile() at module init.
+  setApiRequestProfile: vi.fn()
 }))
 
 import { readDir } from '@/hermes'

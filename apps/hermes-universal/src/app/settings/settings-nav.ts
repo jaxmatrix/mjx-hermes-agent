@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react'
 
 import { useI18n } from '@/i18n'
-import { Archive, Bell, Globe, Info, Key, Keyboard, Paw } from '@/lib/icons'
+import { Archive, Bell, Globe, Info, Key, Keyboard, Paw, Zap } from '@/lib/icons'
 
 import { SECTIONS } from './constants'
 
@@ -36,4 +36,55 @@ export function useSettingsNav(): SettingsNavEntry[] {
   ]
 
   return [...configEntries, ...customEntries]
+}
+
+export interface SettingsNavChild {
+  id: string
+  label: string
+  icon: ComponentType<{ className?: string }>
+}
+
+export interface SettingsNavGroupModel {
+  id: string
+  label: string
+  icon: ComponentType<{ className?: string }>
+  gapBefore?: boolean
+  /** Sub-tabs shown indented under the group when it's active (e.g. Providers →
+   *  Accounts / API keys). Each child id is a `/settings/:child.id` route. */
+  children?: SettingsNavChild[]
+}
+
+// Desktop-parity nav groups for the settings overlay side menu: the 8 schema
+// config sections, then notifications / providers / gateway / keys / sessions /
+// about — matching apps/desktop's order + gapBefore breaks. `providers` is a
+// placeholder until its page lands; `sessions` renders the archived list for now.
+export function useSettingsNavGroups(): SettingsNavGroupModel[] {
+  const { t } = useI18n()
+  const sectionLabels = t.settings.sections as Record<string, string>
+
+  const configGroups: SettingsNavGroupModel[] = SECTIONS.map(section => ({
+    id: section.id,
+    icon: section.icon,
+    label: sectionLabels[section.id] ?? section.label
+  }))
+
+  const extra: SettingsNavGroupModel[] = [
+    { id: 'notifications', icon: Bell, label: t.settings.nav.notifications },
+    {
+      id: 'providers',
+      icon: Zap,
+      label: t.settings.nav.providers,
+      gapBefore: true,
+      children: [
+        { id: 'providers', icon: Key, label: t.settings.nav.providerAccounts },
+        { id: 'providers/keys', icon: Key, label: t.settings.nav.providerApiKeys }
+      ]
+    },
+    { id: 'gateway', icon: Globe, label: t.settings.nav.gateway },
+    { id: 'keys', icon: Key, label: t.settings.nav.apiKeys },
+    { id: 'sessions', icon: Archive, label: t.settings.nav.archivedChats },
+    { id: 'about', icon: Info, label: t.settings.nav.about, gapBefore: true }
+  ]
+
+  return [...configGroups, ...extra]
 }

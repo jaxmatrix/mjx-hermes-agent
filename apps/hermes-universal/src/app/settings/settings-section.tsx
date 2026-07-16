@@ -8,10 +8,12 @@ import { AppearanceSection } from './appearance-section'
 import { ArchivedSection } from './archived-section'
 import { ConfigSection } from './config-section'
 import { GatewaySection } from './gateway-section'
-import { voiceFieldVisible } from './helpers'
 import { KeysSection } from './keys-section'
+import { MemorySection } from './memory-section'
 import { ModelSection } from './model-section'
 import { PetSection } from '@/app/pet/pet-section'
+import { ProvidersSection } from './providers-section'
+import { VoiceSection } from './voice-section'
 
 import { NotificationsSection } from './notifications-section'
 import { ShortcutsSection } from './shortcuts-section'
@@ -19,28 +21,36 @@ import { EmptyState, SettingsContent } from './primitives'
 import { useSettingsNav } from './settings-nav'
 
 // The per-section body. Each Track-J chunk replaces its placeholder case with a
-// real renderer (Jc8 appearance, Jc9 notifications, Jc10 keys, …).
-function SectionBody({ section }: { section: string }) {
+// real renderer (Jc8 appearance, Jc9 notifications, Jc10 keys, …). Exported so
+// the desktop-style SettingsView overlay renders the active section here too.
+export function SectionBody({ section }: { section: string }) {
   const { t } = useI18n()
 
-  switch (section) {
+  // `section` may carry a sub-tab (`providers/keys`); split so the switch keys off
+  // the top-level group and sub-views read the second segment.
+  const [group, sub] = section.split('/')
+
+  switch (group) {
     // Schema-driven config sections (Jc4).
     case 'chat':
     case 'workspace':
     case 'safety':
     case 'advanced':
-      return <ConfigSection sectionId={section} />
+      return <ConfigSection sectionId={group} />
 
-    // Voice (Jc5): same renderer, filtered to the active TTS/STT provider's
-    // fields. FIXME(J5): the ElevenLabs voice list is static (no getElevenLabsVoices
-    // fetch), so tts.elevenlabs.voice_id is a free-text field for now.
+    // Providers: Accounts (OAuth sign-in) + API keys sub-tabs.
+    case 'providers':
+      return <ProvidersSection view={sub === 'keys' ? 'keys' : 'accounts'} />
+
+    // Voice (Jc5): schema fields filtered to the active TTS/STT provider, plus a
+    // live ElevenLabs voice dropdown (tts.elevenlabs.voice_id).
     case 'voice':
-      return <ConfigSection fieldFilter={voiceFieldVisible} sectionId="voice" />
+      return <VoiceSection />
 
-    // Memory (Jc6): schema fields only. FIXME(D2): the memory-provider OAuth
-    // connect panel + per-provider config panel are deferred to the auth track.
+    // Memory (Jc6): schema fields plus the memory-provider OAuth connect
+    // affordance + per-provider config panel on the memory.provider row.
     case 'memory':
-      return <ConfigSection sectionId="memory" />
+      return <MemorySection />
 
     // Model (Jc7): default-model picker + the model schema fields. MoA/auxiliary/
     // local-endpoint onboarding deferred FIXME(J7).
@@ -71,8 +81,10 @@ function SectionBody({ section }: { section: string }) {
     case 'pet':
       return <PetSection />
 
-    // Archived chats (Jc11).
+    // Archived chats (Jc11). `sessions` is the desktop nav id; until the full
+    // Sessions page lands it renders the archived list (its current subset).
     case 'archived':
+    case 'sessions':
       return <ArchivedSection />
 
     // About (Jc12): version + release notes. self-update/uninstall omitted.

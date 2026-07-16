@@ -11,12 +11,16 @@
  * lookups both keep working. `atom` routes through the `@/store/atom` seam.
  */
 
-import { atom } from '@/store/atom'
+import { atom, computed } from '@/store/atom'
 
 import { BUILTIN_THEMES } from './presets'
 import type { DesktopTheme, DesktopThemeColors } from './types'
 
 const USER_THEMES_KEY = 'hermes-user-themes-v1'
+
+// Marketplace-imported themes carry `VS Code · <extensionId>` as their description
+// (set by `buildThemeFromMarketplace`); the prefix is how we recover the id.
+const MARKETPLACE_DESC_PREFIX = 'VS Code · '
 
 // The minimal set of color keys a stored theme must carry to be usable. We keep
 // this loose — `applyTheme` tolerates missing optionals via fallbacks — but a
@@ -111,6 +115,32 @@ export function removeUserTheme(name: string): void {
 }
 
 export const isUserTheme = (name: string): boolean => Boolean($userThemes.get()[name])
+
+/** The Marketplace extension id an installed theme came from, or null. */
+export function marketplaceIdOf(theme: DesktopTheme): string | null {
+  return theme.description.startsWith(MARKETPLACE_DESC_PREFIX)
+    ? theme.description.slice(MARKETPLACE_DESC_PREFIX.length)
+    : null
+}
+
+/**
+ * Reactive `extensionId → installed theme` map, so the install UIs can mark
+ * Marketplace rows you already have (and re-activate them without re-downloading)
+ * from one memoized source instead of re-deriving the set on every render.
+ */
+export const $marketplaceInstalls = computed($userThemes, themes => {
+  const map = new Map<string, DesktopTheme>()
+
+  for (const theme of Object.values(themes)) {
+    const id = marketplaceIdOf(theme)
+
+    if (id) {
+      map.set(id, theme)
+    }
+  }
+
+  return map
+})
 
 /** Resolve a theme by name across the merged registry (built-in + user). */
 export function resolveTheme(name: string): DesktopTheme | undefined {

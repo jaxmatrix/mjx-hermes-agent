@@ -5,6 +5,78 @@
    inline per skin by applyTheme(). Declared here so `dark:` utilities compile. */
 @custom-variant dark (&:is(.dark *));
 
+/* Brand wordmark face (Collapse) + bundled terminal font (JetBrains Mono).
+   Vendored under ./fonts (see src/fonts). JetBrains Mono ships bold + italic so
+   they share the regular face's metrics instead of squeezing a system fallback. */
+@font-face {
+  font-family: 'Collapse';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/Collapse-Bold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/JetBrainsMono-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/JetBrainsMono-Bold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/JetBrainsMono-Italic.woff2') format('woff2');
+}
+
+/* Per-skin mono faces, self-hosted (desktop fetches these from Google Fonts at
+   runtime; we bundle them so the app is fully offline/packaged). Courier Prime =
+   the default nous mono; IBM Plex Mono = ember. Family names match the stacks in
+   themes/presets.ts. */
+@font-face {
+  font-family: 'Courier Prime';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/CourierPrime-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Courier Prime';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/CourierPrime-Bold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/IBMPlexMono-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./fonts/IBMPlexMono-Medium.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/IBMPlexMono-Bold.woff2') format('woff2');
+}
+
 /* Tailwind named-token contract (shadcn). Sourced from the derived `--dt-*`
    chrome tokens (see @layer base below) so bg-primary / text-foreground /
    border-border / ring-ring resolve through the full theme engine. `inline`
@@ -31,14 +103,56 @@
   --color-destructive: var(--dt-destructive);
   --color-destructive-foreground: var(--dt-destructive-foreground);
 
-  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --color-midground: var(--dt-midground);
+  --color-midground-foreground: var(--dt-midground-foreground);
 
-  --radius-sm: 8px;
-  --radius-md: 10px;
-  --radius-lg: var(--radius); /* 12px, matches --radius */
-  --radius-xl: 16px;
-  --radius-2xl: 20px;
+  --font-sans: var(--dt-font-sans);
+  --font-mono: var(--dt-font-mono);
+
+  --spacing-mul: var(--dt-spacing-mul, 1);
+
+  /* rem-scaled radii (desktop density): each step scales by --radius-scalar. */
+  --radius-xs: calc(var(--radius-scalar) * 0.125rem);
+  --radius-sm: calc(var(--radius-scalar) * 0.5rem);
+  --radius-md: calc(var(--radius-scalar) * 0.625rem);
+  --radius-lg: calc(var(--radius-scalar) * 0.75rem);
+  --radius-xl: calc(var(--radius-scalar) * 1rem);
+  --radius-2xl: calc(var(--radius-scalar) * 1.5rem);
+  --radius-3xl: calc(var(--radius-scalar) * 2rem);
+  --radius-4xl: calc(var(--radius-scalar) * 2.5rem);
+
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+
+  --shadow-xs: 0 0.0625rem 0.125rem color-mix(in srgb, #000 5%, transparent);
+  --shadow-sm:
+    0 0 0 0.0625rem color-mix(in srgb, var(--dt-foreground) 6%, transparent),
+    0 0.125rem 0.5rem color-mix(in srgb, #000 4%, transparent);
+  --shadow-md:
+    0 0 0 0.0625rem color-mix(in srgb, var(--dt-foreground) 8%, transparent),
+    0 0.25rem 1rem color-mix(in srgb, #000 8%, transparent),
+    0 1rem 2rem -1.5rem color-mix(in srgb, #000 18%, transparent);
+  /* Soft floating shadow for borderless modals/overlays — single top light
+     source, layered contact → ambient falloff, pooled below the panel. */
+  --shadow-nous:
+    0 0.125rem 0.25rem -0.125rem color-mix(in srgb, #000 7%, transparent),
+    0 0.5rem 0.75rem -0.375rem color-mix(in srgb, #000 6%, transparent),
+    0 1.25rem 1.75rem -0.875rem color-mix(in srgb, #000 6%, transparent),
+    0 2.25rem 3rem -1.75rem color-mix(in srgb, #000 0%, transparent);
+  /* Hairline border paired with --shadow-nous on borderless overlays.
+     currentColor resolves per-element, so it adapts to text color/theme. */
+  --stroke-nous: color-mix(in srgb, currentColor 3%, transparent);
+  --shadow-lg:
+    inset 0 0.0625rem 0 color-mix(in srgb, #fff 28%, transparent),
+    0 0 0 0.0625rem color-mix(in srgb, var(--dt-foreground) 8%, transparent),
+    0 0.75rem 2rem color-mix(in srgb, #000 12%, transparent);
+  --shadow-composer: 0 0.0625rem 0.125rem color-mix(in srgb, #000 5%, transparent);
 }
 
 /* ── Theme engine (ported from apps/desktop/src/styles.css) ──────────────────
@@ -59,32 +173,67 @@
     --theme-secondary: color-mix(in srgb, #0053fd 7%, #ffffff);
     --theme-accent-soft: color-mix(in srgb, #0053fd 10%, #ffffff);
     --theme-midground: #0053fd;
+    --theme-warm: #cf806d;
     --theme-background-seed: #f8faff;
+    --theme-sidebar-seed: #f3f7ff;
     --theme-card-seed: #ffffff;
     --theme-elevated-seed: #ffffff;
     --theme-bubble-seed: color-mix(in srgb, #0053fd 6%, #ffffff);
     --theme-neutral-chrome: #f3f3f3;
+    --theme-neutral-sidebar: #f3f3f3;
     --theme-neutral-card: #fcfcfc;
     --theme-mix-chrome: 92%;
+    --theme-mix-sidebar: 100%;
     --theme-mix-card: 22%;
     --theme-mix-elevated: 28%;
     --theme-mix-bubble: 0%;
     --theme-fill-tertiary-accent-mix: 8%;
+    --theme-fill-quaternary-accent-mix: 5%;
+    --theme-fill-quinary-accent-mix: 3%;
+    /* Settings/conversation typography scale (ported from apps/desktop styles.css). */
+    --conversation-text-font-size: 0.8125rem;
+    --conversation-caption-font-size: 0.75rem;
+    --conversation-caption-line-height: 1rem;
     --theme-stroke-primary-accent-mix: 24%;
     --theme-stroke-secondary-accent-mix: 16%;
     --theme-stroke-tertiary-accent-mix: 10%;
+    --theme-control-hover-accent-mix: 6%;
+    --theme-control-active-accent-mix: 8%;
 
     --ui-base: var(--theme-foreground);
     --ui-accent: var(--theme-midground);
+    --ui-warm: var(--theme-warm);
     --ui-green: #1f8a65;
 
     --ui-bg-chrome: color-mix(in srgb, var(--theme-background-seed) var(--theme-mix-chrome), var(--theme-neutral-chrome));
+    --ui-bg-sidebar: color-mix(in srgb, var(--theme-sidebar-seed) var(--theme-mix-sidebar), var(--theme-neutral-sidebar));
+    --ui-control-hover-background: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-control-hover-accent-mix),
+      color-mix(in srgb, var(--ui-base) 4%, transparent)
+    );
+    --ui-control-active-background: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-control-active-accent-mix),
+      color-mix(in srgb, var(--ui-base) 5%, transparent)
+    );
     --ui-bg-editor: color-mix(in srgb, var(--theme-card-seed) var(--theme-mix-card), var(--theme-neutral-card));
     --ui-bg-elevated: color-mix(in srgb, var(--theme-elevated-seed) var(--theme-mix-elevated), var(--theme-neutral-card));
     --ui-bg-tertiary: color-mix(
       in srgb,
       var(--ui-accent) var(--theme-fill-tertiary-accent-mix),
       color-mix(in srgb, var(--ui-base) 5%, transparent)
+    );
+    /* Quieter card/input fills for settings (ported from apps/desktop). */
+    --ui-bg-quaternary: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-fill-quaternary-accent-mix),
+      color-mix(in srgb, var(--ui-base) 4%, transparent)
+    );
+    --ui-bg-quinary: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-fill-quinary-accent-mix),
+      color-mix(in srgb, var(--ui-base) 3%, transparent)
     );
     --ui-text-primary: color-mix(in srgb, var(--ui-base) 94%, transparent);
     --ui-text-secondary: color-mix(in srgb, var(--ui-base) 74%, transparent);
@@ -105,6 +254,10 @@
       color-mix(in srgb, var(--ui-base) 5%, transparent)
     );
     --ui-chat-surface-background: var(--ui-bg-chrome);
+    /* Right-pane editor/terminal/preview chrome surface (desktop parity). The port
+       dropped this def, leaving the token undefined → transparent, which made the
+       terminal's readTheme() sample nothing and fall back to a hardcoded dark bg. */
+    --ui-editor-surface-background: var(--ui-bg-chrome);
     --ui-chat-bubble-background: color-mix(in srgb, var(--theme-bubble-seed) var(--theme-mix-bubble), var(--theme-neutral-card));
 
     --dt-background: var(--ui-bg-chrome);
@@ -124,10 +277,73 @@
     --dt-border: var(--ui-stroke-secondary);
     --dt-input: var(--ui-stroke-primary);
     --dt-ring: var(--ui-stroke-primary);
+    --dt-midground: var(--theme-midground);
+    --dt-midground-foreground: #fcfcfc;
+    --dt-composer-ring: var(--ui-base);
+    /* Input chrome knobs (desktop parity) — a near-invisible hairline border + a
+       recessed inset over the translucent fill (.desktop-input-chrome). */
+    --dt-input-bg: 0%;
+    --dt-input-border: 7%;
+    --dt-input-inset: inset 0 1px 1px color-mix(in srgb, #000 10%, transparent);
     --dt-destructive: #cf2d56;
+    /* Destructive red for settings (theme remove, etc.) — mirrors desktop --ui-red. */
+    --ui-red: var(--dt-destructive);
     --dt-destructive-foreground: #ffffff;
+    --dt-sidebar-bg: var(--ui-bg-sidebar);
+    --dt-sidebar-border: var(--ui-stroke-secondary);
+    --dt-user-bubble: var(--ui-chat-bubble-background);
+    --dt-user-bubble-border: var(--ui-stroke-tertiary);
 
-    --radius: 12px;
+    /* Inter Variable is self-hosted (@fontsource-variable/inter, imported in
+       main.tsx) so every platform renders the same thin, correctly-weighted sans
+       instead of falling through to Roboto/GTK (which reads as "Material"). The
+       Segoe/SF/system families stay as fallbacks. */
+    --dt-font-sans:
+      'Inter Variable', 'Inter', 'Segoe WPC', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui,
+      sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', emoji;
+    /* Key caps always use the native UI face — never theme typography overrides. */
+    --dt-font-kbd: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+    /* JetBrains Mono first — the bundled face (@font-face above) — so code/diff
+       stay consistent instead of drifting to a system mono where installed. */
+    --dt-font-mono:
+      'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace, 'Apple Color Emoji',
+      'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', emoji;
+    --dt-base-size: 1rem;
+    --dt-line-height: 1.5;
+    --dt-spacing-mul: 1;
+
+    --radius: 0.75rem;
+    --radius-scalar: 0.6;
+
+    /* Custom window chrome (frameless titlebar). Band + control sizing ported
+       from desktop's titlebar tokens. */
+    --titlebar-height: 2.125rem;
+    --titlebar-control-size: 1.25rem;
+    --titlebar-control-height: 1.375rem;
+
+    /* Sidebar tokens (desktop parity) — consumed by the upcoming left/right
+       sidebar chrome; mapped onto the derived chain here so they're live. */
+    --sidebar: var(--dt-sidebar-bg);
+    --sidebar-foreground: var(--dt-foreground);
+    --sidebar-primary: var(--dt-primary);
+    --sidebar-primary-foreground: var(--dt-primary-foreground);
+    --sidebar-accent: var(--ui-control-active-background);
+    --sidebar-accent-foreground: var(--dt-accent-foreground);
+    --sidebar-border: var(--dt-sidebar-border);
+    --sidebar-ring: var(--dt-ring);
+
+    /* Left-sidebar chrome tokens (desktop parity) — the open/closed surface,
+       the edge border that draws the sidebar↔main division, the pane resize
+       sash, quaternary text, active-row fill, and the docked width/inset. */
+    --ui-sidebar-surface-background: var(--ui-bg-sidebar);
+    --ui-text-quaternary: color-mix(in srgb, var(--ui-base) 36%, transparent);
+    --ui-row-active-background: color-mix(in srgb, var(--ui-accent) 6%, color-mix(in srgb, var(--ui-base) 5%, transparent));
+    --ui-row-hover-background: var(--ui-control-hover-background);
+    --ui-sash-hover-border: color-mix(in srgb, var(--ui-accent) 18%, var(--ui-stroke-tertiary));
+    --chrome-action-hover: var(--ui-control-hover-background);
+    --sidebar-edge-border: color-mix(in srgb, var(--ui-base) 7.5%, transparent);
+    --sidebar-width: 14.8125rem;
+    --sidebar-content-inline-padding: 1rem;
 
     /* Bridge: mobile's own `--ui-*` names (referenced across the custom CSS
        below) aliased onto the derived chain. `--ui-accent` / `--ui-stroke-*` /
@@ -151,13 +367,23 @@
     --theme-mix-elevated: 46%;
     --theme-mix-bubble: 46%;
     --theme-neutral-chrome: #0d0d0e;
+    --theme-neutral-sidebar: #0a0a0b;
     --theme-neutral-card: #161618;
     --ui-green: #55a583;
+    /* Division line reads stronger against the dark surface. */
+    --sidebar-edge-border: color-mix(in srgb, var(--ui-base) 12%, transparent);
+    /* Input chrome: softer hairline, deeper inset on dark surfaces. */
+    --dt-input-border: 4%;
+    --dt-input-inset: inset 0 1px 1px color-mix(in srgb, #000 38%, transparent);
   }
 }
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  font-size: var(--dt-base-size, 0.875rem);
 }
 
 html,
@@ -170,12 +396,16 @@ body,
 body {
   background: var(--ui-bg);
   color: var(--ui-text-primary);
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--dt-font-sans);
+  font-size: 0.8125rem;
+  line-height: var(--dt-line-height, 1.5);
+  letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
 }
 
 .brand {
+  font-family: 'Collapse';
   font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -186,6 +416,161 @@ body {
 .muted {
   color: var(--ui-text-tertiary);
   font-weight: 400;
+}
+
+/* ── Sidebar row visual states (ported from desktop styles.css) ──
+   .dither  = the textured section-label dot.
+   row-hover = shared instant-in / 100ms-out list-row highlight.
+   .arc-border = animated running-turn border on a working session row.
+   .quest-glow = amber "needs your input" pulse on a clarify-blocked dot. */
+.dither {
+  background: repeating-conic-gradient(currentColor 0% 25%, transparent 0% 50%) 0 0 / 0.125rem 0.125rem;
+}
+
+@utility row-hover {
+  cursor: pointer;
+  transition:
+    color 100ms ease-out,
+    background-color 100ms ease-out;
+
+  &:hover {
+    background-color: var(--ui-row-hover-background);
+    transition: none;
+  }
+}
+
+@keyframes arc-border {
+  0% {
+    background-position: 15% 15%;
+  }
+  100% {
+    background-position: 75% 75%;
+  }
+}
+
+.arc-border {
+  --arc-c0: color-mix(in srgb, var(--dt-foreground) 0%, transparent);
+  --arc-c1: var(--dt-midground);
+  --arc-c2: var(--dt-background);
+  --arc-angle: 160deg;
+  --arc-width: 0.078125rem;
+  --arc-inset: -0.125rem;
+  --arc-duration: 2.23s;
+
+  pointer-events: none;
+  position: absolute;
+  overflow: hidden;
+  border-radius: inherit;
+  inset: var(--arc-inset);
+  padding: var(--arc-width);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+:root.dark .arc-border {
+  --arc-c1: var(--dt-foreground);
+}
+
+.arc-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    var(--arc-angle),
+    transparent 0%,
+    var(--arc-c0) 15%,
+    var(--arc-c1) 20%,
+    var(--arc-c2) 25%,
+    transparent 35%,
+    transparent 40%,
+    var(--arc-c0) 55%,
+    var(--arc-c1) 60%,
+    var(--arc-c2) 65%,
+    transparent 75%,
+    transparent 80%,
+    var(--arc-c0) 95%,
+    var(--arc-c1) 100%
+  );
+  background-size: 300% 300%;
+  animation: arc-border var(--arc-duration) linear infinite;
+}
+
+@keyframes quest-glow {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow:
+      0 0 0.1875rem color-mix(in srgb, var(--color-amber-500, #f59e0b) 70%, transparent),
+      0 0 0.5rem color-mix(in srgb, var(--color-amber-500, #f59e0b) 45%, transparent);
+  }
+  50% {
+    transform: scale(1.18);
+    box-shadow:
+      0 0 0.3125rem color-mix(in srgb, var(--color-amber-500, #f59e0b) 90%, transparent),
+      0 0 0.875rem color-mix(in srgb, var(--color-amber-500, #f59e0b) 65%, transparent);
+  }
+}
+
+.quest-glow {
+  animation: quest-glow 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quest-glow {
+    animation: none;
+    box-shadow:
+      0 0 0.25rem color-mix(in srgb, var(--color-amber-500, #f59e0b) 80%, transparent),
+      0 0 0.625rem color-mix(in srgb, var(--color-amber-500, #f59e0b) 55%, transparent);
+  }
+
+  .arc-border::before {
+    animation: none;
+  }
+}
+
+/* Glassy overlay surfaces (dialog / dropdown / select / context menu) — ported
+   from desktop styles.css. Attribute selectors out-specify the Tailwind bg/border
+   utilities, giving every floating panel one consistent frosted look. */
+[data-slot='dialog-content'],
+[data-slot='dropdown-menu-content'],
+[data-slot='select-content'],
+[data-slot='context-menu-content'] {
+  border-color: var(--ui-stroke-secondary);
+  background: color-mix(in srgb, var(--ui-bg-elevated) 96%, transparent);
+  backdrop-filter: blur(0.75rem) saturate(1.08);
+  -webkit-backdrop-filter: blur(0.75rem) saturate(1.08);
+}
+
+/* Thin form-control chrome (ported from desktop) — Input / Textarea / SelectTrigger
+   share it via controlVariants. Translucent fill + a near-invisible hairline that
+   doubles on hover and goes full on focus; a recessed inset instead of a Material
+   focus ring. */
+.desktop-input-chrome {
+  background: color-mix(in srgb, var(--dt-card) var(--dt-input-bg), transparent);
+  border-color: color-mix(in srgb, var(--dt-composer-ring) var(--dt-input-border), transparent);
+  box-shadow: var(--dt-input-inset);
+  transition: border-color 200ms ease-out;
+}
+
+.desktop-input-chrome:hover {
+  border-color: color-mix(in srgb, var(--dt-composer-ring) calc(var(--dt-input-border) * 2), transparent);
+}
+
+/* `[data-state='open']` keeps a select trigger looking focused while its list is
+   open (Radix moves focus into the list). */
+.desktop-input-chrome:focus,
+.desktop-input-chrome[data-state='open'] {
+  border-color: var(--dt-composer-ring);
+  box-shadow: none;
+  outline: none;
+}
+
+.desktop-input-chrome[aria-invalid='true'] {
+  border-color: var(--dt-destructive);
 }
 
 /* ── Buttons (one primitive, variants by class) ── */
@@ -495,7 +880,7 @@ body {
   font-size: 13px;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-family: var(--font-mono);
 }
 .completion-drawer {
   list-style: none;
@@ -600,11 +985,36 @@ body {
 .approval-desc {
   font-size: 13px;
   color: var(--ui-text-secondary);
-  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-family: var(--font-mono);
   word-break: break-word;
 }
 .approval-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* ── Scrollbars ──────────────────────────────────────────────────────────────
+   Desktop's `.scrollbar-dt` relies on `::-webkit-scrollbar`, which Tauri's Linux
+   webview (WebKitGTK) ignores — so we draw scrollbars with OverlayScrollbars
+   instead (initialized in src/lib/scrollbars.ts, desktop only). This theme maps
+   OverlayScrollbars' tokens onto the desktop look: thin, --dt-midground thumb
+   (18% idle / 40% hover), pill, transparent track, no arrows. */
+.os-theme-hermes {
+  --os-size: 0.5rem;
+  --os-padding-perpendicular: 0.0625rem;
+  --os-padding-axis: 0.125rem;
+  --os-handle-border-radius: 9999px;
+  --os-track-bg: transparent;
+  --os-handle-bg: color-mix(in srgb, var(--dt-midground) 18%, transparent);
+  --os-handle-bg-hover: color-mix(in srgb, var(--dt-midground) 40%, transparent);
+  --os-handle-bg-active: color-mix(in srgb, var(--dt-midground) 50%, transparent);
+  --os-handle-interactive-area-offset: 4px;
+}
+
+/* Pre-init / uncovered fallback (standard props — the only scrollbar CSS
+   WebKitGTK honors) so there's no flash of the chunky native bar before JS. */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--dt-midground) 18%, transparent) transparent;
 }

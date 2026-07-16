@@ -1,0 +1,132 @@
+import { Codicon } from '@/components/ui/codicon'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger
+} from '@/components/ui/context-menu'
+import { Tip } from '@/components/ui/tooltip'
+import { useI18n } from '@/i18n'
+import { cn } from '@/lib/utils'
+import { useStore } from '@/store/atom'
+import { setTerminalOpen } from '@/store/layout'
+import {
+  type TerminalEntry,
+  $activeTerminalId,
+  $terminals,
+  closeAllTerminals,
+  closeOtherTerminals,
+  closeTerminal,
+  createTerminal,
+  selectTerminal
+} from '@/store/terminals'
+
+// Ported/adapted from desktop's terminal/rail.tsx: a thin vertical icon strip on
+// the terminal's right edge — a tab per terminal (terminal icon), a `+` to open
+// another, and a hide button. Border-l separates it from the terminal content.
+
+const RAIL_ACTION =
+  'grid size-6 place-items-center rounded text-(--ui-text-tertiary) transition-colors hover:bg-(--chrome-action-hover) hover:text-foreground'
+
+export function TerminalRail() {
+  const { t } = useI18n()
+  const terminals = useStore($terminals)
+  const activeId = useStore($activeTerminalId)
+
+  return (
+    <div className="flex h-full w-9 shrink-0 flex-col items-center border-l border-(--ui-stroke-tertiary) bg-(--ui-editor-surface-background)">
+      <ul
+        aria-label={t.rightSidebar.terminalsAria}
+        className="flex min-h-0 flex-1 flex-col items-center gap-0.5 self-stretch overflow-y-auto overflow-x-hidden py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        role="tablist"
+      >
+        {terminals.map((term, index) => (
+          <TerminalRailItem active={term.id === activeId} canCloseOthers={terminals.length > 1} index={index} key={term.id} term={term} />
+        ))}
+        <li className="flex w-full justify-center">
+          <Tip label={t.rightSidebar.terminalNew}>
+            <button
+              aria-label={t.rightSidebar.terminalNew}
+              className={cn(RAIL_ACTION, 'size-7 text-(--ui-text-quaternary)')}
+              onClick={() => createTerminal()}
+              type="button"
+            >
+              <Codicon name="add" size="0.8125rem" />
+            </button>
+          </Tip>
+        </li>
+      </ul>
+
+      <div className="flex shrink-0 flex-col items-center pb-1.5">
+        <Tip label={t.rightSidebar.terminalHide}>
+          <button
+            aria-label={t.rightSidebar.terminalHide}
+            className={RAIL_ACTION}
+            onClick={() => setTerminalOpen(false)}
+            type="button"
+          >
+            <Codicon name="chevron-down" size="0.8125rem" />
+          </button>
+        </Tip>
+      </div>
+    </div>
+  )
+}
+
+function TerminalRailItem({
+  active,
+  canCloseOthers,
+  index,
+  term
+}: {
+  active: boolean
+  canCloseOthers: boolean
+  index: number
+  term: TerminalEntry
+}) {
+  const { t } = useI18n()
+  const label = `${index + 1}. ${term.title}`
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <li className="relative flex w-full justify-center">
+          {active && <span aria-hidden className="absolute inset-y-0.5 right-0 w-0.5 rounded-l-sm bg-(--ui-stroke-primary)" />}
+          <Tip label={label}>
+            <button
+              aria-label={label}
+              aria-selected={active}
+              className={cn(
+                'grid size-7 place-items-center rounded-md transition-colors',
+                active
+                  ? 'bg-(--chrome-action-hover) text-foreground'
+                  : 'text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground'
+              )}
+              onAuxClick={event => {
+                if (event.button === 1) {
+                  event.preventDefault()
+                  closeTerminal(term.id)
+                }
+              }}
+              onClick={() => selectTerminal(term.id)}
+              role="tab"
+              type="button"
+            >
+              <Codicon name="terminal" size="0.875rem" />
+            </button>
+          </Tip>
+        </li>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={() => closeTerminal(term.id)}>{t.common.close}</ContextMenuItem>
+        <ContextMenuItem disabled={!canCloseOthers} onSelect={() => closeOtherTerminals(term.id)}>
+          {t.rightSidebar.terminalCloseOthers}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={closeAllTerminals}>{t.rightSidebar.terminalCloseAll}</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => setTerminalOpen(false)}>{t.rightSidebar.terminalHide}</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}

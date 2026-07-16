@@ -22,6 +22,14 @@ export const IS_MOBILE = IS_ANDROID || IS_IOS
 // vitest), so this cleanly distinguishes "native app" from "web/test".
 export const IS_TAURI = PLATFORM !== 'unknown'
 
+// macOS host — drives ⌘/⌥/⇧/⌃ vs Ctrl/Alt/Shift key-cap rendering (see lib/kbd).
+export const IS_MAC = PLATFORM === 'macos'
+
+// A real Tauri runtime on a desktop OS (macOS/Windows/Linux) — i.e. not a phone
+// and not plain-browser/test. Custom window chrome (frameless titlebar, min/max/
+// close, drag region) only makes sense here.
+export const IS_DESKTOP = IS_TAURI && !IS_MOBILE
+
 // Local-spawn gateway mode is a desktop-only capability: Tauri also builds
 // desktop targets, where a bundled backend could run, but a phone can't spawn
 // one. Mobile-only UIs (E2 mode picker, terminal, updater, pet-overlay) branch

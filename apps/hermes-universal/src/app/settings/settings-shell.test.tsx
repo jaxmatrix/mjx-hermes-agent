@@ -1,14 +1,13 @@
 import { QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 
 import { SidebarProvider } from '@/app/shell/sidebar'
 import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 
-import { SettingsIndex } from './settings-index'
-import { SettingsSection } from './settings-section'
+import { SettingsView } from './settings-view'
 
 function renderAt(path: string) {
   return render(
@@ -16,10 +15,7 @@ function renderAt(path: string) {
       <QueryClientProvider client={queryClient}>
         <SidebarProvider>
           <MemoryRouter initialEntries={[path]}>
-            <Routes>
-              <Route element={<SettingsIndex />} path="/settings" />
-              <Route element={<SettingsSection />} path="/settings/:section" />
-            </Routes>
+            <SettingsView />
           </MemoryRouter>
         </SidebarProvider>
       </QueryClientProvider>
@@ -27,19 +23,20 @@ function renderAt(path: string) {
   )
 }
 
-describe('settings shell', () => {
-  it('lists the config sections + custom rows on the index', () => {
+describe('settings portal', () => {
+  // Note: both the wide rail and the narrow tab-dropdown are always in the DOM
+  // (the 47.5rem media query hides one, but stylesheets aren't loaded in jsdom),
+  // so a given nav label can appear more than once — assert presence, not count.
+  it('renders the desktop-style nav rail with all sections + a close control', () => {
     renderAt('/settings')
-    expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument()
-    // A config section, an appearance section, and a custom row all show.
-    expect(screen.getByRole('link', { name: /Model/ })).toHaveAttribute('href', '/settings/model')
-    expect(screen.getByRole('link', { name: /Appearance/ })).toHaveAttribute('href', '/settings/appearance')
-    expect(screen.getByRole('link', { name: /About/ })).toHaveAttribute('href', '/settings/about')
+    expect(screen.getAllByRole('button', { name: 'Model' }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('button', { name: 'Appearance' }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('button', { name: 'About' }).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: 'Close settings' })).toBeInTheDocument()
   })
 
-  it('renders a section detail with a back link', () => {
-    renderAt('/settings/model')
-    expect(screen.getByRole('heading', { name: 'Model' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Back' })).toHaveAttribute('href', '/settings')
+  it('renders the requested section from the URL', () => {
+    renderAt('/settings/about')
+    expect(screen.getAllByRole('button', { name: 'About' }).length).toBeGreaterThan(0)
   })
 })

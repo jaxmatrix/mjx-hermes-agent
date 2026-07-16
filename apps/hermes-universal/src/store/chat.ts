@@ -1,5 +1,6 @@
 import type { GatewayEvent } from '@/gateway'
 import { translateNow } from '@/i18n'
+import { playCompletionSound } from '@/lib/completion-sound'
 import { speakNow, stopSpeaking } from '@/lib/tts'
 import { atom } from '@/store/atom'
 import { $autoSpeakReplies } from '@/store/voice-prefs'
@@ -8,6 +9,7 @@ import { triggerHaptic } from '@/store/haptics'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notifyError } from '@/store/notifications'
 import { $subagentsBySession, upsertSubagent } from '@/store/subagents'
+import type { ContextBreakdown, UsageStats } from '@/types/hermes'
 
 // Chat model over the assistant-ui parts vocabulary. The gateway-event reducer
 // mutates a plain ChatMessage[] (decoupled from assistant-ui); the runtime
@@ -81,6 +83,35 @@ export const $clarify = atom<ClarifyRequest | null>(null)
 export const $sudo = atom<SudoRequest | null>(null)
 export const $secret = atom<SecretRequest | null>(null)
 export const $sessionId = atom<string | null>(null)
+
+// --- Statusbar runtime signals (turn/session timers + live context usage) ---
+// Mirrors desktop's session-store $turnStartedAt/$sessionStartedAt/$currentUsage,
+// wired here since chat.ts owns the turn lifecycle. The statusbar reads these for
+// its running-timer, session-timer, and context-usage items.
+const EMPTY_USAGE: UsageStats = { calls: 0, input: 0, output: 0, total: 0 }
+export const $turnStartedAt = atom<number | null>(null)
+export const $sessionStartedAt = atom<number | null>(null)
+export const $currentUsage = atom<UsageStats>(EMPTY_USAGE)
+
+// Pull the live context breakdown for the bar label after a settled turn. The
+// ContextUsagePanel fetches its own breakdown on open; this only feeds the label.
+// Best-effort — keep the prior value on failure.
+async function refreshCurrentUsage(): Promise<void> {
+  const sessionId = $sessionId.get()
+  if (!sessionId) return
+  try {
+    const b = await requestGateway<ContextBreakdown>('session.context_breakdown', { session_id: sessionId })
+    $currentUsage.set({
+      ...EMPTY_USAGE,
+      context_max: b.context_max,
+      context_percent: b.context_percent,
+      context_used: b.context_used,
+      total: b.context_used ?? 0
+    })
+  } catch {
+    /* leave the prior usage in place */
+  }
+}
 
 let messageCounter = 0
 const nextId = (): string => `m${++messageCounter}-${Date.now()}`
@@ -175,6 +206,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
   switch (event.type) {
     case 'message.start':
       $busy.set(true)
+      $turnStartedAt.set(Date.now())
       $statusLine.set('')
       stopSpeaking() // interrupt any TTS from the previous turn
       update(withActiveAssistant)
@@ -215,7 +247,9 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'message.complete':
       $busy.set(false)
+      $turnStartedAt.set(null)
       $statusLine.set('')
+      void refreshCurrentUsage()
       update(messages => messages.map(m => (m.pending ? { ...m, pending: false } : m)))
       // Read the reply aloud when auto-TTS is on (K9).
       if ($autoSpeakReplies.get()) {
@@ -231,6 +265,8 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         body: translateNow('notifications.native.turnDoneBody'),
         sessionId: $sessionId.get()
       })
+      // Turn-end audio cue (gated by $hapticsMuted). Mirrors desktop gateway-event.
+      playCompletionSound()
       break
 
     case 'status.update':
@@ -276,6 +312,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'error':
       $busy.set(false)
+      $turnStartedAt.set(null)
       $statusLine.set(coerceText(payload.message) || 'Something went wrong')
       update(messages => messages.map(m => (m.pending ? { ...m, pending: false, error: coerceText(payload.message) } : m)))
       dispatchNativeNotification({
@@ -307,6 +344,10 @@ export async function ensureSession(): Promise<string> {
     const created = await requestGateway<{ session_id: string }>('session.create', { cols: 96 })
     sessionId = created.session_id
     $sessionId.set(sessionId)
+    // Runtime session clock starts when we create the session (statusbar session
+    // timer). Resumed/loaded sessions have no reliable start on this client, so
+    // the timer stays hidden for them.
+    $sessionStartedAt.set(Date.now())
   }
   return sessionId
 }
@@ -318,6 +359,7 @@ export async function sendPrompt(text: string): Promise<void> {
 
   update(messages => [...messages, { id: nextId(), role: 'user', parts: [{ type: 'text', text: trimmed }] }])
   $busy.set(true)
+  $turnStartedAt.set(Date.now())
   $statusLine.set('')
 
   try {
@@ -325,6 +367,7 @@ export async function sendPrompt(text: string): Promise<void> {
     await requestGateway('prompt.submit', { session_id: sessionId, text: trimmed }, PROMPT_SUBMIT_TIMEOUT_MS)
   } catch (err) {
     $busy.set(false)
+    $turnStartedAt.set(null)
     $statusLine.set(err instanceof Error ? err.message : String(err))
     notifyError(err, 'Message failed to send')
   }
@@ -377,6 +420,9 @@ export function resetChat(): void {
   $messages.set([])
   $sessionId.set(null)
   $busy.set(false)
+  $turnStartedAt.set(null)
+  $sessionStartedAt.set(null)
+  $currentUsage.set(EMPTY_USAGE)
   $statusLine.set('')
   $approval.set(null)
   $clarify.set(null)

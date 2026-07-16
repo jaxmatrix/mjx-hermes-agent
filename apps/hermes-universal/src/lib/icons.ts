@@ -2,6 +2,12 @@
 // components can `import { X } from '@/lib/icons'` unchanged. Backed by
 // @tabler/icons-react (the desktop icon library). Icons are aliased to the
 // desktop names and re-exported; grow this list as more get referenced.
+import type { ComponentType } from 'react'
+
+// Structural icon type (matches the desktop `IconComponent`) so ported nav /
+// settings components type their icon props identically.
+export type IconComponent = ComponentType<{ className?: string }>
+
 export {
   IconX as X,
   IconCheck as Check,
@@ -43,16 +49,35 @@ export {
   IconLock as Lock,
   IconMicrophone as Mic,
   IconDeviceDesktop as Monitor,
+  IconSun as Sun,
+  IconMoon as Moon,
   IconCloud as Cloud,
   IconTool as Wrench,
   IconBell as Bell,
   IconKey as Key,
   IconRefresh as Refresh,
+  IconDownload as Download,
+  IconUpload as Upload,
   IconEye as Eye,
   IconEyeOff as EyeOff,
   IconKeyboard as Keyboard,
   IconFolder as Folder,
   IconFile as File,
   IconGitBranch as GitBranch,
-  IconPaw as Paw
+  IconPaw as Paw,
+  // Status bar (Track F — bottom statusbar port)
+  IconCommand as Command,
+  IconActivity as Activity,
+  IconHash as Hash,
+  IconLoader2 as Loader2,
+  IconRefresh as RefreshCw,
+  IconLayoutDashboard as LayoutDashboard,
+  IconBolt as Zap,
+  IconBoltFilled as ZapFilled,
+  IconTerminal2 as Terminal,
+  // Memory provider panels (config sections port)
+  IconExternalLink as ExternalLink,
+  IconDeviceFloppy as Save,
+  // Notifications completion-sound preview
+  IconPlayerPlay as Play
 } from '@tabler/icons-react'

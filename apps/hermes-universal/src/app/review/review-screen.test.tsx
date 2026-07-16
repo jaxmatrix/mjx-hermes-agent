@@ -31,7 +31,10 @@ const status = (files: RepoStatusFile[]): RepoStatus => ({
 vi.mock('@/hermes', () => ({
   getDefaultCwd: vi.fn(async () => ({ cwd: '/repo', branch: 'feature/x' })),
   getRepoStatus: vi.fn(async () => status([file('src/a.ts'), file('README.md', { untracked: true })])),
-  getFileDiff: vi.fn(async () => ({ diff: '@@ -1 +1 @@\n-old\n+new' }))
+  getFileDiff: vi.fn(async () => ({ diff: '@@ -1 +1 @@\n-old\n+new' })),
+  // The sidebar (pulled via SidebarProvider) transitively loads store/profiles,
+  // which calls setApiRequestProfile() at module init.
+  setApiRequestProfile: vi.fn()
 }))
 
 import { getFileDiff } from '@/hermes'

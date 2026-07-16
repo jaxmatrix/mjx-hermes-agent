@@ -4,6 +4,9 @@ import { api } from '@/lib/api'
 
 import type {
   DefaultCwdResult,
+  FsWriteResult,
+  GitRootResult,
+  ReadDataUrlResult,
   ReadDirResult,
   ReadFileTextResult,
   RepoStatus,
@@ -1236,4 +1239,22 @@ export function getFileDiff(repoRoot: string, file: string): Promise<{ diff: str
     ...profileScoped(),
     path: `/api/git/file-diff?path=${encodeURIComponent(repoRoot)}&file=${encodeURIComponent(file)}`
   })
+}
+
+// ── Remote workspace filesystem — write side + image/git-root (right pane) ──
+// `/api/fs/write-text` overwrites an existing regular file atomically (temp +
+// os.replace); the parent must exist and it never builds directory trees.
+export function writeFileText(path: string, content: string): Promise<FsWriteResult> {
+  return api<FsWriteResult>({ ...profileScoped(), path: '/api/fs/write-text', method: 'POST', body: { path, content } })
+}
+
+export function readFileDataUrl(path: string): Promise<ReadDataUrlResult> {
+  return api<ReadDataUrlResult>({
+    ...profileScoped(),
+    path: `/api/fs/read-data-url?path=${encodeURIComponent(path)}`
+  })
+}
+
+export function getGitRoot(path: string): Promise<GitRootResult> {
+  return api<GitRootResult>({ ...profileScoped(), path: `/api/fs/git-root?path=${encodeURIComponent(path)}` })
 }

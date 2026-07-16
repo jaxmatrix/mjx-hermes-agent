@@ -276,6 +276,10 @@ export interface Translations {
     openSettings: string
     openStarmap: string
     openKeybinds: string
+    minimize: string
+    maximize: string
+    restore: string
+    close: string
   }
 
   keybinds: {
@@ -655,6 +659,8 @@ export interface Translations {
       change: string
       autoUseMain: string
       providerDefault: string
+      fallbackAdd: string
+      fallbackEmpty: string
       tasks: Record<string, AuxTaskCopy>
     }
     providers: {
@@ -1350,8 +1356,10 @@ export interface Translations {
       ideaGenerate: string
       ideaGenerating: string
       ideaShuffle: string
+      ideaFailed: string
       noFolders: string
       addFolder: string
+      folderPath: string
       primaryBadge: string
       removeFolder: string
       create: string
@@ -1739,7 +1747,9 @@ export interface Translations {
       low: string
       medium: string
       high: string
+      xhigh: string
       max: string
+      ultra: string
       updateFailed: string
       fastFailed: string
     }
@@ -1757,6 +1767,16 @@ export interface Translations {
       recentActivity: string
       viewAllLogs: string
       messagingPlatforms: string
+    }
+    approvalMode: {
+      title: string
+      ariaLabel: (mode: string) => string
+      manual: string
+      manualDescription: string
+      smart: string
+      smartDescription: string
+      off: string
+      offDescription: string
     }
     statusbar: {
       unknown: string
@@ -1856,6 +1876,9 @@ export interface Translations {
     loadingTree: string
     loadingFiles: string
     terminalHide: string
+    terminalConnecting: string
+    terminalReconnecting: string
+    terminalClosed: string
     terminalsAria: string
     terminalNew: string
     terminalCloseOthers: string
