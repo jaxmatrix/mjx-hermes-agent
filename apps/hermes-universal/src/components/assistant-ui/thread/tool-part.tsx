@@ -5,6 +5,8 @@ import { summarizeShellCommand } from '@/lib/summarize-command'
 import { prettyName } from '@/lib/text'
 import { extractToolErrorMessage, formatToolResultSummary } from '@/lib/tool-result-summary'
 import { cn } from '@/lib/utils'
+import { useStore } from '@/store/atom'
+import { $toolViewMode } from '@/store/tool-view'
 
 // Lean tool-call row (Gc4): humanized title + status + a collapsible body with a
 // formatted result (or error) via the ported formatters. This adapts the desktop
@@ -24,12 +26,21 @@ function toolTitle(toolName: string, args: Record<string, unknown> | undefined):
 
 export function ToolPart({ toolName, args, result, isError }: ToolCallMessagePartProps) {
   const [open, setOpen] = useState(false)
+  // Tool Call Display (Appearance): Technical shows raw input/output; Product
+  // hides the raw payloads and shows a concise formatted summary.
+  const technical = useStore($toolViewMode) === 'technical'
   const running = result === undefined && !isError
   const argsObj = args as Record<string, unknown> | undefined
 
   const title = toolTitle(toolName, argsObj)
-  const body = isError ? extractToolErrorMessage(result) : result !== undefined ? formatToolResultSummary(result) : ''
-  const argsText = argsObj && Object.keys(argsObj).length > 0 ? JSON.stringify(argsObj, null, 2) : ''
+  const body = isError
+    ? extractToolErrorMessage(result)
+    : result !== undefined
+      ? technical
+        ? JSON.stringify(result, null, 2)
+        : formatToolResultSummary(result)
+      : ''
+  const argsText = technical && argsObj && Object.keys(argsObj).length > 0 ? JSON.stringify(argsObj, null, 2) : ''
   const hasDetail = Boolean(body || argsText)
 
   return (
