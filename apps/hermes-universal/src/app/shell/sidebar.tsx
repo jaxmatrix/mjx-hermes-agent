@@ -1,6 +1,9 @@
 import { createContext, type ReactNode, useContext, useMemo, useState } from 'react'
 
 import { ChatSidebar } from '@/app/chat/sidebar'
+import { FileTreePane } from '@/app/right-pane/files/file-tree-pane'
+import { PreviewRail } from '@/app/right-pane/preview/preview-rail'
+import { TerminalArea } from '@/app/right-pane/terminal/terminal-area'
 import { Pane, PaneMain, PaneShell } from '@/components/pane-shell'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
@@ -9,12 +12,31 @@ import { Menu } from '@/lib/icons'
 import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
+import { $previewTabs, setPreviewTarget } from '@/store/preview'
 import {
   CHAT_SIDEBAR_PANE_ID,
+  FILE_TREE_DEFAULT_WIDTH,
+  FILE_TREE_MAX_WIDTH,
+  FILE_TREE_MIN_WIDTH,
+  FILE_TREE_PANE_ID,
   $panesFlipped,
+  $rightSidebarOpen,
+  $terminalOpen,
+  PREVIEW_DEFAULT_WIDTH,
+  PREVIEW_MAX_WIDTH,
+  PREVIEW_MIN_WIDTH,
+  PREVIEW_PANE_ID,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
-  setSidebarOverlayMounted
+  setSidebarOverlayMounted,
+  TERMINAL_COLUMN_DEFAULT_WIDTH,
+  TERMINAL_COLUMN_MAX_WIDTH,
+  TERMINAL_COLUMN_MIN_WIDTH,
+  TERMINAL_COLUMN_PANE_ID,
+  TERMINAL_DEFAULT_HEIGHT,
+  TERMINAL_MAX_HEIGHT,
+  TERMINAL_MIN_HEIGHT,
+  TERMINAL_PANE_ID
 } from '@/store/layout'
 
 // The rich chat sidebar (ported from desktop) renders as a resizable/hover-reveal
@@ -62,6 +84,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const wide = useMediaQuery(SIDEBAR_WIDE_MEDIA_QUERY)
   const { openMobile, setOpenMobile } = useSidebar()
   const panesFlipped = useStore($panesFlipped)
+  const rightOpen = useStore($rightSidebarOpen)
+  const terminalOpen = useStore($terminalOpen)
+  // The editor pane only shows once a file is open; the file tree shows whenever
+  // the right sidebar is open. Closing the right sidebar hides both (main fills).
+  const hasPreview = useStore($previewTabs).length > 0
+  // The file-tree + editor rails dock opposite the chat sidebar.
+  const railSide = panesFlipped ? 'left' : 'right'
 
   if (!wide) {
     return (
@@ -76,6 +105,13 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
     )
   }
+
+  // Terminal placement: while the right sidebar is open it's a bottom-row pane
+  // spanning the open right columns (editor + file tree width); when the right
+  // sidebar is closed it's a full-height right column at a preset, independently
+  // resizable width. Both are independent of the right-sidebar toggle.
+  const terminalBottomActive = terminalOpen && rightOpen
+  const terminalColumnActive = terminalOpen && !rightOpen
 
   return (
     <PaneShell className="h-full">
@@ -99,6 +135,69 @@ export function AppShell({ children }: { children: ReactNode }) {
             Tauri; the pane background still reaches y=0 so the division shows. */}
         <div className={cn('flex min-h-0 flex-1 flex-col', IS_DESKTOP && 'pt-(--titlebar-height)')}>{children}</div>
       </PaneMain>
+
+      {/* Right pane: the tabbed editor (inner, only once a file is open) + the file
+          tree (outer/far-right edge, matching desktop). Both collapse to 0 when the
+          right-sidebar toggle is off, so main fills the space. */}
+      <Pane
+        disabled={!rightOpen || !hasPreview}
+        divider
+        id={PREVIEW_PANE_ID}
+        maxWidth={PREVIEW_MAX_WIDTH}
+        minWidth={PREVIEW_MIN_WIDTH}
+        resizable
+        side={railSide}
+        width={PREVIEW_DEFAULT_WIDTH}
+      >
+        {rightOpen && hasPreview && <PreviewRail />}
+      </Pane>
+      <Pane
+        disabled={!rightOpen}
+        divider
+        id={FILE_TREE_PANE_ID}
+        maxWidth={FILE_TREE_MAX_WIDTH}
+        minWidth={FILE_TREE_MIN_WIDTH}
+        resizable
+        side={railSide}
+        width={FILE_TREE_DEFAULT_WIDTH}
+      >
+        {rightOpen && <FileTreePane onPreviewFile={setPreviewTarget} />}
+      </Pane>
+
+      {/* Terminal — full-height right column when the right sidebar is closed
+          (preset width). Pushed below the titlebar so it doesn't intersect it. */}
+      <Pane
+        disabled={!terminalColumnActive}
+        divider
+        id={TERMINAL_COLUMN_PANE_ID}
+        maxWidth={TERMINAL_COLUMN_MAX_WIDTH}
+        minWidth={TERMINAL_COLUMN_MIN_WIDTH}
+        resizable
+        side={railSide}
+        width={TERMINAL_COLUMN_DEFAULT_WIDTH}
+      >
+        {terminalColumnActive && (
+          <div className={cn('h-full min-h-0', IS_DESKTOP && 'pt-(--titlebar-height)')}>
+            <TerminalArea />
+          </div>
+        )}
+      </Pane>
+
+      {/* Terminal — bottom row spanning the open right columns when the right
+          sidebar is open (width = editor + file tree, or file tree alone). */}
+      <Pane
+        bottomRow
+        disabled={!terminalBottomActive}
+        divider
+        height={TERMINAL_DEFAULT_HEIGHT}
+        id={TERMINAL_PANE_ID}
+        maxHeight={TERMINAL_MAX_HEIGHT}
+        minHeight={TERMINAL_MIN_HEIGHT}
+        resizable
+        side={railSide}
+      >
+        {terminalBottomActive && <TerminalArea />}
+      </Pane>
     </PaneShell>
   )
 }
