@@ -6,19 +6,37 @@
 //! `transport.rs`. The frontend drives it over IPC and reuses the JS
 //! `JsonRpcGatewayClient` via an IPC-backed WebSocket.
 
+mod appearance;
 mod cloud;
 mod local_backend;
+mod marketplace;
 mod oauth;
+mod pty;
 mod transport;
 
+use appearance::set_window_translucency;
+use marketplace::{marketplace_fetch, marketplace_search};
 use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
 };
 use local_backend::{local_backend_spawn, local_backend_status, local_backend_stop, LocalBackendState};
 use oauth::{oauth_login, oauth_logout, oauth_status};
+use pty::{pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
 use transport::{
     cookies_export, cookies_import, http_request, ws_close, ws_open, ws_send, TransportState,
 };
+
+/// Open a URL in the system browser. Routed through the opener plugin's Rust API
+/// rather than its JS `openUrl` command: a Rust-internal call isn't gated by the
+/// opener ACL/scope (which was silently blocking the JS path), so provider OAuth
+/// sign-in and docs links reliably launch the OS browser.
+#[tauri::command]
+fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -40,11 +58,20 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(TransportState::new())
         .manage(LocalBackendState::default())
+        .manage(PtyState::default())
         .invoke_handler(tauri::generate_handler![
             http_request,
             ws_open,
             ws_send,
             ws_close,
+            pty_spawn,
+            pty_write,
+            pty_resize,
+            pty_kill,
+            open_external,
+            set_window_translucency,
+            marketplace_search,
+            marketplace_fetch,
             oauth_login,
             oauth_status,
             oauth_logout,

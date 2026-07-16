@@ -195,16 +195,30 @@ pub async fn ws_open(
     let tx_pong = tx.clone();
     let id_reader = id.clone();
     let reader = tokio::spawn(async move {
+        // Close code (e.g. 4401 auth / 4410 child-exit from /api/shell-pty) so the
+        // terminal can decide whether to reconnect. `None` on error/EOF exits.
+        let mut close_code: Option<u16> = None;
         while let Some(item) = read.next().await {
             match item {
                 Ok(Message::Text(text)) => {
                     let _ = app_reader.emit(&format!("ws://{id_reader}/message"), text.to_string());
                 }
+                Ok(Message::Binary(payload)) => {
+                    // Raw byte frames (e.g. the /api/shell-pty terminal's PTY
+                    // output) go out on a distinct `/binary` channel as a byte
+                    // array — the JSON-RPC gateway client only listens to
+                    // `/message` (text), so this never disturbs it; the terminal
+                    // socket subscribes to `/binary` and feeds xterm directly.
+                    let _ = app_reader.emit(&format!("ws://{id_reader}/binary"), payload.to_vec());
+                }
                 Ok(Message::Ping(payload)) => {
                     // Split streams don't auto-respond to pings; keepalive by hand.
                     let _ = tx_pong.send(Message::Pong(payload));
                 }
-                Ok(Message::Close(_)) => break,
+                Ok(Message::Close(frame)) => {
+                    close_code = frame.map(|f| u16::from(f.code));
+                    break;
+                }
                 Ok(_) => {}
                 Err(err) => {
                     let _ = app_reader.emit(&format!("ws://{id_reader}/error"), err.to_string());
@@ -212,7 +226,9 @@ pub async fn ws_open(
                 }
             }
         }
-        let _ = app_reader.emit(&format!("ws://{id_reader}/close"), ());
+        // Payload is the close code (or null). The JSON-RPC gateway socket ignores
+        // it; the terminal socket uses it for reconnect decisions.
+        let _ = app_reader.emit(&format!("ws://{id_reader}/close"), close_code);
     });
 
     state
