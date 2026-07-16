@@ -9,15 +9,14 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 type EventListenerLike = (event: { type: string; data?: unknown; message?: string }) => void
 
-function deriveOrigin(wsUrl: string): string | undefined {
-  try {
-    const u = new URL(wsUrl)
-    const scheme = u.protocol === 'wss:' ? 'https:' : 'http:'
-    return `${scheme}//${u.host}`
-  } catch {
-    return undefined
-  }
-}
+// Desktop's chat socket is a Chromium `WebSocket` opened from a file:// renderer,
+// so it sends `Origin: null` on the upgrade — the value Hermes gateways accept for
+// native clients. We mirror that exactly. Sending the gateway's OWN origin instead
+// (what we used to derive from the ws URL) is rejected by gateways/reverse proxies
+// that guard the /api/ws upgrade on Origin/Host: behind a proxy the internal Host
+// differs from the public origin, so an explicit same-origin value fails the check
+// while `null` passes. Auth is the single-use `?ticket=` param, not the Origin.
+const NATIVE_ORIGIN = 'null'
 
 export class TauriWebSocket {
   static readonly CONNECTING = 0
@@ -61,7 +60,7 @@ export class TauriWebSocket {
       await invoke('ws_open', {
         id: this.id,
         url: this.url,
-        origin: this.origin ?? deriveOrigin(this.url)
+        origin: this.origin ?? NATIVE_ORIGIN
       })
 
       const queued = this.sendQueue

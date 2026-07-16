@@ -143,7 +143,7 @@ export class JsonRpcGatewayClient {
         resolve()
       }
 
-      const onError = () => {
+      const onError = (event: Event) => {
         if (settled || this.socket !== socket) {
           return
         }
@@ -151,7 +151,12 @@ export class JsonRpcGatewayClient {
         settled = true
         cleanup()
         this.setState('error')
-        reject(new Error(this.options.connectErrorMessage))
+        // Surface the underlying transport error when the socket carries one (the
+        // Tauri/Rust socket puts the real tungstenite reason — e.g. "HTTP error:
+        // 403" or a TLS failure — on event.message); a browser WebSocket error
+        // event has none, so fall back to the generic message.
+        const detail = (event as { message?: string }).message
+        reject(new Error(detail || this.options.connectErrorMessage))
       }
 
       socket.addEventListener('open', onOpen, { once: true })
