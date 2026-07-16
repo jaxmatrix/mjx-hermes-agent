@@ -40,7 +40,11 @@ const buttonVariants = cva(
         icon: 'size-11',
         'icon-xs': "size-8 [&_svg:not([class*='size-'])]:size-4",
         'icon-sm': 'size-9',
-        'icon-lg': 'size-12'
+        'icon-lg': 'size-12',
+        // Compact overlay/titlebar control (ported from apps/desktop) — the settings
+        // portal close button. Sized off the titlebar-control tokens.
+        'icon-titlebar':
+          'h-(--titlebar-control-height) w-(--titlebar-control-size) rounded-[4px] [&_.codicon]:text-[0.875rem]'
       }
     },
     compoundVariants: [

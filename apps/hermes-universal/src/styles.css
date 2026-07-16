@@ -188,6 +188,12 @@
     --theme-mix-elevated: 28%;
     --theme-mix-bubble: 0%;
     --theme-fill-tertiary-accent-mix: 8%;
+    --theme-fill-quaternary-accent-mix: 5%;
+    --theme-fill-quinary-accent-mix: 3%;
+    /* Settings/conversation typography scale (ported from apps/desktop styles.css). */
+    --conversation-text-font-size: 0.8125rem;
+    --conversation-caption-font-size: 0.75rem;
+    --conversation-caption-line-height: 1rem;
     --theme-stroke-primary-accent-mix: 24%;
     --theme-stroke-secondary-accent-mix: 16%;
     --theme-stroke-tertiary-accent-mix: 10%;
@@ -218,6 +224,17 @@
       var(--ui-accent) var(--theme-fill-tertiary-accent-mix),
       color-mix(in srgb, var(--ui-base) 5%, transparent)
     );
+    /* Quieter card/input fills for settings (ported from apps/desktop). */
+    --ui-bg-quaternary: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-fill-quaternary-accent-mix),
+      color-mix(in srgb, var(--ui-base) 4%, transparent)
+    );
+    --ui-bg-quinary: color-mix(
+      in srgb,
+      var(--ui-accent) var(--theme-fill-quinary-accent-mix),
+      color-mix(in srgb, var(--ui-base) 3%, transparent)
+    );
     --ui-text-primary: color-mix(in srgb, var(--ui-base) 94%, transparent);
     --ui-text-secondary: color-mix(in srgb, var(--ui-base) 74%, transparent);
     --ui-text-tertiary: color-mix(in srgb, var(--ui-base) 54%, transparent);
@@ -237,6 +254,10 @@
       color-mix(in srgb, var(--ui-base) 5%, transparent)
     );
     --ui-chat-surface-background: var(--ui-bg-chrome);
+    /* Right-pane editor/terminal/preview chrome surface (desktop parity). The port
+       dropped this def, leaving the token undefined → transparent, which made the
+       terminal's readTheme() sample nothing and fall back to a hardcoded dark bg. */
+    --ui-editor-surface-background: var(--ui-bg-chrome);
     --ui-chat-bubble-background: color-mix(in srgb, var(--theme-bubble-seed) var(--theme-mix-bubble), var(--theme-neutral-card));
 
     --dt-background: var(--ui-bg-chrome);
@@ -265,6 +286,8 @@
     --dt-input-border: 7%;
     --dt-input-inset: inset 0 1px 1px color-mix(in srgb, #000 10%, transparent);
     --dt-destructive: #cf2d56;
+    /* Destructive red for settings (theme remove, etc.) — mirrors desktop --ui-red. */
+    --ui-red: var(--dt-destructive);
     --dt-destructive-foreground: #ffffff;
     --dt-sidebar-bg: var(--ui-bg-sidebar);
     --dt-sidebar-border: var(--ui-stroke-secondary);

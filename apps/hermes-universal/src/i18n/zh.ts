@@ -937,6 +937,8 @@ export const zh: Translations = {
       change: '更改',
       autoUseMain: '自动 · 使用主模型',
       providerDefault: '(提供方默认)',
+      fallbackAdd: '添加后备',
+      fallbackEmpty: '没有后备模型 — 默认模型失败时才会使用。',
       tasks: {
         vision: { label: '视觉', hint: '图片分析' },
         web_extract: { label: '网页提取', hint: '页面总结' },
@@ -2272,7 +2274,9 @@ export const zh: Translations = {
       low: '低',
       medium: '中',
       high: '高',
+      xhigh: '极高',
       max: '最高',
+      ultra: '超高',
       updateFailed: '模型选项更新失败',
       fastFailed: '快速模式更新失败'
     },
@@ -2290,6 +2294,16 @@ export const zh: Translations = {
       recentActivity: '最近活动',
       viewAllLogs: '查看全部日志 →',
       messagingPlatforms: '消息平台'
+    },
+    approvalMode: {
+      title: '审批模式',
+      ariaLabel: mode => `审批模式：${mode}`,
+      manual: '手动',
+      manualDescription: '在需要审批的操作前先询问',
+      smart: '智能',
+      smartDescription: '自动评估操作，必要时再询问',
+      off: '关闭',
+      offDescription: '无需审批提示直接运行'
     },
     statusbar: {
       unknown: '未知',
@@ -2389,6 +2403,9 @@ export const zh: Translations = {
     loadingTree: '正在加载文件树',
     loadingFiles: '正在加载文件',
     terminalHide: '隐藏终端',
+    terminalConnecting: '连接中…',
+    terminalReconnecting: '重新连接中…',
+    terminalClosed: '终端已关闭',
     terminalsAria: '终端',
     terminalNew: '新建终端',
     terminalCloseOthers: '关闭其他',

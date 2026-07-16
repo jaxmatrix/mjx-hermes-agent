@@ -1087,6 +1087,23 @@ export interface ReadFileTextResult {
   byteSize?: number
   language?: string
   mimeType?: string
+  truncated?: boolean
+}
+
+// Write side (in-app spot editor) + image/binary preview + git-root probe. The
+// backend serves these under /api/fs/* (same auth + path hardening as the reads).
+export interface FsWriteResult {
+  ok: boolean
+  path: string
+  byteSize: number
+}
+
+export interface ReadDataUrlResult {
+  dataUrl: string
+}
+
+export interface GitRootResult {
+  root: string | null
 }
 
 export interface DefaultCwdResult {
