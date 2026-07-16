@@ -2,6 +2,7 @@ import { ApprovalBar } from '@/app/chat/approval-bar'
 import { ClarifyBar } from '@/app/chat/clarify-bar'
 import { Composer } from '@/app/chat/composer'
 import { ChatRuntimeProvider } from '@/app/chat/runtime'
+import { ScrollToBottomButton } from '@/app/chat/scroll-to-bottom-button'
 import { SecretBar } from '@/app/chat/secret-bar'
 import { SudoBar } from '@/app/chat/sudo-bar'
 import { SidebarTrigger } from '@/app/shell/sidebar'
@@ -42,9 +43,13 @@ export function ChatScreen() {
         </div>
       </header>
 
-      {/* assistant-ui runtime hosts the streaming thread (markdown/reasoning/tools). */}
+      {/* assistant-ui runtime hosts the streaming thread (markdown/reasoning/tools).
+          The floating scroll-to-bottom button is an out-of-flow child of `.chat`
+          (position: relative) so it floats above the composer footer, mirroring
+          desktop's over-the-composer placement without restructuring the layout. */}
       <ChatRuntimeProvider>
         <Thread />
+        <ScrollToBottomButton />
       </ChatRuntimeProvider>
 
       <footer className="chat-footer">

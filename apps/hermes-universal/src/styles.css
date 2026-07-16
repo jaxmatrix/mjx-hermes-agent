@@ -385,6 +385,10 @@
     --paragraph-gap: 0.7rem;
     --sticky-human-top: 0.23rem;
     --composer-width: 48.75rem;
+    /* Fill painted by controls docked to the composer surface (the floating
+       scroll-to-bottom button, the "show earlier" pill). The overlay-composer
+       phase adds the focus/scroll state ladder; this is the opaque fallback. */
+    --composer-fill: color-mix(in srgb, var(--dt-card) 90%, var(--dt-background));
     --composer-control-size: 1.5rem;
     --composer-control-primary-size: 1.625rem;
     --composer-control-gap: 0.25rem;
@@ -723,6 +727,9 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
+  /* Positioning context for the out-of-flow floating scroll-to-bottom button
+     (see scroll-to-bottom-button.tsx), which anchors above the composer footer. */
+  position: relative;
 }
 .chat-header {
   display: flex;
@@ -1173,6 +1180,23 @@ html {
   mask-image: linear-gradient(to bottom, #000 55%, transparent);
 }
 
+/* Stick-to-bottom owns scrollTop while following. Once escaped, native anchoring
+   is safe and keeps sticky human edits from shoving the viewport; data-editing
+   enables that path before React swaps in the inline editor. */
+[data-slot='aui_thread-viewport'] {
+  overflow-anchor: none;
+}
+
+[data-slot='aui_thread-viewport'][data-following='false'],
+[data-slot='aui_thread-viewport'][data-editing='true'] {
+  overflow-anchor: auto;
+}
+
+[data-slot='aui_thread-content'] {
+  max-width: var(--composer-width);
+  padding-inline: 1.5rem;
+}
+
 /* Tool/thinking blocks share the message-text left edge. */
 [data-slot='aui_assistant-message-content'] > [data-slot='tool-block'],
 [data-slot='aui_assistant-message-content'] > [data-slot='aui_thinking-disclosure'] {
@@ -1454,5 +1478,61 @@ html {
     animation: none;
     -webkit-text-fill-color: currentColor;
     background: none;
+  }
+}
+
+/* Floating "jump to bottom" control (see scroll-to-bottom-button.tsx).
+   Directional scale: it contracts toward 1 as it arrives (from 1.1) and keeps
+   contracting to 0.9 as it leaves — always shrinking in the direction of
+   travel, so the motion reads as a soft settle / recede rather than a pop. The
+   X half-offset stays baked into every transform so `left-1/2` centering holds
+   through the animation. */
+.thread-jump-button {
+  opacity: 0;
+  transform: translateX(-50%) translateY(0.3rem) scale(0.9);
+}
+
+.thread-jump-button[data-state='in'] {
+  animation: thread-jump-in 200ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.thread-jump-button[data-state='out'] {
+  animation: thread-jump-out 180ms ease-in forwards;
+}
+
+@keyframes thread-jump-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(0.3rem) scale(1.1);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+@keyframes thread-jump-out {
+  from {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(0.3rem) scale(0.9);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-jump-button[data-state='in'],
+  .thread-jump-button[data-state='out'] {
+    animation: none;
+    transition: opacity 120ms linear;
+  }
+
+  .thread-jump-button[data-state='in'] {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
   }
 }
