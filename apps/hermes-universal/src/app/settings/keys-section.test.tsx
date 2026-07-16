@@ -5,7 +5,7 @@ import type { EnvVarInfo } from '@/types/hermes'
 
 const envVar = (over: Partial<EnvVarInfo>): EnvVarInfo => ({
   advanced: false,
-  category: 'providers',
+  category: 'tool',
   description: '',
   is_password: true,
   is_set: false,
@@ -17,56 +17,56 @@ const envVar = (over: Partial<EnvVarInfo>): EnvVarInfo => ({
 
 vi.mock('@/hermes', () => ({
   getEnvVars: vi.fn(async () => ({
-    OPENAI_API_KEY: envVar({ description: 'OpenAI key', provider_label: 'OpenAI' }),
-    ANTHROPIC_API_KEY: envVar({ description: 'Claude key', provider_label: 'Anthropic', is_set: true, redacted_value: 'sk-a...z9' })
+    TAVILY_API_KEY: envVar({ category: 'tool', description: 'Tavily search' }),
+    GATEWAY_PROXY: envVar({ category: 'setting', is_password: false }),
+    // Provider LLM keys live on the Providers page — excluded from Tools & Keys.
+    OPENAI_API_KEY: envVar({ category: 'provider', provider_label: 'OpenAI' })
   })),
   setEnvVar: vi.fn(async () => ({ ok: true })),
   revealEnvVar: vi.fn(async (key: string) => ({ key, value: 'super-secret' })),
   deleteEnvVar: vi.fn(async () => ({ ok: true }))
 }))
 
-import { revealEnvVar, setEnvVar } from '@/hermes'
+import { setEnvVar } from '@/hermes'
 import { I18nProvider } from '@/i18n'
 
-import { KeysSection } from './keys-section'
+import { KeysSection, type KeysView } from './keys-section'
 
 const setVar = vi.mocked(setEnvVar)
-const reveal = vi.mocked(revealEnvVar)
 
-const renderSection = () =>
+const renderSection = (view: KeysView) =>
   render(
     <I18nProvider>
-      <KeysSection />
+      <KeysSection view={view} />
     </I18nProvider>
   )
 
-describe('KeysSection', () => {
-  beforeEach(() => {
-    setVar.mockClear()
-    reveal.mockClear()
-  })
+describe('KeysSection (Tools & Keys)', () => {
+  beforeEach(() => setVar.mockClear())
   afterEach(() => localStorage.clear())
 
-  it('lists env vars grouped by provider', async () => {
-    renderSection()
-    expect(await screen.findByText('OPENAI_API_KEY')).toBeInTheDocument()
-    expect(screen.getByText('ANTHROPIC_API_KEY')).toBeInTheDocument()
-    expect(screen.getByText('OpenAI')).toBeInTheDocument()
+  it('Tools view shows tool credentials and hides settings + provider keys', async () => {
+    renderSection('tools')
+    expect(await screen.findByText(/tavily/i)).toBeInTheDocument()
+    expect(screen.queryByText(/gateway proxy/i)).not.toBeInTheDocument() // Settings view
+    expect(screen.queryByText(/openai/i)).not.toBeInTheDocument() // Providers page
   })
 
-  it('sets a value for an unset var', async () => {
-    renderSection()
-    await screen.findByText('OPENAI_API_KEY')
-    fireEvent.change(screen.getByPlaceholderText('Paste key'), { target: { value: 'sk-new' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Set' }))
-    await waitFor(() => expect(setVar).toHaveBeenCalledWith('OPENAI_API_KEY', 'sk-new'))
+  it('Settings view shows setting credentials and hides tool keys', async () => {
+    renderSection('settings')
+    expect(await screen.findByText(/gateway proxy/i)).toBeInTheDocument()
+    expect(screen.queryByText(/tavily/i)).not.toBeInTheDocument()
   })
 
-  it('reveals a set var value', async () => {
-    renderSection()
-    await screen.findByText('ANTHROPIC_API_KEY')
-    fireEvent.click(screen.getByRole('button', { name: 'Reveal value' }))
-    await waitFor(() => expect(reveal).toHaveBeenCalledWith('ANTHROPIC_API_KEY'))
-    expect(await screen.findByText('super-secret')).toBeInTheDocument()
+  it('sets a value for an unset credential', async () => {
+    renderSection('settings')
+    await screen.findByText(/gateway proxy/i)
+
+    const input = screen.getByRole('textbox')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'http://proxy' } })
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }))
+
+    await waitFor(() => expect(setVar).toHaveBeenCalledWith('GATEWAY_PROXY', 'http://proxy'))
   })
 })

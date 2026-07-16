@@ -6,6 +6,7 @@ import { ArtifactsScreen } from '@/app/artifacts/artifacts-screen'
 import { ChatScreen } from '@/app/chat/chat-screen'
 import { CommandCenterScreen } from '@/app/command-center/command-center-screen'
 import { ConnectScreen } from '@/app/connect-screen'
+import { GatewayConnectingScreen } from '@/app/gateway/gateway-connecting-screen'
 import { CronScreen } from '@/app/cron/cron-screen'
 import { FilesScreen } from '@/app/files/files-screen'
 import { MessagingScreen } from '@/app/messaging/messaging-screen'
@@ -21,7 +22,8 @@ import { NotificationStack } from '@/components/notifications'
 import { IS_DESKTOP } from '@/lib/platform'
 import { useThemedScrollbars } from '@/lib/scrollbars'
 import { useStore } from '@/store/atom'
-import { $connectionPhase } from '@/store/connection'
+import { $connectionPhase, $hasConnected } from '@/store/connection'
+import { $restoring } from '@/store/gateway-restore'
 import { $onboardingActive, checkConfigured } from '@/store/onboarding'
 import { syncPetInfo } from '@/store/pet-gallery'
 import { bumpZoom, initZoom, setZoomPercent } from '@/store/zoom'
@@ -39,6 +41,8 @@ import { useSidebarKeybinds } from './shell/use-sidebar-keybinds'
 export function MobileController() {
   const phase = useStore($connectionPhase)
   const onboarding = useStore($onboardingActive)
+  const restoring = useStore($restoring)
+  const hasConnected = useStore($hasConnected)
 
   // Draw custom (WebKitGTK-safe) scrollbars on desktop; no-op on mobile/web.
   useThemedScrollbars()
@@ -84,6 +88,11 @@ export function MobileController() {
   // over it. Open state is derived from the URL.
   const { pathname } = useLocation()
   const settingsOpen = pathname === '/settings' || pathname.startsWith('/settings/')
+  // Only the Gateway settings page is usable while disconnected (it's the
+  // reconnect / sign-in surface). Every other settings section needs live gateway
+  // data, so keeping the overlay mounted there while disconnected would just render
+  // empty sections — so a disconnect only holds the overlay open on Gateway.
+  const settingsGatewayOpen = pathname === '/settings/gateway'
   // Remember the route the user was on before settings opened, so the portal's
   // close button returns there instead of stepping back one settings section.
   const returnPathRef = useRef('/')
@@ -95,10 +104,24 @@ export function MobileController() {
 
   let content: ReactNode
   if (phase !== 'ready') {
+    // Not connected. Priority: a boot restore shows the connecting screen; if the
+    // user is in Settings (e.g. they just signed out on the gateway page) keep a
+    // neutral backdrop so the Settings overlay stays and shows the Sign in button
+    // (desktop parity — sign-out doesn't bounce to the home/connect screen); an
+    // in-session reconnect (dropped socket) shows the connecting screen; otherwise
+    // it's a genuine first run → the connect screen.
     content = (
       <>
         <NotificationStack />
-        <ConnectScreen />
+        {restoring ? (
+          <GatewayConnectingScreen />
+        ) : settingsGatewayOpen ? (
+          <div className="h-full bg-background" />
+        ) : hasConnected ? (
+          <GatewayConnectingScreen />
+        ) : (
+          <ConnectScreen />
+        )}
       </>
     )
   } else if (onboarding) {
@@ -157,8 +180,12 @@ export function MobileController() {
             the titlebar band (Requirement #1). Desktop Tauri only. */}
         {IS_DESKTOP && <Titlebar connected={connected} />}
         {/* Settings portal — a full-window overlay (fixed z-50) over the titlebar
-            (z-40) and chat backdrop. Connected-only (it reads live config). */}
-        {connected && settingsOpen && <SettingsView returnPath={returnPathRef.current} />}
+            (z-40) and chat backdrop. Stays mounted while disconnected too (a
+            settings-initiated "Save & reconnect", or a sign-out) so reconfiguring or
+            re-authenticating the gateway never bounces the user out to the connect
+            picker — desktop parity. Blocked only during the first-run onboarding
+            wizard (phase ready but not connected). */}
+        {settingsOpen && (connected || settingsGatewayOpen) && <SettingsView returnPath={returnPathRef.current} />}
         {/* Provider-connect overlay — a focused per-provider sign-in card that
             floats OVER the settings page (z-70) without unmounting it. Opened from
             Providers → Accounts; gated on $connectProvider, not $onboardingActive. */}

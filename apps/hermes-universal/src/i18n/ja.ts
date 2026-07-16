@@ -724,7 +724,7 @@ export const ja = defineLocale({
       saveForRestart: '次回起動時のために保存',
       saveAndReconnect: '保存して再接続',
       diagnostics: '診断',
-      diagnosticsDesc: 'ファイルマネージャーで desktop.log を表示します。ゲートウェイの起動に失敗した際に役立ちます。',
+      diagnosticsDesc: '接続状態と最近のゲートウェイログ。ゲートウェイの動作がおかしいときに役立ちます。',
       openLogs: 'ログを開く',
       incompleteTitle: 'リモートゲートウェイの設定が不完全です',
       incompleteSignIn: 'リモートに切り替える前にリモート URL を入力してサインインしてください。',
@@ -745,7 +745,10 @@ export const ja = defineLocale({
       signOutFailed: 'サインアウトに失敗しました',
       testFailed: 'リモートゲートウェイのテストに失敗しました',
       applyFailed: 'ゲートウェイ設定を適用できませんでした',
-      saveFailed: 'ゲートウェイ設定を保存できませんでした'
+      saveFailed: 'ゲートウェイ設定を保存できませんでした',
+      connectingTitle: 'Hermes に接続しています',
+      reconnectingTo: target => `${target} に再接続しています…`,
+      useDifferentGateway: '別のゲートウェイを使用'
     },
     keys: {
       loading: 'API キーと認証情報を読み込み中...',

@@ -156,8 +156,10 @@ pub async fn http_request(
 
 /// Open a raw WebSocket. The *client* supplies `id` (a uuid) and subscribes to
 /// `ws://{id}/open|message|close|error` BEFORE calling this, so no frame is
-/// missed. `origin` is set on the upgrade because auth-gated gateways guard the
-/// handshake on Host/Origin (see desktop `gateway-ws-probe.cjs`).
+/// missed. `origin` is set on the upgrade to whatever the JS caller passes — the
+/// gateway client sends `Origin: null` to mirror desktop's file:// renderer (the
+/// value Hermes gateways accept for native clients). Sending the gateway's own
+/// origin instead is rejected by reverse proxies that guard /api/ws on Origin/Host.
 #[tauri::command]
 pub async fn ws_open(
     app: AppHandle,

@@ -826,7 +826,7 @@ export const zh: Translations = {
       saveForRestart: '保存到下次重启',
       saveAndReconnect: '保存并重连',
       diagnostics: '诊断',
-      diagnosticsDesc: '在文件管理器中显示 desktop.log，网关启动失败时很有用。',
+      diagnosticsDesc: '连接状态和最近的网关日志 — 网关异常时很有用。',
       openLogs: '打开日志',
       incompleteTitle: '远程网关配置不完整',
       incompleteSignIn: '切换到远程前，请输入远程 URL 并完成登录。',
@@ -847,7 +847,10 @@ export const zh: Translations = {
       signOutFailed: '退出登录失败',
       testFailed: '远程网关测试失败',
       applyFailed: '无法应用网关设置',
-      saveFailed: '无法保存网关设置'
+      saveFailed: '无法保存网关设置',
+      connectingTitle: '正在连接 Hermes',
+      reconnectingTo: target => `正在重新连接到 ${target}…`,
+      useDifferentGateway: '使用其他网关'
     },
     keys: {
       loading: '正在加载 API 密钥和凭据...',

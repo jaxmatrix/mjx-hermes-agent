@@ -10,37 +10,117 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
-import { deleteSession, listSessions, setSessionArchived } from '@/hermes'
+import { Tip } from '@/components/ui/tooltip'
+import { deleteSession, getDefaultCwd, listSessions, setSessionArchived } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { Archive, Trash } from '@/lib/icons'
+import { Archive, ArchiveOff, FolderOpen, Loader2, Trash } from '@/lib/icons'
+import { IS_DESKTOP } from '@/lib/platform'
+import { useStore } from '@/store/atom'
+import { $defaultProjectDir, setDefaultProjectDir } from '@/store/default-project-dir'
 import { notify, notifyError } from '@/store/notifications'
+import { pickProjectFolder } from '@/store/projects'
+import { refreshSessions } from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 
-import { EmptyState, ListRow, LoadingState, SettingsContent } from './primitives'
+import { EmptyState, ListRow, LoadingState, SectionHeading, SettingsContent } from './primitives'
 
-// Archived chats (Jc11): list archived sessions with unarchive + permanent
-// delete. Self-contained (own fetch) — the main session store only tracks the
-// active list.
+// Settings → Archived Chats. Ported to desktop parity (apps/desktop/src/app/settings/
+// sessions-settings.tsx): a Default Project Directory picker on top, then the
+// archived-session list (unarchive + permanent delete). Self-contained fetch — the
+// main session store only tracks the active list.
+
+// title || preview || fallback (matches desktop lib/chat-runtime sessionTitle).
+const sessionTitle = (session: SessionInfo): string =>
+  session.title?.trim() || session.preview?.trim() || 'Untitled session'
+
+// Last path segment of the session's workspace cwd, for the mono meta line.
+const workspaceLabel = (cwd?: null | string): string =>
+  cwd ? cwd.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || '' : ''
+
+// ── Default project directory (desktop-only: needs a local FS + folder picker) ──
+function DefaultProjectDirSetting() {
+  const { t } = useI18n()
+  const s = t.settings.sessions
+  const dir = useStore($defaultProjectDir)
+  const [fallback, setFallback] = useState('~')
+  const [busy, setBusy] = useState(false)
+
+  // Best-effort backend cwd for the "Defaults to …" hint when unset.
+  useEffect(() => {
+    let alive = true
+    void getDefaultCwd()
+      .then(res => {
+        if (alive && res.cwd) setFallback(res.cwd)
+      })
+      .catch(() => {})
+    return () => void (alive = false)
+  }, [])
+
+  const choose = async () => {
+    setBusy(true)
+    try {
+      const picked = await pickProjectFolder()
+      if (!picked) return
+      setDefaultProjectDir(picked)
+      notify({ kind: 'success', message: s.defaultDirUpdated })
+    } catch (err) {
+      notifyError(err, s.updateDirFailed)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const clear = () => {
+    try {
+      setDefaultProjectDir(null)
+    } catch (err) {
+      notifyError(err, s.clearDirFailed)
+    }
+  }
+
+  return (
+    <div className="mb-6">
+      <SectionHeading icon={FolderOpen} title={s.defaultDirTitle} />
+      <p className="mb-2 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
+        {s.defaultDirDesc}
+      </p>
+      <ListRow
+        action={
+          <div className="flex items-center gap-3">
+            <Button disabled={busy} onClick={() => void choose()} size="sm" type="button" variant="textStrong">
+              <FolderOpen className="size-3.5" />
+              <span>{dir ? s.change : s.choose}</span>
+            </Button>
+            {dir ? (
+              <Button disabled={busy} onClick={clear} size="sm" type="button" variant="text">
+                {s.clear}
+              </Button>
+            ) : null}
+          </div>
+        }
+        description={dir || s.defaultsTo(fallback)}
+        title={dir || s.notSet}
+      />
+    </div>
+  )
+}
+
 export function ArchivedSection() {
   const { t } = useI18n()
   const s = t.settings.sessions
   const [sessions, setSessions] = useState<SessionInfo[] | null>(null)
   const [failed, setFailed] = useState(false)
-  const [busy, setBusy] = useState<string | null>(null)
+  const [busy, setBusy] = useState<null | string>(null)
   const [confirm, setConfirm] = useState<SessionInfo | null>(null)
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
-        const res = await listSessions(50, 0, 'only', 'recent')
-        if (!cancelled) {
-          setSessions(res.sessions)
-        }
+        const res = await listSessions(200, 0, 'only', 'recent')
+        if (!cancelled) setSessions(res.sessions)
       } catch (err) {
-        if (!cancelled) {
-          setFailed(true)
-        }
+        if (!cancelled) setFailed(true)
         notifyError(err, s.failedLoad)
       }
     })()
@@ -55,6 +135,7 @@ export function ArchivedSection() {
     try {
       await setSessionArchived(id, false)
       drop(id)
+      void refreshSessions() // re-show the restored chat in the sidebar
       notify({ kind: 'success', message: s.restored })
     } catch (err) {
       notifyError(err, s.unarchiveFailed)
@@ -76,49 +157,77 @@ export function ArchivedSection() {
     }
   }
 
-  const titleOf = (session: SessionInfo) => session.title || session.preview || session.id.slice(0, 8)
-
   if (!sessions && !failed) {
     return <LoadingState label={s.loading} />
   }
 
+  const list = sessions ?? []
+
   return (
     <SettingsContent>
-      <p className="pt-3 pb-1 text-xs text-muted-foreground">{s.archivedIntro}</p>
+      {IS_DESKTOP ? <DefaultProjectDirSetting /> : null}
 
-      {sessions && sessions.length === 0 ? (
+      <SectionHeading icon={Archive} meta={list.length ? String(list.length) : undefined} title={s.archivedTitle} />
+      <p className="mb-2 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
+        {s.archivedIntro}
+      </p>
+
+      {list.length === 0 ? (
         <EmptyState description={s.emptyArchivedDesc} title={s.emptyArchivedTitle} />
       ) : (
-        (sessions ?? []).map(session => (
-          <ListRow
-            key={session.id}
-            description={s.messages(session.message_count)}
-            title={<span className="truncate">{titleOf(session)}</span>}
-            action={
-              <div className="flex items-center gap-1">
-                <Button aria-label={s.unarchive} disabled={busy === session.id} onClick={() => void unarchive(session.id)} size="icon-sm" variant="ghost">
-                  <Archive className="size-4" />
-                </Button>
-                <Button
-                  aria-label={s.deletePermanently}
-                  disabled={busy === session.id}
-                  onClick={() => setConfirm(session)}
-                  size="icon-sm"
-                  variant="ghost"
-                >
-                  <Trash className="size-4" />
-                </Button>
+        <div className="grid gap-1">
+          {list.map(session => {
+            const label = workspaceLabel(session.cwd)
+            const meta = label ? `${label} · ${s.messages(session.message_count)}` : s.messages(session.message_count)
+            return (
+              <div className="scroll-mt-6 rounded-lg" id={`archived-session-${session.id}`} key={session.id}>
+                <ListRow
+                  action={
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        disabled={busy === session.id}
+                        onClick={() => void unarchive(session.id)}
+                        size="sm"
+                        type="button"
+                        variant="textStrong"
+                      >
+                        {busy === session.id ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <ArchiveOff className="size-3.5" />
+                        )}
+                        <span>{s.unarchive}</span>
+                      </Button>
+                      <Tip label={s.deletePermanently}>
+                        <Button
+                          aria-label={s.deletePermanently}
+                          className="text-muted-foreground hover:text-destructive"
+                          disabled={busy === session.id}
+                          onClick={() => setConfirm(session)}
+                          size="icon-sm"
+                          type="button"
+                          variant="ghost"
+                        >
+                          <Trash className="size-3.5" />
+                        </Button>
+                      </Tip>
+                    </div>
+                  }
+                  description={session.preview || undefined}
+                  hint={meta}
+                  title={sessionTitle(session)}
+                />
               </div>
-            }
-          />
-        ))
+            )
+          })}
+        </div>
       )}
 
       <Dialog onOpenChange={open => !open && setConfirm(null)} open={confirm !== null}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{s.deletePermanently}</DialogTitle>
-            <DialogDescription>{confirm ? s.deleteConfirm(titleOf(confirm)) : ''}</DialogDescription>
+            <DialogDescription>{confirm ? s.deleteConfirm(sessionTitle(confirm)) : ''}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <DialogClose asChild>
