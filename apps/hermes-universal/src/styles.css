@@ -878,153 +878,69 @@ body {
   padding-left: 2px;
 }
 
-/* ── Footer / composer / approval ── */
-.chat-footer {
-  border-top: 1px solid var(--ui-stroke-tertiary);
-  padding: 10px 12px max(10px, env(safe-area-inset-bottom));
+/* ── Composer (Phase 7 chat-UI port) — overlay dock + glass surface ──────────
+   The single-file plain-textarea composer was replaced by a 1:1 port of the
+   desktop docked composer (src/app/chat/composer/). These rules mirror the
+   desktop styles.css composer block, minus the pop-out/drag/glow machinery
+   (desktop-window-only). The geometry tokens live in :root above (phase 6). */
+
+/* Safe-area bottom padding for the docked overlay (mobile home indicator). */
+[data-slot='composer-root'] {
+  padding-bottom: calc(var(--composer-shell-pad-block-end) + env(safe-area-inset-bottom));
+}
+
+[data-slot='composer-root'] > .pointer-events-none {
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--ui-chat-surface-background) 88%, transparent)
+  ) !important;
+}
+
+[data-slot='composer-surface'] {
+  border-color: var(--ui-stroke-secondary) !important;
+}
+
+[data-slot='composer-fade'] {
+  min-height: 2.375rem;
+}
+
+[data-slot='composer-rich-input'] {
+  color: var(--ui-text-primary);
+  font-size: 0.8125rem;
+}
+
+[data-slot='composer-rich-input']:empty::before {
+  color: var(--ui-text-tertiary) !important;
+}
+
+/* ── Composer fill — ONE var painted by the surface AND anything docked to it
+   (slash·@ popover, status stack). The :root fallback exists above (phase 6);
+   these set the rest / scrolled states. */
+[data-slot='composer-root'] {
+  --composer-fill: color-mix(in srgb, var(--dt-card) 72%, transparent);
+}
+
+[data-slot='composer-root'][data-thread-scrolled-up] {
+  --composer-fill: color-mix(in srgb, var(--dt-card) 48%, transparent);
+}
+
+/* Approval / clarify / sudo / secret bars + status line — a centered overlay
+   column floating just above the docked composer surface. */
+.composer-bars {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--composer-measured-height) + env(safe-area-inset-bottom));
+  width: min(var(--composer-width), calc(100% - 2rem));
+  z-index: 31;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  pointer-events: none;
 }
-.composer {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-}
-.composer-input {
-  flex: 1;
-  resize: none;
-  border-radius: 20px;
-  border: 1px solid var(--ui-stroke-primary);
-  background: var(--ui-surface);
-  color: var(--ui-text-primary);
-  padding: 11px 14px;
-  font-size: 16px;
-  line-height: 1.4;
-  max-height: 160px;
-  font-family: inherit;
-}
-.composer-input::placeholder {
-  color: var(--ui-text-tertiary);
-}
-.composer-send {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  border: none;
-  background: var(--ui-accent);
-  color: var(--ui-accent-ink);
-  font-size: 20px;
-  font-weight: 700;
-  flex-shrink: 0;
-  cursor: pointer;
-}
-.composer-send:disabled {
-  opacity: 0.4;
-}
-
-/* ── Composer completion drawer (slash / @) ── */
-.composer-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-/* Transient result line for client-side slash commands (e.g. /skin). */
-.composer-notice {
-  padding: 8px 12px;
-  border-radius: var(--radius);
-  background: var(--ui-surface-2);
-  border: 1px solid var(--ui-stroke-tertiary);
-  color: var(--ui-text-secondary);
-  font-size: 13px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: var(--font-mono);
-}
-.completion-drawer {
-  list-style: none;
-  margin: 0;
-  padding: 4px;
-  max-height: 200px;
-  overflow-y: auto;
-  background: var(--ui-surface);
-  border: 1px solid var(--ui-stroke-primary);
-  border-radius: var(--radius);
-}
-.completion-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  color: var(--ui-text-primary);
-  padding: 9px 10px;
-  border-radius: 8px;
-  font-size: 14px;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.completion-item:hover,
-.completion-item:active {
-  background: var(--ui-surface-2);
-}
-
-/* ── Attachments ── */
-.composer-attach,
-.composer-mic {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  border: 1px solid var(--ui-stroke-primary);
-  background: var(--ui-surface);
-  color: var(--ui-text-secondary);
-  font-size: 18px;
-  flex-shrink: 0;
-  cursor: pointer;
-}
-.composer-attach {
-  font-size: 20px;
-}
-.composer-mic.recording {
-  background: var(--ui-danger);
-  color: var(--ui-accent-ink);
-  border-color: var(--ui-danger);
-}
-.composer-mic:disabled {
-  opacity: 0.5;
-}
-.attach-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.attach-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  padding: 4px 6px 4px 10px;
-  border-radius: 999px;
-  background: var(--ui-surface-2);
-  color: var(--ui-text-secondary);
-  max-width: 220px;
-}
-.attach-chip > span,
-.attach-chip {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.attach-chip button {
-  background: none;
-  border: none;
-  color: var(--ui-text-tertiary);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 2px;
+.composer-bars > * {
+  pointer-events: auto;
 }
 
 .approval {

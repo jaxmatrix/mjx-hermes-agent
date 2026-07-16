@@ -103,5 +103,33 @@ export {
   // Zoomable viewer (embeds phase — mermaid/svg pan-zoom toolbar)
   IconMaximize as Maximize,
   IconZoomIn as ZoomIn,
-  IconZoomOut as ZoomOut
+  IconZoomOut as ZoomOut,
+  // Composer (Phase 7 chat-UI port) — aliased to the exact names the desktop
+  // composer imports so the ported files resolve unchanged.
+  IconArrowUp as ArrowUp,
+  IconWaveSine as AudioLines,
+  IconLayersIntersect2 as Layers3,
+  IconSquare as Square,
+  IconSquareFilled as SquareFilled,
+  IconSteeringWheel as SteeringWheel,
+  IconFileText as FileText,
+  IconPhoto as ImageIcon,
+  IconClipboard as Clipboard,
+  IconLink as Link,
+  IconMessage2 as MessageSquareText,
+  IconTrash as Trash2,
+  IconVolume2 as Volume2,
+  IconVolumeOff as VolumeX
 } from '@tabler/icons-react'
+
+// Shared icon-size utility (mirrors desktop `@/lib/icons` iconSize) so ported
+// components can size glyphs with `className={iconSize.sm}`.
+export const iconSize = {
+  xs: 'size-3', // 12px
+  sm: 'size-3.5', // 14px
+  md: 'size-4', // 16px
+  lg: 'size-5', // 20px
+  xl: 'size-6' // 24px
+} as const
+
+export type IconSize = keyof typeof iconSize

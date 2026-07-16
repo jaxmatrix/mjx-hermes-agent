@@ -30,7 +30,7 @@ export function Thread() {
   return (
     <ThreadPrimitive.Root className="relative flex min-h-0 flex-1 flex-col bg-transparent contain-[layout_paint]">
       <ThreadMessageList
-        clampToComposer={false}
+        clampToComposer
         components={{ AssistantMessage, SystemMessage, UserMessage }}
         emptyPlaceholder={EmptyPlaceholder}
       />

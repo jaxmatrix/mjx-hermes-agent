@@ -25,3 +25,12 @@ export function dequeue(): string | undefined {
   $queue.set(q.slice(1))
   return q[0]
 }
+
+/** Remove and return the queued prompt at `index` (queue-panel send-now/delete). */
+export function removeQueuedAt(index: number): string | undefined {
+  const q = $queue.get()
+  if (index < 0 || index >= q.length) return undefined
+  const removed = q[index]
+  $queue.set([...q.slice(0, index), ...q.slice(index + 1)])
+  return removed
+}
