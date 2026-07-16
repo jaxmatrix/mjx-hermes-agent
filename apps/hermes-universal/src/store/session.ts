@@ -41,6 +41,15 @@ export const $attentionSessionIds = computed([$clarify, $activeStoredSessionId],
   clarify && activeId ? [activeId] : []
 )
 
+/** Title of the currently-viewed chat (title → first-message preview → ''),
+ *  parity with desktop's `sessionTitle`. Empty for a fresh/unsaved chat — the
+ *  titlebar / mobile header show their brand fallback then. Drives the topbar. */
+export const $activeSessionTitle = computed([$sessions, $activeStoredSessionId], (sessions, activeId) => {
+  if (!activeId) return ''
+  const session = sessions.find(s => s.id === activeId)
+  return session ? (session.title?.trim() || session.preview?.trim() || '') : ''
+})
+
 /** Functional setter for optimistic row edits (rename dialog etc.). */
 export function setSessions(updater: (prev: SessionInfo[]) => SessionInfo[]): void {
   $sessions.set(updater($sessions.get()))

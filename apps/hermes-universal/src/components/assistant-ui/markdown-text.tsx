@@ -12,6 +12,7 @@ import { type ComponentProps, memo, useMemo } from 'react'
 
 import { ExpandableBlock } from '@/components/chat/expandable-block'
 import { chunkByLines, SyntaxHighlighter } from '@/components/chat/shiki-highlighter'
+import { ZoomableImage } from '@/components/chat/zoomable-image'
 import { normalizeExternalUrl, openExternalLink, PrettyLink } from '@/lib/external-link'
 import { preprocessMarkdown } from '@/lib/markdown-preprocess'
 import { cn } from '@/lib/utils'
@@ -132,15 +133,21 @@ function MarkdownLink({ children, className, href, ...props }: ComponentProps<'a
 }
 
 function MarkdownImage({ className, src, alt, ...props }: ComponentProps<'img'>) {
-  // FIXME(chat-port): ZoomableImage (click-to-zoom) lands with the embeds phase.
+  // Rendered images (data:/http/gateway) open in the shared pan/zoom viewer.
+  // FIXME(chat-port): file://media: attachments still need the gateway-media RPCs
+  // (blocked) — those hrefs are handled by MarkdownLink, not here.
+  if (!src) {
+    return null
+  }
+
   return (
-    <img
-      alt={alt}
+    <ZoomableImage
+      alt={typeof alt === 'string' ? alt : ''}
       className={cn(
         'm-0 block h-auto w-auto max-h-(--image-preview-height) max-w-[min(100%,var(--image-preview-max-width))] rounded-lg object-contain',
         className
       )}
-      src={src}
+      src={typeof src === 'string' ? src : ''}
       {...props}
     />
   )

@@ -14,6 +14,8 @@ import {
   toggleRightSidebar
 } from '@/store/layout'
 
+import { $activeSessionTitle } from '@/store/session'
+
 import { TitlebarButton } from './titlebar-button'
 import { WindowControls } from './window-controls'
 
@@ -31,6 +33,7 @@ export function Titlebar({ connected }: { connected: boolean }) {
   const panesFlipped = useStore($panesFlipped)
   const rightSidebarOpen = useStore($rightSidebarOpen)
   const sidebarOpen = useStore($sidebarOpen)
+  const title = useStore($activeSessionTitle)
 
   return (
     <div
@@ -55,7 +58,18 @@ export function Titlebar({ connected }: { connected: boolean }) {
         </div>
       )}
 
-      <div className="h-full flex-1" data-tauri-drag-region />
+      {/* Centered chat title (desktop parity — the title lives in the window
+          strip). Draggable + click-through so it never eats the drag band. */}
+      <div className="relative h-full flex-1" data-tauri-drag-region>
+        {connected && title && (
+          <span
+            className="pointer-events-none absolute inset-0 flex items-center justify-center truncate px-2 text-center text-xs font-medium text-(--ui-text-secondary)"
+            data-tauri-drag-region
+          >
+            {title}
+          </span>
+        )}
+      </div>
 
       {connected && (
         <div className="flex items-center gap-0.5">
