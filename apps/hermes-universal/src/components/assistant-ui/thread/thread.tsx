@@ -1,19 +1,18 @@
 import { ThreadPrimitive } from '@assistant-ui/react'
 
+import { Intro } from '@/components/chat/intro'
+
 import { AssistantMessage } from './assistant-message'
 import { ThreadMessageList } from './list'
 import { SystemMessage } from './system-message'
 import { UserMessage } from './user-message'
 
-// Universal's empty state (kept from the original thin thread) — the brand mark
-// plus a hint. Desktop's richer <Intro> pulls its own large dependency tree, so
-// it's intentionally not ported here.
+// New-conversation empty state — desktop's <Intro>: the auto-fit "HERMES AGENT"
+// wordmark + a rotating neutral tagline. Centered and pushed above the docked
+// composer by its measured height, matching desktop's placement.
 const EmptyPlaceholder = (
-  <div className="flex min-h-0 w-full flex-col items-center justify-center">
-    <div className="empty">
-      <div className="brand">Hermes</div>
-      <p>Send a message to start.</p>
-    </div>
+  <div className="flex min-h-0 w-full flex-col items-center justify-center pt-[var(--composer-measured-height)]">
+    <Intro />
   </div>
 )
 
