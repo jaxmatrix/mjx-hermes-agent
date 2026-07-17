@@ -38,6 +38,25 @@ export function useThemedScrollbars(): void {
         }
       }
       document.querySelectorAll<HTMLElement>(SELECTOR).forEach(el => {
+        // Elements that own their own scroll management must NOT be wrapped:
+        //  - the composer's contentEditable rich input — OverlayScrollbars injects
+        //    viewport + os-scrollbar child divs and manages it as a viewport,
+        //    which corrupts contentEditable editing/layout (the input collapses to
+        //    ~1px so it can't be typed into);
+        //  - the chat thread viewport — it's the `use-stick-to-bottom` scroller;
+        //    OverlayScrollbars preserves/restores scrollTop on its resize `update`,
+        //    fighting the stick-to-bottom re-anchor so the thread jumps to a stale
+        //    scroll position whenever the pane/window resizes.
+        // Both keep native scrolling. Destroy any instance that already attached.
+        const slot = el.getAttribute('data-slot')
+        if (el.isContentEditable || slot === 'composer-rich-input' || slot === 'aui_thread-viewport') {
+          const existing = OverlayScrollbars(el)
+          if (existing) {
+            existing.destroy()
+            instances.delete(existing)
+          }
+          return
+        }
         if (OverlayScrollbars(el)) {
           return
         }
