@@ -1471,12 +1471,14 @@ html {
   border-radius: 0.4rem;
   opacity: 0;
   transition: opacity 150ms ease;
+  /* Denser hatch than desktop's 3.5px pitch — tighter diagonal lines read as a
+     more tactile "grab here" ring around the input. */
   background-image: repeating-linear-gradient(
     -45deg,
-    color-mix(in srgb, var(--ui-text-tertiary) 38%, transparent) 0,
-    color-mix(in srgb, var(--ui-text-tertiary) 38%, transparent) 1px,
+    color-mix(in srgb, var(--ui-text-tertiary) 42%, transparent) 0,
+    color-mix(in srgb, var(--ui-text-tertiary) 42%, transparent) 1px,
     transparent 1px,
-    transparent 3.5px
+    transparent 2.5px
   );
 }
 
