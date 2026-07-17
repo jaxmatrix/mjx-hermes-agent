@@ -16,6 +16,9 @@ export {
   IconChevronLeft as ChevronLeft,
   IconChevronUp as ChevronUp,
   IconCircleFilled as Circle,
+  // Tool / clarify glyphs (chat-port phase 5)
+  IconMessageQuestion as MessageQuestion,
+  IconCircleLetterA as CircleLetterA,
   // Navigation glyphs (Track F sidebar)
   IconMenu2 as Menu,
   IconSettings as Settings,
@@ -73,6 +76,14 @@ export {
   IconActivity as Activity,
   IconHash as Hash,
   IconLoader2 as Loader2,
+  // Chat message action bar / user bubble (Phase 4 chat-UI port) — aliased to
+  // the exact names desktop's assistant-message / user-message import.
+  IconLoader2 as Loader2Icon,
+  IconX as XIcon,
+  IconVolume as Volume2Icon,
+  IconVolumeOff as VolumeXIcon,
+  IconGitBranch as GitBranchIcon,
+  IconPlayerStopFilled as StopFilled,
   IconRefresh as RefreshCw,
   IconLayoutDashboard as LayoutDashboard,
   IconBolt as Zap,
@@ -85,5 +96,40 @@ export {
   IconPlayerPlay as Play,
   // Gateway settings (mode-card hint + sign-in buttons)
   IconHelpCircle as HelpCircle,
-  IconLogin as LogIn
+  IconLogin as LogIn,
+  // Chat rendering pipeline (chat-session UI port)
+  IconCopy as Copy,
+  IconArrowUpRight as ArrowUpRight,
+  // Zoomable viewer (embeds phase — mermaid/svg pan-zoom toolbar)
+  IconMaximize as Maximize,
+  IconZoomIn as ZoomIn,
+  IconZoomOut as ZoomOut,
+  // Composer (Phase 7 chat-UI port) — aliased to the exact names the desktop
+  // composer imports so the ported files resolve unchanged.
+  IconArrowUp as ArrowUp,
+  IconWaveSine as AudioLines,
+  IconLayersIntersect2 as Layers3,
+  IconSquare as Square,
+  IconSquareFilled as SquareFilled,
+  IconSteeringWheel as SteeringWheel,
+  IconFileText as FileText,
+  IconPhoto as ImageIcon,
+  IconClipboard as Clipboard,
+  IconLink as Link,
+  IconMessage2 as MessageSquareText,
+  IconTrash as Trash2,
+  IconVolume2 as Volume2,
+  IconVolumeOff as VolumeX
 } from '@tabler/icons-react'
+
+// Shared icon-size utility (mirrors desktop `@/lib/icons` iconSize) so ported
+// components can size glyphs with `className={iconSize.sm}`.
+export const iconSize = {
+  xs: 'size-3', // 12px
+  sm: 'size-3.5', // 14px
+  md: 'size-4', // 16px
+  lg: 'size-5', // 20px
+  xl: 'size-6' // 24px
+} as const
+
+export type IconSize = keyof typeof iconSize

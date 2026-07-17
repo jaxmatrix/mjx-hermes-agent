@@ -81,7 +81,14 @@ export function SidebarTrigger({ className }: { className?: string }) {
 
 /** The responsive frame: docked pane on md+, drawer on phones, one main slot. */
 export function AppShell({ children }: { children: ReactNode }) {
-  const wide = useMediaQuery(SIDEBAR_WIDE_MEDIA_QUERY)
+  // Desktop always uses the docked shell (resizable/hover-reveal panes + the
+  // titlebar-offset content), regardless of window width. Without this a sub-768px
+  // desktop window falls into the phone branch, which has no docked sidebars, no
+  // titlebar offset, and no hamburger (the chat's mobile header is IS_DESKTOP-
+  // hidden) — leaving no sidebars and no usable top bar. Mobile/web keep the
+  // responsive drawer behavior below 768px.
+  const mediaWide = useMediaQuery(SIDEBAR_WIDE_MEDIA_QUERY)
+  const wide = IS_DESKTOP || mediaWide
   const { openMobile, setOpenMobile } = useSidebar()
   const panesFlipped = useStore($panesFlipped)
   const rightOpen = useStore($rightSidebarOpen)

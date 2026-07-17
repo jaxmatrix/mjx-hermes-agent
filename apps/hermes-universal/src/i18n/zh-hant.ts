@@ -2260,7 +2260,8 @@ export const zhHant = defineLocale({
       other: '其他（輸入您的答案）',
       placeholder: '輸入您的答案…',
       skip: '略過',
-      continueLabel: '繼續'
+      continueLabel: '繼續',
+      skipped: '已略過'
     },
     tool: {
       code: '程式碼',

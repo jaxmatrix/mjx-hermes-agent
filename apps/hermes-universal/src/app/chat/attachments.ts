@@ -2,6 +2,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { readFile } from '@tauri-apps/plugin-fs'
 
 import { ensureSession } from '@/store/chat'
+import type { ComposerAttachment } from '@/store/composer'
 import { requestGateway } from '@/store/gateway'
 
 // Attachment staging (Gc8/R7). Pick a file → read bytes → data-URL → file.attach
@@ -42,22 +43,63 @@ export interface StagedAttachment {
   name: string
 }
 
+/**
+ * Stage an already-known absolute path via file.attach (read bytes → data-URL →
+ * gateway) and return its prompt ref. Shared by the picker and the OS file-drop
+ * handler (a Tauri drop hands over paths directly). Returns null on failure —
+ * e.g. a dropped directory, whose readFile throws, is skipped rather than fatal.
+ */
+export async function stageAttachmentFromPath(path: string): Promise<StagedAttachment | null> {
+  try {
+    const name = basename(path)
+    const bytes = await readFile(path)
+    const dataUrl = toDataUrl(bytes, mimeFor(name))
+    const { id: sessionId } = await ensureSession()
+
+    const res = await requestGateway<{ ref_text?: string }>('file.attach', {
+      name,
+      path,
+      session_id: sessionId,
+      data_url: dataUrl
+    })
+
+    return res.ref_text ? { ref: res.ref_text, name } : null
+  } catch {
+    return null
+  }
+}
+
 /** Open the picker, stage the file via file.attach, return its prompt ref. */
 export async function pickAttachment(): Promise<StagedAttachment | null> {
   const path = await open({ multiple: false })
   if (typeof path !== 'string') return null
 
-  const name = basename(path)
-  const bytes = await readFile(path)
-  const dataUrl = toDataUrl(bytes, mimeFor(name))
-  const sessionId = await ensureSession()
+  return stageAttachmentFromPath(path)
+}
 
-  const res = await requestGateway<{ ref_text?: string }>('file.attach', {
-    name,
-    path,
-    session_id: sessionId,
-    data_url: dataUrl
-  })
+/** Pick a folder (no byte staging — folders resolve as `@folder:` refs). */
+export async function pickFolderAttachment(): Promise<StagedAttachment | null> {
+  const path = await open({ directory: true, multiple: false })
+  if (typeof path !== 'string') return null
 
-  return res.ref_text ? { ref: res.ref_text, name } : null
+  return { name: basename(path), ref: `@folder:${path}` }
+}
+
+/**
+ * Convert a StagedAttachment (gateway ref + name) into the ComposerAttachment
+ * the ported composer's scope model uses. Kind is inferred from the ref prefix.
+ */
+export function stagedToComposerAttachment(staged: StagedAttachment): ComposerAttachment {
+  const ref = staged.ref
+  const kind: ComposerAttachment['kind'] = ref.startsWith('@image:')
+    ? 'image'
+    : ref.startsWith('@folder:')
+      ? 'folder'
+      : ref.startsWith('@url:')
+        ? 'url'
+        : ref.startsWith('@terminal:')
+          ? 'terminal'
+          : 'file'
+
+  return { id: ref, kind, label: staged.name, refText: ref }
 }

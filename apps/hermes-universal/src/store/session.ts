@@ -41,6 +41,15 @@ export const $attentionSessionIds = computed([$clarify, $activeStoredSessionId],
   clarify && activeId ? [activeId] : []
 )
 
+/** Title of the currently-viewed chat (title → first-message preview → ''),
+ *  parity with desktop's `sessionTitle`. Empty for a fresh/unsaved chat — the
+ *  titlebar / mobile header show their brand fallback then. Drives the topbar. */
+export const $activeSessionTitle = computed([$sessions, $activeStoredSessionId], (sessions, activeId) => {
+  if (!activeId) return ''
+  const session = sessions.find(s => s.id === activeId)
+  return session ? (session.title?.trim() || session.preview?.trim() || '') : ''
+})
+
 /** Functional setter for optimistic row edits (rename dialog etc.). */
 export function setSessions(updater: (prev: SessionInfo[]) => SessionInfo[]): void {
   $sessions.set(updater($sessions.get()))
@@ -161,6 +170,42 @@ export async function openSession(storedId: string): Promise<void> {
 export function newSession(): void {
   resetChat()
   $activeStoredSessionId.set(null)
+}
+
+/**
+ * Optimistically add a just-created session to the sidebar list + mark it active,
+ * seeding the row's PREVIEW with the user's first message so `sessionTitle`
+ * (title || preview || 'Untitled') shows it immediately — instead of the chat
+ * being absent from the list and the header stuck on "New session". The backend's
+ * async `session.title` event later patches `title` in place (see store/chat.ts),
+ * superseding the first-message preview. Desktop parity (upsertOptimisticSession).
+ */
+export function registerNewSession(id: string, firstMessage: string): void {
+  const now = Math.floor(Date.now() / 1000)
+  const stub: SessionInfo = {
+    ended_at: null,
+    id,
+    input_tokens: 0,
+    is_active: true,
+    last_active: now,
+    message_count: 1,
+    model: null,
+    output_tokens: 0,
+    preview: firstMessage.trim().slice(0, 200) || null,
+    source: null,
+    started_at: now,
+    title: null,
+    tool_call_count: 0
+  }
+  $sessions.set([stub, ...$sessions.get().filter(s => s.id !== id)])
+  $activeStoredSessionId.set(id)
+}
+
+// STUB — the ported composer's `/resume` slash directive opens desktop's session
+// picker overlay. Universal has no such overlay yet, so this is a no-op kept for
+// import-site parity (composer-utils session-picker action). FLAG(chat-port).
+export function setSessionPickerOpen(_open: boolean): void {
+  /* no-op: session picker overlay not ported */
 }
 
 export async function renameSessionLocal(id: string, title: string): Promise<void> {

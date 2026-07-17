@@ -34,11 +34,13 @@ export function Titlebar({ connected }: { connected: boolean }) {
 
   return (
     <div
-      className="absolute inset-x-0 top-0 z-40 flex h-(--titlebar-height) w-full shrink-0 items-center gap-0.5 bg-transparent px-2 select-none"
-      data-tauri-drag-region
+      // pointer-events-none so the transparent band lets clicks reach whatever is
+      // beneath it (the in-pane chat title, aligned into this band). Interactive
+      // bits below re-enable pointer events; a right-side strip stays draggable.
+      className="pointer-events-none absolute inset-x-0 top-0 z-40 flex h-(--titlebar-height) w-full shrink-0 items-center gap-0.5 bg-transparent px-2 select-none"
     >
       {connected && (
-        <div className="flex items-center gap-0.5">
+        <div className="pointer-events-auto flex items-center gap-0.5">
           <TitlebarButton
             active={sidebarOpen}
             label={sidebarOpen ? t.titlebar.hideSidebar : t.titlebar.showSidebar}
@@ -55,10 +57,16 @@ export function Titlebar({ connected }: { connected: boolean }) {
         </div>
       )}
 
-      <div className="h-full flex-1" data-tauri-drag-region />
+      {/* The session title lives inside the chat pane (see chat-header.tsx),
+          aligned into THIS band. The left portion of the middle passes clicks
+          through to that title (pointer-events-none, inherited); the right
+          portion stays a draggable window region for moving the frameless
+          window. Title is left-aligned so it never falls under the drag strip. */}
+      <div className="h-full flex-[4]" />
+      <div className="pointer-events-auto h-full flex-1" data-tauri-drag-region />
 
       {connected && (
-        <div className="flex items-center gap-0.5">
+        <div className="pointer-events-auto flex items-center gap-0.5">
           <TitlebarButton
             active={hapticsMuted}
             label={hapticsMuted ? t.titlebar.unmuteHaptics : t.titlebar.muteHaptics}
@@ -82,7 +90,9 @@ export function Titlebar({ connected }: { connected: boolean }) {
         </div>
       )}
 
-      <WindowControls />
+      <div className="pointer-events-auto flex items-center">
+        <WindowControls />
+      </div>
     </div>
   )
 }

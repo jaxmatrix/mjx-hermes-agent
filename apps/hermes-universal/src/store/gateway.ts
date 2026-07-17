@@ -1,4 +1,5 @@
 import { type ConnectionState, JsonRpcGatewayClient, type WebSocketLike } from '@/gateway'
+import type { HermesGateway } from '@/hermes'
 import { handleGatewayEvent } from '@/store/chat'
 import { type Connection, resolveWsUrl } from '@/store/gateway-config'
 import { atom } from '@/store/atom'
@@ -45,6 +46,16 @@ export function requestGateway<T = unknown>(
 ): Promise<T> {
   if (!client) return Promise.reject(new Error('Hermes gateway is not connected'))
   return client.request<T>(method, params, timeoutMs)
+}
+
+// The live gateway client, typed as HermesGateway for the ported composer
+// completion hooks (use-at-completions / use-slash-completions) which take a
+// `gateway` prop and only ever call `gateway.request(method, params)`. The
+// concrete instance is a base JsonRpcGatewayClient (HermesGateway adds no
+// members), so the cast is sound; the socket underneath is the Tauri IPC one.
+// Returns null until connected.
+export function getGatewayClient(): HermesGateway | null {
+  return client as HermesGateway | null
 }
 
 // Subscribe to a single server-push event type (e.g. streaming progress events

@@ -356,6 +356,60 @@
     --ui-accent-ink: var(--dt-primary-foreground);
     --ui-danger: var(--dt-destructive);
     --ui-good: var(--ui-green);
+
+    /* ── Chat conversation + composer layout tokens (desktop parity) ──────────
+       Ported 1:1 from apps/desktop/src/styles.css (~lines 331-383). These drive
+       message/tool/thinking spacing, the overlay-composer sizing chain, and the
+       thread viewport height. `--conversation-{text,caption}-*` already live
+       above; this block adds the rest. The `--composer-measured-height` /
+       `--status-stack-measured-height` vars are recomputed at runtime by the
+       composer + status-stack once those land (phases 6/7); the static values
+       here are the pre-measure fallbacks. */
+    --status-stack-measured-height: 0px;
+    --thread-last-message-clearance: calc(
+      var(--composer-measured-height) + var(--status-stack-measured-height) + 2rem
+    );
+    --composer-shell-pad-block-end: 0.625rem;
+    --message-text-indent: 0.75rem;
+    --conversation-tool-font-size: 0.6875rem;
+    --conversation-line-height: 1.125rem;
+    --conversation-turn-gap: 0.375rem;
+    /* Gap between top-level turn blocks (prose ↔ tools ↔ thinking). */
+    --turn-block-gap: 0.75rem;
+    /* Tight gap between tool rows inside a single action group. */
+    --tool-row-gap: 0.375rem;
+    /* Height of the bounded auto-scrolling window a long tool-call run collapses
+       into (see `.tool-group-scroll`, ported in the tool-call phase). */
+    --tool-group-scroll-max-h: 6.75rem;
+    /* Vertical gap between prose paragraphs (single knob). */
+    --paragraph-gap: 0.7rem;
+    --sticky-human-top: 0.23rem;
+    --composer-width: 48.75rem;
+    /* Fill painted by controls docked to the composer surface (the floating
+       scroll-to-bottom button, the "show earlier" pill). The overlay-composer
+       phase adds the focus/scroll state ladder; this is the opaque fallback. */
+    --composer-fill: color-mix(in srgb, var(--dt-card) 90%, var(--dt-background));
+    --composer-control-size: 1.5rem;
+    --composer-control-primary-size: 1.625rem;
+    --composer-control-gap: 0.25rem;
+    --composer-row-gap: 0.25rem;
+    --composer-ring-strength: 1;
+    --composer-surface-pad-x: 0.5rem;
+    --composer-surface-pad-y: 0.3125rem;
+    --composer-input-min-height: 1.625rem;
+    --composer-input-max-height: 9.375rem;
+    --composer-input-inline-min-width: 8rem;
+    --composer-fallback-height: 2.75rem;
+    --composer-measured-height: calc(0.5rem + var(--composer-shell-pad-block-end) + var(--composer-fallback-height));
+    --composer-surface-measured-height: var(--composer-fallback-height);
+    --thread-viewport-height: max(
+      0rem,
+      calc(100% - var(--composer-measured-height) + var(--composer-surface-measured-height))
+    );
+    --vsq: min(0.5vh, 0.5vw);
+    --image-preview-max-width: 34rem;
+    --image-preview-height: clamp(16.25rem, calc(var(--vsq) * 100), 26.25rem);
+    --chat-min-width: 28rem;
   }
 
   :root.dark {
@@ -375,6 +429,8 @@
     /* Input chrome: softer hairline, deeper inset on dark surfaces. */
     --dt-input-border: 4%;
     --dt-input-inset: inset 0 1px 1px color-mix(in srgb, #000 38%, transparent);
+    /* Composer focus ring reads stronger on dark (desktop parity). */
+    --composer-ring-strength: 1.3;
   }
 }
 
@@ -668,9 +724,25 @@ body {
 
 /* ── Chat ── */
 .chat {
-  height: 100%;
+  /* Fill the parent flex column via flex-grow (NOT height:100%). The chat is
+     always a direct child of a flex-col parent (mobile <main>, or the wide
+     PaneMain wrapper which adds pt-(--titlebar-height)); height:100% resolves
+     against the padded box on WebKitGTK and pushed the composer off-screen. */
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  /* Positioning context for the out-of-flow floating scroll-to-bottom button
+     (see scroll-to-bottom-button.tsx), which anchors above the composer footer. */
+  position: relative;
+}
+/* The chat thread scroller owns its own stick-to-bottom scroll and is excluded
+   from OverlayScrollbars (see lib/scrollbars.ts). Give it a slim native scrollbar
+   where the standard CSS scrollbar properties are supported (recent WebKitGTK);
+   older engines fall back to the default bar. */
+[data-slot='aui_thread-viewport'] {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ui-text-tertiary) 40%, transparent) transparent;
 }
 .chat-header {
   display: flex;
@@ -819,153 +891,69 @@ body {
   padding-left: 2px;
 }
 
-/* ── Footer / composer / approval ── */
-.chat-footer {
-  border-top: 1px solid var(--ui-stroke-tertiary);
-  padding: 10px 12px max(10px, env(safe-area-inset-bottom));
+/* ── Composer (Phase 7 chat-UI port) — overlay dock + glass surface ──────────
+   The single-file plain-textarea composer was replaced by a 1:1 port of the
+   desktop docked composer (src/app/chat/composer/). These rules mirror the
+   desktop styles.css composer block, minus the pop-out/drag/glow machinery
+   (desktop-window-only). The geometry tokens live in :root above (phase 6). */
+
+/* Safe-area bottom padding for the docked overlay (mobile home indicator). */
+[data-slot='composer-root'] {
+  padding-bottom: calc(var(--composer-shell-pad-block-end) + env(safe-area-inset-bottom));
+}
+
+[data-slot='composer-root'] > .pointer-events-none {
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--ui-chat-surface-background) 88%, transparent)
+  ) !important;
+}
+
+[data-slot='composer-surface'] {
+  border-color: var(--ui-stroke-secondary) !important;
+}
+
+[data-slot='composer-fade'] {
+  min-height: 2.375rem;
+}
+
+[data-slot='composer-rich-input'] {
+  color: var(--ui-text-primary);
+  font-size: 0.8125rem;
+}
+
+[data-slot='composer-rich-input']:empty::before {
+  color: var(--ui-text-tertiary) !important;
+}
+
+/* ── Composer fill — ONE var painted by the surface AND anything docked to it
+   (slash·@ popover, status stack). The :root fallback exists above (phase 6);
+   these set the rest / scrolled states. */
+[data-slot='composer-root'] {
+  --composer-fill: color-mix(in srgb, var(--dt-card) 72%, transparent);
+}
+
+[data-slot='composer-root'][data-thread-scrolled-up] {
+  --composer-fill: color-mix(in srgb, var(--dt-card) 48%, transparent);
+}
+
+/* Approval / clarify / sudo / secret bars + status line — a centered overlay
+   column floating just above the docked composer surface. */
+.composer-bars {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--composer-measured-height) + env(safe-area-inset-bottom));
+  width: min(var(--composer-width), calc(100% - 2rem));
+  z-index: 31;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  pointer-events: none;
 }
-.composer {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-}
-.composer-input {
-  flex: 1;
-  resize: none;
-  border-radius: 20px;
-  border: 1px solid var(--ui-stroke-primary);
-  background: var(--ui-surface);
-  color: var(--ui-text-primary);
-  padding: 11px 14px;
-  font-size: 16px;
-  line-height: 1.4;
-  max-height: 160px;
-  font-family: inherit;
-}
-.composer-input::placeholder {
-  color: var(--ui-text-tertiary);
-}
-.composer-send {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  border: none;
-  background: var(--ui-accent);
-  color: var(--ui-accent-ink);
-  font-size: 20px;
-  font-weight: 700;
-  flex-shrink: 0;
-  cursor: pointer;
-}
-.composer-send:disabled {
-  opacity: 0.4;
-}
-
-/* ── Composer completion drawer (slash / @) ── */
-.composer-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-/* Transient result line for client-side slash commands (e.g. /skin). */
-.composer-notice {
-  padding: 8px 12px;
-  border-radius: var(--radius);
-  background: var(--ui-surface-2);
-  border: 1px solid var(--ui-stroke-tertiary);
-  color: var(--ui-text-secondary);
-  font-size: 13px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: var(--font-mono);
-}
-.completion-drawer {
-  list-style: none;
-  margin: 0;
-  padding: 4px;
-  max-height: 200px;
-  overflow-y: auto;
-  background: var(--ui-surface);
-  border: 1px solid var(--ui-stroke-primary);
-  border-radius: var(--radius);
-}
-.completion-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  color: var(--ui-text-primary);
-  padding: 9px 10px;
-  border-radius: 8px;
-  font-size: 14px;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.completion-item:hover,
-.completion-item:active {
-  background: var(--ui-surface-2);
-}
-
-/* ── Attachments ── */
-.composer-attach,
-.composer-mic {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  border: 1px solid var(--ui-stroke-primary);
-  background: var(--ui-surface);
-  color: var(--ui-text-secondary);
-  font-size: 18px;
-  flex-shrink: 0;
-  cursor: pointer;
-}
-.composer-attach {
-  font-size: 20px;
-}
-.composer-mic.recording {
-  background: var(--ui-danger);
-  color: var(--ui-accent-ink);
-  border-color: var(--ui-danger);
-}
-.composer-mic:disabled {
-  opacity: 0.5;
-}
-.attach-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.attach-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  padding: 4px 6px 4px 10px;
-  border-radius: 999px;
-  background: var(--ui-surface-2);
-  color: var(--ui-text-secondary);
-  max-width: 220px;
-}
-.attach-chip > span,
-.attach-chip {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.attach-chip button {
-  background: none;
-  border: none;
-  color: var(--ui-text-tertiary);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 2px;
+.composer-bars > * {
+  pointer-events: auto;
 }
 
 .approval {
@@ -1017,4 +1005,508 @@ body {
 html {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--dt-midground) 18%, transparent) transparent;
+}
+
+/* ==========================================================================
+   Phase 4 chat-UI port — assistant / user message + reasoning rendering.
+   Ported from apps/desktop/src/styles.css (message / prose / thinking rules).
+   These reference tokens already added in phase 1. Some selectors
+   (`[data-slot='tool-block']`, code-card streaming states) light up in a later
+   phase — ported now so the markup already carries its styling contract.
+   ========================================================================== */
+
+/* Messages are selectable text even though buttons globally aren't. */
+[data-slot='aui_user-message-root'],
+[data-slot='aui_assistant-message-content'],
+[data-slot='aui_system-message-root'],
+[data-selectable-text='true'],
+[data-selectable-text='true'] * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+[data-slot='aui_assistant-message-content'] {
+  padding-left: var(--message-text-indent);
+  font-size: var(--conversation-text-font-size);
+  line-height: 1.5;
+}
+
+[data-slot='aui_assistant-message-root'] {
+  width: 100%;
+}
+
+[data-slot='aui_assistant-message-content'] .aui-md,
+[data-slot='aui_assistant-message-content'] .aui-md :where(p, li, blockquote, table, pre) {
+  font-size: inherit;
+}
+
+/* Tailwind Typography sets `.prose :where(p) { margin: 1.25em }` (~16px). That
+   selector ties our `my-*` utility on specificity and wins on source order, so
+   paragraph spacing must be reclaimed here at higher specificity. One tight
+   top-margin (bottom zeroed to avoid doubling), first child reset to flush. */
+[data-slot='aui_assistant-message-content'] .aui-md :where(p) {
+  margin-block: var(--paragraph-gap) 0;
+}
+
+/* Headings are section breaks, so they own a larger top gap than prose. */
+[data-slot='aui_assistant-message-content'] .aui-md :where(h1, h2, h3, h4) {
+  margin-block: 1rem 0.25rem;
+}
+
+/* First rendered element of a prose block is flush — reach one level deep too. */
+[data-slot='aui_assistant-message-content'] .aui-md > :first-child,
+[data-slot='aui_assistant-message-content'] .aui-md > :first-child > :first-child {
+  margin-top: 0;
+}
+
+/* RTL/bidi chat text (#44150): each block resolves its own base direction from
+   its first strong char (UAX#9 plaintext). text-align:start makes that resolved
+   direction drive alignment too. */
+[data-slot='aui_assistant-message-content'] .aui-md :where(p, h1, h2, h3, h4, h5, h6, li, blockquote),
+[data-slot='aui_user-inline-text'] {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+/* Inline code/KaTeX don't vote on direction and keep their own order. */
+[data-slot='aui_assistant-message-content'] .aui-md :where(:not(pre) > code),
+[data-slot='aui_user-inline-code'],
+[data-slot='aui_assistant-message-content'] .aui-md .katex {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* Fenced code stays LTR even inside an RTL list item/blockquote. */
+[data-slot='aui_assistant-message-content'] .aui-md [data-slot='code-card'],
+[data-slot='aui_user-fence'] {
+  direction: ltr;
+  text-align: left;
+}
+
+[data-slot='aui_user-message-root'] {
+  top: var(--sticky-human-top);
+}
+
+[data-slot='aui_user-message-root'] {
+  --human-msg-line-height: 1.3;
+  font-size: var(--conversation-text-font-size);
+}
+
+[data-slot='aui_user-inline-text'] {
+  line-height: var(--human-msg-line-height);
+}
+
+/* Sticky human bubbles clamp to ~2 lines with a soft bottom fade so a long
+   prompt doesn't dominate the viewport. */
+.sticky-human-clamp {
+  cursor: pointer;
+  max-height: calc(4 * var(--human-msg-line-height) * var(--conversation-text-font-size) + 0.15rem);
+  overflow: hidden;
+}
+
+.sticky-human-clamp[data-clamped='true'] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+
+/* Stick-to-bottom owns scrollTop while following. Once escaped, native anchoring
+   is safe and keeps sticky human edits from shoving the viewport; data-editing
+   enables that path before React swaps in the inline editor. */
+[data-slot='aui_thread-viewport'] {
+  overflow-anchor: none;
+}
+
+[data-slot='aui_thread-viewport'][data-following='false'],
+[data-slot='aui_thread-viewport'][data-editing='true'] {
+  overflow-anchor: auto;
+}
+
+[data-slot='aui_thread-content'] {
+  max-width: var(--composer-width);
+  padding-inline: 1.5rem;
+}
+
+/* Tool/thinking blocks share the message-text left edge. */
+[data-slot='aui_assistant-message-content'] > [data-slot='tool-block'],
+[data-slot='aui_assistant-message-content'] > [data-slot='aui_thinking-disclosure'] {
+  width: 100%;
+  max-width: 100%;
+}
+
+[data-slot='aui_assistant-message-content'] .aui-md [data-streamdown='code-block'] code {
+  max-width: none;
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  overflow-x: visible;
+  overflow-wrap: inherit;
+  vertical-align: baseline;
+  word-break: inherit;
+  white-space: inherit;
+}
+
+/* Streamdown's adapter wraps code fences in a `data-streamdown="code-block"`
+   container with its own card chrome. We render our own <CodeCard>, so this
+   strips the upstream chrome down to a layout-only passthrough. */
+[data-slot='aui_assistant-message-content'] .aui-md [data-streamdown='code-block'] {
+  contain: none;
+  overflow: visible;
+  margin-block: var(--paragraph-gap) 0 !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: inherit;
+}
+
+[data-slot='aui_assistant-message-content'] .aui-md [data-streamdown='code-block']:has(.aui-prose-fence) {
+  margin-block: 0 !important;
+}
+
+[data-slot='aui_assistant-message-content'] .aui-md [data-slot='code-card'] {
+  margin-block: var(--paragraph-gap) 0;
+  position: relative;
+  transition:
+    border-color 180ms ease-out,
+    box-shadow 180ms ease-out,
+    background-color 180ms ease-out;
+}
+
+[data-slot='aui_assistant-message-content'] .aui-md [data-slot='code-card'][data-streaming='true'] {
+  animation:
+    code-card-stream-enter 180ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    code-card-stream-glow 1.8s ease-in-out 180ms infinite alternate;
+  border-color: color-mix(in srgb, var(--dt-ring) 24%, var(--ui-stroke-tertiary));
+  box-shadow:
+    0 0 0 0.0625rem color-mix(in srgb, var(--dt-ring) 10%, transparent),
+    0 0.625rem 1.75rem color-mix(in srgb, var(--dt-ring) 8%, transparent);
+}
+
+[data-slot='aui_assistant-message-content']
+  .aui-md
+  [data-slot='code-card'][data-streaming='true']
+  [data-slot='code-card-body'] {
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, black calc(100% - 1.5rem), rgb(0 0 0 / 64%) 100%);
+  mask-image: linear-gradient(to bottom, black 0%, black calc(100% - 1.5rem), rgb(0 0 0 / 64%) 100%);
+}
+
+[data-slot='aui_assistant-message-content'] .aui-md :not(pre) > code {
+  background: var(--ui-inline-code-background, color-mix(in srgb, currentColor 8%, transparent));
+  color: var(--ui-inline-code-foreground, inherit);
+}
+
+[data-slot='aui_assistant-message-content'] .aui-md :where(.aui-shiki, .aui-shiki > pre) {
+  margin: 0 !important;
+}
+
+[data-slot='aui_assistant-message-content'] .aui-md .aui-md-table {
+  border-spacing: 0;
+}
+
+[data-slot='aui_assistant-message-content'] .aui-md .aui-md-table > table,
+[data-slot='aui_assistant-message-content'] .aui-md .aui-md-table thead,
+[data-slot='aui_assistant-message-content'] .aui-md .aui-md-table tbody,
+[data-slot='aui_assistant-message-content'] .aui-md .aui-md-table tr,
+[data-slot='aui_assistant-message-content'] .aui-md .aui-md-table th,
+[data-slot='aui_assistant-message-content'] .aui-md .aui-md-table td {
+  margin: 0 !important;
+  margin-block-start: 0 !important;
+  margin-block-end: 0 !important;
+}
+
+[data-slot='aui_assistant-message-content'] .aui-md .aui-md-table thead {
+  border-bottom-color: var(--dt-border) !important;
+}
+
+/* Tool / thinking blocks are scaffolding around the model's reply — kept
+   transparent and faded slightly so the reading column (prose) stays primary. */
+[data-slot='tool-block'],
+[data-slot='aui_thinking-disclosure'] {
+  background: transparent !important;
+}
+
+[data-slot='aui_assistant-message-content'] > [data-slot='aui_thinking-disclosure'],
+[data-slot='aui_assistant-message-content'] [data-slot='tool-block'][data-tool-row] {
+  opacity: 0.67;
+  transition: opacity 120ms ease-out;
+}
+
+/* Lift on hover or *keyboard* focus only. */
+[data-slot='aui_assistant-message-content'] > [data-slot='aui_thinking-disclosure']:is(:hover, :has(:focus-visible)),
+[data-slot='aui_assistant-message-content'] [data-slot='tool-block'][data-tool-row]:is(:hover, :has(:focus-visible)) {
+  opacity: 1;
+}
+
+/* File edits are the deliverable, not scaffolding — an expanded edit stays lit. */
+[data-slot='aui_assistant-message-content'] [data-slot='tool-block'][data-tool-row][data-file-edit] {
+  opacity: 1;
+}
+
+/* Long adjacent tool-call run collapsed into a fixed, auto-scrolling window.
+   ToolGroupSlot pins the newest call to the bottom (unless the user scrolls
+   up), so a back-to-back run stays compact instead of pushing the reply off
+   screen. A thin scrollbar keeps the affordance discoverable. */
+.tool-group-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-stroke-tertiary) transparent;
+}
+
+/* Break out of the fixed window the moment any row inside is expanded: the
+   user is now reading a diff/output, so let it grow to full height instead of
+   peering at it through a ~2-row viewport. Collapsing the row drops it back
+   into the compact, auto-scrolling window. Beats a larger fixed cap since an
+   open row already bounds its own payload with an inner scroll. */
+.tool-group-scroll:has([data-tool-row][data-tool-open]) {
+  max-height: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/* Top gradient — only applied once the user is scrolled down off the top, so
+   the oldest visible call fades up under the fade while the first row stays
+   fully legible when scrolled all the way up. */
+.tool-group-scroll--faded {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 2rem, black 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, black 2rem, black 100%);
+}
+
+/* Conversation block rhythm. Scaffolding (tool / thinking) gets a roomy block
+   gap; consecutive prose collapses to a tight paragraph rhythm. */
+[data-slot='aui_assistant-message-content']
+  > :is([data-slot='tool-block'], [data-slot='aui_thinking-disclosure'])
+  + :is([data-slot='tool-block'], [data-slot='aui_thinking-disclosure'], .aui-md),
+[data-slot='aui_assistant-message-content']
+  > .aui-md
+  + :is([data-slot='tool-block'], [data-slot='aui_thinking-disclosure']) {
+  margin-top: var(--turn-block-gap);
+}
+
+[data-slot='aui_assistant-message-content'] > .aui-md + .aui-md {
+  margin-top: var(--paragraph-gap);
+}
+
+/* Message action bars — flat icon hits with default dim; only the hovered /
+   focused control is full-strength. */
+[data-slot='aui_msg-actions'] button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  gap: 0;
+  height: auto;
+  width: auto;
+  min-height: 0;
+  min-width: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  color: var(--color-muted-foreground);
+  opacity: 0.5;
+}
+
+[data-slot='aui_msg-actions'] button:disabled {
+  cursor: default;
+}
+
+[data-slot='aui_msg-actions'] button:hover {
+  background: transparent;
+  color: var(--color-foreground);
+  opacity: 1;
+}
+
+[data-slot='aui_msg-actions'] button:active {
+  background: transparent;
+}
+
+[data-slot='aui_msg-actions'] button:focus-visible {
+  opacity: 1;
+}
+
+[data-slot='aui_msg-actions'] button svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+/* Live thinking preview window. Pairs with the ResizeObserver in
+   ThinkingDisclosure that pins scrollTop to the bottom — older lines fade
+   into the top mask while the latest tokens settle in below. */
+.thinking-preview {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 28%, black 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, black 28%, black 100%);
+}
+
+@keyframes code-card-stream-enter {
+  from {
+    opacity: 0.74;
+    transform: translateY(0.375rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes code-card-stream-glow {
+  from {
+    border-color: color-mix(in srgb, var(--dt-ring) 18%, var(--ui-stroke-tertiary));
+    box-shadow:
+      0 0 0 0.0625rem color-mix(in srgb, var(--dt-ring) 6%, transparent),
+      0 0.5rem 1.5rem color-mix(in srgb, var(--dt-ring) 5%, transparent);
+  }
+
+  to {
+    border-color: color-mix(in srgb, var(--dt-ring) 32%, var(--ui-stroke-tertiary));
+    box-shadow:
+      0 0 0 0.0625rem color-mix(in srgb, var(--dt-ring) 12%, transparent),
+      0 0.75rem 2rem color-mix(in srgb, var(--dt-ring) 10%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot='aui_assistant-message-content'] .aui-md [data-slot='code-card'][data-streaming='true'] {
+    animation: none;
+  }
+}
+
+/* Universal has no `tw-shimmer` plugin (desktop's `@import 'tw-shimmer'`), so
+   provide a self-contained shimmering-text sweep for the "Thinking…" label and
+   other live status text. FLAG(chat-port): approximation of the desktop plugin. */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    currentColor 0%,
+    currentColor 40%,
+    color-mix(in srgb, currentColor 25%, transparent) 50%,
+    currentColor 60%,
+    currentColor 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: hermes-shimmer 1.8s linear infinite;
+}
+
+@keyframes hermes-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer {
+    animation: none;
+    -webkit-text-fill-color: currentColor;
+    background: none;
+  }
+}
+
+/* Floating "jump to bottom" control (see scroll-to-bottom-button.tsx).
+   Directional scale: it contracts toward 1 as it arrives (from 1.1) and keeps
+   contracting to 0.9 as it leaves — always shrinking in the direction of
+   travel, so the motion reads as a soft settle / recede rather than a pop. The
+   X half-offset stays baked into every transform so `left-1/2` centering holds
+   through the animation. */
+.thread-jump-button {
+  opacity: 0;
+  transform: translateX(-50%) translateY(0.3rem) scale(0.9);
+}
+
+.thread-jump-button[data-state='in'] {
+  animation: thread-jump-in 200ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.thread-jump-button[data-state='out'] {
+  animation: thread-jump-out 180ms ease-in forwards;
+}
+
+@keyframes thread-jump-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(0.3rem) scale(1.1);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+@keyframes thread-jump-out {
+  from {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(0.3rem) scale(0.9);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-jump-button[data-state='in'],
+  .thread-jump-button[data-state='out'] {
+    animation: none;
+    transition: opacity 120ms linear;
+  }
+
+  .thread-jump-button[data-state='in'] {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+/* ── Movable / pop-out composer (ported from apps/desktop) ────────────────────
+   The floating composer's fixed sizing is on the [data-popped-out] Tailwind
+   classes; here is the drag-region hatch affordance + the dock-glow intensity
+   scale (dimmer in light mode, where the primary glow reads stronger). */
+:root {
+  --dock-glow-scale: 0.55;
+}
+:root.dark {
+  --dock-glow-scale: 1;
+}
+
+/* Drag-region hatch — a diagonal ///// pattern that fades into the transparent
+   grab margin on hover (and stays while dragging) to signal the composer is
+   draggable. */
+[data-slot='composer-drag-region'] {
+  border-radius: 0.4rem;
+  opacity: 0;
+  transition: opacity 150ms ease;
+  /* Desktop's hatch is a 1px line at ~7% effective ink — crisp on Chromium, but
+     the Tauri Linux WebKitGTK webview softens thin translucent diagonals so much
+     they wash out. Compensate with THICKER (1.5px) + more OPAQUE lines at a
+     tighter 3px pitch so it reads like desktop's dense grab hatch. */
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--ui-text-tertiary) 68%, transparent) 0,
+    color-mix(in srgb, var(--ui-text-tertiary) 68%, transparent) 1.5px,
+    transparent 1.5px,
+    transparent 3px
+  );
+}
+
+/* Docked (default): the grab margin is thin, so WebKitGTK's already-dense hatch
+   reads as too heavy — dial it to ~60% of the prior 0.5 strength. */
+[data-slot='composer-drag-region']:hover,
+[data-slot='composer-drag-region'][data-dragging] {
+  opacity: 0.3;
+}
+
+/* Floating (popped-out): a full 5px grab margin all around gives the hatch more
+   room, so keep it a touch stronger — ~80% of the prior 0.5. */
+[data-popped-out] [data-slot='composer-drag-region']:hover,
+[data-popped-out] [data-slot='composer-drag-region'][data-dragging] {
+  opacity: 0.4;
 }
