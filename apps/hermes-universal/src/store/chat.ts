@@ -175,11 +175,23 @@ function patchActive(messages: ChatMessage[], patch: (m: ChatMessage) => ChatMes
 // (used by reasoning.available / moa.reference).
 function appendStreamPart(parts: ChatPart[], type: 'reasoning' | 'text', delta: string, replace = false): ChatPart[] {
   if (!delta) return parts
-  const last = parts[parts.length - 1]
-  if (last && last.type === type) {
-    const copy = parts.slice()
-    copy[copy.length - 1] = { type, text: replace ? delta : last.text + delta }
-    return copy
+  // Coalesce into the most recent same-type part within the current segment
+  // (bounded by non-streaming parts like tool calls). The opposite streaming
+  // channel (text<->reasoning) is TRANSPARENT — so a final reasoning burst
+  // (reasoning.available) that arrives AFTER the response text merges back into
+  // the existing reasoning part instead of spawning a duplicate "thinking" block
+  // at the end. `replace` swaps the accumulated text for the final version.
+  // (Ported from desktop lib/chat-messages.ts appendStreamPart.)
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i]
+    if (part.type === type) {
+      const copy = parts.slice()
+      copy[i] = { type, text: replace ? delta : part.text + delta }
+      return copy
+    }
+    if (part.type !== 'text' && part.type !== 'reasoning') {
+      break
+    }
   }
   return [...parts, { type, text: delta }]
 }
