@@ -5,6 +5,8 @@
 // only what the contentEditable composer needs to build `@type:value` and
 // `/command` chips inline.
 
+import type { Unstable_DirectiveFormatter, Unstable_DirectiveSegment, Unstable_TriggerItem } from '@assistant-ui/core'
+
 const HERMES_REF_TYPES = ['file', 'folder', 'url', 'image', 'tool', 'line', 'terminal', 'session'] as const
 type HermesRefType = (typeof HERMES_REF_TYPES)[number]
 
@@ -147,4 +149,140 @@ export function formatRefValue(value: string): string {
   }
 
   return value
+}
+
+// ---------------------------------------------------------------------------
+// Directive formatter for assistant-ui's composer trigger system (ported from
+// desktop directive-text.tsx). The ported composer's use-composer-trigger calls
+// `hermesDirectiveFormatter.serialize(item)` to turn a picked completion into
+// its `@type:value` chip text. `parse` is provided for contract completeness.
+// ---------------------------------------------------------------------------
+
+const CANONICAL_DIRECTIVE_RE = /:([\w-]{1,64})\[([^\]\n]{1,1024})\](?:\{name=([^}\n]{1,1024})\})?/g
+
+const HERMES_DIRECTIVE_RE = new RegExp(
+  '@(file|folder|url|image|tool|line|terminal|session):(' + '`[^`\\n]+`' + '|"[^"\\n]+"' + "|'[^'\\n]+'" + '|\\S+' + ')',
+  'g'
+)
+
+const TRAILING_PUNCTUATION_RE = /[,.;!?]+$/
+
+function unwrapRefValue(raw: string): string {
+  if (raw.length < 2) {
+    return raw
+  }
+
+  const head = raw[0]
+  const tail = raw[raw.length - 1]
+
+  if ((head === '`' && tail === '`') || (head === '"' && tail === '"') || (head === "'" && tail === "'")) {
+    return raw.slice(1, -1)
+  }
+
+  return raw.replace(TRAILING_PUNCTUATION_RE, '')
+}
+
+function shortLabel(type: HermesRefType, id: string): string {
+  if (type === 'terminal') {
+    return id || 'terminal'
+  }
+
+  if (type === 'url') {
+    try {
+      const parsed = new URL(id)
+
+      return parsed.hostname || id
+    } catch {
+      return id
+    }
+  }
+
+  if (type === 'session') {
+    const sid = id.split('/').filter(Boolean).pop() || id
+
+    return sid.length > 10 ? `${sid.slice(0, 8)}…` : sid
+  }
+
+  const tail = id.split(/[\\/]/).filter(Boolean).pop()
+
+  return tail || id
+}
+
+function parseDirectiveText(text: string): Unstable_DirectiveSegment[] {
+  const matches = [
+    ...Array.from(text.matchAll(CANONICAL_DIRECTIVE_RE)).map(match => ({
+      start: match.index ?? 0,
+      end: (match.index ?? 0) + match[0].length,
+      type: match[1] || 'tool',
+      label: match[2] || match[3] || '',
+      id: match[3] || match[2] || ''
+    })),
+    ...Array.from(text.matchAll(HERMES_DIRECTIVE_RE)).map(match => {
+      const id = unwrapRefValue(match[2] || '')
+
+      return {
+        start: match.index ?? 0,
+        end: (match.index ?? 0) + match[0].length,
+        type: match[1] || 'file',
+        label: shortLabel(match[1] as HermesRefType, id),
+        id
+      }
+    })
+  ]
+    .filter(match => match.id)
+    .sort((a, b) => a.start - b.start)
+
+  const segments: Unstable_DirectiveSegment[] = []
+  let cursor = 0
+
+  for (const match of matches) {
+    if (match.start < cursor) {
+      continue
+    }
+
+    if (match.start > cursor) {
+      segments.push({ kind: 'text', text: text.slice(cursor, match.start) })
+    }
+
+    segments.push({ kind: 'mention', type: match.type, label: match.label, id: match.id })
+    cursor = match.end
+  }
+
+  if (cursor < text.length) {
+    segments.push({ kind: 'text', text: text.slice(cursor) })
+  }
+
+  return segments
+}
+
+export const hermesDirectiveFormatter: Unstable_DirectiveFormatter = {
+  serialize(item: Unstable_TriggerItem): string {
+    const metadata = item.metadata as { rawText?: unknown; insertId?: unknown } | undefined
+    const rawText = typeof metadata?.rawText === 'string' ? metadata.rawText : null
+    const insertId = typeof metadata?.insertId === 'string' ? metadata.insertId : null
+
+    if (rawText) {
+      if (rawText.endsWith(':') && !insertId) {
+        return rawText
+      }
+
+      if (!insertId) {
+        return rawText
+      }
+
+      const kindMatch = rawText.match(/^@([^:]+):/)
+      const kind = kindMatch?.[1] ?? item.type
+
+      return `@${kind}:${formatRefValue(insertId)}`
+    }
+
+    if (item.id === `${item.type}:`) {
+      return `@${item.id}`
+    }
+
+    return `@${item.type}:${formatRefValue(item.id)}`
+  },
+  parse(text: string): readonly Unstable_DirectiveSegment[] {
+    return parseDirectiveText(text)
+  }
 }

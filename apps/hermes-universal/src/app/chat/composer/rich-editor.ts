@@ -2,10 +2,9 @@
  * Helpers for the contenteditable composer surface: serialize refs to chip
  * HTML, walk the DOM back to plain `@kind:value` text, and place the caret.
  *
- * Ported from apps/desktop/src/app/chat/composer/rich-editor.ts. Chip values are
- * always wrapped in backticks/quotes so REF_RE stops at the fence — without
- * that, typing after a chip would get re-absorbed on the next plain-text
- * round-trip.
+ * Chip values are always wrapped in backticks/quotes so REF_RE stops at the
+ * fence — without that, typing after a chip would get re-absorbed on the next
+ * plain-text round-trip.
  */
 import {
   DIRECTIVE_CHIP_CLASS,
@@ -175,7 +174,8 @@ export function insertPlainTextAtCaret(editor: HTMLElement, text: string) {
 
 /** Backspace at a collapsed caret immediately after a chip: delete the chip AND
  *  the single trailing space we auto-insert after it, atomically — so removing a
- *  directive never strands an orphaned space. Returns whether it ran. */
+ *  directive never strands an orphaned space (the contenteditable-driven cleanup
+ *  was unreliable). Returns whether it ran. */
 export function deleteChipBeforeCaret(editor: HTMLElement): boolean {
   const hit = composerSelectionRange(editor)
 
@@ -325,6 +325,8 @@ function isBlankNode(node: ChildNode | null): boolean {
  *  rendering emits (we use text nodes + <br> + chips). Real <br> line breaks
  *  (Shift+Enter, which sit after actual text) are preserved. */
 export function normalizeComposerEditorDom(editor: HTMLElement) {
+  // A trailing block wrapper holding only a break/whitespace is the phantom
+  // "new line" Chromium adds after a chip on backspace — drop it.
   const tailBlock = editor.lastChild as HTMLElement | null
 
   if (
@@ -335,6 +337,7 @@ export function normalizeComposerEditorDom(editor: HTMLElement) {
     editor.removeChild(tailBlock)
   }
 
+  // Unwrap a lone block wrapper back to inline content.
   if (editor.childNodes.length === 1 && editor.firstChild?.nodeType === Node.ELEMENT_NODE) {
     const wrapper = editor.firstChild as HTMLElement
 
@@ -343,6 +346,7 @@ export function normalizeComposerEditorDom(editor: HTMLElement) {
     }
   }
 
+  // A trailing <br> right after a chip / only whitespace is a phantom line.
   const last = editor.lastChild
 
   if (last?.nodeName === 'BR') {

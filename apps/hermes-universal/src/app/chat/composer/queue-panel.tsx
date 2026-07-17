@@ -3,25 +3,24 @@ import { StatusSection } from '@/components/chat/status-section'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { Tip } from '@/components/ui/tooltip'
-import { useI18n } from '@/i18n'
-import { ArrowUp, iconSize, Trash2 } from '@/lib/icons'
+import { type Translations, useI18n } from '@/i18n'
+import { ArrowUp, iconSize, Pencil, Trash2 } from '@/lib/icons'
+import { cn } from '@/lib/utils'
+import type { QueuedPromptEntry } from '@/store/composer-queue'
 
-// Adapted from apps/desktop/src/app/chat/composer/queue-panel.tsx. Universal's
-// queue is a plain string[] (no per-entry ids / attachments / in-place edit), so
-// this drops the pencil-edit affordance — send-now + delete only.
-// FLAG(chat-port): queued-prompt in-place editing is deferred (no rich queue store).
-
-export function QueuePanel({
-  busy,
-  entries,
-  onDelete,
-  onSendNow
-}: {
+interface QueuePanelProps {
   busy: boolean
-  entries: string[]
-  onDelete: (index: number) => void
-  onSendNow: (index: number) => void
-}) {
+  editingId: null | string
+  entries: QueuedPromptEntry[]
+  onDelete: (id: string) => void
+  onEdit: (entry: QueuedPromptEntry) => void
+  onSendNow: (id: string) => void
+}
+
+const entryPreview = (entry: QueuedPromptEntry, c: Translations['composer']) =>
+  entry.text.trim() || (entry.attachments.length > 0 ? c.attachmentOnly : c.emptyTurn)
+
+export function QueuePanel({ busy, editingId, entries, onDelete, onEdit, onSendNow }: QueuePanelProps) {
   const { t } = useI18n()
   const c = t.composer
 
@@ -34,45 +33,77 @@ export function QueuePanel({
       icon={<Codicon className="text-muted-foreground/70" name="layers" size="0.8rem" />}
       label={c.queued(entries.length)}
     >
-      {entries.map((entry, index) => (
-        <StatusRow
-          className="border border-transparent"
-          key={`${index}-${entry}`}
-          trailing={
-            <>
-              <Tip label={busy ? c.queueSendNext : c.queueSend}>
-                <Button
-                  aria-label={busy ? c.queueSendNext : c.queueSend}
-                  className="size-5 rounded-md"
-                  disabled={busy}
-                  onClick={() => onSendNow(index)}
-                  size="icon-xs"
-                  type="button"
-                  variant="ghost"
-                >
-                  <ArrowUp className={iconSize.xs} />
-                </Button>
-              </Tip>
-              <Tip label={c.queueDelete}>
-                <Button
-                  aria-label={c.queueDelete}
-                  className="size-5 rounded-md"
-                  onClick={() => onDelete(index)}
-                  size="icon-xs"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Trash2 className={iconSize.xs} />
-                </Button>
-              </Tip>
-            </>
-          }
-        >
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[0.73rem] leading-4 text-foreground/92">{entry.trim() || c.emptyTurn}</p>
-          </div>
-        </StatusRow>
-      ))}
+      {entries.map(entry => {
+        const isEditing = editingId === entry.id
+        const attachmentsCount = entry.attachments.length
+
+        return (
+          <StatusRow
+            className={cn(
+              'border border-transparent',
+              isEditing && 'border-[color-mix(in_srgb,var(--dt-composer-ring)_40%,transparent)] bg-accent/25'
+            )}
+            key={entry.id}
+            trailing={
+              <>
+                <Tip label={c.queueEdit}>
+                  <Button
+                    aria-label={c.queueEdit}
+                    className="size-5 rounded-md"
+                    disabled={Boolean(editingId) && !isEditing}
+                    onClick={() => onEdit(entry)}
+                    size="icon-xs"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Pencil className={iconSize.xs} />
+                  </Button>
+                </Tip>
+                <Tip label={busy ? c.queueSendNext : c.queueSend}>
+                  <Button
+                    aria-label={busy ? c.queueSendNext : c.queueSend}
+                    className="size-5 rounded-md"
+                    disabled={isEditing}
+                    onClick={() => onSendNow(entry.id)}
+                    size="icon-xs"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <ArrowUp className={iconSize.xs} />
+                  </Button>
+                </Tip>
+                <Tip label={c.queueDelete}>
+                  <Button
+                    aria-label={c.queueDelete}
+                    className="size-5 rounded-md"
+                    onClick={() => onDelete(entry.id)}
+                    size="icon-xs"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Trash2 className={iconSize.xs} />
+                  </Button>
+                </Tip>
+              </>
+            }
+            trailingVisible={isEditing}
+          >
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[0.73rem] leading-4 text-foreground/92">{entryPreview(entry, c)}</p>
+              {(attachmentsCount > 0 || isEditing) && (
+                <div className="mt-0.5 flex items-center gap-1.5 text-[0.64rem] text-muted-foreground/75">
+                  {attachmentsCount > 0 && <span>{c.attachments(attachmentsCount)}</span>}
+                  {isEditing && (
+                    <span className="text-[color-mix(in_srgb,var(--dt-composer-ring)_78%,var(--muted-foreground))]">
+                      {c.editingInComposer}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </StatusRow>
+        )
+      })}
     </StatusSection>
   )
 }

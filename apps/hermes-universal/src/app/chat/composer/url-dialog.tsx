@@ -11,8 +11,8 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
+import { Globe } from '@/lib/icons'
 
-// Ported from apps/desktop/src/app/chat/composer/url-dialog.tsx.
 const URL_HINT = /^https?:\/\//i
 
 export function UrlDialog({
@@ -39,7 +39,7 @@ export function UrlDialog({
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="max-w-md gap-5">
         <DialogHeader>
-          <DialogTitle>{c.attachUrlTitle}</DialogTitle>
+          <DialogTitle icon={Globe}>{c.attachUrlTitle}</DialogTitle>
           <DialogDescription>{c.attachUrlDesc}</DialogDescription>
         </DialogHeader>
         <form

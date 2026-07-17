@@ -1,9 +1,9 @@
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { useEffect, useState } from 'react'
 
-import { stageAttachmentFromPath } from '@/app/chat/attachments'
+import { stageAttachmentFromPath, stagedToComposerAttachment } from '@/app/chat/attachments'
 import { IS_DESKTOP } from '@/lib/platform'
-import { addStaged } from '@/store/composer'
+import { mainComposerScope } from '@/store/composer'
 import { triggerHaptic } from '@/store/haptics'
 
 // OS file drag-and-drop into the chat (desktop parity). Tauri v2 intercepts
@@ -39,7 +39,7 @@ export function useFileDrop(): { dragActive: boolean } {
           for (const path of payload.paths) {
             const attachment = await stageAttachmentFromPath(path)
             if (attachment) {
-              addStaged(attachment)
+              mainComposerScope.add(stagedToComposerAttachment(attachment))
               staged = true
             }
           }

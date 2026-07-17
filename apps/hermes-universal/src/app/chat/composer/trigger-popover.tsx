@@ -1,24 +1,12 @@
+import type { Unstable_TriggerItem } from '@assistant-ui/core'
 import { Fragment } from 'react'
 
-import { composerPanelCard } from '@/components/chat/composer-dock'
-import { type CompletionEntry, displayText } from '@/app/chat/composer-completions'
 import { Codicon } from '@/components/ui/codicon'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 
-// Adapted from apps/desktop/src/app/chat/composer/{trigger-popover,completion-drawer}.tsx.
-// Desktop drives this off assistant-ui's Unstable_TriggerItem adapter; universal
-// feeds it its own CompletionEntry[] (RPC-backed), keeping the exact drawer skin.
-
-const DRAWER_SHELL = cn(
-  'absolute left-2 z-50 w-80 max-w-[calc(100%-1rem)] max-h-[min(22rem,calc(100vh-8rem))]',
-  'overflow-y-auto overscroll-contain p-1 text-popover-foreground',
-  composerPanelCard
-)
-
-export const COMPLETION_DRAWER_CLASS = cn(DRAWER_SHELL, 'bottom-full mb-1')
-export const COMPLETION_DRAWER_BELOW_CLASS = cn(DRAWER_SHELL, 'top-full mt-1')
+import { COMPLETION_DRAWER_BELOW_CLASS, COMPLETION_DRAWER_CLASS, CompletionDrawerEmpty } from './completion-drawer'
 
 const AT_ICON_BY_TYPE: Record<string, string> = {
   diff: 'diff',
@@ -32,14 +20,25 @@ const AT_ICON_BY_TYPE: Record<string, string> = {
   url: 'globe'
 }
 
-function atIcon(entry: CompletionEntry): string {
-  const raw = entry.text
-  if (raw.startsWith('@diff')) return AT_ICON_BY_TYPE.diff
-  if (raw.startsWith('@staged')) return AT_ICON_BY_TYPE.staged
-  if (raw.startsWith('@folder') || raw.endsWith('/')) return AT_ICON_BY_TYPE.folder
-  if (raw.startsWith('@image') || /\.(png|jpe?g|gif|webp|svg)\b/i.test(raw)) return AT_ICON_BY_TYPE.image
-  if (raw.startsWith('@url') || raw.startsWith('@http')) return AT_ICON_BY_TYPE.url
-  return AT_ICON_BY_TYPE.file
+function atIcon(item: Unstable_TriggerItem) {
+  const meta = item.metadata as { rawText?: string } | undefined
+  const raw = meta?.rawText || item.label
+
+  if (raw.startsWith('@diff')) {
+    return AT_ICON_BY_TYPE.diff
+  }
+
+  if (raw.startsWith('@staged')) {
+    return AT_ICON_BY_TYPE.staged
+  }
+
+  return AT_ICON_BY_TYPE[item.type] || AT_ICON_BY_TYPE.simple
+}
+
+interface RowMeta {
+  display?: string
+  group?: string
+  meta?: string
 }
 
 const ROW_BASE_CLASS = [
@@ -47,6 +46,16 @@ const ROW_BASE_CLASS = [
   'outline-hidden transition-colors hover:bg-(--ui-bg-tertiary)',
   'data-[highlighted]:bg-(--ui-bg-tertiary) data-[highlighted]:text-foreground'
 ].join(' ')
+
+interface ComposerTriggerPopoverProps {
+  activeIndex: number
+  items: readonly Unstable_TriggerItem[]
+  kind: '@' | '/'
+  loading: boolean
+  onHover: (index: number) => void
+  onPick: (item: Unstable_TriggerItem) => void
+  placement?: 'bottom' | 'top'
+}
 
 export function ComposerTriggerPopover({
   activeIndex,
@@ -56,15 +65,7 @@ export function ComposerTriggerPopover({
   onHover,
   onPick,
   placement = 'top'
-}: {
-  activeIndex: number
-  items: readonly CompletionEntry[]
-  kind: '@' | '/'
-  loading: boolean
-  onHover: (index: number) => void
-  onPick: (entry: CompletionEntry) => void
-  placement?: 'bottom' | 'top'
-}) {
+}: ComposerTriggerPopoverProps) {
   const { t } = useI18n()
   const copy = t.composer
   const isSlash = kind === '/'
@@ -86,33 +87,32 @@ export function ComposerTriggerPopover({
             <span>{copy.lookupLoading}</span>
           </div>
         ) : (
-          <div className="px-3 py-3 text-xs text-(--ui-text-tertiary)">
-            <p>{copy.lookupNoMatches}</p>
-            <p className="mt-1 text-xs text-(--ui-text-tertiary)">
-              {kind === '@' ? (
-                <>
-                  {copy.lookupTry} <span className="font-mono text-foreground/80">@file:</span> {copy.lookupOr}{' '}
-                  <span className="font-mono text-foreground/80">@folder:</span>.
-                </>
-              ) : (
-                <>
-                  {copy.lookupTry} <span className="font-mono text-foreground/80">/help</span>.
-                </>
-              )}
-            </p>
-          </div>
+          <CompletionDrawerEmpty title={copy.lookupNoMatches}>
+            {kind === '@' ? (
+              <>
+                {copy.lookupTry} <span className="font-mono text-foreground/80">@file:</span> {copy.lookupOr}{' '}
+                <span className="font-mono text-foreground/80">@folder:</span>.
+              </>
+            ) : (
+              <>
+                {copy.lookupTry} <span className="font-mono text-foreground/80">/help</span>.
+              </>
+            )}
+          </CompletionDrawerEmpty>
         )
       ) : (
-        items.map((entry, index) => {
-          const display = displayText(entry)
-          const group = entry.group?.trim()
+        items.map((item, index) => {
+          const meta = item.metadata as RowMeta | undefined
+          const display = meta?.display ?? (isSlash ? `/${item.label}` : item.label)
+          const description = meta?.meta || item.description
+          const group = meta?.group?.trim()
           const showHeader = isSlash && Boolean(group) && group !== lastGroup
           const isFirstHeader = lastGroup === undefined
           lastGroup = group || lastGroup
           const active = index === activeIndex
 
           return (
-            <Fragment key={`${entry.text}-${index}`}>
+            <Fragment key={item.id}>
               {showHeader && (
                 <div
                   className={cn(
@@ -126,27 +126,45 @@ export function ComposerTriggerPopover({
               <button
                 className={cn(ROW_BASE_CLASS, isSlash ? 'flex-col gap-0' : 'items-center gap-2')}
                 data-highlighted={active ? '' : undefined}
-                onClick={() => onPick(entry)}
+                onClick={() => onPick(item)}
                 onMouseEnter={() => onHover(index)}
                 type="button"
               >
                 {isSlash ? (
-                  <span
-                    className={cn(
-                      'font-medium leading-snug text-foreground',
-                      active ? 'whitespace-normal break-words' : 'truncate'
+                  <>
+                    {/* Active row (keyboard nav or hover) un-truncates inline so
+                        long command names / descriptions stay readable without a
+                        floating tooltip. */}
+                    <span
+                      className={cn(
+                        'font-medium leading-snug text-foreground',
+                        active ? 'whitespace-normal break-words' : 'truncate'
+                      )}
+                    >
+                      {display}
+                    </span>
+                    {description && (
+                      <span
+                        className={cn(
+                          'leading-snug text-(--ui-text-tertiary)',
+                          active ? 'whitespace-normal break-words' : 'truncate'
+                        )}
+                      >
+                        {description}
+                      </span>
                     )}
-                  >
-                    {display}
-                  </span>
+                  </>
                 ) : (
                   <>
                     <span className="grid size-4 shrink-0 place-items-center text-(--ui-text-tertiary)">
-                      <Codicon name={atIcon(entry)} size="0.875rem" />
+                      <Codicon name={atIcon(item)} size="0.875rem" />
                     </span>
                     <span className="min-w-0 shrink truncate font-mono font-medium leading-5 text-foreground">
                       {display}
                     </span>
+                    {description && (
+                      <span className="min-w-0 flex-1 truncate leading-5 text-(--ui-text-tertiary)">{description}</span>
+                    )}
                   </>
                 )}
               </button>

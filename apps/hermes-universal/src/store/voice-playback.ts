@@ -9,13 +9,20 @@ import { atom } from '@/store/atom'
 //   source   — which affordance started playback ('read-aloud' | 'auto' | null)
 //   messageId — the message being read (so only its row shows active state)
 //   status   — 'idle' | 'preparing' (fetching audio) | 'speaking' (playing)
-export type VoicePlaybackSource = 'auto' | 'read-aloud' | null
+// 'voice-conversation' is the ported desktop live-conversation source (its
+// VoiceActivity reads back the playing audio element); kept in the union so the
+// ported composer compiles even though universal's tts-only engine doesn't drive
+// a conversation stream yet.
+export type VoicePlaybackSource = 'auto' | 'read-aloud' | 'voice-conversation' | null
 export type VoicePlaybackStatus = 'idle' | 'preparing' | 'speaking'
 
 export interface VoicePlaybackState {
   source: VoicePlaybackSource
   messageId: string | null
   status: VoicePlaybackStatus
+  /** The live <audio> element for a voice-conversation playback (desktop parity);
+   *  null for tts-engine 'read-aloud'/'auto' playback. */
+  audioElement?: HTMLAudioElement | null
 }
 
 const IDLE: VoicePlaybackState = { source: null, messageId: null, status: 'idle' }

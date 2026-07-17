@@ -2,6 +2,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { readFile } from '@tauri-apps/plugin-fs'
 
 import { ensureSession } from '@/store/chat'
+import type { ComposerAttachment } from '@/store/composer'
 import { requestGateway } from '@/store/gateway'
 
 // Attachment staging (Gc8/R7). Pick a file → read bytes → data-URL → file.attach
@@ -53,7 +54,7 @@ export async function stageAttachmentFromPath(path: string): Promise<StagedAttac
     const name = basename(path)
     const bytes = await readFile(path)
     const dataUrl = toDataUrl(bytes, mimeFor(name))
-    const sessionId = await ensureSession()
+    const { id: sessionId } = await ensureSession()
 
     const res = await requestGateway<{ ref_text?: string }>('file.attach', {
       name,
@@ -74,4 +75,31 @@ export async function pickAttachment(): Promise<StagedAttachment | null> {
   if (typeof path !== 'string') return null
 
   return stageAttachmentFromPath(path)
+}
+
+/** Pick a folder (no byte staging — folders resolve as `@folder:` refs). */
+export async function pickFolderAttachment(): Promise<StagedAttachment | null> {
+  const path = await open({ directory: true, multiple: false })
+  if (typeof path !== 'string') return null
+
+  return { name: basename(path), ref: `@folder:${path}` }
+}
+
+/**
+ * Convert a StagedAttachment (gateway ref + name) into the ComposerAttachment
+ * the ported composer's scope model uses. Kind is inferred from the ref prefix.
+ */
+export function stagedToComposerAttachment(staged: StagedAttachment): ComposerAttachment {
+  const ref = staged.ref
+  const kind: ComposerAttachment['kind'] = ref.startsWith('@image:')
+    ? 'image'
+    : ref.startsWith('@folder:')
+      ? 'folder'
+      : ref.startsWith('@url:')
+        ? 'url'
+        : ref.startsWith('@terminal:')
+          ? 'terminal'
+          : 'file'
+
+  return { id: ref, kind, label: staged.name, refText: ref }
 }

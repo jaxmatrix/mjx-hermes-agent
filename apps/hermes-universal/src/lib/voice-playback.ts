@@ -15,9 +15,11 @@ import {
 // initiating source/message and clear on failure.
 export async function playSpeechText(
   text: string,
-  { messageId, source }: { messageId: string; source: Exclude<VoicePlaybackSource, null> }
+  // messageId is optional: read-aloud passes the message being read; the ported
+  // voice-conversation replies aren't tied to a message row (source-only).
+  { messageId, source }: { messageId?: string; source: Exclude<VoicePlaybackSource, null> }
 ): Promise<void> {
-  $voicePlayback.set({ source, messageId, status: 'preparing' })
+  $voicePlayback.set({ source, messageId: messageId ?? null, status: 'preparing' })
 
   try {
     await speakNow(text)

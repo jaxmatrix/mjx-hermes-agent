@@ -3,17 +3,16 @@ import type { ReactNode } from 'react'
 import { KbdCombo } from '@/components/ui/kbd'
 import { useI18n } from '@/i18n'
 
-import { COMPLETION_DRAWER_CLASS } from './trigger-popover'
+import { COMPLETION_DRAWER_CLASS } from './completion-drawer'
 
-// Ported from apps/desktop/src/app/chat/composer/help-hint.tsx. The `?`-at-start
-// quick-help drawer: common commands + composer hotkeys.
-const COMMON_COMMAND_KEYS = ['/help', '/clear', '/resume', '/details', '/copy', '/quit'] as const
+const COMMON_COMMAND_KEYS = ['/help', '/clear', '/resume', '/details', '/copy', '/quit']
 
+/** Stable ids → i18n `hotkeyDescs` keys. Combos resolve mod labels per OS. */
 const COMPOSER_HOTKEY_ROWS = [
   { id: 'composer.mention', combos: ['@'] },
   { id: 'composer.slash', combos: ['/'] },
   { id: 'composer.help', combos: ['?'] },
-  { id: 'composer.sendNewline', combos: ['mod+enter'] },
+  { id: 'composer.sendNewline', combos: ['enter', 'shift+enter'] },
   { id: 'composer.sendQueued', combos: ['mod+shift+k'] },
   { id: 'keybinds.openPanel', combos: ['mod+/'] },
   { id: 'composer.cancel', combos: ['escape'] },

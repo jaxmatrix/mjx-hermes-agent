@@ -1,7 +1,7 @@
+import { useStore } from '@nanostores/react'
 import { type RefObject, useCallback, useEffect } from 'react'
 
-import { IS_DESKTOP } from '@/lib/platform'
-import { useStore } from '@/store/atom'
+import { triggerHaptic } from '@/store/haptics'
 import {
   $composerPopoutPosition,
   $composerPoppedOut,
@@ -9,7 +9,9 @@ import {
   setComposerPopoutPosition,
   setComposerPoppedOut
 } from '@/store/composer-popout'
-import { triggerHaptic } from '@/store/haptics'
+import { isSecondaryWindow } from '@/store/windows'
+
+import { useComposerScope } from '../scope'
 
 import { useComposerPopoutGestures } from './use-popout-drag'
 
@@ -20,25 +22,25 @@ interface UseComposerPopoutOptions {
 /**
  * Pop-out engine: the docked↔floating state (a shared, persisted atom), the
  * dock/float/toggle actions, the drag gestures, and the on-screen re-clamp.
- *
- * Ported from desktop, simplified: universal is a single window with a single
- * composer, so the secondary-window / multi-composer-scope guards are dropped
- * (`popoutAllowed` is always true).
+ * Secondary windows (the tiny Ctrl+Shift+N window, subagent watch windows) can't
+ * pop out — a floating composer makes no sense there and would yank the main
+ * window's composer out via the shared atom.
  */
 export function useComposerPopout({ composerRef }: UseComposerPopoutOptions) {
-  // Desktop-only: a floating composer + peel-up gesture make no sense on a phone
-  // (they'd fight touch scroll / typing), so mobile keeps the docked composer.
-  const popoutAllowed = IS_DESKTOP
+  // The floating composer is a window-level singleton: only the main scope
+  // (not tiles) in a primary window may pop out.
+  const scope = useComposerScope()
+  const popoutAllowed = !isSecondaryWindow() && scope.popoutAllowed
   const poppedOut = useStore($composerPoppedOut) && popoutAllowed
   const popoutPosition = useStore($composerPopoutPosition)
 
   const handleComposerPopOut = useCallback(() => {
-    void triggerHaptic('select')
+    triggerHaptic('open')
     setComposerPoppedOut(true)
   }, [])
 
   const handleComposerDock = useCallback(() => {
-    void triggerHaptic('success')
+    triggerHaptic('success')
     setComposerPoppedOut(false)
   }, [])
 
@@ -60,9 +62,12 @@ export function useComposerPopout({ composerRef }: UseComposerPopoutOptions) {
     position: popoutPosition
   })
 
-  // Keep the floating box on-screen: re-clamp with the real measured size when it
-  // pops out and on every window resize — so a position persisted on a bigger
-  // window, or a now-shrunk window, can never strand it.
+  // Keep the floating box on-screen: re-clamp (with the real measured size +
+  // thread bounds) when it pops out and on every window resize — so a position
+  // persisted on a bigger/other monitor, a shrunk window, or now-wider sidebar
+  // can never strand it. The rAF pass re-clamps after layout settles (sidebar
+  // widths, fonts), so anyone loading in out of bounds is pulled back + saved
+  // even if the first measure was premature.
   useEffect(() => {
     if (!poppedOut) {
       return undefined

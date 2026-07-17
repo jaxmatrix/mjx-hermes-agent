@@ -39,6 +39,20 @@ export function selectPreviewTab(path: string): void {
   if ($previewTabs.get().some(tab => tab.path === path)) $activePreviewPath.set(path)
 }
 
+// Opened from a composer attachment pill (ported from desktop, where it set a
+// rich session-scoped preview target). Universal's preview model is tab-based,
+// so this best-effort opens a tab for the target's path. The rich preview
+// descriptor + source are accepted for import-site parity but not yet used.
+// FLAG(chat-port).
+export function setCurrentSessionPreviewTarget(
+  preview: { target?: unknown } & Record<string, unknown>,
+  _source: string,
+  target: string
+): void {
+  const path = target || (typeof preview.target === 'string' ? preview.target : '')
+  if (path) setPreviewTarget(path)
+}
+
 export function requestPreviewReload(): void {
   $previewReloadNonce.set($previewReloadNonce.get() + 1)
 }
