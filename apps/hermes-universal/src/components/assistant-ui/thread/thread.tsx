@@ -4,6 +4,7 @@ import { Intro } from '@/components/chat/intro'
 
 import { AssistantMessage } from './assistant-message'
 import { ThreadMessageList } from './list'
+import { ResponseLoadingIndicator } from './status'
 import { SystemMessage } from './system-message'
 import { UserMessage } from './user-message'
 
@@ -32,6 +33,7 @@ export function Thread() {
         clampToComposer
         components={{ AssistantMessage, SystemMessage, UserMessage }}
         emptyPlaceholder={EmptyPlaceholder}
+        loadingIndicator={<ResponseLoadingIndicator />}
       />
     </ThreadPrimitive.Root>
   )

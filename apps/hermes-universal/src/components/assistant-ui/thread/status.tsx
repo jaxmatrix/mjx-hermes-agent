@@ -3,7 +3,10 @@ import { type FC, type ReactNode, useEffect, useState } from 'react'
 
 import { useElapsedSeconds } from '@/components/chat/activity-timer'
 import { ActivityTimerText } from '@/components/chat/activity-timer-text'
+import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
+import { useStore } from '@/store/atom'
+import { $busy, $messages } from '@/store/chat'
 
 // Ported (lean) from apps/desktop/src/components/assistant-ui/thread/status.tsx.
 // Only StreamStallIndicator is needed for Phase 4 (assistant message tail).
@@ -29,6 +32,35 @@ const StatusRow: FC<{ children: ReactNode; label: string } & React.ComponentProp
     {children}
   </div>
 )
+
+// Pre-first-token "working" indicator (ported from desktop's
+// ResponseLoadingIndicator). Rendered as the thread's `loadingIndicator` at the
+// bottom of the list. Shows the pulsing square + elapsed timer from the moment
+// the turn starts (sendPrompt sets $busy) until the assistant produces its first
+// part — the empty running message renders null, so without this nothing signals
+// that work is underway and it reads as "stopped". Once ANY content arrives the
+// message body + its tail StreamStallIndicator take over, so this self-hides.
+export const ResponseLoadingIndicator: FC = () => {
+  const { t } = useI18n()
+  const busy = useStore($busy)
+  const messages = useStore($messages)
+
+  const last = messages[messages.length - 1]
+  const waiting = busy && (!last || last.role !== 'assistant' || last.parts.length === 0)
+
+  const elapsed = useElapsedSeconds(waiting)
+
+  if (!waiting) {
+    return null
+  }
+
+  return (
+    <StatusRow className="mt-1.5" data-slot="aui_response-loading" label={t.assistant.thread.loadingResponse}>
+      <span aria-hidden="true" className="dither inline-block size-3 rounded-[2px] text-midground/80 animate-pulse" />
+      <ActivityTimerText seconds={elapsed} />
+    </StatusRow>
+  )
+}
 
 // Seconds of no visible output (text or part count) before a still-running turn
 // is treated as stalled and the thinking indicator returns at the tail.
