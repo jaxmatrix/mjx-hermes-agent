@@ -276,9 +276,16 @@ export function ChatBar({ onSubmit, onCancel }: ChatBarProps) {
   const handleEditorInput = (event: FormEvent<HTMLDivElement>) => {
     if (composingRef.current) return
     const editor = event.currentTarget
-    normalizeComposerEditorDom(editor)
+    // Do NOT mutate the editor DOM synchronously here. WebKitGTK corrupts its
+    // editing state (dropped keystrokes) if the contenteditable is restructured
+    // during an `input` event — Chromium tolerates it, WebKit does not. The
+    // stray-node cleanup runs on a microtask instead, after the browser has
+    // finished applying the input.
     syncHasText(editor)
     setHistIndex(-1)
+    queueMicrotask(() => {
+      if (editorRef.current && !composingRef.current) normalizeComposerEditorDom(editorRef.current)
+    })
     window.setTimeout(refreshTrigger, 0)
   }
 
@@ -499,10 +506,13 @@ export function ChatBar({ onSubmit, onCancel }: ChatBarProps) {
             style={{ background: COMPOSER_FADE_BACKGROUND }}
           />
         )}
-        {/* Drag region: covers the transparent grab margin around the surface.
-            The surface sits on top (z-4) so only the exposed ring receives the
-            grab cursor + double-click-to-toggle — never over the input. */}
-        {popoutAllowed && (
+        {/* Drag region: the transparent grab margin around the FLOATING composer
+            (double-click to re-dock). Only mounted when popped out — a full-bleed
+            pointer-events-auto overlay reliably sits under the z-4 surface on
+            Chromium, but Tauri's WebKitGTK hit-tests it ABOVE the input and eats
+            clicks/typing, so the docked composer must have no overlay. Peel-out
+            from the dock still works via the root's onPointerDown gesture. */}
+        {poppedOut && (
           <div
             aria-hidden
             className={cn('pointer-events-auto absolute inset-0', dragging ? 'cursor-grabbing' : 'cursor-grab')}
@@ -567,19 +577,32 @@ export function ChatBar({ onSubmit, onCancel }: ChatBarProps) {
                 </div>
                 <div className="min-w-0 [grid-area:input]">
                   <div className={cn('relative', stacked ? 'w-full' : 'min-w-(--composer-input-inline-min-width) flex-1')}>
+                    {/* React-controlled placeholder — NOT `:empty::before`, which
+                        never shows on WebKitGTK because WebKit seeds empty
+                        contenteditables with a bogus <br> (so they're never
+                        `:empty`). Shown until the editor has real text. */}
+                    {!hasText && (
+                      <div
+                        aria-hidden
+                        className={cn(
+                          'pointer-events-none absolute top-1 right-1 left-0 truncate leading-normal text-muted-foreground/60',
+                          stacked && 'pl-3'
+                        )}
+                      >
+                        {placeholder}
+                      </div>
+                    )}
                     <div
                       aria-label={c.message}
                       autoCapitalize="off"
                       autoCorrect="off"
                       className={cn(
                         'min-h-(--composer-input-min-height) max-h-(--composer-input-max-height) cursor-text overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] bg-transparent pb-1 pr-1 pt-1 leading-normal text-foreground outline-none',
-                        'empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground/60',
                         '**:data-ref-text:cursor-default',
                         stacked && 'pl-3',
                         stacked ? 'w-full' : 'min-w-(--composer-input-inline-min-width) flex-1'
                       )}
                       contentEditable
-                      data-placeholder={placeholder}
                       data-slot={RICH_INPUT_SLOT}
                       onBlur={() => window.setTimeout(closeTrigger, 80)}
                       onCompositionEnd={event => {
