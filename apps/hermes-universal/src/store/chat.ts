@@ -10,7 +10,7 @@ import { triggerHaptic } from '@/store/haptics'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notifyError } from '@/store/notifications'
 import { $subagentsBySession, upsertSubagent } from '@/store/subagents'
-import type { ContextBreakdown, UsageStats } from '@/types/hermes'
+import type { ContextBreakdown, SessionCreateResponse, UsageStats } from '@/types/hermes'
 
 // Chat model over the assistant-ui parts vocabulary. The gateway-event reducer
 // mutates a plain ChatMessage[] (decoupled from assistant-ui); the runtime
@@ -84,6 +84,13 @@ export const $clarify = atom<ClarifyRequest | null>(null)
 export const $sudo = atom<SudoRequest | null>(null)
 export const $secret = atom<SecretRequest | null>(null)
 export const $sessionId = atom<string | null>(null)
+
+// Live auto-title of the CURRENT runtime session, pushed by the backend's
+// `session.title` event (the titler runs async after the first turn). A brand-new
+// session isn't in the $sessions list yet and has no $activeStoredSessionId, so
+// the chat header can't resolve its title from the list — it reads this instead,
+// so the "New session" heading updates on the fly once the title lands.
+export const $liveSessionTitle = atom<string>('')
 
 // FIXME(chat-port): universal has no live cwd atom (desktop's session store owns
 // $currentCwd, updated from session.info events). This is a minimal placeholder
@@ -343,6 +350,25 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       })
       break
 
+    case 'session.title': {
+      // Live auto-title push (titler runs async, after the turn). Update the
+      // current session's live title so the chat header reflects it on the fly,
+      // and patch the sidebar list entry if it's already loaded (decoupled via a
+      // dynamic import — store/session imports store/chat, so a static import
+      // here would cycle).
+      const sid = coerceText(payload.session_id)
+      const title = coerceText(payload.title).trim()
+      if (title && (!sid || sid === $sessionId.get())) {
+        $liveSessionTitle.set(title)
+      }
+      if (sid && title) {
+        void import('@/store/session')
+          .then(m => m.setSessions(prev => prev.map(s => (s.id === sid ? { ...s, title } : s))))
+          .catch(() => {})
+      }
+      break
+    }
+
     default:
       // Subagent lifecycle (spawn/start/thinking/tool/progress/complete) feeds
       // the Agents view's spawn tree, keyed by the active runtime session.
@@ -357,25 +383,33 @@ export function handleGatewayEvent(event: GatewayEvent): void {
   }
 }
 
-/** Lazily create the session (needed before prompt.submit or file.attach). */
-export async function ensureSession(): Promise<string> {
-  let sessionId = $sessionId.get()
-  if (!sessionId) {
-    // A configured default project directory pre-attaches new LOCAL chats to that
-    // folder (desktop parity); the gateway resolves its own default cwd otherwise.
-    const cwd = cwdForNewSession()
-    const created = await requestGateway<{ session_id: string }>('session.create', {
-      cols: 96,
-      ...(cwd && { cwd })
-    })
-    sessionId = created.session_id
-    $sessionId.set(sessionId)
-    // Runtime session clock starts when we create the session (statusbar session
-    // timer). Resumed/loaded sessions have no reliable start on this client, so
-    // the timer stays hidden for them.
-    $sessionStartedAt.set(Date.now())
+/**
+ * Lazily create the session (needed before prompt.submit or file.attach).
+ * Returns the live gateway `id` (used for prompt.submit / file.attach) AND the
+ * durable `storedId` — session.create returns both, and the backend keys the
+ * session LIST + `session.title` events on the stored id (which can differ from
+ * the runtime id). The sidebar row + $activeStoredSessionId must use `storedId`
+ * so the chat header can resolve the session after the list refreshes.
+ */
+export async function ensureSession(): Promise<{ id: string; storedId: string }> {
+  const existing = $sessionId.get()
+  if (existing) {
+    return { id: existing, storedId: existing }
   }
-  return sessionId
+  // A configured default project directory pre-attaches new LOCAL chats to that
+  // folder (desktop parity); the gateway resolves its own default cwd otherwise.
+  const cwd = cwdForNewSession()
+  const created = await requestGateway<SessionCreateResponse>('session.create', {
+    cols: 96,
+    ...(cwd && { cwd })
+  })
+  const id = created.session_id
+  $sessionId.set(id)
+  // Runtime session clock starts when we create the session (statusbar session
+  // timer). Resumed/loaded sessions have no reliable start on this client, so
+  // the timer stays hidden for them.
+  $sessionStartedAt.set(Date.now())
+  return { id, storedId: created.stored_session_id ?? id }
 }
 
 export async function sendPrompt(text: string): Promise<void> {
@@ -389,7 +423,17 @@ export async function sendPrompt(text: string): Promise<void> {
   $statusLine.set('')
 
   try {
-    const sessionId = await ensureSession()
+    const wasNew = !$sessionId.get()
+    const { id: sessionId, storedId } = await ensureSession()
+    if (wasNew) {
+      // New chat: optimistically add it to the sidebar list + mark active, keyed
+      // on the STORED id (what the list refresh + session.title use), with the
+      // first message as the provisional title (preview). Dynamic import —
+      // store/session imports store/chat, so a static import here would cycle.
+      void import('@/store/session')
+        .then(m => m.registerNewSession(storedId, trimmed))
+        .catch(() => {})
+    }
     await requestGateway('prompt.submit', { session_id: sessionId, text: trimmed }, PROMPT_SUBMIT_TIMEOUT_MS)
   } catch (err) {
     $busy.set(false)
@@ -445,6 +489,7 @@ export async function respondSecret(value: string): Promise<void> {
 export function resetChat(): void {
   $messages.set([])
   $sessionId.set(null)
+  $liveSessionTitle.set('')
   $busy.set(false)
   $turnStartedAt.set(null)
   $sessionStartedAt.set(null)
