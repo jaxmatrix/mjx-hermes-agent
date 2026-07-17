@@ -1,3 +1,4 @@
+import type { StagedAttachment } from '@/app/chat/attachments'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { atom } from '@/store/atom'
 
@@ -7,6 +8,22 @@ const MAX_HISTORY = 50
 
 export const $history = persistentAtom<string[]>('hermes.composerHistory', [], Codecs.stringArray)
 export const $queue = atom<string[]>([])
+
+// Staged attachments live in a shared store (not composer-local state) so the
+// whole-chat file-drop handler and the composer's chips operate on one list.
+export const $staged = atom<StagedAttachment[]>([])
+
+export function addStaged(attachment: StagedAttachment): void {
+  $staged.set([...$staged.get(), attachment])
+}
+
+export function removeStagedAt(index: number): void {
+  $staged.set($staged.get().filter((_, i) => i !== index))
+}
+
+export function clearStaged(): void {
+  $staged.set([])
+}
 
 export function pushHistory(text: string): void {
   const value = text.trim()

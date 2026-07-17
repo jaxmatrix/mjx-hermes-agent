@@ -1,10 +1,12 @@
 import { useCallback } from 'react'
 
 import { ApprovalBar } from '@/app/chat/approval-bar'
+import { ChatDropOverlay } from '@/app/chat/chat-drop-overlay'
 import { ClarifyBar } from '@/app/chat/clarify-bar'
 import { ChatBar } from '@/app/chat/composer'
 import { ChatRuntimeProvider } from '@/app/chat/runtime'
 import { ScrollToBottomButton } from '@/app/chat/scroll-to-bottom-button'
+import { useFileDrop } from '@/app/chat/use-file-drop'
 import { SecretBar } from '@/app/chat/secret-bar'
 import { SudoBar } from '@/app/chat/sudo-bar'
 import { SidebarTrigger } from '@/app/shell/sidebar'
@@ -26,6 +28,7 @@ export function ChatScreen() {
   const secret = useStore($secret)
   const title = useStore($activeSessionTitle)
   const runSkin = useSkinCommand()
+  const { dragActive } = useFileDrop()
 
   // Route the fully-composed prompt to universal's OWN gateway path (the stock
   // external-store runtime doesn't send — runtime.tsx's onNew is a no-op). The
@@ -84,6 +87,10 @@ export function ChatScreen() {
         )}
         <ChatBar onSubmit={onSubmit} />
       </ChatRuntimeProvider>
+
+      {/* OS file drag-and-drop affordance — covers the whole chat area (Tauri
+          delivers drops window-globally; the drop is handled by useFileDrop). */}
+      <ChatDropOverlay active={dragActive} />
     </div>
   )
 }

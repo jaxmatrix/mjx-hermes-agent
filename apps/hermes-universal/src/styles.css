@@ -1452,3 +1452,35 @@ html {
     transform: translateX(-50%) translateY(0) scale(1);
   }
 }
+
+/* ── Movable / pop-out composer (ported from apps/desktop) ────────────────────
+   The floating composer's fixed sizing is on the [data-popped-out] Tailwind
+   classes; here is the drag-region hatch affordance + the dock-glow intensity
+   scale (dimmer in light mode, where the primary glow reads stronger). */
+:root {
+  --dock-glow-scale: 0.55;
+}
+:root.dark {
+  --dock-glow-scale: 1;
+}
+
+/* Drag-region hatch — a diagonal ///// pattern that fades into the transparent
+   grab margin on hover (and stays while dragging) to signal the composer is
+   draggable. */
+[data-slot='composer-drag-region'] {
+  border-radius: 0.4rem;
+  opacity: 0;
+  transition: opacity 150ms ease;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--ui-text-tertiary) 38%, transparent) 0,
+    color-mix(in srgb, var(--ui-text-tertiary) 38%, transparent) 1px,
+    transparent 1px,
+    transparent 3.5px
+  );
+}
+
+[data-slot='composer-drag-region']:hover,
+[data-slot='composer-drag-region'][data-dragging] {
+  opacity: 0.33;
+}

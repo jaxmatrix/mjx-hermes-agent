@@ -9,7 +9,7 @@ import {
   useState
 } from 'react'
 
-import { pickAttachment, type StagedAttachment } from '@/app/chat/attachments'
+import { pickAttachment } from '@/app/chat/attachments'
 import {
   applyCompletion,
   type CompletionEntry,
@@ -24,7 +24,8 @@ import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $busy, $sessionId, sendPrompt } from '@/store/chat'
-import { $history, $queue, dequeue, enqueue, removeQueuedAt } from '@/store/composer'
+import { $history, $queue, $staged, addStaged, clearStaged, dequeue, enqueue, removeQueuedAt, removeStagedAt } from '@/store/composer'
+import { POPOUT_WIDTH_REM } from '@/store/composer-popout'
 import { triggerHaptic } from '@/store/haptics'
 import { $subagentsBySession } from '@/store/subagents'
 import { $threadScrolledUp } from '@/store/thread-scroll'
@@ -37,6 +38,7 @@ import { ComposerControls } from './controls'
 import { COMPOSER_DROP_FADE_CLASS } from './drop-affordance'
 import { focusComposerInput, markActiveComposer } from './focus'
 import { HelpHint } from './help-hint'
+import { useComposerPopout } from './hooks/use-composer-popout'
 import { QueuePanel } from './queue-panel'
 import {
   composerPlainText,
@@ -72,7 +74,7 @@ export function ChatBar({ onSubmit, onCancel }: ChatBarProps) {
   // typing-driven render (it gates the send button). draftRef mirrors the live
   // serialized text so submit/keydown read it synchronously.
   const [hasText, setHasText] = useState(false)
-  const [staged, setStaged] = useState<StagedAttachment[]>([])
+  const staged = useStore($staged)
   const [notice, setNotice] = useState('')
   const [isHelpHint, setIsHelpHint] = useState(false)
 
@@ -99,6 +101,17 @@ export function ChatBar({ onSubmit, onCancel }: ChatBarProps) {
   const voiceTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
 
   const { stacked, compactPill } = useComposerMetrics(composerRef)
+
+  // Pop-out engine: docked↔floating state, dock/float/toggle, drag gestures.
+  const {
+    dockProximity,
+    dragging,
+    handleComposerToggle,
+    onComposerGesturePointerDown,
+    popoutAllowed,
+    popoutPosition,
+    poppedOut
+  } = useComposerPopout({ composerRef })
   const subagents = useStore($subagentsBySession)
   const hasSubagents = (sessionId ? subagents[sessionId] : subagents.active)?.length ? true : false
   const statusStackVisible = queue.length > 0 || hasSubagents
@@ -228,7 +241,7 @@ export function ChatBar({ onSubmit, onCancel }: ChatBarProps) {
     void triggerHaptic('submit')
     const result = onSubmit(full)
     clearInput()
-    setStaged([])
+    clearStaged()
     setHistIndex(-1)
     closeTrigger()
     if (typeof result === 'string' && result) showNotice(result)
@@ -238,7 +251,7 @@ export function ChatBar({ onSubmit, onCancel }: ChatBarProps) {
   const attach = () => {
     void pickAttachment()
       .then(a => {
-        if (a) setStaged(prev => [...prev, a])
+        if (a) addStaged(a)
       })
       .catch(() => {
         /* picker cancelled / unavailable */
@@ -406,20 +419,49 @@ export function ChatBar({ onSubmit, onCancel }: ChatBarProps) {
 
   return (
     <>
+      {/* Dock target glow — a bottom-centered radial that intensifies as the
+          floating composer nears the dock (drop there to re-dock). */}
+      {dragging && poppedOut && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-32"
+          style={{
+            background:
+              'radial-gradient(64% 130% at 50% 100%, color-mix(in srgb, var(--color-primary) 26%, transparent) 0%, transparent 70%)',
+            opacity: `calc(${0.1 + dockProximity * 0.57} * var(--dock-glow-scale, 1))`
+          }}
+        />
+      )}
       <ComposerPrimitive.Root
         className={cn(
           'group/composer z-30 overflow-visible rounded-2xl',
-          'absolute bottom-0 left-1/2 w-[min(var(--composer-width),calc(100%-2rem))] max-w-full -translate-x-1/2 pt-2 pb-[var(--composer-shell-pad-block-end)]'
+          poppedOut
+            ? // Floating: fixed, compact one-sentence width, with a 5px transparent
+              // grab margin around the surface — drag that margin to move it.
+              'fixed w-[var(--composer-popout-width)] max-w-[calc(100vw-1.5rem)] bg-transparent p-[5px]'
+            : 'absolute bottom-0 left-1/2 w-[min(var(--composer-width),calc(100%-2rem))] max-w-full -translate-x-1/2 pt-2 pb-[var(--composer-shell-pad-block-end)]',
+          dragging && 'cursor-grabbing select-none touch-none'
         )}
+        data-popped-out={poppedOut ? '' : undefined}
         data-slot="composer-root"
         data-status-stack={statusStackVisible ? '' : undefined}
         data-thread-scrolled-up={scrolledUp ? '' : undefined}
+        onPointerDown={popoutAllowed ? onComposerGesturePointerDown : undefined}
         onSubmit={e => {
           e.preventDefault()
           if (composingRef.current) return
           submit()
         }}
         ref={composerRef}
+        style={
+          poppedOut
+            ? {
+                bottom: `${popoutPosition.bottom}px`,
+                right: `${popoutPosition.right}px`,
+                ['--composer-popout-width' as string]: `${POPOUT_WIDTH_REM}rem`
+              }
+            : undefined
+        }
       >
         {isHelpHint && <HelpHint />}
         {trigger && (
@@ -451,10 +493,24 @@ export function ChatBar({ onSubmit, onCancel }: ChatBarProps) {
           }
           sessionId={sessionId}
         />
-        <div
-          className="pointer-events-none absolute inset-0 rounded-[inherit]"
-          style={{ background: COMPOSER_FADE_BACKGROUND }}
-        />
+        {!poppedOut && (
+          <div
+            className="pointer-events-none absolute inset-0 rounded-[inherit]"
+            style={{ background: COMPOSER_FADE_BACKGROUND }}
+          />
+        )}
+        {/* Drag region: covers the transparent grab margin around the surface.
+            The surface sits on top (z-4) so only the exposed ring receives the
+            grab cursor + double-click-to-toggle — never over the input. */}
+        {popoutAllowed && (
+          <div
+            aria-hidden
+            className={cn('pointer-events-auto absolute inset-0', dragging ? 'cursor-grabbing' : 'cursor-grab')}
+            data-dragging={dragging ? '' : undefined}
+            data-slot="composer-drag-region"
+            onDoubleClick={handleComposerToggle}
+          />
+        )}
         <div className="relative w-full rounded-[inherit]">
           <div
             className={cn(
@@ -491,7 +547,7 @@ export function ChatBar({ onSubmit, onCancel }: ChatBarProps) {
               {staged.length > 0 && (
                 <AttachmentList
                   attachments={staged}
-                  onRemove={index => setStaged(prev => prev.filter((_, j) => j !== index))}
+                  onRemove={removeStagedAt}
                 />
               )}
               <div
@@ -573,7 +629,7 @@ export function ChatBar({ onSubmit, onCancel }: ChatBarProps) {
                     busy={busy}
                     busyAction={busyAction}
                     canSubmit={canSubmit}
-                    compactModelPill={compactPill}
+                    compactModelPill={poppedOut || compactPill}
                     dictationActive={voiceStatus !== 'idle'}
                     dictationEnabled={!voice.transcribing}
                     dictationStatus={voiceStatus}
