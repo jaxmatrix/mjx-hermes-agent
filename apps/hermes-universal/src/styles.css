@@ -724,12 +724,25 @@ body {
 
 /* ── Chat ── */
 .chat {
-  height: 100%;
+  /* Fill the parent flex column via flex-grow (NOT height:100%). The chat is
+     always a direct child of a flex-col parent (mobile <main>, or the wide
+     PaneMain wrapper which adds pt-(--titlebar-height)); height:100% resolves
+     against the padded box on WebKitGTK and pushed the composer off-screen. */
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   /* Positioning context for the out-of-flow floating scroll-to-bottom button
      (see scroll-to-bottom-button.tsx), which anchors above the composer footer. */
   position: relative;
+}
+/* The chat thread scroller owns its own stick-to-bottom scroll and is excluded
+   from OverlayScrollbars (see lib/scrollbars.ts). Give it a slim native scrollbar
+   where the standard CSS scrollbar properties are supported (recent WebKitGTK);
+   older engines fall back to the default bar. */
+[data-slot='aui_thread-viewport'] {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ui-text-tertiary) 40%, transparent) transparent;
 }
 .chat-header {
   display: flex;
@@ -1484,7 +1497,16 @@ html {
   );
 }
 
+/* Docked (default): the grab margin is thin, so WebKitGTK's already-dense hatch
+   reads as too heavy — dial it to ~60% of the prior 0.5 strength. */
 [data-slot='composer-drag-region']:hover,
 [data-slot='composer-drag-region'][data-dragging] {
-  opacity: 0.5;
+  opacity: 0.3;
+}
+
+/* Floating (popped-out): a full 5px grab margin all around gives the hatch more
+   room, so keep it a touch stronger — ~80% of the prior 0.5. */
+[data-popped-out] [data-slot='composer-drag-region']:hover,
+[data-popped-out] [data-slot='composer-drag-region'][data-dragging] {
+  opacity: 0.4;
 }
