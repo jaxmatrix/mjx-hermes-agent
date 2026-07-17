@@ -1471,18 +1471,20 @@ html {
   border-radius: 0.4rem;
   opacity: 0;
   transition: opacity 150ms ease;
-  /* Denser hatch than desktop's 3.5px pitch — tighter diagonal lines read as a
-     more tactile "grab here" ring around the input. */
+  /* Desktop's hatch is a 1px line at ~7% effective ink — crisp on Chromium, but
+     the Tauri Linux WebKitGTK webview softens thin translucent diagonals so much
+     they wash out. Compensate with THICKER (1.5px) + more OPAQUE lines at a
+     tighter 3px pitch so it reads like desktop's dense grab hatch. */
   background-image: repeating-linear-gradient(
     -45deg,
-    color-mix(in srgb, var(--ui-text-tertiary) 42%, transparent) 0,
-    color-mix(in srgb, var(--ui-text-tertiary) 42%, transparent) 1px,
-    transparent 1px,
-    transparent 2.5px
+    color-mix(in srgb, var(--ui-text-tertiary) 68%, transparent) 0,
+    color-mix(in srgb, var(--ui-text-tertiary) 68%, transparent) 1.5px,
+    transparent 1.5px,
+    transparent 3px
   );
 }
 
 [data-slot='composer-drag-region']:hover,
 [data-slot='composer-drag-region'][data-dragging] {
-  opacity: 0.33;
+  opacity: 0.5;
 }
