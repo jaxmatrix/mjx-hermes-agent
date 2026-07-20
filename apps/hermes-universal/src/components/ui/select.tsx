@@ -1,12 +1,10 @@
 import { Select as SelectPrimitive } from 'radix-ui'
 import * as React from 'react'
 
+import { Codicon } from '@/components/ui/codicon'
 import { type ControlVariantProps, controlVariants } from '@/components/ui/control'
-import { Check, ChevronDown } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
-// Ported from apps/desktop/src/components/ui/select.tsx. Codicon chevron/check
-// swapped for Tabler icons; item rows sized up for touch.
 function Select({ ...props }: React.ComponentProps<typeof SelectPrimitive.Root>) {
   return <SelectPrimitive.Root data-slot="select" {...props} />
 }
@@ -29,7 +27,7 @@ function SelectTrigger({
     >
       {children}
       <SelectPrimitive.Icon asChild>
-        <ChevronDown className="size-4 opacity-60" />
+        <Codicon className="opacity-60" name="chevron-down" size="1rem" />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   )
@@ -71,11 +69,25 @@ function SelectContent({
   )
 }
 
+function SelectGroup({ ...props }: React.ComponentProps<typeof SelectPrimitive.Group>) {
+  return <SelectPrimitive.Group data-slot="select-group" {...props} />
+}
+
+function SelectLabel({ className, ...props }: React.ComponentProps<typeof SelectPrimitive.Label>) {
+  return (
+    <SelectPrimitive.Label
+      className={cn('px-2 py-1.5 text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground', className)}
+      data-slot="select-label"
+      {...props}
+    />
+  )
+}
+
 function SelectItem({ className, children, ...props }: React.ComponentProps<typeof SelectPrimitive.Item>) {
   return (
     <SelectPrimitive.Item
       className={cn(
-        'relative flex w-full cursor-pointer items-center gap-2 rounded-sm py-2 pr-8 pl-2.5 text-sm outline-none select-none focus:bg-accent focus:text-accent-foreground data-disabled:pointer-events-none data-disabled:cursor-default data-disabled:opacity-50',
+        'relative flex w-full cursor-pointer items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-xs outline-none select-none focus:bg-accent focus:text-accent-foreground data-disabled:pointer-events-none data-disabled:cursor-default data-disabled:opacity-50',
         className
       )}
       data-slot="select-item"
@@ -83,7 +95,7 @@ function SelectItem({ className, children, ...props }: React.ComponentProps<type
     >
       <span className="absolute right-2 flex size-3.5 items-center justify-center">
         <SelectPrimitive.ItemIndicator>
-          <Check className="size-4" />
+          <Codicon name="check" size="1rem" />
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
@@ -91,4 +103,4 @@ function SelectItem({ className, children, ...props }: React.ComponentProps<type
   )
 }
 
-export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue }
+export { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue }

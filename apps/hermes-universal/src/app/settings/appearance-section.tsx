@@ -13,7 +13,7 @@ import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $embedAllowed, $embedMode, clearEmbedAllowed, type EmbedMode, setEmbedMode } from '@/store/embed-consent'
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 import { installFromMarketplace, type MarketplaceSearchItem, searchMarketplace } from '@/store/marketplace'
 import { $toolViewMode, setToolViewMode, type ToolViewMode } from '@/store/tool-view'
 import { $translucency, setTranslucency } from '@/store/translucency'
@@ -111,7 +111,7 @@ function MarketplaceThemeResults({
     const owned = installs.get(item.extensionId)
 
     if (owned) {
-      triggerHaptic('select')
+      triggerHaptic('selection')
       onInstalled(owned.name)
 
       return
@@ -131,7 +131,7 @@ function MarketplaceThemeResults({
     try {
       const theme = await installFromMarketplace(item.extensionId)
 
-      triggerHaptic('select')
+      triggerHaptic('selection')
       onInstalled(theme.name)
     } catch (e) {
       setError(e instanceof Error ? e.message : copy.error)
@@ -311,7 +311,7 @@ export function AppearanceSection() {
                             <button
                               className={cn('w-full p-2 text-left', selectableCardClass({ active, prominent: true }))}
                               onClick={() => {
-                                triggerHaptic('select')
+                                triggerHaptic('selection')
                                 setTheme(theme.name)
                               }}
                               type="button"
@@ -331,7 +331,7 @@ export function AppearanceSection() {
                                 aria-label={a.removeTheme}
                                 className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-md bg-(--ui-bg-elevated)/80 text-(--ui-text-tertiary) opacity-0 backdrop-blur-sm transition hover:text-(--ui-red) focus-visible:opacity-100 group-hover:opacity-100"
                                 onClick={() => {
-                                  triggerHaptic('select')
+                                  triggerHaptic('selection')
                                   removeUserTheme(theme.name)
                                   if (active) {
                                     setTheme(theme.name)
@@ -360,7 +360,7 @@ export function AppearanceSection() {
                 <span>{a.themeTitle}</span>
                 <SegmentedControl
                   onChange={id => {
-                    triggerHaptic('select')
+                    triggerHaptic('selection')
                     setMode(id)
                   }}
                   options={modeOptions}
@@ -376,7 +376,7 @@ export function AppearanceSection() {
             action={
               <SegmentedControl
                 onChange={id => {
-                  triggerHaptic('select')
+                  triggerHaptic('selection')
                   setZoomPercent(Number(id))
                 }}
                 options={uiScaleOptions}
@@ -398,7 +398,7 @@ export function AppearanceSection() {
                     max={100}
                     min={0}
                     onChange={event => {
-                      triggerHaptic('select')
+                      triggerHaptic('selection')
                       setTranslucency(Number(event.target.value))
                     }}
                     step={5}
@@ -421,7 +421,7 @@ export function AppearanceSection() {
             action={
               <SegmentedControl
                 onChange={id => {
-                  triggerHaptic('select')
+                  triggerHaptic('selection')
                   setToolViewMode(id as ToolViewMode)
                 }}
                 options={toolOptions}
@@ -438,7 +438,7 @@ export function AppearanceSection() {
               <div className="flex flex-col items-end gap-1.5">
                 <SegmentedControl
                   onChange={id => {
-                    triggerHaptic('select')
+                    triggerHaptic('selection')
                     setEmbedMode(id as EmbedMode)
                   }}
                   options={embedOptions}
@@ -447,7 +447,7 @@ export function AppearanceSection() {
                 {embedAllowed.length > 0 && (
                   <Button
                     onClick={() => {
-                      triggerHaptic('select')
+                      triggerHaptic('selection')
                       clearEmbedAllowed()
                     }}
                     size="inline"

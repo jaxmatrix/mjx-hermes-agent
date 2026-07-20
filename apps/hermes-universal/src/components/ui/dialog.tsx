@@ -2,15 +2,10 @@ import { Dialog as DialogPrimitive } from 'radix-ui'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { X } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-
-// Adapted from apps/desktop/src/components/ui/dialog.tsx. Same export set + props
-// (showCloseButton / fitContent / banner / bannerTone) so ported desktop dialogs
-// are drop-in. Differences: keyed to the A2 named-token contract (bg-card /
-// border-border / text-muted-foreground) instead of the desktop conversation/
-// chrome tokens, and mobile-width sizing. The close label is i18n'd (t.common.close).
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -43,11 +38,26 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
 
 type DialogBannerTone = 'error' | 'warn' | 'info'
 
-// Tinted, edge-to-edge bottom banner per tone (see DialogContent's `banner`).
+// Tinted, edge-to-edge bottom banner per tone. Error/warn keep their semantic
+// destructive/primary tokens; info derives from the dialog's own bubble
+// background so it reads as part of the themed dialog — lifted 30% toward white
+// in light mode, deepened 20% toward black in dark mode.
 const DIALOG_BANNER_TONES: Record<DialogBannerTone, string> = {
   error: 'bg-destructive/12 text-destructive',
   warn: 'bg-primary/12 text-primary',
-  info: 'bg-muted text-foreground'
+  info: 'bg-[color-mix(in_srgb,var(--ui-chat-bubble-background),white_30%)] text-[color-mix(in_srgb,var(--ui-chat-bubble-background),black_60%)] dark:bg-[color-mix(in_srgb,var(--ui-chat-bubble-background),black_20%)] dark:text-[color-mix(in_srgb,var(--ui-chat-bubble-background),white_60%)]'
+}
+
+// Radix focuses the first focusable element inside Dialog.Content on open. In
+// most dialogs that's a real input and the default autofocus is exactly what
+// we want, so it's opt-in rather than a shared default here. In dialogs with
+// no input (e.g. the updates overlay's idle/error views), the first focusable
+// element ends up being the close button, and since Tip shows on focus as well
+// as hover, that autofocus makes the "Close" tip appear immediately with no
+// pointer ever near the button. Dialogs like that should pass this in
+// explicitly as `onOpenAutoFocus={preventCloseButtonAutoFocus}`.
+export function preventCloseButtonAutoFocus(event: Event) {
+  event.preventDefault()
 }
 
 function DialogContent({
@@ -57,52 +67,79 @@ function DialogContent({
   fitContent = false,
   banner,
   bannerTone = 'error',
+  onOpenAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
-  // Size to content (capped) instead of the default max-w-lg.
+  // Size the dialog to its content (capped at the viewport) instead of the
+  // default fixed `max-w-lg`. For content that has no intrinsic width (grids,
+  // full-width inputs) pair it with a `min-w-*` in `className`.
   fitContent?: boolean
-  // Dialog-level notice rendered flush to the bottom edge. Falsy → none.
+  // A dialog-level notice rendered as a banner flush to the bottom edge (tinted,
+  // inherited bottom radius) so it reads as part of the dialog, not a floating
+  // alert. Falsy → no banner. Tone picks the colour.
   banner?: React.ReactNode
   bannerTone?: DialogBannerTone
 }) {
   const { t } = useI18n()
-  const widthClass = fitContent ? 'w-auto max-w-[92vw]' : 'w-full max-w-[calc(100%-2rem)] sm:max-w-lg'
 
+  const widthClass = fitContent ? 'w-auto max-w-[92vw]' : 'w-full max-w-lg'
+
+  // No default here — Radix's normal autofocus (first focusable element, often
+  // an input) is what most dialogs want. Dialogs with no input should pass
+  // `onOpenAutoFocus={preventCloseButtonAutoFocus}` explicitly instead.
+
+  // `Tip` wraps `DialogPrimitive.Close asChild` (not the other way around) so
+  // Radix's `Slot` can forward `Close`'s `onClick` straight through to the
+  // `Button`. When `Tip` was the innermost wrapper, `onClick` was absorbed by
+  // `Tip`'s passthrough `...props` and forwarded to `TooltipContent` instead of
+  // the button, so clicking the close button silently did nothing.
   const closeButton = showCloseButton ? (
-    <DialogPrimitive.Close asChild data-slot="dialog-close-button">
-      <Button
-        aria-label={t.common.close}
-        className="absolute right-2 top-2 z-20 text-muted-foreground hover:bg-accent hover:text-foreground"
-        size="icon-sm"
-        variant="ghost"
-      >
-        <X className="size-4" />
-        <span className="sr-only">{t.common.close}</span>
-      </Button>
-    </DialogPrimitive.Close>
+    <Tip label={t.common.close}>
+      <DialogPrimitive.Close asChild data-slot="dialog-close-button">
+        <Button
+          aria-label={t.common.close}
+          className="absolute right-2.5 top-2.5 z-20 text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground"
+          size="icon-xs"
+          variant="ghost"
+        >
+          <X className="size-4" />
+          <span className="sr-only">{t.common.close}</span>
+        </Button>
+      </DialogPrimitive.Close>
+    </Tip>
   ) : null
 
+  // With a banner, the border can't live on the scroll/clip box (it would draw a
+  // line around the banner too). The white body keeps its own bottom radius and
+  // sits over the tinted footer; the outer shell only clips the banner to the
+  // dialog's rounded bottom edge.
   if (banner) {
     return (
       <DialogPortal>
         <DialogOverlay />
         <DialogPrimitive.Content
           className={cn(
-            'fixed left-1/2 top-1/2 z-[130] pointer-events-auto flex max-h-[85vh] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl bg-card text-sm text-foreground shadow-lg duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+            'fixed left-1/2 top-1/2 z-[130] pointer-events-auto flex max-h-[85vh] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl bg-(--ui-chat-bubble-background) text-[length:var(--conversation-text-font-size)] text-foreground shadow-nous duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
             widthClass,
             className,
+            // Callers often pass `gap-*` for the no-banner grid layout — suppress
+            // it here so the banner can tuck under the body's rounded bottom edge.
             'gap-0'
           )}
           data-slot="dialog-content"
+          onOpenAutoFocus={onOpenAutoFocus}
           {...props}
         >
-          <div className="relative z-10 overflow-hidden rounded-xl border border-b-0 border-border bg-card">
+          {/* Scroll lives on an inner box so this shell keeps a painted bottom radius. */}
+          <div className="relative z-10 overflow-hidden rounded-xl border border-b-0 border-(--stroke-nous) bg-(--ui-chat-bubble-background)">
             <div className="grid max-h-[calc(85vh-5rem)] min-h-0 gap-3 overflow-y-auto p-4">{children}</div>
           </div>
           <div
             className={cn(
-              'relative z-0 -mt-[var(--radius-xl)] px-4 pb-2.5 pt-[calc(var(--radius-xl)+0.625rem)] text-center text-sm leading-relaxed',
+              // Overlap by one corner radius so the white bottom lobes read clearly
+              // over the tint instead of meeting it on a straight seam.
+              'relative z-0 -mt-[var(--radius-xl)] px-4 pb-2.5 pt-[calc(var(--radius-xl)+0.625rem)] text-center text-[length:var(--conversation-tool-font-size)] leading-relaxed shadow-[inset_0_7px_7px_-4px_rgb(0_0_0/0.28)]',
               DIALOG_BANNER_TONES[bannerTone]
             )}
             data-slot="dialog-banner"
@@ -121,11 +158,15 @@ function DialogContent({
       <DialogOverlay />
       <DialogPrimitive.Content
         className={cn(
-          'fixed left-1/2 top-1/2 z-[130] pointer-events-auto grid max-h-[85vh] -translate-x-1/2 -translate-y-1/2 gap-3 overflow-y-auto rounded-xl border border-border bg-card p-4 text-sm text-foreground shadow-lg duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+          // Cap height at 85vh and let long content scroll inside the dialog
+          // instead of overflowing off-screen (long cron titles, tool detail
+          // dumps, etc.). Individual dialogs can still override via className.
+          'fixed left-1/2 top-1/2 z-[130] pointer-events-auto grid max-h-[85vh] -translate-x-1/2 -translate-y-1/2 gap-3 overflow-y-auto rounded-xl border border-(--stroke-nous) bg-(--ui-chat-bubble-background) p-4 text-[length:var(--conversation-text-font-size)] text-foreground shadow-nous duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
           widthClass,
           className
         )}
         data-slot="dialog-content"
+        onOpenAutoFocus={onOpenAutoFocus}
         {...props}
       >
         {children}
@@ -137,7 +178,11 @@ function DialogContent({
 
 function DialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
   return (
-    <div className={cn('flex flex-col gap-1 text-center sm:text-left', className)} data-slot="dialog-header" {...props} />
+    <div
+      className={cn('flex flex-col gap-1 text-center sm:text-left', className)}
+      data-slot="dialog-header"
+      {...props}
+    />
   )
 }
 
@@ -157,12 +202,18 @@ function DialogTitle({
   children,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Title> & {
-  // Pass an icon (from @/lib/icons) for the canonical primary-tinted header glyph.
+  // Pass an icon (from `@/lib/icons`) to get the canonical dialog-header glyph: a plain
+  // primary-tinted icon inline with the title (no bg chip / ring). This is the
+  // single source of truth for dialog header icons — don't hand-roll wrappers.
   icon?: React.ComponentType<{ className?: string }>
 }) {
   return (
     <DialogPrimitive.Title
-      className={cn('text-base font-semibold tracking-tight text-foreground', Icon && 'flex items-center gap-2', className)}
+      className={cn(
+        'text-[0.9375rem] font-semibold tracking-tight text-foreground',
+        Icon && 'flex items-center gap-2',
+        className
+      )}
       data-slot="dialog-title"
       {...props}
     >
@@ -175,7 +226,10 @@ function DialogTitle({
 function DialogDescription({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Description>) {
   return (
     <DialogPrimitive.Description
-      className={cn('text-sm leading-normal text-muted-foreground', className)}
+      className={cn(
+        'text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) text-(--ui-text-tertiary)',
+        className
+      )}
       data-slot="dialog-description"
       {...props}
     />

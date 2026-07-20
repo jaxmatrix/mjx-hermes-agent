@@ -1,5 +1,8 @@
 import { useState } from 'react'
 
+import { RequestBar, RequestBarActions, RequestBarDescription } from '@/app/chat/request-bar'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { respondSecret, type SecretRequest } from '@/store/chat'
 
 export function SecretBar({ request }: { request: SecretRequest }) {
@@ -8,27 +11,21 @@ export function SecretBar({ request }: { request: SecretRequest }) {
     if (value) void respondSecret(value)
   }
   return (
-    <div className="approval">
-      <div className="approval-head">Secret required{request.envVar ? `: ${request.envVar}` : ''}</div>
-      {request.prompt && (
-        <div className="approval-desc" style={{ fontFamily: 'inherit' }}>
-          {request.prompt}
-        </div>
-      )}
-      <input
+    <RequestBar title={`Secret required${request.envVar ? `: ${request.envVar}` : ''}`}>
+      {request.prompt && <RequestBarDescription>{request.prompt}</RequestBarDescription>}
+      <Input
         autoFocus
-        className="field"
         onChange={e => setValue(e.target.value)}
         onKeyDown={e => e.key === 'Enter' && submit()}
         placeholder={request.envVar || 'Value'}
         type="password"
         value={value}
       />
-      <div className="approval-actions">
-        <button className="btn btn-sm btn-primary" disabled={!value} onClick={submit}>
+      <RequestBarActions>
+        <Button disabled={!value} onClick={submit} size="sm">
           Submit
-        </button>
-      </div>
-    </div>
+        </Button>
+      </RequestBarActions>
+    </RequestBar>
   )
 }

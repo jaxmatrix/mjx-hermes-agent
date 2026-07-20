@@ -1,6 +1,6 @@
 import type { StagedAttachment } from '@/app/chat/attachments'
 import { Codecs, persistentAtom } from '@/lib/persisted'
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 import { atom } from '@/store/atom'
 
 // ===========================================================================

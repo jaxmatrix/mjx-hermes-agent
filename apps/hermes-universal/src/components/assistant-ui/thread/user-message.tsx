@@ -7,7 +7,7 @@ import { UserMessageText } from '@/components/assistant-ui/thread/user-message-t
 import { Codicon } from '@/components/ui/codicon'
 import { useResizeObserver } from '@/hooks/use-resize-observer'
 import { useI18n } from '@/i18n'
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 import { StopFilled } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
@@ -241,7 +241,7 @@ export const UserMessage: FC<{
                 <button
                   aria-label={copy.editMessage}
                   className={bubbleClassName}
-                  onClick={() => void triggerHaptic('select')}
+                  onClick={() => void triggerHaptic('selection')}
                   title={copy.editMessage}
                   type="button"
                 >
@@ -271,7 +271,7 @@ export const UserMessage: FC<{
                       onClick={event => {
                         event.preventDefault()
                         event.stopPropagation()
-                        void triggerHaptic('select')
+                        void triggerHaptic('selection')
                         onRequestRestoreConfirm?.(messageId, {
                           text: messageText,
                           userOrdinal: runtimeUserOrdinal

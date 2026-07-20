@@ -15,7 +15,7 @@ export function ConnectScreen() {
       <div className="connect-card">
         <div className="brand">Hermes</div>
         <h1 className="connect-title">Connect to Hermes</h1>
-        {connectError && <div className="error-line">{connectError}</div>}
+        {connectError && <div className="text-[0.8125rem] text-destructive">{connectError}</div>}
         <GatewayConfigurator variant="onboarding" />
       </div>
     </main>

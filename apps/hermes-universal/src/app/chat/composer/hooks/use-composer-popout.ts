@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { type RefObject, useCallback, useEffect } from 'react'
 
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 import {
   $composerPopoutPosition,
   $composerPoppedOut,

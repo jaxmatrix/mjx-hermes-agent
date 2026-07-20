@@ -1,30 +1,34 @@
+import { RequestBar, RequestBarActions, RequestBarDescription } from '@/app/chat/request-bar'
+import { Button, type buttonVariants } from '@/components/ui/button'
 import { type ApprovalChoice, type ApprovalRequest, respondApproval } from '@/store/chat'
 
-const CHOICES: { choice: ApprovalChoice; label: string; kind: string }[] = [
-  { choice: 'once', label: 'Allow once', kind: 'primary' },
-  { choice: 'session', label: 'Allow session', kind: 'soft' },
-  { choice: 'always', label: 'Always', kind: 'soft' },
-  { choice: 'deny', label: 'Deny', kind: 'danger' }
+type Variant = NonNullable<Parameters<typeof buttonVariants>[0]>['variant']
+
+const CHOICES: { choice: ApprovalChoice; label: string; variant: Variant }[] = [
+  { choice: 'once', label: 'Allow once', variant: 'default' },
+  { choice: 'session', label: 'Allow session', variant: 'secondary' },
+  { choice: 'always', label: 'Always', variant: 'secondary' },
+  { choice: 'deny', label: 'Deny', variant: 'destructive' }
 ]
 
 export function ApprovalBar({ request }: { request: ApprovalRequest }) {
   return (
-    <div className="approval">
-      <div className="approval-head">Approval needed</div>
-      <div className="approval-desc">{request.command || request.description}</div>
-      <div className="approval-actions">
+    <RequestBar title="Approval needed">
+      <RequestBarDescription mono>{request.command || request.description}</RequestBarDescription>
+      <RequestBarActions>
         {CHOICES.filter(c => c.choice !== 'always' || request.allowPermanent).map(c => (
-          <button
+          <Button
             key={c.choice}
-            className={`btn btn-sm btn-${c.kind}`}
             onClick={() => {
               void respondApproval(c.choice)
             }}
+            size="sm"
+            variant={c.variant}
           >
             {c.label}
-          </button>
+          </Button>
         ))}
-      </div>
-    </div>
+      </RequestBarActions>
+    </RequestBar>
   )
 }

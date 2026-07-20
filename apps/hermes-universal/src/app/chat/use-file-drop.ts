@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { stageAttachmentFromPath, stagedToComposerAttachment } from '@/app/chat/attachments'
 import { IS_DESKTOP } from '@/lib/platform'
 import { mainComposerScope } from '@/store/composer'
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 
 // OS file drag-and-drop into the chat (desktop parity). Tauri v2 intercepts
 // external file drops at the window level (HTML5 drop events are suppressed
@@ -43,7 +43,7 @@ export function useFileDrop(): { dragActive: boolean } {
               staged = true
             }
           }
-          if (staged) void triggerHaptic('select')
+          if (staged) void triggerHaptic('selection')
         })()
       }
     })

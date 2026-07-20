@@ -39,7 +39,7 @@ export function SessionRow({ session, active, onOpen }: { session: SessionInfo; 
     <div className={cn('flex items-center gap-1 rounded-md pr-1 hover:bg-accent', active && 'bg-accent')}>
       <button className="min-w-0 flex-1 px-3 py-2.5 text-left" onClick={open} type="button">
         <div className="flex items-center gap-2">
-          {session.is_active && <span className="size-2 shrink-0 rounded-full bg-[var(--ui-good)]" />}
+          {session.is_active && <span className="size-2 shrink-0 rounded-full bg-[var(--ui-green)]" />}
           <span className="truncate text-sm font-medium text-foreground">{session.title || 'Untitled'}</span>
         </div>
         <div className="text-xs text-muted-foreground">

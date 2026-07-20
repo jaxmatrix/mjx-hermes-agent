@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 import { notify, notifyError } from '@/store/notifications'
 import { renameSessionLocal } from '@/store/session'
 
@@ -48,7 +48,7 @@ function useSessionActions({ sessionId, title, pinned = false, onPin, onArchive,
       icon: 'pin',
       label: pinned ? r.unpin : r.pin,
       onSelect: () => {
-        void triggerHaptic('select')
+        void triggerHaptic('selection')
         onPin?.()
       }
     },
@@ -65,7 +65,7 @@ function useSessionActions({ sessionId, title, pinned = false, onPin, onArchive,
       icon: 'edit',
       label: r.rename,
       onSelect: () => {
-        void triggerHaptic('select')
+        void triggerHaptic('selection')
         setRenameOpen(true)
       }
     },
@@ -74,7 +74,7 @@ function useSessionActions({ sessionId, title, pinned = false, onPin, onArchive,
       icon: 'archive',
       label: r.archive,
       onSelect: () => {
-        void triggerHaptic('select')
+        void triggerHaptic('selection')
         onArchive?.()
       }
     },

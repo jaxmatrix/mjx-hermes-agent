@@ -18,7 +18,7 @@ import { useStore } from '@/store/atom'
 import { $busy, $currentCwd, $sessionId, $statusLine, $approval, $clarify, $secret, $sudo, sendPrompt } from '@/store/chat'
 import { type ComposerAttachment, mainComposerScope } from '@/store/composer'
 import { $gatewayState, getGatewayClient, requestGateway } from '@/store/gateway'
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 import { $currentModel, $currentProvider, refreshCurrentModel, selectModel } from '@/store/model'
 import { useSkinCommand } from '@/themes'
 
@@ -125,7 +125,9 @@ export function ChatScreen() {
         <ScrollToBottomButton />
         {barsPresent && (
           <div className="composer-bars">
-            {busy && statusLine && <div className="status-line">{statusLine}</div>}
+            {busy && statusLine && (
+              <div className="pl-0.5 text-[0.8125rem] text-muted-foreground">{statusLine}</div>
+            )}
             {approval && <ApprovalBar request={approval} />}
             {clarify && <ClarifyBar request={clarify} />}
             {sudo && <SudoBar request={sudo} />}

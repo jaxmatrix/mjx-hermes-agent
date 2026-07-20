@@ -4,12 +4,12 @@ import { HashRouter } from 'react-router-dom'
 
 import { App } from './app'
 import { ErrorBoundary } from './components/error-boundary'
+import { HapticsProvider } from './components/haptics-provider'
 import { I18nProvider } from './i18n'
 import { queryClient } from './lib/query-client'
 import { restoreSessionCookies } from './lib/session-persist'
 import { autoRestoreConnection } from './store/gateway-restore'
 import { ThemeProvider } from './themes'
-import '@fontsource-variable/inter/wght.css'
 import 'katex/dist/katex.min.css'
 import '@vscode/codicons/dist/codicon.css'
 import 'overlayscrollbars/overlayscrollbars.css'
@@ -34,9 +34,11 @@ createRoot(container).render(
     <I18nProvider>
       <ThemeProvider>
         <QueryClientProvider client={queryClient}>
-          <HashRouter>
-            <App />
-          </HashRouter>
+          <HapticsProvider>
+            <HashRouter>
+              <App />
+            </HashRouter>
+          </HapticsProvider>
         </QueryClientProvider>
       </ThemeProvider>
     </I18nProvider>

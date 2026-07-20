@@ -6,7 +6,7 @@ import { useI18n } from '@/i18n'
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 import { $notifications, type AppNotification, dismissNotification, type NotificationKind } from '@/store/notifications'
 
 // Lean mobile toast stack (the desktop NotificationStack's dual-placement +

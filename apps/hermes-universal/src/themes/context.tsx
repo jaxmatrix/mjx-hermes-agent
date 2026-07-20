@@ -126,6 +126,7 @@ function renderedModeFor(colors: DesktopThemeColors, mode: 'light' | 'dark'): 'l
 // `:root.dark`; setting them inline keeps active-skin overrides in force.
 const mixesFor = (isDark: boolean): Record<string, string> => ({
   '--theme-mix-chrome': isDark ? '74%' : '92%',
+  '--theme-mix-sidebar': '100%',
   '--theme-mix-card': isDark ? '38%' : '22%',
   '--theme-mix-elevated': isDark ? '46%' : '28%',
   '--theme-mix-bubble': isDark ? '46%' : '0%'
@@ -182,7 +183,8 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark') {
     '--dt-sidebar-border': c.sidebarBorder ?? c.border,
     '--dt-user-bubble-border': c.userBubbleBorder ?? c.border,
     '--dt-font-sans': typo.fontSans,
-    '--dt-font-mono': typo.fontMono
+    '--dt-font-mono': typo.fontMono,
+    '--noise-opacity-mul': isDark ? 'calc(0.04 / 0.21)' : 'calc(0.34 / 0.21)'
   }
 
   for (const [k, v] of Object.entries({ ...seeds, ...mixesFor(isDark), ...palette })) {

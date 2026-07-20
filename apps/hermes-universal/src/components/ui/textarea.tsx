@@ -1,14 +1,14 @@
 import * as React from 'react'
 
-import { type ControlVariantProps, controlVariants } from '@/components/ui/control'
 import { cn } from '@/lib/utils'
 
-// Ported from apps/desktop/src/components/ui/textarea.tsx — shares the control
-// chrome (controlVariants). Autocorrect/spellcheck default off (these edit
-// config/code/prompt text, not prose).
+import { type ControlVariantProps, controlVariants } from './control'
+
 function Textarea({ className, size, ...props }: React.ComponentProps<'textarea'> & ControlVariantProps) {
   return (
     <textarea
+      // Off by default for every consumer — these are code/config/prompt fields,
+      // not prose. Callers can re-enable per-instance by passing the prop.
       autoCapitalize="off"
       autoComplete="off"
       autoCorrect="off"

@@ -5,11 +5,9 @@ import { Codicon } from '@/components/ui/codicon'
 import { cn } from '@/lib/utils'
 
 /**
- * Compact "Label ▾" chrome trigger. Ported verbatim from desktop
- * (apps/desktop/src/components/ui/title-menu-trigger.tsx); dropped the
- * Electron-only `[-webkit-app-region:no-drag]` (universal isn't in a drag band
- * here). Drop in as the child of a `DropdownMenuTrigger asChild` (or any asChild
- * menu trigger); the menu owner supplies the menu, this owns the trigger look.
+ * Compact "Label ▾" chrome trigger. Domain-agnostic — drop in as the child of
+ * `DropdownMenuTrigger asChild` (or any asChild menu trigger). Sessions,
+ * projects, filters, etc. own their menus; this only owns the trigger look.
  */
 export function TitleMenuTrigger({
   children,
@@ -21,7 +19,7 @@ export function TitleMenuTrigger({
   return (
     <Button
       className={cn(
-        'pointer-events-auto flex h-6 min-w-0 max-w-full gap-1 overflow-hidden border border-transparent bg-transparent px-2 py-0 text-(--ui-text-secondary) hover:border-(--ui-stroke-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground data-[state=open]:border-(--ui-stroke-tertiary) data-[state=open]:bg-(--ui-control-active-background)',
+        'pointer-events-auto flex h-6 min-w-0 max-w-full gap-1 overflow-hidden border border-transparent bg-transparent px-2 py-0 text-(--ui-text-secondary) hover:border-(--ui-stroke-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground data-[state=open]:border-(--ui-stroke-tertiary) data-[state=open]:bg-(--ui-control-active-background) [-webkit-app-region:no-drag]',
         className
       )}
       type="button"
