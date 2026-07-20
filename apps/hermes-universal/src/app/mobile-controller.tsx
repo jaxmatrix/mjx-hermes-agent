@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useRef } from 'react'
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
 import { AgentsView } from '@/app/agents'
-import { ArtifactsScreen } from '@/app/artifacts/artifacts-screen'
+import { ArtifactsView } from '@/app/artifacts'
 import { ChatScreen } from '@/app/chat/chat-screen'
 import { CommandCenterScreen } from '@/app/command-center/command-center-screen'
 import { ConnectScreen } from '@/app/connect-screen'
@@ -158,7 +158,7 @@ export function MobileController() {
             {/* Skills + Toolsets; MCP/Hub tabs land in Kc7/Kc8. */}
             <Route element={<SkillsScreen />} path="/skills" />
             <Route element={<MessagingScreen />} path="/messaging" />
-            <Route element={<ArtifactsScreen />} path="/artifacts" />
+            <Route element={<ArtifactsView />} path="/artifacts" />
             <Route element={<CronScreen />} path="/cron" />
             {/* CRUD/soul view; active-profile switching lives in Settings → Gateway (E7). */}
             <Route element={<ProfilesScreen />} path="/profiles" />
