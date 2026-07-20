@@ -38,6 +38,18 @@ fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Reveal a path in the OS file manager (Finder/Explorer/Files), selecting the
+/// item. Routed through the opener plugin's Rust API — like `open_external`, a
+/// Rust-internal call isn't gated by the opener ACL/scope. Desktop-local only:
+/// the caller must ensure the path exists on this machine's disk.
+#[tauri::command]
+fn reveal_in_file_manager(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Install a rustls CryptoProvider process-wide before any TLS handshake.
@@ -69,6 +81,7 @@ pub fn run() {
             pty_resize,
             pty_kill,
             open_external,
+            reveal_in_file_manager,
             set_window_translucency,
             marketplace_search,
             marketplace_fetch,

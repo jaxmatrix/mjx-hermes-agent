@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
 import { useApprovalModeStatusbarItem } from '@/app/shell/approval-mode-menu'
@@ -7,19 +7,29 @@ import { GatewayMenuPanel } from '@/app/shell/gateway-menu-panel'
 import type { StatusbarItem } from '@/app/shell/statusbar-controls'
 import { Codicon } from '@/components/ui/codicon'
 import { useI18n } from '@/i18n'
-import { Activity, AlertCircle, Clock, Command, Hash, Loader2, Terminal } from '@/lib/icons'
-import { IS_MOBILE } from '@/lib/platform'
+import { Activity, AlertCircle, Clock, Command, FolderOpen, Hash, Loader2, Terminal } from '@/lib/icons'
+import { IS_DESKTOP, IS_MOBILE } from '@/lib/platform'
+import { revealPathInFileManager } from '@/lib/reveal-path'
 import { contextBarLabel, LiveDuration, usageContextLabel } from '@/lib/statusbar'
 import { cn } from '@/lib/utils'
+import { workspaceLabel } from '@/lib/workspace-path'
 import { AGENTS_ROUTE, appViewForPath, COMMAND_CENTER_ROUTE, CRON_ROUTE } from '@/app/routes'
 import { useStore } from '@/store/atom'
-import { $terminalOpen, toggleTerminalOpen } from '@/store/layout'
+import { $terminalOpen, revealFileInTree, toggleTerminalOpen } from '@/store/layout'
 import { $busy, $currentUsage, $sessionId, $sessionStartedAt, $turnStartedAt } from '@/store/chat'
 import { $connection, $status } from '@/store/connection'
 import { $gatewayState, requestGateway } from '@/store/gateway'
+import { notify } from '@/store/notifications'
 import { $activeProfile } from '@/store/profiles'
 import { activeSubagentCount, failedSubagentCount, $subagentsBySession } from '@/store/subagents'
 import { $appVersion, $gatewayRestarting, $inferenceStatus, $statusSnapshot } from '@/store/system-status'
+import { $workspaceCwd, ensureWorkspaceCwd } from '@/store/workspace-events'
+
+// Copy the absolute cwd to the clipboard, toasting on success (mirrors the
+// file-tree context menu's copy-path behavior).
+function copyWorkspacePath(cwd: string, copiedMsg: string): void {
+  void navigator.clipboard.writeText(cwd).then(() => notify({ kind: 'success', message: copiedMsg }))
+}
 
 // Ported/adapted from apps/desktop/src/app/shell/hooks/use-statusbar-items.tsx.
 // Assembles the left/right statusbar item descriptors from universal stores.
@@ -28,7 +38,8 @@ import { $appVersion, $gatewayRestarting, $inferenceStatus, $statusSnapshot } fr
 //     highlight from the current view) instead of toggling in-window panels;
 //   • version items link to the Command Center system panel (no client
 //     self-updater by design; the backend-update flow lives there);
-//   • workspace-cwd + terminal are deferred (see the FIXME markers below);
+//   • the workspace-cwd menu drops desktop's OS-reveal entry unless we're a
+//     desktop app on a LOCAL backend (the cwd is a remote path otherwise);
 //   • chrome-y items (command-center / cron / versions) hide on phones so the
 //     touch bar stays a compact live-status strip.
 
@@ -56,7 +67,9 @@ export function useStatusbarItems(): {
   const sessionId = useStore($sessionId)
   const subagentsBySession = useStore($subagentsBySession)
   const terminalOpen = useStore($terminalOpen)
+  const currentCwd = useStore($workspaceCwd)
 
+  const fileMenu = t.fileMenu
   const contextUsage = usageContextLabel(currentUsage)
   const contextBar = contextBarLabel(currentUsage)
   const approvalModeItem = useApprovalModeStatusbarItem(activeProfile ?? '', requestGateway)
@@ -75,6 +88,13 @@ export function useStatusbarItems(): {
   const gatewayConnecting = gatewayState === 'connecting'
   const inferenceReady = gatewayOpen && inferenceStatus?.ready === true
   const gatewayDegraded = gatewayOpen || gatewayConnecting
+
+  // Load the backend workspace root so the cwd segment can render. Re-runs when
+  // the gateway (re)opens: `resetWorkspaceCwd` clears it on reconnect, and
+  // `ensureWorkspaceCwd` no-ops when it's already loaded.
+  useEffect(() => {
+    if (gatewayOpen) void ensureWorkspaceCwd()
+  }, [gatewayOpen])
 
   const gatewayDetail = gatewayOpen
     ? inferenceStatus?.ready
@@ -132,9 +152,39 @@ export function useStatusbarItems(): {
       title: inferenceStatus?.reason || copy.gatewayTitle,
       variant: 'menu'
     },
-    // FIXME(statusbar-cwd): no per-session cwd atom on this client, and no
-    // clipboard / file-manager-reveal / file-tree capability on the remote+mobile
-    // target — so the desktop workspace-cwd item is deferred.
+    {
+      hidden: !currentCwd,
+      icon: <FolderOpen className="size-3" />,
+      id: 'workspace-cwd',
+      label: currentCwd ? workspaceLabel(currentCwd) : undefined,
+      menuItems: currentCwd
+        ? [
+            {
+              id: 'copy-workspace-path',
+              label: fileMenu.copyPath,
+              onSelect: () => copyWorkspacePath(currentCwd, fileMenu.pathCopied),
+              title: currentCwd
+            },
+            {
+              // OS reveal only makes sense on a desktop app talking to a local
+              // backend — on remote/cloud the cwd is a path on the remote box.
+              hidden: !(IS_DESKTOP && !isRemoteBackend),
+              id: 'reveal-workspace-finder',
+              label: fileMenu.revealFileManager,
+              onSelect: () => void revealPathInFileManager(currentCwd),
+              title: currentCwd
+            },
+            {
+              id: 'reveal-workspace-sidebar',
+              label: fileMenu.revealInSidebar,
+              onSelect: () => revealFileInTree(currentCwd),
+              title: currentCwd
+            }
+          ]
+        : undefined,
+      title: currentCwd || undefined,
+      variant: 'menu'
+    },
     {
       className: cn(
         view === 'agents' && 'bg-accent/55 text-foreground',
