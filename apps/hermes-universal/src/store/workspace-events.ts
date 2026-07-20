@@ -1,5 +1,6 @@
 import { getDefaultCwd } from '@/hermes'
-import { atom } from '@/store/atom'
+import { atom, computed, type ReadableAtom } from '@/store/atom'
+import { $currentCwd } from '@/store/chat'
 
 // Ported from desktop's store/workspace-events.ts. Bumped whenever the workspace
 // filesystem may have changed (a settled agent turn, an in-app file save) so the
@@ -35,6 +36,17 @@ export function ensureWorkspaceCwd(): Promise<string> {
 
   return cwdInflight
 }
+
+// What the UI should treat as "the current directory": the active chat's project
+// directory when it has one, else the backend workspace root. Chats can be
+// detached (no cwd), and on a fresh client no chat is open at all — both fall
+// back to the root so the file tree / statusbar / terminal always have somewhere
+// to point, rather than going blank (desktop shows an empty hint there instead,
+// but it always has a local FS to fall back on).
+export const $effectiveCwd: ReadableAtom<string> = computed(
+  [$currentCwd, $workspaceCwd],
+  (sessionCwd, workspaceRoot) => sessionCwd.trim() || workspaceRoot
+)
 
 export function resetWorkspaceCwd(): void {
   $workspaceCwd.set('')

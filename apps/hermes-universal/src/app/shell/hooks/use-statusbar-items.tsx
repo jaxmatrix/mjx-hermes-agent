@@ -23,7 +23,7 @@ import { notify } from '@/store/notifications'
 import { $activeProfile } from '@/store/profiles'
 import { activeSubagentCount, failedSubagentCount, $subagentsBySession } from '@/store/subagents'
 import { $appVersion, $gatewayRestarting, $inferenceStatus, $statusSnapshot } from '@/store/system-status'
-import { $workspaceCwd, ensureWorkspaceCwd } from '@/store/workspace-events'
+import { $effectiveCwd, ensureWorkspaceCwd } from '@/store/workspace-events'
 
 // Copy the absolute cwd to the clipboard, toasting on success (mirrors the
 // file-tree context menu's copy-path behavior).
@@ -67,7 +67,8 @@ export function useStatusbarItems(): {
   const sessionId = useStore($sessionId)
   const subagentsBySession = useStore($subagentsBySession)
   const terminalOpen = useStore($terminalOpen)
-  const currentCwd = useStore($workspaceCwd)
+  // The active chat's project directory, falling back to the workspace root.
+  const currentCwd = useStore($effectiveCwd)
 
   const fileMenu = t.fileMenu
   const contextUsage = usageContextLabel(currentUsage)

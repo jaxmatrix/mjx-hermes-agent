@@ -92,12 +92,18 @@ export const $sessionId = atom<string | null>(null)
 // so the "New session" heading updates on the fly once the title lands.
 export const $liveSessionTitle = atom<string>('')
 
-// FIXME(chat-port): universal has no live cwd atom (desktop's session store owns
-// $currentCwd, updated from session.info events). This is a minimal placeholder
-// so the tool renderer's path-shortening + preview-artifact recording can read a
-// cwd; it stays '' until a cwd feed is wired. Consumers must tolerate an empty
-// value (they do — path shortening falls back to the raw path).
+// The ACTIVE chat's working directory — its project directory. Every stored
+// session carries one (`SessionInfo.cwd`), so switching chats switches this:
+// restored on open/resume (store/session.ts), adopted on create (ensureSession),
+// and followed live via `session.info` when the agent relocates itself. Empty
+// for a detached chat (no project dir) — consumers should generally read
+// `$effectiveCwd` (store/workspace-events), which falls back to the workspace
+// root, rather than this raw value.
 export const $currentCwd = atom<string>('')
+
+export function setCurrentCwd(cwd: null | string | undefined): void {
+  $currentCwd.set(cwd?.trim() || '')
+}
 
 // --- Statusbar runtime signals (turn/session timers + live context usage) ---
 // Mirrors desktop's session-store $turnStartedAt/$sessionStartedAt/$currentUsage,
@@ -369,6 +375,25 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       break
     }
 
+    case 'session.info': {
+      // Runtime info for a session. The active chat's agent can relocate itself
+      // (entering another repo/worktree via the terminal), so follow its cwd.
+      // Apply a session-scoped event only when it targets the active chat; a
+      // global broadcast (no session id) only when no chat is open — otherwise a
+      // background session would yank the directory out from under the user.
+      const eventSessionId = typeof payload.session_id === 'string' ? payload.session_id : ''
+      const activeSessionId = $sessionId.get()
+      const applies = eventSessionId ? eventSessionId === activeSessionId : !activeSessionId
+
+      // Truthiness-gated (desktop parity): an empty cwd means "unknown", not
+      // "detach the current one".
+      if (applies && typeof payload.cwd === 'string' && payload.cwd) {
+        setCurrentCwd(payload.cwd)
+      }
+
+      break
+    }
+
     default:
       // Subagent lifecycle (spawn/start/thinking/tool/progress/complete) feeds
       // the Agents view's spawn tree, keyed by the active runtime session.
@@ -405,6 +430,10 @@ export async function ensureSession(): Promise<{ id: string; storedId: string }>
   })
   const id = created.session_id
   $sessionId.set(id)
+  // Adopt the runtime's resolved working directory — it normalizes (or defaults)
+  // whatever cwd we asked for, so this is the value the agent will actually run
+  // in, and what the new chat's stored row should be seeded with.
+  setCurrentCwd(created.info?.cwd ?? cwd)
   // Runtime session clock starts when we create the session (statusbar session
   // timer). Resumed/loaded sessions have no reliable start on this client, so
   // the timer stays hidden for them.
@@ -489,6 +518,9 @@ export async function respondSecret(value: string): Promise<void> {
 export function resetChat(): void {
   $messages.set([])
   $sessionId.set(null)
+  // A fresh chat starts in the configured default project dir (if any), not in
+  // whatever directory the chat we just left happened to use.
+  setCurrentCwd(cwdForNewSession())
   $liveSessionTitle.set('')
   $busy.set(false)
   $turnStartedAt.set(null)

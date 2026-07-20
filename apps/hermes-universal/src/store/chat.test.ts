@@ -8,7 +8,18 @@ vi.mock('@/store/gateway', async () => {
 })
 import { requestGateway } from '@/store/gateway'
 
-import { $approval, $clarify, $messages, $secret, $sudo, handleGatewayEvent, resetChat, respondSudo } from './chat'
+import {
+  $approval,
+  $clarify,
+  $currentCwd,
+  $messages,
+  $secret,
+  $sessionId,
+  $sudo,
+  handleGatewayEvent,
+  resetChat,
+  respondSudo
+} from './chat'
 
 const ev = (type: string, payload: Record<string, unknown>): GatewayEvent =>
   ({ type, payload } as unknown as GatewayEvent)
@@ -71,5 +82,37 @@ describe('chat reducer (parts model)', () => {
     await respondSudo('hunter2')
     expect(requestGateway).toHaveBeenCalledWith('sudo.respond', { request_id: 's9', password: 'hunter2' })
     expect($sudo.get()).toBeNull()
+  })
+})
+
+describe('session.info cwd tracking', () => {
+  it('follows the active session relocating itself', () => {
+    $sessionId.set('runtime-1')
+    handleGatewayEvent(ev('session.info', { session_id: 'runtime-1', cwd: '/home/me/worktree-b' }))
+    expect($currentCwd.get()).toBe('/home/me/worktree-b')
+  })
+
+  it('ignores info for a background session', () => {
+    $sessionId.set('runtime-1')
+    $currentCwd.set('/home/me/project-a')
+    handleGatewayEvent(ev('session.info', { session_id: 'other-runtime', cwd: '/home/me/somewhere-else' }))
+    expect($currentCwd.get()).toBe('/home/me/project-a')
+  })
+
+  it('applies a global broadcast only when no chat is open', () => {
+    $sessionId.set(null)
+    handleGatewayEvent(ev('session.info', { cwd: '/home/me/default' }))
+    expect($currentCwd.get()).toBe('/home/me/default')
+
+    $sessionId.set('runtime-1')
+    handleGatewayEvent(ev('session.info', { cwd: '/home/me/other-default' }))
+    expect($currentCwd.get()).toBe('/home/me/default')
+  })
+
+  it('treats an empty cwd as unknown rather than a detach', () => {
+    $sessionId.set('runtime-1')
+    $currentCwd.set('/home/me/project-a')
+    handleGatewayEvent(ev('session.info', { session_id: 'runtime-1', cwd: '' }))
+    expect($currentCwd.get()).toBe('/home/me/project-a')
   })
 })
