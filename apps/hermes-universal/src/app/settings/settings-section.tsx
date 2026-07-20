@@ -16,7 +16,7 @@ import { ProvidersSection } from './providers-section'
 import { VoiceSection } from './voice-section'
 
 import { NotificationsSection } from './notifications-section'
-import { ShortcutsSection } from './shortcuts-section'
+import { KeybindSettings } from './keybind-settings'
 import { EmptyState, SettingsContent } from './primitives'
 import { useSettingsNav } from './settings-nav'
 
@@ -74,9 +74,9 @@ export function SectionBody({ section }: { section: string }) {
     case 'gateway':
       return <GatewaySection />
 
-    // Keyboard shortcuts reference (K16).
+    // Keyboard shortcuts — the full rebindable panel, ported from desktop.
     case 'shortcuts':
-      return <ShortcutsSection />
+      return <KeybindSettings />
 
     // Pet gallery (K10).
     case 'pet':

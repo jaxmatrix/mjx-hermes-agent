@@ -60,15 +60,6 @@ export const zh: Translations = {
     review: '审查'
   },
 
-  shortcuts: {
-    title: '键盘快捷键',
-    intro: '适用于硬件键盘。使用软键盘时请用发送按钮。',
-    sendMessage: '发送消息',
-    newLine: '换行',
-    history: '上一条 / 下一条消息',
-    dismiss: '关闭建议'
-  },
-
   files: {
     title: '文件',
     loading: '正在加载…',
@@ -233,6 +224,7 @@ export const zh: Translations = {
   keybinds: {
     title: '键盘快捷键',
     subtitle: open => `点击快捷键即可重新绑定 · ${open} 可重新打开此面板。`,
+    search: '搜索快捷键…',
     rebind: '重新绑定',
     reset: '恢复默认',
     resetAll: '全部重置',

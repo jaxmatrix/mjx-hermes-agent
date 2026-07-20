@@ -1,18 +1,28 @@
-// Shim for desktop's `lib/keybinds/use-keybind-hint.ts`.
-//
-// Desktop tooltips append the shortcut for their action ("New chat  ⌘N"), read
-// from the rebindable-keybind store (`@/store/keybinds` + `keybinds/actions.ts`).
-// Universal has neither — it ships `combo.ts` for formatting only, and has no
-// user-rebindable keybind system to source hints from.
-//
-// Desktop's own hook already returns null for unknown action ids, and the
-// tooltip renders the plain text label in that case. So returning null here is
-// not a stub that swallows a feature: it is the same code path desktop takes
-// when an action has no binding, which is every action on universal. That lets
-// `components/ui/tooltip.tsx` stay a byte-identical copy of desktop's.
-//
-// If universal ever gains a keybind store, replace this file with desktop's
-// implementation verbatim — the signature is deliberately identical.
-export function useKeybindHint(_actionId: string): string | null {
+import { useStore } from '@nanostores/react'
+
+import { $bindings } from '@/store/keybinds'
+
+import { KEYBIND_READONLY } from './actions'
+import { formatCombo } from './combo'
+
+// The formatted first combo for `actionId`, or null when unbound. Rebindable
+// actions read live from the store; readonly shortcuts (e.g. `composer.steer`)
+// fall back to their fixed combo. Returns null for unknown action ids so the
+// tooltip shows just the text label with no trailing hint.
+export function useKeybindHint(actionId: string): string | null {
+  const bindings = useStore($bindings)
+
+  const rebindable = bindings[actionId]?.[0]
+
+  if (rebindable) {
+    return formatCombo(rebindable)
+  }
+
+  const readonly = KEYBIND_READONLY.find(entry => entry.id === actionId)
+
+  if (readonly) {
+    return formatCombo(readonly.keys[0])
+  }
+
   return null
 }

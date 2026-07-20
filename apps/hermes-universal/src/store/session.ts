@@ -11,6 +11,7 @@ import { toChatMessages } from '@/lib/session-history'
 import { atom, computed } from '@/store/atom'
 import { $busy, $clarify, $currentCwd, $messages, $sessionId, $statusLine, resetChat, setCurrentCwd } from '@/store/chat'
 import { requestGateway } from '@/store/gateway'
+import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
 import { notifyError } from '@/store/notifications'
 import type { SessionInfo, SessionResumeResponse, SessionSearchResult } from '@/types/hermes'
 
@@ -61,6 +62,34 @@ export function setSessions(updater: (prev: SessionInfo[]) => SessionInfo[]): vo
 /** Durable pin key: the lineage-root id survives auto-compression's id rotation. */
 export function sessionPinId(session: SessionInfo): string {
   return session._lineage_root_id ?? session.id
+}
+
+/** True when a stored/lineage id resolves to this session — it matches either
+ *  the live id or the stable lineage root (see sessionPinId). Verbatim from
+ *  desktop store/session.ts. */
+export const sessionMatchesStoredId = (
+  session: Pick<SessionInfo, '_lineage_root_id' | 'id'>,
+  storedSessionId: string
+): boolean => session.id === storedSessionId || session._lineage_root_id === storedSessionId
+
+/** Pin/unpin the active session — the `session.togglePin` keybind action.
+ *  Adapted from desktop `app/contrib/wiring.tsx`; pins are keyed by the durable
+ *  lineage id so the pin survives auto-compression. */
+export function toggleSelectedPin(): void {
+  const sessionId = $activeStoredSessionId.get()
+
+  if (!sessionId) {
+    return
+  }
+
+  const session = $sessions.get().find(s => sessionMatchesStoredId(s, sessionId))
+  const pinId = session ? sessionPinId(session) : sessionId
+
+  if ($pinnedSessionIds.get().includes(pinId)) {
+    unpinSession(pinId)
+  } else {
+    pinSession(pinId)
+  }
 }
 
 // ── Messaging-platform sessions (Discord, Telegram, …) ──────────────────────

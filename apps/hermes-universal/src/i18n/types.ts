@@ -117,15 +117,6 @@ export interface Translations {
     changed: (count: number) => string
   }
 
-  // Mobile-only: the keyboard-shortcuts reference (hardware keyboards).
-  shortcuts: {
-    title: string
-    intro: string
-    sendMessage: string
-    newLine: string
-    history: string
-    dismiss: string
-  }
 
   // Mobile-only: the remote workspace file browser (K13).
   files: {
@@ -282,9 +273,12 @@ export interface Translations {
     close: string
   }
 
+  // The rebindable keyboard-shortcuts panel (Settings → Keyboard shortcuts).
+  // `categories` and `actions` are keyed by the ids in lib/keybinds/actions.ts.
   keybinds: {
     title: string
     subtitle: (open: string) => string
+    search: string
     rebind: string
     reset: string
     resetAll: string

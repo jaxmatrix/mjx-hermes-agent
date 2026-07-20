@@ -60,15 +60,6 @@ export const en: Translations = {
     review: 'Review'
   },
 
-  shortcuts: {
-    title: 'Keyboard shortcuts',
-    intro: 'For a hardware keyboard. On the touch keyboard, use the Send button.',
-    sendMessage: 'Send message',
-    newLine: 'New line',
-    history: 'Previous / next message',
-    dismiss: 'Dismiss suggestions'
-  },
-
   files: {
     title: 'Files',
     loading: 'Loading…',
@@ -238,6 +229,7 @@ export const en: Translations = {
   keybinds: {
     title: 'Keyboard shortcuts',
     subtitle: open => `Click a shortcut to rebind it · ${open} reopens this panel.`,
+    search: 'Search shortcuts…',
     rebind: 'Rebind',
     reset: 'Reset to default',
     resetAll: 'Reset all',
