@@ -11,7 +11,7 @@ import { CronView } from '@/app/cron'
 import { FilesScreen } from '@/app/files/files-screen'
 import { MessagingView } from '@/app/messaging'
 import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
-import { ProfilesScreen } from '@/app/profiles/profiles-screen'
+import { ProfilesView } from '@/app/profiles'
 import { ReviewScreen } from '@/app/review/review-screen'
 import { SkillsView } from '@/app/skills'
 import { StarmapScreen } from '@/app/starmap/starmap-screen'
@@ -93,7 +93,7 @@ export function MobileController() {
   // shell/hooks/use-overlay-routing.
   const { pathname } = useLocation()
   const navigate = useNavigate()
-  const { agentsOpen, closeOverlayToPreviousRoute, commandCenterOpen, cronOpen, returnPathRef, settingsOpen } =
+  const { agentsOpen, closeOverlayToPreviousRoute, commandCenterOpen, cronOpen, profilesOpen, returnPathRef, settingsOpen } =
     useOverlayRouting()
   // Only the Gateway settings page is usable while disconnected (it's the
   // reconnect / sign-in surface). Every other settings section needs live gateway
@@ -150,8 +150,8 @@ export function MobileController() {
             <Route element={<ArtifactsView />} path="/artifacts" />
             {/* /cron falls through to the chat backdrop; the Cron overlay
                 renders as a top-level portal below (fixed z-50). */}
-            {/* CRUD/soul view; active-profile switching lives in Settings → Gateway (E7). */}
-            <Route element={<ProfilesScreen />} path="/profiles" />
+            {/* /profiles falls through to the chat backdrop; the Profiles overlay
+                renders as a top-level portal below (fixed z-50). */}
             {/* /agents falls through to the chat backdrop; the Agents ("Spawn
                 tree") overlay renders as a top-level portal below (fixed z-50). */}
             <Route element={<StarmapScreen />} path="/starmap" />
@@ -212,13 +212,15 @@ export function MobileController() {
             onOpenSession={sessionId => navigate(sessionRoute(sessionId))}
           />
         )}
+        {/* Profiles overlay — desktop's profile CRUD + soul editor master/detail. */}
+        {connected && profilesOpen && <ProfilesView onClose={closeOverlayToPreviousRoute} />}
         {/* Provider-connect overlay — a focused per-provider sign-in card that
             floats OVER the settings page (z-70) without unmounting it. Opened from
             Providers → Accounts; gated on $connectProvider, not $onboardingActive. */}
         {connected && <ProviderConnectOverlay />}
         {/* Floating pet — a top-level draggable + roaming mascot (fixed z-60) that
             floats over ALL routes. It patrols the Settings overlay's edge when open. */}
-        {connected && <FloatingPet overlayOpen={settingsOpen || agentsOpen || commandCenterOpen || cronOpen} />}
+        {connected && <FloatingPet overlayOpen={settingsOpen || agentsOpen || commandCenterOpen || cronOpen || profilesOpen} />}
       </div>
     </SidebarProvider>
   )
