@@ -5,15 +5,181 @@
    inline per skin by applyTheme(). Declared here so `dark:` utilities compile. */
 @custom-variant dark (&:is(.dark *));
 
-/* Brand wordmark face (Collapse) + bundled terminal font (JetBrains Mono).
-   Vendored under ./fonts (see src/fonts). JetBrains Mono ships bold + italic so
-   they share the regular face's metrics instead of squeezing a system fallback. */
+/* ─── Fonts ──────────────────────────────────────────────────────────────────
+   Everything the app can name is VENDORED under ./fonts — nothing depends on
+   what the host happens to have installed. That is the one place universal
+   deliberately diverges from Electron desktop, which pulls Courier Prime /
+   IBM Plex Mono from Google Fonts at runtime (`fontUrl` in themes/presets.ts):
+   the Tauri webviews are offline- and CSP-bound, so a runtime stylesheet fetch
+   is not an option and the faces are packed instead.
+
+   The brand kit is the full @nous-research/ui set (Collapse, Rules Expanded,
+   Rules Compressed, Mondwest, Neuebit) — the declarations below mirror
+   @nous-research/ui/dist/ui/fonts.css and extend it to the weights the package
+   ships but does not declare.
+
+   Collapse is a DISPLAY face — the wordmark (`.brand` below, and the chat
+   intro). It is NOT the UI text face: heading --dt-font-sans with it makes
+   every label, message and menu wear the logo font. */
+
+/* Inter — the UI TEXT face, and the only reason it is here rather than a brand
+   face: measured with Chromium's own CSS.getPlatformFontsForNode, the Electron
+   desktop app resolves `--dt-font-sans` to `system-ui` on Linux (every Segoe/SF
+   name in that stack matches nothing and is skipped). Its design intent is the
+   platform UI face — SF Pro Text on macOS, Segoe UI on Windows — and Inter is
+   the closest open-source equivalent to SF Pro Text: same UI-first proportions,
+   tall x-height, small-size legibility.
+
+   So the stack below keeps the real faces first (macOS/Windows render exactly
+   what desktop renders) and Inter stands in wherever they don't exist, instead
+   of falling through to whatever the host happens to default to.
+
+   Variable weight 100-900 in one file per subset, so every font-weight in the
+   app maps to a real instance and nothing is synthesised. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./fonts/inter-latin-wght-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
+    U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./fonts/inter-latin-ext-wght-normal.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
+    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./fonts/inter-latin-wght-italic.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
+    U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./fonts/inter-latin-ext-wght-italic.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
+    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Collapse — 100/300/400/700, roman + italic. */
+@font-face {
+  font-family: 'Collapse';
+  font-style: normal;
+  font-weight: 100;
+  font-display: swap;
+  src: url('./fonts/Collapse-Thin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Collapse';
+  font-style: italic;
+  font-weight: 100;
+  font-display: swap;
+  src: url('./fonts/Collapse-ThinItalic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Collapse';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url('./fonts/Collapse-Light.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Collapse';
+  font-style: italic;
+  font-weight: 300;
+  font-display: swap;
+  src: url('./fonts/Collapse-LightItalic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Collapse';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/Collapse-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Collapse';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/Collapse-Italic.woff2') format('woff2');
+}
 @font-face {
   font-family: 'Collapse';
   font-style: normal;
   font-weight: 700;
   font-display: swap;
   src: url('./fonts/Collapse-Bold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Collapse';
+  font-style: italic;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/Collapse-BoldItalic.woff2') format('woff2');
+}
+
+/* Rules Expanded / Compressed ship two weights each, so both are declared over
+   a RANGE: the app uses font-medium (500) in ~70 files and font-semibold (600)
+   in ~31, and without ranges the engine synthesises a fake bold for those. This
+   way 500 renders the real regular and 600 the real bold. */
+@font-face {
+  font-family: 'Rules Expanded';
+  font-style: normal;
+  font-weight: 100 500;
+  font-display: swap;
+  src: url('./fonts/RulesExpanded-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Rules Expanded';
+  font-style: normal;
+  font-weight: 600 900;
+  font-display: swap;
+  src: url('./fonts/RulesExpanded-Bold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Rules Compressed';
+  font-style: normal;
+  font-weight: 100 500;
+  font-display: swap;
+  src: url('./fonts/RulesCompressed-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Rules Compressed';
+  font-style: normal;
+  font-weight: 600 900;
+  font-display: swap;
+  src: url('./fonts/RulesCompressed-Medium.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Mondwest';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/Mondwest-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Neuebit';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/Neuebit-Bold.woff2') format('woff2');
 }
 @font-face {
   font-family: 'JetBrains Mono';
@@ -108,6 +274,14 @@
 
   --font-sans: var(--dt-font-sans);
   --font-mono: var(--dt-font-mono);
+  /* Brand display faces, named exactly as the design language does (see
+     @nous-research/ui/dist/ui/globals.css). Nothing consumes them yet — they
+     exist so a ported surface that asks for the brand kit gets the packed face
+     instead of a silent fallback. */
+  --font-rules-compressed: 'Rules Compressed', var(--dt-font-sans);
+  --font-rules-expanded: 'Rules Expanded', var(--dt-font-sans);
+  --font-mondwest: 'Mondwest', var(--dt-font-sans);
+  --font-neuebit: 'Neuebit', var(--dt-font-mono);
 
   --spacing-mul: var(--dt-spacing-mul, 1);
 
@@ -362,24 +536,39 @@
     --dt-user-bubble: var(--ui-chat-bubble-background);
     --dt-user-bubble-border: var(--ui-stroke-tertiary);
 
+    /* Desktop's stack, with packed Inter slotted in ahead of `system-ui`.
+       macOS and Windows still render the real SF Pro Text / Segoe UI, exactly
+       as Electron does; Linux and Android get Inter — the closest open-source
+       face to SF Pro Text — instead of falling through to whatever the host
+       defaults to (measured: Chromium picks the GNOME `font-name` setting,
+       WebKitGTK picks the `sans-serif` generic, and neither is a decision
+       anyone made). The generic tail stays load-bearing: WebKitGTK resolves
+       none of the Segoe/SF names, nor `system-ui`/`-webkit-system-ui`. */
     --dt-font-sans:
-      'Segoe WPC', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif,
-      'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', emoji;
-    /* Key caps always use the native UI face — never theme typography overrides. */
-    --dt-font-kbd: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+      'Segoe WPC', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', -webkit-system-ui,
+      system-ui, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
+      'Noto Color Emoji', emoji;
+    /* Key caps take the same treatment — native face where it exists, Inter
+       elsewhere. Theme typography never overrides this token (desktop parity). */
+    --dt-font-kbd:
+      -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'Inter', -webkit-system-ui, system-ui,
+      'Noto Sans', sans-serif;
     /* JetBrains Mono first — the face we bundle (@font-face above) and the
        terminal's primary — so code/diff match the terminal on every platform
-       instead of drifting to a system Cascadia Code where it's installed. */
+       instead of drifting to a system Cascadia Code where it's installed.
+       `ui-monospace` sits AFTER the concrete families on purpose: WebKitGTK
+       resolves it to the default SANS face, not a monospace one, so leading
+       with it would silently unmonospace every code surface on Linux. */
     --dt-font-mono:
-      'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace, 'Apple Color Emoji',
-      'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', emoji;
+      'JetBrains Mono', 'Cascadia Code', 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono',
+      ui-monospace, monospace, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', emoji;
     --dt-base-size: 1rem;
     --dt-line-height: 1.5;
     --dt-letter-spacing: 0;
     --dt-spacing-mul: 1;
 
     --radius: 0.75rem;
-    --radius-scalar: 0.6;
+    --radius-scalar: 0.25;
 
     /* Space under last message vs overlay composer — driven by the measured composer height (see composer/index.tsx)
        plus the out-of-flow status stack's measured height (see status-stack/index.tsx) when one is showing. */
@@ -634,6 +823,36 @@
    .quest-glow = amber "needs your input" pulse on a clarify-blocked dot. */
 .dither {
   background: repeating-conic-gradient(currentColor 0% 25%, transparent 0% 50%) 0 0 / 0.125rem 0.125rem;
+}
+
+/* Brand-kit utilities, copied verbatim from @nous-research/ui/dist/ui/globals.css
+   so a surface ported from anywhere in the design language resolves to the
+   packed face. `text-display` is purely typographic (uppercase + tracking) and
+   composes with any of them; per the package's own guidance it belongs on
+   chrome, never on body copy. */
+@utility font-compressed {
+  font-family: var(--font-rules-compressed);
+}
+
+@utility font-expanded {
+  font-family: var(--font-rules-expanded);
+}
+
+@utility font-mondwest {
+  font-family: var(--font-mondwest);
+}
+
+@utility text-display {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Neuebit has no counterpart in the package's utilities (it declares no
+   @font-face for it either), but the token needs a consumer: Tailwind v4 drops
+   any @theme variable nothing references, which silently emptied
+   --font-neuebit. */
+@utility font-neuebit {
+  font-family: var(--font-neuebit);
 }
 
 @utility row-hover {

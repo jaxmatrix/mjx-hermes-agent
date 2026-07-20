@@ -62,7 +62,10 @@ export function TerminalView() {
       allowTransparency: false,
       convertEol: true,
       cursorBlink: true,
-      fontFamily: "'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace",
+      // Desktop's exact stack (apps/desktop/.../use-terminal-session.ts). It
+      // needs no `ui-monospace` repair: every entry is a concrete family and
+      // the bundled JetBrains Mono leads, so it resolves on every webview.
+      fontFamily: "'JetBrains Mono', 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace",
       fontSize: 12,
       // VS Code's terminal.integrated.minimumContrastRatio (4.5). xterm defaults
       // to 1 (off), which paints the raw saturated ANSI palette — vivid green/cyan
@@ -101,6 +104,26 @@ export function TerminalView() {
     termRef.current = term
     fitRef.current = fit
 
+    // xterm measures the glyph cell ONCE, at open(). With `font-display: swap`
+    // that measurement can land on the fallback face and never be redone, which
+    // leaves the grid mis-sized for the rest of the session. Re-measure as soon
+    // as the bundled face is actually available. (jsdom has no document.fonts.)
+    let disposed = false
+    void document.fonts
+      ?.load('12px "JetBrains Mono"')
+      .then(() => {
+        if (disposed) return
+        term.clearTextureAtlas()
+        try {
+          fit.fit()
+        } catch {
+          /* host gone or mid-transition */
+        }
+      })
+      .catch(() => {
+        /* face unavailable — the fallback measurement stands */
+      })
+
     const onData = term.onData(data => {
       if (SGR_MOUSE_RE.test(data)) return
       socketRef.current?.write(data)
@@ -121,6 +144,7 @@ export function TerminalView() {
     ro.observe(host)
 
     return () => {
+      disposed = true
       onData.dispose()
       onResize.dispose()
       cancelAnimationFrame(raf)

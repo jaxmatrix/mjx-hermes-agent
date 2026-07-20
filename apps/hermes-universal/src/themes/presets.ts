@@ -11,12 +11,26 @@ import type { DesktopTheme, DesktopThemeTypography } from './types'
 // Covers macOS, Windows, Linux, plus the `emoji` generic for anything else.
 export const EMOJI_FALLBACK = '"Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", emoji'
 
+// These are written onto --dt-font-sans/--dt-font-mono at runtime (see
+// context.tsx applyTheme), so they OVERRIDE the styles.css defaults — keep the
+// two copies in sync or the app silently renders the runtime one.
+// Desktop's stack with packed Inter (@font-face in styles.css) slotted in ahead
+// of `system-ui`: macOS/Windows keep the real SF Pro Text / Segoe UI, while
+// Linux and Android render Inter — the closest open-source face to SF Pro Text
+// — rather than the host's default. The generic tail is load-bearing rather
+// than decorative: WebKitGTK resolves neither the Segoe/SF names nor
+// `system-ui`, so without it `sans-serif` is what would actually render.
 const SYSTEM_SANS =
-  '"Segoe WPC", "Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif, ' +
+  '"Segoe WPC", "Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", ' +
+  '-webkit-system-ui, system-ui, "Noto Sans", sans-serif, ' +
   EMOJI_FALLBACK
 
+// `ui-monospace` trails the concrete families: WebKitGTK maps it to the default
+// SANS face, so leading with it unmonospaces code surfaces on Linux.
 const SYSTEM_MONO =
-  '"Cascadia Code", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace, ' + EMOJI_FALLBACK
+  '"Cascadia Code", "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, "DejaVu Sans Mono", "Liberation Mono", ' +
+  'ui-monospace, monospace, ' +
+  EMOJI_FALLBACK
 
 export const DEFAULT_TYPOGRAPHY: DesktopThemeTypography = { fontSans: SYSTEM_SANS, fontMono: SYSTEM_MONO }
 
@@ -236,8 +250,12 @@ export const cyberpunkTheme: DesktopTheme = {
     userBubbleBorder: '#004800'
   },
   typography: {
-    fontMono: `"Courier New", Courier, monospace, ${EMOJI_FALLBACK}`,
-    fontSans: `"Courier New", Courier, monospace, ${EMOJI_FALLBACK}`
+    // "Courier New" ships on Windows/macOS only, so on Linux/Android this skin
+    // used to fall through to the generic and lose its typewriter look
+    // entirely. The packed Courier Prime sits right behind it as the same
+    // intent, rendered from a face we control.
+    fontMono: `"Courier New", "Courier Prime", Courier, monospace, ${EMOJI_FALLBACK}`,
+    fontSans: `"Courier New", "Courier Prime", Courier, monospace, ${EMOJI_FALLBACK}`
   }
 }
 
