@@ -849,10 +849,9 @@
      (see scroll-to-bottom-button.tsx), which anchors above the composer footer. */
   position: relative;
 }
-/* The chat thread scroller owns its own stick-to-bottom scroll and is excluded
-   from OverlayScrollbars (see lib/scrollbars.ts). Give it a slim native scrollbar
-   where the standard CSS scrollbar properties are supported (recent WebKitGTK);
-   older engines fall back to the default bar. */
+/* The chat thread scroller owns its own stick-to-bottom scroll. Slim native
+   scrollbar where the standard CSS scrollbar properties are supported (recent
+   WebKitGTK); older engines fall back to the default bar. */
 [data-slot='aui_thread-viewport'] {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--ui-text-tertiary) 40%, transparent) transparent;
@@ -923,25 +922,18 @@
 }
 
 /* ── Scrollbars ──────────────────────────────────────────────────────────────
-   Desktop's `.scrollbar-dt` relies on `::-webkit-scrollbar`, which Tauri's Linux
-   webview (WebKitGTK) ignores — so we draw scrollbars with OverlayScrollbars
-   instead (initialized in src/lib/scrollbars.ts, desktop only). This theme maps
-   OverlayScrollbars' tokens onto the desktop look: thin, --dt-midground thumb
-   (18% idle / 40% hover), pill, transparent track, no arrows. */
-.os-theme-hermes {
-  --os-size: 0.5rem;
-  --os-padding-perpendicular: 0.0625rem;
-  --os-padding-axis: 0.125rem;
-  --os-handle-border-radius: 9999px;
-  --os-track-bg: transparent;
-  --os-handle-bg: color-mix(in srgb, var(--dt-midground) 18%, transparent);
-  --os-handle-bg-hover: color-mix(in srgb, var(--dt-midground) 40%, transparent);
-  --os-handle-bg-active: color-mix(in srgb, var(--dt-midground) 50%, transparent);
-  --os-handle-interactive-area-offset: 4px;
-}
+   All native, no JS. `scrollbar-width` / `scrollbar-color` are the only
+   scrollbar CSS Tauri's Linux webview (WebKitGTK) honors, so the thin themed
+   bar comes from those; the `::-webkit-scrollbar` rules in `.scrollbar-dt`
+   below are inert there but do apply on macOS (WKWebView) and Windows
+   (WebView2), which is how desktop gets its bars.
 
-/* Pre-init / uncovered fallback (standard props — the only scrollbar CSS
-   WebKitGTK honors) so there's no flash of the chunky native bar before JS. */
+   This app previously drew its own bars with OverlayScrollbars, since
+   `::-webkit-scrollbar` alone left Linux with GTK's chunky arrowed bar. That
+   library was removed: managing elements as viewports broke the contentEditable
+   composer, fought the thread's stick-to-bottom scrolling, and knocked centered
+   dialogs off-center. Don't reintroduce it — if a Linux bar looks unthemed, the
+   webview is too old for `scrollbar-width`, and that's the tradeoff we took. */
 html {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--dt-midground) 18%, transparent) transparent;
@@ -1499,9 +1491,10 @@ html {
 }
 
 
-/* Themed native scrollbars (desktop styles.css ~837). Universal uses
-   OverlayScrollbars for its own panes, but ported desktop components (and
-   the Radix portals in components/ui) class themselves with these. */
+/* Themed native scrollbars (desktop styles.css ~837), applied app-wide via
+   `class="scrollbar-dt"` on #root (index.html) exactly as desktop does. Ported
+   desktop components and the Radix portals in components/ui also class
+   themselves with these. */
 @layer components {
   .scrollbar-dt,
   .scrollbar-dt * {

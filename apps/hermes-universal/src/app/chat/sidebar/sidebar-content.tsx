@@ -307,7 +307,7 @@ export function SidebarScrollBody({ onNavigate }: { onNavigate?: () => void }) {
         <>
           <SidebarSessionsSection
             {...rowHandlers}
-            contentClassName="flex max-h-44 flex-col gap-px overflow-y-auto overflow-x-hidden overscroll-contain rounded-lg pb-2 pt-1 pr-2.5"
+            contentClassName="flex max-h-44 flex-col gap-px overflow-y-auto overflow-x-hidden overscroll-contain rounded-lg pb-2 pt-1"
             emptyState={<SidebarPinnedEmptyState />}
             label={s.pinned}
             onReorderSessions={ids => {
@@ -399,7 +399,7 @@ export function SidebarScrollBody({ onNavigate }: { onNavigate?: () => void }) {
               return (
                 <SidebarSessionsSection
                   {...rowHandlers}
-                  contentClassName="flex max-h-56 flex-col gap-px overflow-y-auto overflow-x-hidden overscroll-contain pb-1.5 pr-2.5"
+                  contentClassName="flex max-h-56 flex-col gap-px overflow-y-auto overflow-x-hidden overscroll-contain pb-1.5"
                   emptyState={null}
                   footer={
                     group.sessions.length > shown ? (

@@ -18,7 +18,6 @@ import { ProviderConnectOverlay } from '@/app/settings/provider-connect-overlay'
 import { SettingsView } from '@/app/settings/settings-view'
 import { NotificationStack } from '@/components/notifications'
 import { IS_DESKTOP } from '@/lib/platform'
-import { useThemedScrollbars } from '@/lib/scrollbars'
 import { useStore } from '@/store/atom'
 import { $connectionPhase, $hasConnected } from '@/store/connection'
 import { $restoring } from '@/store/gateway-restore'
@@ -46,8 +45,8 @@ export function MobileController() {
   const restoring = useStore($restoring)
   const hasConnected = useStore($hasConnected)
 
-  // Draw custom (WebKitGTK-safe) scrollbars on desktop; no-op on mobile/web.
-  useThemedScrollbars()
+  // Sidebar shortcuts (mod+b / mod+shift+f / mod+n).
+  useSidebarKeybinds()
 
   // UI scale: apply the persisted zoom once, and wire Cmd/Ctrl +/-/0 shortcuts.
   // Zoom stays outside the rebindable registry — desktop keeps it out too.

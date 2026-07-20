@@ -12,7 +12,6 @@ import { autoRestoreConnection } from './store/gateway-restore'
 import { ThemeProvider } from './themes'
 import 'katex/dist/katex.min.css'
 import '@vscode/codicons/dist/codicon.css'
-import 'overlayscrollbars/overlayscrollbars.css'
 import './styles.css'
 
 // Rehydrate a persisted gateway/cloud session into the Rust cookie jar (R2b), THEN
