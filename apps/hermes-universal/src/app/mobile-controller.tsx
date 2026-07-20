@@ -13,7 +13,7 @@ import { MessagingView } from '@/app/messaging'
 import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
 import { ProfilesScreen } from '@/app/profiles/profiles-screen'
 import { ReviewScreen } from '@/app/review/review-screen'
-import { SkillsScreen } from '@/app/skills/skills-screen'
+import { SkillsView } from '@/app/skills'
 import { StarmapScreen } from '@/app/starmap/starmap-screen'
 import { FloatingPet } from '@/app/pet/floating-pet'
 import { ProviderConnectOverlay } from '@/app/settings/provider-connect-overlay'
@@ -155,8 +155,8 @@ export function MobileController() {
             {/* /settings* falls through to the chat backdrop; the settings portal
                 itself renders as a top-level overlay below (fixed z-50). */}
             <Route element={<CommandCenterScreen />} path="/command-center" />
-            {/* Skills + Toolsets; MCP/Hub tabs land in Kc7/Kc8. */}
-            <Route element={<SkillsScreen />} path="/skills" />
+            {/* Capabilities: Skills · Toolsets · MCP · Hub (ported from desktop). */}
+            <Route element={<SkillsView />} path="/skills" />
             <Route element={<MessagingView />} path="/messaging" />
             <Route element={<ArtifactsView />} path="/artifacts" />
             <Route element={<CronScreen />} path="/cron" />
