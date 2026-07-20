@@ -12,6 +12,16 @@ export interface PreviewTarget {
   name: string
 }
 
+// Live preview-server restart status (verbatim from desktop store/preview.ts).
+// Universal doesn't drive preview-server restarts yet, but the ported activity
+// rail (store/activity.ts) consumes this shape; callers pass null until wired.
+export interface PreviewServerRestart {
+  message?: string
+  status: 'complete' | 'error' | 'running'
+  taskId: string
+  url: string
+}
+
 function baseName(path: string): string {
   const cleaned = path.replace(/[\\/]+$/, '')
   return cleaned.slice(cleaned.lastIndexOf('/') + 1) || cleaned

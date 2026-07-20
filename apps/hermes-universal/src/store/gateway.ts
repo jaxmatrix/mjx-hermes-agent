@@ -15,6 +15,13 @@ let client: JsonRpcGatewayClient | null = null
 
 export const $gatewayState = atom<ConnectionState>('idle')
 
+// Compat shim for ported desktop code that reads the live client reactively via
+// `useStore($gateway)` (e.g. the Capabilities/MCP tab). Desktop's `$gateway` is
+// an atom<HermesGateway | null>; universal keeps the client module-local, so we
+// mirror it into this atom on connect/close. The concrete instance is the base
+// JsonRpcGatewayClient (HermesGateway adds no members), so the cast is sound.
+export const $gateway = atom<HermesGateway | null>(null)
+
 export async function connectGateway(conn: Connection): Promise<void> {
   client?.close()
 
@@ -29,6 +36,7 @@ export async function connectGateway(conn: Connection): Promise<void> {
   next.onState(state => $gatewayState.set(state))
   next.onAny(event => handleGatewayEvent(event))
   client = next
+  $gateway.set(next as HermesGateway)
 
   await next.connect(wsUrl)
 }
@@ -36,6 +44,7 @@ export async function connectGateway(conn: Connection): Promise<void> {
 export function closeGateway(): void {
   client?.close()
   client = null
+  $gateway.set(null)
   $gatewayState.set('closed')
 }
 

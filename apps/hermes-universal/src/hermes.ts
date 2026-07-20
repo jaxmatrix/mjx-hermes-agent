@@ -637,14 +637,33 @@ export function saveMcpServers(servers: Record<string, Record<string, unknown>>)
   })
 }
 
-/** Run the OAuth flow for an HTTP server — opens the system browser and blocks
- *  until the user finishes (or gives up), hence the very generous timeout. */
-export function authMcpServer(name: string): Promise<McpTestResult> {
-  return api<McpTestResult>({
+export interface McpOAuthFlow {
+  flow_id: string
+  server_name: string
+  status: 'starting' | 'authorization_required' | 'approved' | 'error'
+  authorization_url: string | null
+  error: string | null
+  tools?: { name: string; description: string }[]
+}
+
+/** Start an MCP OAuth flow and return the authorization URL. The ported
+ *  Capabilities MCP tab drives the browser + polling itself via
+ *  completeMcpDesktopOAuth (see lib/mcp-dashboard-oauth), so this only kicks the
+ *  flow off — hence a short timeout, not a blocking 5-minute wait. */
+export function authMcpServer(name: string): Promise<McpOAuthFlow> {
+  return api<McpOAuthFlow>({
     ...profileScoped(),
     path: `/api/mcp/servers/${encodeURIComponent(name)}/auth`,
     method: 'POST',
-    timeoutMs: 300_000
+    timeoutMs: 60_000
+  })
+}
+
+/** Poll a running MCP OAuth flow by id until it lands approved/error. */
+export function getMcpOAuthFlow(flowId: string): Promise<McpOAuthFlow> {
+  return api<McpOAuthFlow>({
+    ...profileScoped(),
+    path: `/api/mcp/oauth/flows/${encodeURIComponent(flowId)}`
   })
 }
 
