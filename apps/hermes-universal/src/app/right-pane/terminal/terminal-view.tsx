@@ -10,7 +10,7 @@ import type { DesktopTheme } from '@/themes/types'
 
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { $workspaceCwd } from '@/store/workspace-events'
+import { $effectiveCwd } from '@/store/workspace-events'
 import { LocalPtySocket } from '@/transport/local-pty'
 import { useTheme } from '@/themes/context'
 
@@ -149,7 +149,9 @@ export function TerminalView() {
     }
 
     socketRef.current = new LocalPtySocket(
-      { cols: term.cols, cwd: $workspaceCwd.get() || undefined, rows: term.rows },
+      // Snapshot at spawn (desktop parity): a terminal keeps the directory it was
+      // opened in — switching chats doesn't cd an already-running shell.
+      { cols: term.cols, cwd: $effectiveCwd.get() || undefined, rows: term.rows },
       {
         onData: bytes => termRef.current?.write(bytes),
         onError: () => {},

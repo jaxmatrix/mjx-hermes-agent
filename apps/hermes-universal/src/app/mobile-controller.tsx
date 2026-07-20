@@ -2,18 +2,18 @@ import { type ReactNode, useEffect, useRef } from 'react'
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
 import { AgentsView } from '@/app/agents'
-import { ArtifactsScreen } from '@/app/artifacts/artifacts-screen'
+import { ArtifactsView } from '@/app/artifacts'
 import { ChatScreen } from '@/app/chat/chat-screen'
 import { CommandCenterScreen } from '@/app/command-center/command-center-screen'
 import { ConnectScreen } from '@/app/connect-screen'
 import { GatewayConnectingScreen } from '@/app/gateway/gateway-connecting-screen'
 import { CronScreen } from '@/app/cron/cron-screen'
 import { FilesScreen } from '@/app/files/files-screen'
-import { MessagingScreen } from '@/app/messaging/messaging-screen'
+import { MessagingView } from '@/app/messaging'
 import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
 import { ProfilesScreen } from '@/app/profiles/profiles-screen'
 import { ReviewScreen } from '@/app/review/review-screen'
-import { SkillsScreen } from '@/app/skills/skills-screen'
+import { SkillsView } from '@/app/skills'
 import { StarmapScreen } from '@/app/starmap/starmap-screen'
 import { FloatingPet } from '@/app/pet/floating-pet'
 import { ProviderConnectOverlay } from '@/app/settings/provider-connect-overlay'
@@ -155,10 +155,10 @@ export function MobileController() {
             {/* /settings* falls through to the chat backdrop; the settings portal
                 itself renders as a top-level overlay below (fixed z-50). */}
             <Route element={<CommandCenterScreen />} path="/command-center" />
-            {/* Skills + Toolsets; MCP/Hub tabs land in Kc7/Kc8. */}
-            <Route element={<SkillsScreen />} path="/skills" />
-            <Route element={<MessagingScreen />} path="/messaging" />
-            <Route element={<ArtifactsScreen />} path="/artifacts" />
+            {/* Capabilities: Skills · Toolsets · MCP · Hub (ported from desktop). */}
+            <Route element={<SkillsView />} path="/skills" />
+            <Route element={<MessagingView />} path="/messaging" />
+            <Route element={<ArtifactsView />} path="/artifacts" />
             <Route element={<CronScreen />} path="/cron" />
             {/* CRUD/soul view; active-profile switching lives in Settings → Gateway (E7). */}
             <Route element={<ProfilesScreen />} path="/profiles" />

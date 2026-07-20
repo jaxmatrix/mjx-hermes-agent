@@ -15,6 +15,7 @@ import { deleteSession, getDefaultCwd, listSessions, setSessionArchived } from '
 import { useI18n } from '@/i18n'
 import { Archive, ArchiveOff, FolderOpen, Loader2, Trash } from '@/lib/icons'
 import { IS_DESKTOP } from '@/lib/platform'
+import { workspaceLabel } from '@/lib/workspace-path'
 import { useStore } from '@/store/atom'
 import { $defaultProjectDir, setDefaultProjectDir } from '@/store/default-project-dir'
 import { notify, notifyError } from '@/store/notifications'
@@ -32,10 +33,6 @@ import { EmptyState, ListRow, LoadingState, SectionHeading, SettingsContent } fr
 // title || preview || fallback (matches desktop lib/chat-runtime sessionTitle).
 const sessionTitle = (session: SessionInfo): string =>
   session.title?.trim() || session.preview?.trim() || 'Untitled session'
-
-// Last path segment of the session's workspace cwd, for the mono meta line.
-const workspaceLabel = (cwd?: null | string): string =>
-  cwd ? cwd.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || '' : ''
 
 // ── Default project directory (desktop-only: needs a local FS + folder picker) ──
 function DefaultProjectDirSetting() {

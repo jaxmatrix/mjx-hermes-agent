@@ -7,7 +7,7 @@ import { useI18n } from '@/i18n'
 import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
-import { $workspaceChangeTick, $workspaceCwd, ensureWorkspaceCwd } from '@/store/workspace-events'
+import { $effectiveCwd, $workspaceChangeTick, ensureWorkspaceCwd } from '@/store/workspace-events'
 
 import { ProjectTree, type RepoChangeKind } from './tree'
 import { useProjectTree } from './use-project-tree'
@@ -72,7 +72,9 @@ function CenteredState({ children }: { children: ReactNode }) {
 export function FileTreePane({ onPreviewFile }: { onPreviewFile: (path: string) => void }) {
   const { t } = useI18n()
   const r = t.rightSidebar
-  const cwd = useStore($workspaceCwd)
+  // Roots at the active chat's project directory (falling back to the workspace
+  // root), so switching chats re-roots the tree with them.
+  const cwd = useStore($effectiveCwd)
   const tick = useStore($workspaceChangeTick)
 
   useEffect(() => {
