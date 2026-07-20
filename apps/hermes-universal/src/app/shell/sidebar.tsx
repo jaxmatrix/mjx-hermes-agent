@@ -1,10 +1,12 @@
 import { createContext, type ReactNode, useContext, useMemo, useState } from 'react'
 
 import { ChatSidebar } from '@/app/chat/sidebar'
-import { FileTreePane } from '@/app/right-pane/files/file-tree-pane'
+import { RightSidebarPane } from '@/app/right-pane'
+import { ReviewPane } from '@/app/right-pane/review'
 import { PreviewRail } from '@/app/right-pane/preview/preview-rail'
 import { TerminalArea } from '@/app/right-pane/terminal/terminal-area'
 import { Pane, PaneMain, PaneShell } from '@/components/pane-shell'
+import { normalizeOrLocalPreviewTarget } from '@/lib/local-preview'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { useMediaQuery } from '@/hooks/use-media-query'
@@ -12,7 +14,9 @@ import { Menu } from '@/lib/icons'
 import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
-import { $previewTabs, setPreviewTarget } from '@/store/preview'
+import { $currentCwd } from '@/store/chat'
+import { $reviewOpen, REVIEW_PANE_ID } from '@/store/review'
+import { $previewTabs, setCurrentSessionPreviewTarget } from '@/store/preview'
 import {
   CHAT_SIDEBAR_PANE_ID,
   FILE_TREE_DEFAULT_WIDTH,
@@ -80,6 +84,18 @@ export function SidebarTrigger({ className }: { className?: string }) {
 }
 
 /** The responsive frame: docked pane on md+, drawer on phones, one main slot. */
+/** Open a file from the tree in the real preview pipeline. Verbatim from
+ *  desktop's app/contrib/panes.tsx. */
+function previewFile(path: string) {
+  void normalizeOrLocalPreviewTarget(path, $currentCwd.get() || undefined)
+    .then(target => {
+      if (target) {
+        setCurrentSessionPreviewTarget(target, 'file-browser', path)
+      }
+    })
+    .catch(() => undefined)
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   // Desktop always uses the docked shell (resizable/hover-reveal panes + the
   // titlebar-offset content), regardless of window width. Without this a sub-768px
@@ -96,6 +112,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   // The editor pane only shows once a file is open; the file tree shows whenever
   // the right sidebar is open. Closing the right sidebar hides both (main fills).
   const hasPreview = useStore($previewTabs).length > 0
+  // The review (git diff) pane is its own column, revealed by ⌘G / $reviewOpen
+  // independently of the right-sidebar toggle — desktop parity.
+  const reviewOpen = useStore($reviewOpen)
+  const currentCwd = useStore($currentCwd)
   // The file-tree + editor rails dock opposite the chat sidebar.
   const railSide = panesFlipped ? 'left' : 'right'
 
@@ -168,7 +188,28 @@ export function AppShell({ children }: { children: ReactNode }) {
         side={railSide}
         width={FILE_TREE_DEFAULT_WIDTH}
       >
-        {rightOpen && <FileTreePane onPreviewFile={setPreviewTarget} />}
+        {rightOpen && <RightSidebarPane onActivateFile={previewFile} onActivateFolder={previewFile} />}
+      </Pane>
+
+      {/* Review — the git diff pane (desktop's right-sidebar/review). Its own
+          column so it can open independently of the file tree, keyed on the cwd
+          so switching projects rebuilds the diff state instead of showing the
+          previous repo's files (mirrors desktop's ReviewPaneContent). */}
+      <Pane
+        disabled={!reviewOpen}
+        divider
+        id={REVIEW_PANE_ID}
+        maxWidth={FILE_TREE_MAX_WIDTH}
+        minWidth={FILE_TREE_MIN_WIDTH}
+        resizable
+        side={railSide}
+        width={FILE_TREE_DEFAULT_WIDTH}
+      >
+        {reviewOpen && (
+          <div className={cn('flex h-full min-h-0 flex-col', IS_DESKTOP && 'pt-(--titlebar-height)')}>
+            <ReviewPane key={currentCwd || 'no-cwd'} />
+          </div>
+        )}
       </Pane>
 
       {/* Terminal — full-height right column when the right sidebar is closed

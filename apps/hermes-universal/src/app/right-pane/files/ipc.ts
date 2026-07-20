@@ -1,30 +1,152 @@
-import { readDir } from '@/hermes'
-import type { ReadDirResult } from '@/types/hermes'
+import ignore from 'ignore'
 
-// The tree's directory reader. Adapted from desktop's files/ipc.ts: on desktop it
-// bridged local Electron FS + client-side .gitignore; here it's the remote REST
-// `readDir` (`/api/fs/list`) — the backend owns path hardening, and we just strip
-// a small set of always-noise entries. (gitignore-aware filtering is deferred.)
+import { desktopFsCacheKey, desktopGitRoot, readDesktopDir, readDesktopFileDataUrl } from '@/lib/desktop-fs'
+import { ALWAYS_EXCLUDED } from '@/lib/excluded-paths'
+import type { FsEntry as HermesReadDirEntry, ReadDirResult as HermesReadDirResult } from '@/types/hermes'
 
-const ALWAYS_EXCLUDED = new Set([
-  '.git',
-  'node_modules',
-  '.DS_Store',
-  '__pycache__',
-  '.venv',
-  '.mypy_cache',
-  '.pytest_cache',
-  '.ruff_cache'
-])
+export type ProjectTreeEntry = HermesReadDirEntry
 
-export async function readProjectDir(dirPath: string): Promise<ReadDirResult> {
-  const res = await readDir(dirPath)
-  if (res.error) return res
-  return { entries: res.entries.filter(entry => !ALWAYS_EXCLUDED.has(entry.name)) }
+interface GitignoreRule {
+  base: string
+  ig: ReturnType<typeof ignore>
 }
 
-// Kept for API parity with the desktop hook's cache-invalidation calls. This
-// reader doesn't cache (readDir is a cheap REST hit), so these are no-ops.
-export function clearProjectDirCache(_path?: string): void {
-  /* no cache to clear */
+const gitRootCache = new Map<string, Promise<string | null>>()
+const gitignoreCache = new Map<string, Promise<GitignoreRule | null>>()
+
+function decodeDataUrl(dataUrl: string) {
+  const match = dataUrl.match(/^data:[^,]*,(.*)$/)
+  const data = match?.[1] || ''
+  const isBase64 = dataUrl.slice(0, dataUrl.indexOf(',')).includes(';base64')
+
+  if (!isBase64) {
+    return decodeURIComponent(data)
+  }
+
+  const bytes = Uint8Array.from(atob(data), ch => ch.charCodeAt(0))
+
+  return new TextDecoder().decode(bytes)
+}
+
+function clean(path: string) {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '') || '/'
+}
+
+/** Strict POSIX-style relative path; null if `child` is not inside `root`. */
+function relativeTo(root: string, child: string) {
+  const r = clean(root)
+  const c = clean(child)
+
+  if (c === r) {
+    return ''
+  }
+
+  return c.startsWith(`${r}/`) ? c.slice(r.length + 1) : null
+}
+
+/** Repo-root → repo-root/a → repo-root/a/b → … for every dir between root and `dir`. */
+function ancestorDirs(root: string, dir: string) {
+  const r = clean(root)
+  const rel = relativeTo(r, dir)
+
+  if (rel === null || rel === '') {
+    return [r]
+  }
+
+  const dirs = [r]
+  let current = r
+
+  for (const part of rel.split('/').filter(Boolean)) {
+    current = `${current}/${part}`
+    dirs.push(current)
+  }
+
+  return dirs
+}
+
+async function gitRootFor(start: string) {
+  const key = `${desktopFsCacheKey()}:${clean(start)}`
+  let cached = gitRootCache.get(key)
+
+  if (!cached) {
+    cached = desktopGitRoot(clean(start))
+    gitRootCache.set(key, cached)
+  }
+
+  return cached
+}
+
+/** Read .gitignore at `dir` if it actually exists — never probe missing files. */
+async function readGitignore(dir: string): Promise<GitignoreRule | null> {
+  try {
+    const listing = await readDesktopDir(dir)
+
+    if (!listing.entries.some(e => e.name === '.gitignore' && !e.isDirectory)) {
+      return null
+    }
+
+    const text = decodeDataUrl(await readDesktopFileDataUrl(`${dir}/.gitignore`))
+
+    return { base: dir, ig: ignore().add(text) }
+  } catch {
+    return null
+  }
+}
+
+async function gitignoreFor(dir: string) {
+  const key = `${desktopFsCacheKey()}:${clean(dir)}`
+  let cached = gitignoreCache.get(key)
+
+  if (!cached) {
+    cached = readGitignore(clean(dir))
+    gitignoreCache.set(key, cached)
+  }
+
+  return cached
+}
+
+function ignoredBy(rules: GitignoreRule[], entry: HermesReadDirEntry) {
+  return rules.some(rule => {
+    const rel = relativeTo(rule.base, entry.path)
+
+    if (rel === null || rel === '') {
+      return false
+    }
+
+    return rule.ig.ignores(entry.isDirectory ? `${rel}/` : rel)
+  })
+}
+
+async function filterIgnored(entries: HermesReadDirEntry[], rootPath: string, dirPath: string) {
+  const root = await gitRootFor(rootPath)
+
+  if (!root) {
+    return entries
+  }
+
+  const rules = (await Promise.all(ancestorDirs(root, dirPath).map(gitignoreFor))).filter((r): r is GitignoreRule =>
+    Boolean(r)
+  )
+
+  return rules.length > 0 ? entries.filter(entry => !ignoredBy(rules, entry)) : entries
+}
+
+export async function readProjectDir(dirPath: string, rootPath = dirPath): Promise<HermesReadDirResult> {
+  const result = await readDesktopDir(dirPath)
+  const entries = (result?.entries ?? []).filter(entry => !ALWAYS_EXCLUDED.has(entry.name))
+
+  return { ...result, entries: await filterIgnored(entries, rootPath, dirPath) }
+}
+
+export function clearProjectDirCache(rootPath?: string) {
+  if (!rootPath) {
+    gitRootCache.clear()
+    gitignoreCache.clear()
+
+    return
+  }
+
+  const key = `${desktopFsCacheKey()}:${clean(rootPath)}`
+  gitRootCache.delete(key)
+  gitignoreCache.delete(key)
 }

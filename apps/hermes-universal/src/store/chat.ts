@@ -175,6 +175,15 @@ function withActiveAssistant(messages: ChatMessage[]): ChatMessage[] {
   return [...messages, newAssistant()]
 }
 
+// See the tool.complete case: lazy to avoid a chat ↔ workspace-events cycle.
+async function notifyWorkspaceChangeFromTool(payload: Record<string, unknown>): Promise<void> {
+  const { notifyWorkspaceChanged, toolChangedPath, toolMayMutateFiles } = await import('@/store/workspace-events')
+
+  if (toolMayMutateFiles(payload)) {
+    notifyWorkspaceChanged(toolChangedPath(payload))
+  }
+}
+
 function patchActive(messages: ChatMessage[], patch: (m: ChatMessage) => ChatMessage): ChatMessage[] {
   const next = withActiveAssistant(messages)
   const index = next.length - 1
@@ -276,6 +285,17 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'tool.complete':
       update(messages => patchActive(messages, m => ({ ...m, parts: upsertToolPart(m.parts, payload, 'complete') })))
+      // A file-mutating tool just finished — nudge the git-mirroring surfaces
+      // (coding rail, review pane, file tree) to refresh. Event-driven, not
+      // polled: fires exactly when the agent touches the tree. (Desktop does the
+      // same in use-message-stream/gateway-event.ts.)
+      //
+      // Imported lazily: store/workspace-events reads $currentCwd from THIS
+      // module for $effectiveCwd, so a static import is a cycle that leaves one
+      // side undefined at init (it broke the statusbar's $effectiveCwd read).
+      if (payload) {
+        void notifyWorkspaceChangeFromTool(payload)
+      }
       break
 
     case 'message.complete':
