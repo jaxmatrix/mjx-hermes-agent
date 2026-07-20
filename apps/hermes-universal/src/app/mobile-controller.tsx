@@ -1,20 +1,18 @@
-import { type ReactNode, useEffect, useRef } from 'react'
+import { type ReactNode, useEffect } from 'react'
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
 import { AgentsView } from '@/app/agents'
 import { ArtifactsView } from '@/app/artifacts'
 import { ChatScreen } from '@/app/chat/chat-screen'
-import { CommandCenterScreen } from '@/app/command-center/command-center-screen'
+import { CommandCenterView } from '@/app/command-center'
 import { ConnectScreen } from '@/app/connect-screen'
 import { GatewayConnectingScreen } from '@/app/gateway/gateway-connecting-screen'
-import { CronScreen } from '@/app/cron/cron-screen'
-import { FilesScreen } from '@/app/files/files-screen'
+import { CronView } from '@/app/cron'
 import { MessagingView } from '@/app/messaging'
 import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
-import { ProfilesScreen } from '@/app/profiles/profiles-screen'
-import { ReviewScreen } from '@/app/review/review-screen'
+import { ProfilesView } from '@/app/profiles'
 import { SkillsView } from '@/app/skills'
-import { StarmapScreen } from '@/app/starmap/starmap-screen'
+import { StarmapView } from '@/app/starmap'
 import { FloatingPet } from '@/app/pet/floating-pet'
 import { ProviderConnectOverlay } from '@/app/settings/provider-connect-overlay'
 import { SettingsView } from '@/app/settings/settings-view'
@@ -26,9 +24,12 @@ import { $connectionPhase, $hasConnected } from '@/store/connection'
 import { $restoring } from '@/store/gateway-restore'
 import { $onboardingActive, checkConfigured } from '@/store/onboarding'
 import { syncPetInfo } from '@/store/pet-gallery'
+import { deleteSessionLocal } from '@/store/session'
 import { bumpZoom, initZoom, setZoomPercent } from '@/store/zoom'
 
+import { sessionRoute } from './routes'
 import { CommandMenu } from './shell/command-menu'
+import { useOverlayRouting } from './shell/hooks/use-overlay-routing'
 import { AppShell, SidebarProvider } from './shell/sidebar'
 import { Statusbar } from './shell/statusbar'
 import { Titlebar } from './shell/titlebar'
@@ -83,35 +84,28 @@ export function MobileController() {
 
   const connected = phase === 'ready' && !onboarding
 
-  // Settings is a top-level overlay portal (desktop parity) rather than a routed
-  // pane: the underlying route (chat) stays as the backdrop and the portal floats
-  // over it. Open state is derived from the URL.
+  // Overlay views (settings / command-center / agents / cron / …) are top-level
+  // portals rather than routed panes — desktop parity: the underlying route (chat)
+  // stays as the backdrop and the portal floats over it. Open state and the
+  // "return to where you were" path both come from the shared hook ported from
+  // desktop's shell/hooks/use-overlay-routing.
   const { pathname } = useLocation()
   const navigate = useNavigate()
-  const settingsOpen = pathname === '/settings' || pathname.startsWith('/settings/')
-  // Agents ("Spawn tree") is a top-level overlay portal too (desktop parity —
-  // it floats over chat with an X / Esc-to-close), so /agents falls through the
-  // router to the chat backdrop and the portal is derived from the URL.
-  const agentsOpen = pathname === '/agents'
-  const agentsReturnPathRef = useRef('/')
-  useEffect(() => {
-    if (!agentsOpen) {
-      agentsReturnPathRef.current = pathname
-    }
-  }, [agentsOpen, pathname])
+  const {
+    agentsOpen,
+    closeOverlayToPreviousRoute,
+    commandCenterOpen,
+    cronOpen,
+    profilesOpen,
+    returnPathRef,
+    starmapOpen,
+    settingsOpen
+  } = useOverlayRouting()
   // Only the Gateway settings page is usable while disconnected (it's the
   // reconnect / sign-in surface). Every other settings section needs live gateway
   // data, so keeping the overlay mounted there while disconnected would just render
   // empty sections — so a disconnect only holds the overlay open on Gateway.
   const settingsGatewayOpen = pathname === '/settings/gateway'
-  // Remember the route the user was on before settings opened, so the portal's
-  // close button returns there instead of stepping back one settings section.
-  const returnPathRef = useRef('/')
-  useEffect(() => {
-    if (!settingsOpen) {
-      returnPathRef.current = pathname
-    }
-  }, [settingsOpen, pathname])
 
   let content: ReactNode
   if (phase !== 'ready') {
@@ -154,19 +148,23 @@ export function MobileController() {
             <Route element={<ChatScreen />} path="/" />
             {/* /settings* falls through to the chat backdrop; the settings portal
                 itself renders as a top-level overlay below (fixed z-50). */}
-            <Route element={<CommandCenterScreen />} path="/command-center" />
+            {/* /command-center falls through to the chat backdrop; the Command
+                Center overlay renders as a top-level portal below (fixed z-50). */}
             {/* Capabilities: Skills · Toolsets · MCP · Hub (ported from desktop). */}
             <Route element={<SkillsView />} path="/skills" />
             <Route element={<MessagingView />} path="/messaging" />
             <Route element={<ArtifactsView />} path="/artifacts" />
-            <Route element={<CronScreen />} path="/cron" />
-            {/* CRUD/soul view; active-profile switching lives in Settings → Gateway (E7). */}
-            <Route element={<ProfilesScreen />} path="/profiles" />
+            {/* /cron falls through to the chat backdrop; the Cron overlay
+                renders as a top-level portal below (fixed z-50). */}
+            {/* /profiles falls through to the chat backdrop; the Profiles overlay
+                renders as a top-level portal below (fixed z-50). */}
             {/* /agents falls through to the chat backdrop; the Agents ("Spawn
                 tree") overlay renders as a top-level portal below (fixed z-50). */}
-            <Route element={<StarmapScreen />} path="/starmap" />
-            <Route element={<FilesScreen />} path="/files" />
-            <Route element={<ReviewScreen />} path="/review" />
+            {/* /starmap falls through to the chat backdrop; the Star map overlay
+                renders as a top-level portal below (fixed z-50). */}
+            {/* No /files or /review routes — desktop parity: Files is the
+                right-pane file tree and Review is the right-pane git diff, both
+                mounted in AppShell rather than routed. */}
             {/* Session ids (and anything else) resolve to chat, per routes.ts */}
             <Route element={<ChatScreen />} path="*" />
           </Routes>
@@ -201,14 +199,38 @@ export function MobileController() {
         {/* Agents ("Spawn tree") overlay — desktop's live subagent surface,
             floated over the chat backdrop and opened from the statusbar Agents
             item. Its Panel supplies the fixed-inset card + close-X / Esc. */}
-        {connected && agentsOpen && <AgentsView onClose={() => navigate(agentsReturnPathRef.current)} />}
+        {connected && agentsOpen && <AgentsView onClose={closeOverlayToPreviousRoute} />}
+        {/* Command Center overlay — desktop's Sessions / System / Usage /
+            Maintenance ops surface, opened from the statusbar (icon + version
+            chips) and the sidebar rail. */}
+        {connected && commandCenterOpen && (
+          <CommandCenterView
+            onClose={closeOverlayToPreviousRoute}
+            onDeleteSession={deleteSessionLocal}
+            onNavigateRoute={path => navigate(path)}
+            onOpenSession={sessionId => navigate(sessionRoute(sessionId))}
+          />
+        )}
+        {/* Cron ("Routines") overlay — desktop's scheduled-jobs master/detail:
+            schedule, run history, pause/resume/trigger. Opened from the sidebar
+            rail and from "Manage" on a sidebar cron row. */}
+        {connected && cronOpen && (
+          <CronView
+            onClose={closeOverlayToPreviousRoute}
+            onOpenSession={sessionId => navigate(sessionRoute(sessionId))}
+          />
+        )}
+        {/* Profiles overlay — desktop's profile CRUD + soul editor master/detail. */}
+        {connected && profilesOpen && <ProfilesView onClose={closeOverlayToPreviousRoute} />}
+        {/* Star map overlay — the radial "what Hermes has learned" map. */}
+        {connected && starmapOpen && <StarmapView onClose={closeOverlayToPreviousRoute} />}
         {/* Provider-connect overlay — a focused per-provider sign-in card that
             floats OVER the settings page (z-70) without unmounting it. Opened from
             Providers → Accounts; gated on $connectProvider, not $onboardingActive. */}
         {connected && <ProviderConnectOverlay />}
         {/* Floating pet — a top-level draggable + roaming mascot (fixed z-60) that
             floats over ALL routes. It patrols the Settings overlay's edge when open. */}
-        {connected && <FloatingPet overlayOpen={settingsOpen || agentsOpen} />}
+        {connected && <FloatingPet overlayOpen={settingsOpen || agentsOpen || commandCenterOpen || cronOpen || profilesOpen || starmapOpen} />}
       </div>
     </SidebarProvider>
   )

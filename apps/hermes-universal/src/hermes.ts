@@ -775,9 +775,11 @@ export function testMessagingPlatform(platformId: string): Promise<MessagingPlat
   })
 }
 
-export function getCronJobs(): Promise<CronJob[]> {
+export function getCronJobs(profile?: string): Promise<CronJob[]> {
+  const suffix = profile ? `?profile=${encodeURIComponent(profile)}` : ''
+
   return api<CronJob[]>({
-    path: '/api/cron/jobs',
+    path: `/api/cron/jobs${suffix}`,
     timeoutMs: STARTUP_REQUEST_TIMEOUT_MS
   })
 }

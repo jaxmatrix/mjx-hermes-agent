@@ -11,10 +11,28 @@ import { atom } from '@/store/atom'
 import { notifyError } from '@/store/notifications'
 import type { CronJob, CronJobCreatePayload, CronJobUpdates } from '@/types/hermes'
 
-// Scheduled-jobs (cron) store — lean, optimistic, mirrors store/session.ts.
+// Cron *jobs* (not run sessions) power the sidebar "Cron jobs" section and the
+// cron overlay. Listing the job — schedule, state, live next-run countdown —
+// makes the job the first-class entity; its runs (sessions) resolve under it in
+// the cron detail. The optimistic mutation helpers below back the sidebar rows.
 export const $cronJobs = atom<CronJob[]>([])
 export const $cronLoading = atom(false)
 export const $cronLoadError = atom<string | null>(null)
+
+// Ported from desktop's store/cron.ts — the cron overlay writes through these
+// so the sidebar and the overlay never drift (a delete in the overlay clears the
+// sidebar row immediately).
+export const setCronJobs = (jobs: CronJob[]) => $cronJobs.set(jobs)
+
+// In-place edit so the cron overlay's mutations (create/edit/delete/pause/…)
+// land in the same atom the sidebar renders — no stale list until the next poll.
+export const updateCronJobs = (fn: (jobs: CronJob[]) => CronJob[]) => $cronJobs.set(fn($cronJobs.get()))
+
+// One-shot focus target: clicking "Manage" on a job sets this, then opens the
+// cron overlay, which reads it once to select + scroll to that job. Cleared
+// after consumption so re-opening cron normally doesn't re-focus a stale job.
+export const $cronFocusJobId = atom<null | string>(null)
+export const setCronFocusJobId = (id: null | string) => $cronFocusJobId.set(id)
 
 export async function refreshCronJobs(): Promise<void> {
   $cronLoading.set(true)

@@ -121,7 +121,10 @@ export {
   IconMessage2 as MessageSquareText,
   IconTrash as Trash2,
   IconVolume2 as Volume2,
-  IconVolumeOff as VolumeX
+  IconVolumeOff as VolumeX,
+  IconChartBar as BarChart3,
+  IconBookmark as Bookmark,
+  IconBookmarkFilled as BookmarkFilled
 } from '@tabler/icons-react'
 
 // Shared icon-size utility (mirrors desktop `@/lib/icons` iconSize) so ported

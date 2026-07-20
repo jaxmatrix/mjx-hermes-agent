@@ -1279,11 +1279,16 @@ export interface Translations {
     promptPlaceholder: string
     frequencyLabel: string
     deliverLabel: string
+    modelLabel: string
+    modelDefault: string
     customScheduleLabel: string
     customPlaceholder: string
     customHint: string
     optional: string
+    promptRequired: string
     promptScheduleRequired: string
+    scheduleRequired: string
+    scriptOnlyEditHint: string
     saveChanges: string
     createAction: string
   }

@@ -1,54 +1,55 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useStore } from '@nanostores/react'
+import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { type NodeApi, type NodeRendererProps, type RowRendererProps, Tree, type TreeApi } from 'react-arborist'
 
+import { TreeSkeleton } from '@/components/chat/skeletons'
 import { Codicon } from '@/components/ui/codicon'
-import { Skeleton } from '@/components/ui/skeleton'
+import { useResizeObserver } from '@/hooks/use-resize-observer'
 import { cn } from '@/lib/utils'
+import { $repoChangeByPath, type RepoChangeKind } from '@/store/coding-status'
+import { $renamingPath, beginInlineRename } from '@/store/file-actions'
 import { $revealInTreeRequest } from '@/store/layout'
 
-import { FileContextMenu } from './file-context-menu'
+import { FileEntryContextMenu, InlineRenameInput, isRenameShortcut } from '../file-actions'
+
+import { getFileTreeDndManager } from './dnd-manager'
 import type { TreeNode } from './use-project-tree'
-
-// Ported from desktop's files/tree.tsx. react-arborist tree with lazy children +
-// reveal-in-tree. Adaptations: no inline-rename / no drag-and-drop (deferred), an
-// inlined ResizeObserver (no shared hook), and git tint driven by a passed map
-// (universal has no `coding-status` store).
-
-export type RepoChangeKind = 'added' | 'conflicted' | 'modified'
 
 const ROW_HEIGHT = 22
 const INDENT = 10
-/** Fixed base inset layered on top of arborist's depth indent. */
-const TREE_ROW_INSET = '13px'
+/** Fixed base inset (`px-6.5`) layered on top of arborist's depth indent. */
+const TREE_ROW_INSET = '17px'
 
 function withTreeInset(paddingLeft: number | string | undefined): string {
-  if (typeof paddingLeft === 'number') return `calc(${paddingLeft}px + ${TREE_ROW_INSET})`
-  if (!paddingLeft) return TREE_ROW_INSET
+  if (typeof paddingLeft === 'number') {
+    return `calc(${paddingLeft}px + ${TREE_ROW_INSET})`
+  }
+
+  if (!paddingLeft) {
+    return TREE_ROW_INSET
+  }
+
   return `calc(${paddingLeft} + ${TREE_ROW_INSET})`
 }
 
-const CHANGE_TINT: Record<RepoChangeKind, string> = {
-  added: 'text-(--ui-green)',
-  conflicted: 'text-(--ui-red)',
-  modified: 'text-(--ui-yellow)'
-}
-
 interface ProjectTreeProps {
-  changeByPath?: Map<string, RepoChangeKind>
   collapseNonce: number
   cwd: string
   data: TreeNode[]
+  onActivateFile: (path: string) => void
+  onActivateFolder: (path: string) => void
   onLoadChildren: (id: string) => void | Promise<void>
   onNodeOpenChange: (id: string, open: boolean) => void
-  onPreviewFile: (path: string) => void
+  onPreviewFile?: (path: string) => void
   openState: Record<string, boolean>
 }
 
 export function ProjectTree({
-  changeByPath,
   collapseNonce,
   cwd,
   data,
+  onActivateFile,
+  onActivateFolder,
   onLoadChildren,
   onNodeOpenChange,
   onPreviewFile,
@@ -57,28 +58,38 @@ export function ProjectTree({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const treeRef = useRef<TreeApi<TreeNode> | null>(null)
   const [size, setSize] = useState({ height: 0, width: 0 })
+  const changeByPath = useStore($repoChangeByPath)
 
-  useLayoutEffect(() => {
+  const syncTreeSize = useCallback(() => {
     const el = containerRef.current
-    if (!el) return
 
-    const sync = () => {
-      const { height, width } = el.getBoundingClientRect()
-      setSize(prev => (prev.height === height && prev.width === width ? prev : { height, width }))
+    if (!el) {
+      return
     }
 
-    sync()
-    const ro = new ResizeObserver(sync)
-    ro.observe(el)
-    return () => ro.disconnect()
+    const { height, width } = el.getBoundingClientRect()
+
+    setSize(prev => {
+      if (prev.height === height && prev.width === width) {
+        return prev
+      }
+
+      return { height, width }
+    })
   }, [])
+
+  useResizeObserver(syncTreeSize, containerRef)
 
   const handleToggle = useCallback(
     (id: string) => {
       const node = treeRef.current?.get(id)
-      if (!node) return
+
+      if (!node) {
+        return
+      }
 
       onNodeOpenChange(id, node.isOpen)
+
       if (node.isOpen && node.data?.isDirectory && node.data.children === undefined) {
         void onLoadChildren(id)
       }
@@ -86,8 +97,9 @@ export function ProjectTree({
     [onLoadChildren, onNodeOpenChange]
   )
 
-  // Reveal-in-tree: expand each ancestor top-down (lazy-loading first), then
-  // select + scroll to the target.
+  // "Reveal in side bar": expand each ancestor folder top-down (lazy-loading its
+  // children first so the node exists), then select + scroll to the target. The
+  // pane is opened by the caller; this drives the tree to the file.
   const revealNode = useCallback(
     async (absPath: string) => {
       const root = cwd.replace(/[\\/]+$/, '')
@@ -96,16 +108,23 @@ export function ProjectTree({
       const segments = rel.split(/[\\/]/).filter(Boolean)
 
       let acc = root
+
       for (let i = 0; i < segments.length - 1; i += 1) {
         acc = `${acc}/${segments[i]}`
         const node = treeRef.current?.get(acc)
-        if (node?.data?.isDirectory && node.data.children === undefined) await onLoadChildren(acc)
+
+        if (node?.data?.isDirectory && node.data.children === undefined) {
+          await onLoadChildren(acc)
+        }
+
         onNodeOpenChange(acc, true)
         treeRef.current?.open(acc)
         await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)))
       }
 
       treeRef.current?.select(target)
+      // 'start' lands the file at/near the top (instant — arborist sets scrollTop
+      // directly, no smooth scroll).
       treeRef.current?.scrollTo(target, 'start')
     },
     [cwd, onLoadChildren, onNodeOpenChange]
@@ -114,7 +133,10 @@ export function ProjectTree({
   useEffect(
     () =>
       $revealInTreeRequest.subscribe(path => {
-        if (!path) return
+        if (!path) {
+          return
+        }
+
         $revealInTreeRequest.set(null)
         void revealNode(path)
       }),
@@ -123,13 +145,37 @@ export function ProjectTree({
 
   const handleActivate = useCallback(
     (node: NodeApi<TreeNode>) => {
-      if (node.data && !node.data.isDirectory && !node.data.placeholder) onPreviewFile(node.data.id)
+      // arborist fires onActivate on click/dblclick/Enter — independent of the
+      // row's own handlers. Suppress it for the row being renamed so the
+      // context-menu "Rename" (and its fall-through) can't open the preview.
+      if (node.data && !node.data.isDirectory && $renamingPath.get() !== node.data.id) {
+        onPreviewFile?.(node.data.id)
+      }
     },
     [onPreviewFile]
   )
 
+  // F2 / Enter on the selected row begins an inline rename. Capture-phase so it
+  // beats arborist's own Enter-to-activate; skipped while an edit is in progress
+  // (the editor input owns Enter/Esc then) and for placeholder rows.
+  const handleRenameShortcut = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!isRenameShortcut(event) || $renamingPath.get()) {
+      return
+    }
+
+    const node = treeRef.current?.selectedNodes?.[0]
+
+    if (!node?.data || node.data.placeholder) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    beginInlineRename(node.data.id)
+  }, [])
+
   return (
-    <div className="min-h-0 flex-1 overflow-hidden" ref={containerRef}>
+    <div className="min-h-0 flex-1 overflow-hidden" onKeyDownCapture={handleRenameShortcut} ref={containerRef}>
       {size.height > 0 && size.width > 0 ? (
         <Tree<TreeNode>
           childrenAccessor={node => (node?.isDirectory ? (node.children ?? []) : null)}
@@ -137,6 +183,7 @@ export function ProjectTree({
           disableDrag
           disableDrop
           disableEdit
+          dndManager={getFileTreeDndManager()}
           height={size.height}
           indent={INDENT}
           initialOpenState={openState}
@@ -153,25 +200,29 @@ export function ProjectTree({
           {props => (
             <ProjectTreeRow
               {...props}
-              changeKind={props.node.data ? changeByPath?.get(props.node.data.id) : undefined}
+              changeKind={props.node.data ? changeByPath.get(props.node.data.id) : undefined}
+              onAttachFile={onActivateFile}
+              onAttachFolder={onActivateFolder}
               onPreviewFile={onPreviewFile}
               relativeTo={cwd}
             />
           )}
         </Tree>
       ) : (
-        <div className="flex flex-col gap-1.5 p-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton className="h-3.5" key={i} style={{ width: `${60 + ((i * 13) % 35)}%` }} />
-          ))}
-        </div>
+        <TreeSizingState />
       )}
     </div>
   )
 }
 
-// arborist's default row hardcodes `min-width: max-content`; we don't scroll
-// sideways, so pin the row to the viewport width so long names ellipsize.
+function TreeSizingState() {
+  return <TreeSkeleton />
+}
+
+// arborist's default row hardcodes `min-width: max-content` (so a highlight can
+// span horizontally-scrolled content), which grows the row to its full name
+// width and defeats the inner `truncate`. We don't scroll sideways — pin the row
+// to the viewport so long names ellipsize instead of clipping at the pane edge.
 function ProjectTreeRowContainer({ attrs, children, innerRef, node }: RowRendererProps<TreeNode>) {
   return (
     <div
@@ -186,48 +237,103 @@ function ProjectTreeRowContainer({ attrs, children, innerRef, node }: RowRendere
   )
 }
 
+const CHANGE_TINT: Record<RepoChangeKind, string> = {
+  added: 'text-(--ui-green)',
+  conflicted: 'text-(--ui-red)',
+  modified: 'text-(--ui-yellow)'
+}
+
 function ProjectTreeRow({
   changeKind,
+  dragHandle,
   node,
+  onAttachFile,
+  onAttachFolder,
   onPreviewFile,
   relativeTo,
   style
 }: NodeRendererProps<TreeNode> & {
   changeKind?: RepoChangeKind
-  onPreviewFile: (path: string) => void
+  onAttachFile: (path: string) => void
+  onAttachFolder: (path: string) => void
+  onPreviewFile?: (path: string) => void
   relativeTo?: null | string
 }) {
-  if (!node.data) return <div style={style} />
+  const renamingPath = useStore($renamingPath)
+
+  if (!node.data) {
+    return <div style={style} />
+  }
 
   const isFolder = node.data.isDirectory
   const isPlaceholder = Boolean(node.data.placeholder)
   const isErrorPlaceholder = node.data.placeholder === 'error'
+  const editing = !isPlaceholder && renamingPath === node.data.id
 
   const row = (
     <div
       aria-expanded={isFolder ? node.isOpen : undefined}
       aria-selected={node.isSelected}
       className={cn(
-        'row-hover flex h-full select-none items-center gap-1 border border-transparent px-3 text-xs font-normal text-(--ui-text-secondary) hover:text-foreground',
+        'group/row row-hover flex h-full select-none items-center gap-1 border border-transparent px-3 text-xs font-normal leading-(--file-tree-row-height) text-(--ui-text-secondary) hover:text-foreground',
         node.isSelected && 'bg-(--ui-row-active-background) text-foreground',
         isPlaceholder && 'pointer-events-none italic text-muted-foreground/70'
       )}
+      draggable={!isPlaceholder && !editing}
       onClick={event => {
         event.stopPropagation()
-        if (isPlaceholder) return
-        if (isFolder) node.toggle()
-        else node.select()
+
+        // Read the rename atom LIVE (not the render closure): the fall-through
+        // click from a context-menu close can fire before the editing re-render
+        // commits, so a stale closure would still select/activate and yank focus.
+        if (isPlaceholder || $renamingPath.get() === node.data.id) {
+          return
+        }
+
+        if (event.shiftKey) {
+          ;(isFolder ? onAttachFolder : onAttachFile)(node.data.id)
+
+          return
+        }
+
+        if (isFolder) {
+          node.toggle()
+        } else {
+          node.select()
+        }
       }}
       onDoubleClick={event => {
         event.stopPropagation()
-        if (!isFolder && !isPlaceholder) onPreviewFile(node.data.id)
+
+        if (!isFolder && !isPlaceholder && $renamingPath.get() !== node.data.id) {
+          onPreviewFile?.(node.data.id)
+        }
       }}
-      style={{ ...style, paddingLeft: withTreeInset(style.paddingLeft) }}
+      onDragStart={event => {
+        if (isPlaceholder || $renamingPath.get() === node.data.id) {
+          event.preventDefault()
+
+          return
+        }
+
+        const payload = JSON.stringify([{ isDirectory: isFolder, path: node.data.id }])
+
+        event.dataTransfer.effectAllowed = 'copy'
+        event.dataTransfer.setData('application/x-hermes-paths', payload)
+        event.dataTransfer.setData('text/plain', node.data.id)
+      }}
+      ref={dragHandle}
+      style={{
+        ...style,
+        paddingLeft: withTreeInset(style.paddingLeft)
+      }}
       title={node.data.id}
     >
+      {/* No chevron column — the folder icon (open/closed) already carries the
+          expand state, so the extra glyph was pure noise. */}
       <span aria-hidden className="flex w-3.5 items-center justify-center text-(--ui-text-tertiary)">
         {isPlaceholder && !isErrorPlaceholder ? (
-          <Codicon className="animate-spin" name="loading" size="0.75rem" />
+          <Codicon name="loading" size="0.75rem" spinning />
         ) : isErrorPlaceholder ? (
           <Codicon name="warning" size="0.75rem" />
         ) : isFolder ? (
@@ -236,15 +342,23 @@ function ProjectTreeRow({
           <Codicon name="file" size="0.875rem" />
         )}
       </span>
-      <span className={cn('min-w-0 flex-1 truncate', changeKind && CHANGE_TINT[changeKind])}>{node.data.name}</span>
+      {editing ? (
+        <InlineRenameInput name={node.data.name} path={node.data.id} />
+      ) : (
+        // Git decoration (VS Code-style): tint changed files; the explicit color
+        // wins over the row's hover/selected text color, so it persists.
+        <span className={cn('min-w-0 flex-1 truncate', changeKind && CHANGE_TINT[changeKind])}>{node.data.name}</span>
+      )}
     </div>
   )
 
-  if (isPlaceholder) return row
+  if (isPlaceholder) {
+    return row
+  }
 
   return (
-    <FileContextMenu path={node.data.id} relativeTo={relativeTo}>
+    <FileEntryContextMenu isDirectory={isFolder} name={node.data.name} path={node.data.id} relativeTo={relativeTo}>
       {row}
-    </FileContextMenu>
+    </FileEntryContextMenu>
   )
 }
