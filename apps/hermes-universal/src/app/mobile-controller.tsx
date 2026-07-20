@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useRef } from 'react'
-import { Route, Routes, useLocation } from 'react-router-dom'
+import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
-import { AgentsScreen } from '@/app/agents/agents-screen'
+import { AgentsView } from '@/app/agents'
 import { ArtifactsScreen } from '@/app/artifacts/artifacts-screen'
 import { ChatScreen } from '@/app/chat/chat-screen'
 import { CommandCenterScreen } from '@/app/command-center/command-center-screen'
@@ -87,7 +87,18 @@ export function MobileController() {
   // pane: the underlying route (chat) stays as the backdrop and the portal floats
   // over it. Open state is derived from the URL.
   const { pathname } = useLocation()
+  const navigate = useNavigate()
   const settingsOpen = pathname === '/settings' || pathname.startsWith('/settings/')
+  // Agents ("Spawn tree") is a top-level overlay portal too (desktop parity —
+  // it floats over chat with an X / Esc-to-close), so /agents falls through the
+  // router to the chat backdrop and the portal is derived from the URL.
+  const agentsOpen = pathname === '/agents'
+  const agentsReturnPathRef = useRef('/')
+  useEffect(() => {
+    if (!agentsOpen) {
+      agentsReturnPathRef.current = pathname
+    }
+  }, [agentsOpen, pathname])
   // Only the Gateway settings page is usable while disconnected (it's the
   // reconnect / sign-in surface). Every other settings section needs live gateway
   // data, so keeping the overlay mounted there while disconnected would just render
@@ -151,7 +162,8 @@ export function MobileController() {
             <Route element={<CronScreen />} path="/cron" />
             {/* CRUD/soul view; active-profile switching lives in Settings → Gateway (E7). */}
             <Route element={<ProfilesScreen />} path="/profiles" />
-            <Route element={<AgentsScreen />} path="/agents" />
+            {/* /agents falls through to the chat backdrop; the Agents ("Spawn
+                tree") overlay renders as a top-level portal below (fixed z-50). */}
             <Route element={<StarmapScreen />} path="/starmap" />
             <Route element={<FilesScreen />} path="/files" />
             <Route element={<ReviewScreen />} path="/review" />
@@ -186,13 +198,17 @@ export function MobileController() {
             picker — desktop parity. Blocked only during the first-run onboarding
             wizard (phase ready but not connected). */}
         {settingsOpen && (connected || settingsGatewayOpen) && <SettingsView returnPath={returnPathRef.current} />}
+        {/* Agents ("Spawn tree") overlay — desktop's live subagent surface,
+            floated over the chat backdrop and opened from the statusbar Agents
+            item. Its Panel supplies the fixed-inset card + close-X / Esc. */}
+        {connected && agentsOpen && <AgentsView onClose={() => navigate(agentsReturnPathRef.current)} />}
         {/* Provider-connect overlay — a focused per-provider sign-in card that
             floats OVER the settings page (z-70) without unmounting it. Opened from
             Providers → Accounts; gated on $connectProvider, not $onboardingActive. */}
         {connected && <ProviderConnectOverlay />}
         {/* Floating pet — a top-level draggable + roaming mascot (fixed z-60) that
             floats over ALL routes. It patrols the Settings overlay's edge when open. */}
-        {connected && <FloatingPet overlayOpen={settingsOpen} />}
+        {connected && <FloatingPet overlayOpen={settingsOpen || agentsOpen} />}
       </div>
     </SidebarProvider>
   )
