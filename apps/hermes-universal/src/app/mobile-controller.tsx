@@ -45,9 +45,6 @@ export function MobileController() {
   const restoring = useStore($restoring)
   const hasConnected = useStore($hasConnected)
 
-  // Sidebar shortcuts (mod+b / mod+shift+f / mod+n).
-  useSidebarKeybinds()
-
   // UI scale: apply the persisted zoom once, and wire Cmd/Ctrl +/-/0 shortcuts.
   // Zoom stays outside the rebindable registry — desktop keeps it out too.
   useEffect(() => {
