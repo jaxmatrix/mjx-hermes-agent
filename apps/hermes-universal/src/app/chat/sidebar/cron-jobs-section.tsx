@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { jobName } from '@/app/cron/schedule'
-import { jobState, STATE_DOT } from '@/app/cron/job-state'
+import { jobState, jobTitle, STATE_DOT } from '@/app/cron/job-state'
 import { Codicon } from '@/components/ui/codicon'
 import { DisclosureCaret } from '@/components/ui/disclosure-caret'
 import { getCronJobRuns } from '@/hermes'
@@ -82,7 +81,7 @@ export function SidebarCronJobsSection({
       if (an !== null && bn !== null && an !== bn) return an - bn
       if (an === null && bn !== null) return 1
       if (an !== null && bn === null) return -1
-      return jobName(a).localeCompare(jobName(b))
+      return jobTitle(a).localeCompare(jobTitle(b))
     })
   }, [jobs])
 
@@ -154,7 +153,7 @@ function CronJobSidebarRow({
   const c = t.cron
   const state = jobState(job)
   const next = nextRunMs(job)
-  const label = jobName(job)
+  const label = jobTitle(job)
 
   const meta = INACTIVE_STATES.has(state) ? c.states[state] ?? state : next !== null ? relativeTime(next, nowMs) : '—'
 

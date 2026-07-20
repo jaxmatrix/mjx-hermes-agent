@@ -7,7 +7,7 @@ import { ChatScreen } from '@/app/chat/chat-screen'
 import { CommandCenterView } from '@/app/command-center'
 import { ConnectScreen } from '@/app/connect-screen'
 import { GatewayConnectingScreen } from '@/app/gateway/gateway-connecting-screen'
-import { CronScreen } from '@/app/cron/cron-screen'
+import { CronView } from '@/app/cron'
 import { FilesScreen } from '@/app/files/files-screen'
 import { MessagingView } from '@/app/messaging'
 import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
@@ -93,7 +93,7 @@ export function MobileController() {
   // shell/hooks/use-overlay-routing.
   const { pathname } = useLocation()
   const navigate = useNavigate()
-  const { agentsOpen, closeOverlayToPreviousRoute, commandCenterOpen, returnPathRef, settingsOpen } =
+  const { agentsOpen, closeOverlayToPreviousRoute, commandCenterOpen, cronOpen, returnPathRef, settingsOpen } =
     useOverlayRouting()
   // Only the Gateway settings page is usable while disconnected (it's the
   // reconnect / sign-in surface). Every other settings section needs live gateway
@@ -148,7 +148,8 @@ export function MobileController() {
             <Route element={<SkillsView />} path="/skills" />
             <Route element={<MessagingView />} path="/messaging" />
             <Route element={<ArtifactsView />} path="/artifacts" />
-            <Route element={<CronScreen />} path="/cron" />
+            {/* /cron falls through to the chat backdrop; the Cron overlay
+                renders as a top-level portal below (fixed z-50). */}
             {/* CRUD/soul view; active-profile switching lives in Settings → Gateway (E7). */}
             <Route element={<ProfilesScreen />} path="/profiles" />
             {/* /agents falls through to the chat backdrop; the Agents ("Spawn
@@ -202,13 +203,22 @@ export function MobileController() {
             onOpenSession={sessionId => navigate(sessionRoute(sessionId))}
           />
         )}
+        {/* Cron ("Routines") overlay — desktop's scheduled-jobs master/detail:
+            schedule, run history, pause/resume/trigger. Opened from the sidebar
+            rail and from "Manage" on a sidebar cron row. */}
+        {connected && cronOpen && (
+          <CronView
+            onClose={closeOverlayToPreviousRoute}
+            onOpenSession={sessionId => navigate(sessionRoute(sessionId))}
+          />
+        )}
         {/* Provider-connect overlay — a focused per-provider sign-in card that
             floats OVER the settings page (z-70) without unmounting it. Opened from
             Providers → Accounts; gated on $connectProvider, not $onboardingActive. */}
         {connected && <ProviderConnectOverlay />}
         {/* Floating pet — a top-level draggable + roaming mascot (fixed z-60) that
             floats over ALL routes. It patrols the Settings overlay's edge when open. */}
-        {connected && <FloatingPet overlayOpen={settingsOpen || agentsOpen || commandCenterOpen} />}
+        {connected && <FloatingPet overlayOpen={settingsOpen || agentsOpen || commandCenterOpen || cronOpen} />}
       </div>
     </SidebarProvider>
   )
