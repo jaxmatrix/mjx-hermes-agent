@@ -11,7 +11,7 @@ vi.mock('@/hermes', () => ({
 vi.mock('@/store/gateway', () => ({ requestGateway: vi.fn() }))
 
 import { deleteSession, renameSession } from '@/hermes'
-import { $busy, $messages, $sessionId } from '@/store/chat'
+import { $busy, $currentCwd, $messages, $sessionId } from '@/store/chat'
 import { requestGateway } from '@/store/gateway'
 import type { SessionInfo } from '@/types/hermes'
 
@@ -25,6 +25,7 @@ import {
 } from './session'
 
 const row = (id: string, title: string): SessionInfo => ({ id, title } as unknown as SessionInfo)
+const rowWithCwd = (id: string, cwd: null | string): SessionInfo => ({ id, cwd } as unknown as SessionInfo)
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -32,6 +33,7 @@ afterEach(() => {
   $sessionsTotal.set(0)
   $activeStoredSessionId.set(null)
   $messages.set([])
+  $currentCwd.set('')
 })
 
 describe('session store', () => {
@@ -67,5 +69,45 @@ describe('session store', () => {
     expect($sessionId.get()).toBe('runtime-1')
     expect($busy.get()).toBe(false)
     expect($messages.get()).toEqual([{ id: expect.any(String), role: 'user', parts: [{ type: 'text', text: 'hi' }] }])
+  })
+
+  it('openSession restores the chat cwd from the stored row', async () => {
+    $sessions.set([rowWithCwd('stored-9', '/home/me/project-a')])
+    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1' })
+    await openSession('stored-9')
+    expect($currentCwd.get()).toBe('/home/me/project-a')
+  })
+
+  it('openSession prefers the resume response runtime cwd over the stored row', async () => {
+    $sessions.set([rowWithCwd('stored-9', '/home/me/stale')])
+    vi.mocked(requestGateway).mockResolvedValue({
+      info: { cwd: '/home/me/project-b' },
+      messages: [],
+      session_id: 'runtime-1'
+    })
+    await openSession('stored-9')
+    expect($currentCwd.get()).toBe('/home/me/project-b')
+  })
+
+  it('openSession keeps the stored cwd when the resume response omits one', async () => {
+    $sessions.set([rowWithCwd('stored-9', '/home/me/project-a')])
+    vi.mocked(requestGateway).mockResolvedValue({ info: {}, messages: [], session_id: 'runtime-1' })
+    await openSession('stored-9')
+    expect($currentCwd.get()).toBe('/home/me/project-a')
+  })
+
+  it('openSession detaches the cwd for a chat that has none', async () => {
+    $currentCwd.set('/home/me/previous-chat')
+    $sessions.set([rowWithCwd('stored-9', null)])
+    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1' })
+    await openSession('stored-9')
+    expect($currentCwd.get()).toBe('')
+  })
+
+  it('openSession still restores the cwd when resume fails', async () => {
+    $sessions.set([rowWithCwd('stored-9', '/home/me/project-a')])
+    vi.mocked(requestGateway).mockRejectedValue(new Error('offline'))
+    await openSession('stored-9')
+    expect($currentCwd.get()).toBe('/home/me/project-a')
   })
 })

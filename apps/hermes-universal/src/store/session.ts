@@ -9,7 +9,7 @@ import {
 } from '@/hermes'
 import { toChatMessages } from '@/lib/session-history'
 import { atom, computed } from '@/store/atom'
-import { $busy, $clarify, $messages, $sessionId, $statusLine, resetChat } from '@/store/chat'
+import { $busy, $clarify, $currentCwd, $messages, $sessionId, $statusLine, resetChat, setCurrentCwd } from '@/store/chat'
 import { requestGateway } from '@/store/gateway'
 import { notifyError } from '@/store/notifications'
 import type { SessionInfo, SessionResumeResponse, SessionSearchResult } from '@/types/hermes'
@@ -149,6 +149,11 @@ export async function openSession(storedId: string): Promise<void> {
   $messages.set([])
   $busy.set(true)
   $statusLine.set('')
+  // Each stored session carries the project directory it runs in. Restore it up
+  // front from the list row so the statusbar / file tree switch with the chat
+  // immediately; the resume response's runtime info supersedes it below with the
+  // authoritative value.
+  setCurrentCwd($sessions.get().find(session => session.id === storedId)?.cwd)
   try {
     const resumed = await requestGateway<SessionResumeResponse>('session.resume', {
       session_id: storedId,
@@ -156,6 +161,10 @@ export async function openSession(storedId: string): Promise<void> {
     })
     $messages.set(toChatMessages(resumed.messages ?? []))
     $sessionId.set(resumed.session_id ?? storedId)
+
+    if (resumed.info?.cwd) {
+      setCurrentCwd(resumed.info.cwd)
+    }
   } catch {
     // Fallback: static transcript (no live runtime binding).
     try {
@@ -186,6 +195,10 @@ export function newSession(): void {
 export function registerNewSession(id: string, firstMessage: string): void {
   const now = Math.floor(Date.now() / 1000)
   const stub: SessionInfo = {
+    // Seed the row's project directory (ensureSession just adopted the runtime's
+    // resolved cwd) so re-opening this chat later restores the same directory,
+    // and the sidebar can group it by workspace right away.
+    cwd: $currentCwd.get().trim() || null,
     ended_at: null,
     id,
     input_tokens: 0,
