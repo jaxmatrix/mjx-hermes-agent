@@ -60,7 +60,6 @@
     "ignore": "^7.0.6",
     "katex": "^0.17.0",
     "nanostores": "^1.4.0",
-    "overlayscrollbars": "^2.16.0",
     "radix-ui": "^1.6.2",
     "react": "^19.2.4",
     "react-arborist": "^3.13.2",
