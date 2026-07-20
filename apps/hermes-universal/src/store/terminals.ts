@@ -53,6 +53,34 @@ export function closeOtherTerminals(id: string): void {
   $activeTerminalId.set(keep.length ? id : null)
 }
 
+// ── Keybind entry points (view.nextTerminal / prevTerminal / closeTerminal) ──
+// Desktop keeps these in right-sidebar/terminal/terminals.ts; here they sit with
+// the rest of the terminal state. Both are no-ops with nothing open, so the
+// hotkeys stay harmless when the terminal area is empty.
+
+/** Step the active terminal by `direction`, wrapping at both ends. */
+export function cycleTerminal(direction: 1 | -1): void {
+  const terminals = $terminals.get()
+
+  if (terminals.length < 2) {
+    return
+  }
+
+  const current = terminals.findIndex(term => term.id === $activeTerminalId.get())
+  const start = current === -1 ? 0 : current
+  const next = (start + direction + terminals.length) % terminals.length
+
+  $activeTerminalId.set(terminals[next].id)
+}
+
+export function closeActiveTerminal(): void {
+  const id = $activeTerminalId.get()
+
+  if (id) {
+    closeTerminal(id)
+  }
+}
+
 export function closeAllTerminals(): void {
   $terminals.set([])
   $activeTerminalId.set(null)

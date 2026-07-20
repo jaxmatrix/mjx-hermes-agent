@@ -28,11 +28,6 @@ describe('CommandMenu', () => {
     expect(screen.queryByText('Agents')).not.toBeInTheDocument()
   })
 
-  it('toggles open on ⌘K / Ctrl+K', () => {
-    renderMenu()
-    expect($commandMenuOpen.get()).toBe(false)
-
-    fireEvent.keyDown(window, { key: 'k', metaKey: true })
-    expect($commandMenuOpen.get()).toBe(true)
-  })
+  // ⌘K is no longer bound here — it's the rebindable `nav.commandPalette`
+  // action, covered in `app/hooks/use-keybinds.test.tsx`.
 })

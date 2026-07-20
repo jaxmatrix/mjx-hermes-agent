@@ -29,7 +29,7 @@ export function useSettingsNav(): SettingsNavEntry[] {
     { id: 'gateway', icon: Globe, label: t.settings.nav.gateway },
     { id: 'notifications', icon: Bell, label: t.settings.nav.notifications },
     { id: 'keys', icon: Key, label: t.settings.nav.apiKeys },
-    { id: 'shortcuts', icon: Keyboard, label: t.shortcuts.title },
+    { id: 'shortcuts', icon: Keyboard, label: t.keybinds.title },
     { id: 'pet', icon: Paw, label: t.commandCenter.pets.title },
     { id: 'archived', icon: Archive, label: t.settings.nav.archivedChats },
     { id: 'about', icon: Info, label: t.settings.nav.about }

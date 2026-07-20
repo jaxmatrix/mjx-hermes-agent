@@ -27,13 +27,14 @@ import { syncPetInfo } from '@/store/pet-gallery'
 import { deleteSessionLocal } from '@/store/session'
 import { bumpZoom, initZoom, setZoomPercent } from '@/store/zoom'
 
-import { sessionRoute } from './routes'
+import { useKeybinds } from './hooks/use-keybinds'
+import { COMMAND_CENTER_ROUTE, sessionRoute } from './routes'
+import { SessionSwitcher } from './session-switcher'
 import { CommandMenu } from './shell/command-menu'
 import { useOverlayRouting } from './shell/hooks/use-overlay-routing'
 import { AppShell, SidebarProvider } from './shell/sidebar'
 import { Statusbar } from './shell/statusbar'
 import { Titlebar } from './shell/titlebar'
-import { useSidebarKeybinds } from './shell/use-sidebar-keybinds'
 
 // Connected-guard + routing. Until a gateway connection is ready we show the
 // full-screen ConnectScreen (no nav). Once ready, the first-run onboarding
@@ -48,10 +49,8 @@ export function MobileController() {
   // Draw custom (WebKitGTK-safe) scrollbars on desktop; no-op on mobile/web.
   useThemedScrollbars()
 
-  // Sidebar shortcuts (mod+b / mod+shift+f / mod+n).
-  useSidebarKeybinds()
-
   // UI scale: apply the persisted zoom once, and wire Cmd/Ctrl +/-/0 shortcuts.
+  // Zoom stays outside the rebindable registry — desktop keeps it out too.
   useEffect(() => {
     initZoom()
     const onKey = (event: KeyboardEvent) => {
@@ -101,6 +100,16 @@ export function MobileController() {
     starmapOpen,
     settingsOpen
   } = useOverlayRouting()
+
+  // The single global listener for every rebindable hotkey, plus the keybind
+  // panel's capture mode (ported from desktop). It supersedes the ad-hoc ⌘B/⌘⇧F/
+  // ⌘G/⌘N and ⌘K listeners this app used to carry. Mounted unconditionally so
+  // the keys work on the connect / onboarding screens too.
+  useKeybinds({
+    toggleCommandCenter: () =>
+      commandCenterOpen ? closeOverlayToPreviousRoute() : navigate(COMMAND_CENTER_ROUTE)
+  })
+
   // Only the Gateway settings page is usable while disconnected (it's the
   // reconnect / sign-in surface). Every other settings section needs live gateway
   // data, so keeping the overlay mounted there while disconnected would just render
@@ -140,9 +149,12 @@ export function MobileController() {
     content = (
       <>
         <NotificationStack />
-        {/* Global command menu — ⌘K, titlebar search, and the in-drawer button
-            all open it; reaches every view not on the 4-item sidebar rail. */}
+        {/* Global command menu — ⌘K (the `nav.commandPalette` keybind), titlebar
+            search, and the in-drawer button all open it; reaches every view not
+            on the 4-item sidebar rail. */}
         <CommandMenu />
+        {/* ⌃Tab session switcher HUD — keyboard-driven from useKeybinds. */}
+        <SessionSwitcher />
         <AppShell>
           <Routes>
             <Route element={<ChatScreen />} path="/" />
