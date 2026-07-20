@@ -17,3 +17,11 @@ export function normalizeProfileKey(name: string | null | undefined): string {
 // live backend is scoped to ('default' = root). Universal's `$activeProfile` is a
 // nullable persisted atom (null = primary), so we derive the normalized key.
 export const $activeGatewayProfile = computed($activeProfile, profile => normalizeProfileKey(profile))
+
+// Desktop's unified "All profiles" browse mode (`$showAllProfiles`) has no
+// universal equivalent yet, so the scope always follows the live gateway
+// profile. ALL_PROFILES is still exported because ported views compare against
+// it — they simply never see it here.
+export const ALL_PROFILES = '__all__'
+
+export const $profileScope = $activeGatewayProfile
