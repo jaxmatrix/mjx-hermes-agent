@@ -60,13 +60,10 @@ export const zhHant = defineLocale({
     review: '審查'
   },
 
-  shortcuts: {
-    title: '鍵盤快速鍵',
-    intro: '適用於硬體鍵盤。使用軟鍵盤時請用傳送按鈕。',
-    sendMessage: '傳送訊息',
-    newLine: '換行',
-    history: '上一則 / 下一則訊息',
-    dismiss: '關閉建議'
+  // The read-only `shortcuts` reference became the full rebindable `keybinds`
+  // panel; only its title is translated here, the rest falls back to English.
+  keybinds: {
+    title: '鍵盤快速鍵'
   },
 
   files: {

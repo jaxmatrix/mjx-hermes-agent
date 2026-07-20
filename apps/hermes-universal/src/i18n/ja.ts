@@ -60,13 +60,10 @@ export const ja = defineLocale({
     review: 'レビュー'
   },
 
-  shortcuts: {
-    title: 'キーボードショートカット',
-    intro: 'ハードウェアキーボード向け。ソフトキーボードでは送信ボタンを使用します。',
-    sendMessage: 'メッセージを送信',
-    newLine: '改行',
-    history: '前 / 次のメッセージ',
-    dismiss: '候補を閉じる'
+  // The read-only `shortcuts` reference became the full rebindable `keybinds`
+  // panel; only its title is translated here, the rest falls back to English.
+  keybinds: {
+    title: 'キーボードショートカット'
   },
 
   files: {

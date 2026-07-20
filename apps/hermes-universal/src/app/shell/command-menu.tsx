@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
-import { $commandMenuOpen, closeCommandMenu, toggleCommandMenu } from '@/store/command-menu'
+import { $commandMenuOpen, closeCommandMenu } from '@/store/command-menu'
 
 import { useNavItems } from './nav-items'
 
@@ -20,18 +20,8 @@ export function CommandMenu() {
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
-        e.preventDefault()
-        toggleCommandMenu()
-      }
-    }
-
-    window.addEventListener('keydown', onKey)
-
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  // ⌘K is no longer bound here: it's the rebindable `nav.commandPalette` action,
+  // dispatched by the global listener in `app/hooks/use-keybinds.ts`.
 
   const needle = query.trim().toLowerCase()
   const filtered = needle ? navItems.filter(item => item.label.toLowerCase().includes(needle)) : navItems
