@@ -12,7 +12,7 @@ import { MessagingView } from '@/app/messaging'
 import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
 import { ProfilesView } from '@/app/profiles'
 import { SkillsView } from '@/app/skills'
-import { StarmapScreen } from '@/app/starmap/starmap-screen'
+import { StarmapView } from '@/app/starmap'
 import { FloatingPet } from '@/app/pet/floating-pet'
 import { ProviderConnectOverlay } from '@/app/settings/provider-connect-overlay'
 import { SettingsView } from '@/app/settings/settings-view'
@@ -98,6 +98,7 @@ export function MobileController() {
     cronOpen,
     profilesOpen,
     returnPathRef,
+    starmapOpen,
     settingsOpen
   } = useOverlayRouting()
   // Only the Gateway settings page is usable while disconnected (it's the
@@ -159,7 +160,8 @@ export function MobileController() {
                 renders as a top-level portal below (fixed z-50). */}
             {/* /agents falls through to the chat backdrop; the Agents ("Spawn
                 tree") overlay renders as a top-level portal below (fixed z-50). */}
-            <Route element={<StarmapScreen />} path="/starmap" />
+            {/* /starmap falls through to the chat backdrop; the Star map overlay
+                renders as a top-level portal below (fixed z-50). */}
             {/* No /files or /review routes — desktop parity: Files is the
                 right-pane file tree and Review is the right-pane git diff, both
                 mounted in AppShell rather than routed. */}
@@ -220,13 +222,15 @@ export function MobileController() {
         )}
         {/* Profiles overlay — desktop's profile CRUD + soul editor master/detail. */}
         {connected && profilesOpen && <ProfilesView onClose={closeOverlayToPreviousRoute} />}
+        {/* Star map overlay — the radial "what Hermes has learned" map. */}
+        {connected && starmapOpen && <StarmapView onClose={closeOverlayToPreviousRoute} />}
         {/* Provider-connect overlay — a focused per-provider sign-in card that
             floats OVER the settings page (z-70) without unmounting it. Opened from
             Providers → Accounts; gated on $connectProvider, not $onboardingActive. */}
         {connected && <ProviderConnectOverlay />}
         {/* Floating pet — a top-level draggable + roaming mascot (fixed z-60) that
             floats over ALL routes. It patrols the Settings overlay's edge when open. */}
-        {connected && <FloatingPet overlayOpen={settingsOpen || agentsOpen || commandCenterOpen || cronOpen || profilesOpen} />}
+        {connected && <FloatingPet overlayOpen={settingsOpen || agentsOpen || commandCenterOpen || cronOpen || profilesOpen || starmapOpen} />}
       </div>
     </SidebarProvider>
   )
