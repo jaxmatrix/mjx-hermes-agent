@@ -9,7 +9,7 @@ import { ConnectScreen } from '@/app/connect-screen'
 import { GatewayConnectingScreen } from '@/app/gateway/gateway-connecting-screen'
 import { CronScreen } from '@/app/cron/cron-screen'
 import { FilesScreen } from '@/app/files/files-screen'
-import { MessagingScreen } from '@/app/messaging/messaging-screen'
+import { MessagingView } from '@/app/messaging'
 import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
 import { ProfilesScreen } from '@/app/profiles/profiles-screen'
 import { ReviewScreen } from '@/app/review/review-screen'
@@ -157,7 +157,7 @@ export function MobileController() {
             <Route element={<CommandCenterScreen />} path="/command-center" />
             {/* Skills + Toolsets; MCP/Hub tabs land in Kc7/Kc8. */}
             <Route element={<SkillsScreen />} path="/skills" />
-            <Route element={<MessagingScreen />} path="/messaging" />
+            <Route element={<MessagingView />} path="/messaging" />
             <Route element={<ArtifactsView />} path="/artifacts" />
             <Route element={<CronScreen />} path="/cron" />
             {/* CRUD/soul view; active-profile switching lives in Settings → Gateway (E7). */}
