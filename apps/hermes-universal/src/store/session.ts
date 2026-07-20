@@ -26,6 +26,9 @@ export const $sessionsLoading = atom(false)
 export const $sessionsTotal = atom(0)
 export const $sessionsLimit = atom(PAGE)
 export const $activeStoredSessionId = atom<null | string>(null)
+// Compat alias for ported desktop code (`@/store/session` → `$activeSessionId`).
+// Universal's stored id IS the desktop "active session" id for a single-session app.
+export const $activeSessionId = $activeStoredSessionId
 export const $sessionSearch = atom<SessionSearchResult[]>([])
 export const $searchLoading = atom(false)
 

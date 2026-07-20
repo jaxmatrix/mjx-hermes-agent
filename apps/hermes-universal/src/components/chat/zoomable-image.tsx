@@ -11,13 +11,16 @@ import { cn } from '@/lib/utils'
 interface ZoomableImageProps extends ComponentProps<'img'> {
   src: string
   alt: string
+  /** Classes for the wrapper around the trigger image (desktop parity). */
+  containerClassName?: string
 }
 
-export function ZoomableImage({ alt, className, src, ...props }: ZoomableImageProps) {
+export function ZoomableImage({ alt, className, containerClassName, src, ...props }: ZoomableImageProps) {
   const image = <img alt={alt} className={cn('block w-full', className)} src={src} {...props} />
 
   return (
     <Zoomable
+      className={containerClassName}
       label={alt}
       overlay={<img alt={alt} className="max-h-full max-w-full object-contain" src={src} />}
     >
