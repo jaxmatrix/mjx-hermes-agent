@@ -5,8 +5,9 @@ interface DisclosureCaretProps extends Omit<CodiconProps, 'name'> {
   open: boolean
 }
 
-// Chrome caret for collapsible sections: points right when closed (▶), rotates
-// to point down (▼) when open. Ported from desktop `components/ui/disclosure-caret.tsx`.
+// Chrome caret for collapsible sections: points right when closed (▶),
+// rotates to point down (▼) when open. Override `className` to layer
+// hover/opacity styling; twMerge resolves transition conflicts.
 export function DisclosureCaret({ className, open, size = '0.75rem', ...props }: DisclosureCaretProps) {
   return (
     <Codicon

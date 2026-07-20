@@ -29,8 +29,6 @@ interface FadeTextProps extends Omit<ComponentProps<'span'>, 'children'> {
  * on every `children` reference change. Wrapped in `memo` with a custom
  * comparator so scalar-string children skip re-render entirely when the text
  * is unchanged but the parent re-rendered.
- *
- * Ported from apps/desktop/src/components/ui/fade-text.tsx.
  */
 function FadeTextImpl({ children, className, fadeWidth = '3rem', style, ...rest }: FadeTextProps) {
   const ref = useRef<HTMLSpanElement>(null)

@@ -5,7 +5,7 @@ import { Codicon } from '@/components/ui/codicon'
 import { useI18n, type Translations } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 import { $attentionSessionIds } from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 
@@ -133,7 +133,7 @@ export function SidebarSessionRow({
             if (event.shiftKey) {
               event.preventDefault()
               event.stopPropagation()
-              void triggerHaptic('select')
+              void triggerHaptic('selection')
               onPin()
               return
             }

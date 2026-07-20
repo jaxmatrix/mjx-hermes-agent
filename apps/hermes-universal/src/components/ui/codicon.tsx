@@ -1,10 +1,8 @@
+import type { Icon } from '@tabler/icons-react'
 import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
-// VS Code codicons (@vscode/codicons) — the same icon pack hermes-desktop uses
-// for its window chrome, so the titlebar/controls match desktop exactly. Font
-// loaded via `import '@vscode/codicons/dist/codicon.css'` in main.tsx.
 export interface CodiconProps extends React.HTMLAttributes<HTMLElement> {
   name: string
   size?: number | string
@@ -20,4 +18,15 @@ export function Codicon({ className, name, size, spinning, style, ...props }: Co
       {...props}
     />
   )
+}
+
+/** Wrap a codicon as a Tabler-shaped icon for nav rows that expect `IconComponent`. */
+export function codiconIcon(name: string): Icon {
+  function CodiconIcon({ className }: { className?: string }) {
+    return <Codicon aria-hidden className={cn('leading-none', className)} name={name} size="1em" />
+  }
+
+  CodiconIcon.displayName = `Codicon(${name})`
+
+  return CodiconIcon as Icon
 }

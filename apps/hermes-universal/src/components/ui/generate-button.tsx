@@ -3,6 +3,7 @@ import type * as React from 'react'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { Tip } from '@/components/ui/tooltip'
+import { Square } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
 interface GenerateButtonProps extends Omit<React.ComponentProps<typeof Button>, 'children' | 'onClick'> {
@@ -10,19 +11,24 @@ interface GenerateButtonProps extends Omit<React.ComponentProps<typeof Button>, 
   generating: boolean
   /** Start a generation. */
   onGenerate: () => void
-  /** Tooltip + aria label at rest. */
+  /** Cancel an in-flight generation. When omitted, the button just spins while
+   *  generating (for one-shots that can't be cancelled). */
+  onCancel?: () => void
+  /** Tooltip + aria label at rest (and while generating if no `generatingLabel`). */
   label: string
-  /** Tooltip while generating (e.g. "Generating…"). Falls back to `label`. */
+  /** Tooltip while generating (e.g. "Stop" with cancel, "Generating…" without). */
   generatingLabel?: string
   iconSize?: number | string
 }
 
-// The sparkle "generate with AI" affordance — icon + tooltip. Ported/adapted from
-// desktop `components/ui/generate-button.tsx`; the universal one-shot can't be
-// cancelled, so the sparkle just spins until it resolves.
+/** The sparkle "generate with AI" affordance — icon + tooltip, shared by the
+ *  commit-message box and the new-project idea field so they stay one pattern.
+ *  Sparkle → click generates; with `onCancel`, a Stop square appears mid-run;
+ *  without it, the sparkle spins until the one-shot resolves. */
 export function GenerateButton({
   generating,
   onGenerate,
+  onCancel,
   label,
   generatingLabel,
   disabled,
@@ -30,21 +36,26 @@ export function GenerateButton({
   className,
   ...rest
 }: GenerateButtonProps) {
-  const tip = generating ? generatingLabel ?? label : label
+  const tip = generating ? (generatingLabel ?? label) : label
+  const cancellable = generating && !!onCancel
 
   return (
     <Tip label={tip}>
       <Button
         aria-label={tip}
-        className={cn('size-6 text-muted-foreground/80 hover:text-foreground', className)}
-        disabled={generating || disabled}
-        onClick={onGenerate}
+        className={cn('text-muted-foreground/80 hover:text-foreground', className)}
+        disabled={generating ? !onCancel : disabled}
+        onClick={cancellable ? onCancel : onGenerate}
         size="icon-xs"
         type="button"
         variant="ghost"
         {...rest}
       >
-        <Codicon className={generating ? 'animate-pulse' : undefined} name="sparkle" size={iconSize} />
+        {cancellable ? (
+          <Square className="fill-current" size={11} />
+        ) : (
+          <Codicon name="sparkle" size={iconSize} spinning={generating} />
+        )}
       </Button>
     </Tip>
   )

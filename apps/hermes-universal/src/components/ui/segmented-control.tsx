@@ -1,8 +1,6 @@
 import type { IconComponent } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
-// Ported from apps/desktop/src/components/ui/segmented-control.tsx.
-
 export interface SegmentedControlOption<T extends string> {
   id: T
   label: string

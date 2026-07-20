@@ -7,7 +7,7 @@ import {
 import { type Locale, LOCALE_OPTIONS, useI18n } from '@/i18n'
 import { Check, ChevronDown, Globe } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 
 // Adapted from apps/desktop/src/components/language-switcher.tsx. Trimmed for
 // mobile: only four locales, so we drop cmdk search/Popover in favour of the
@@ -28,7 +28,7 @@ export function LanguageSwitcher({ className, collapsed = false }: LanguageSwitc
 
   const selectLocale = (code: Locale) => {
     if (code !== locale) {
-      triggerHaptic('select')
+      triggerHaptic('selection')
       void setLocale(code)
     }
   }

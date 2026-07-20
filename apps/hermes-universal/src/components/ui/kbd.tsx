@@ -1,11 +1,9 @@
 import { cva, type VariantProps } from 'class-variance-authority'
 import * as React from 'react'
 
-import { comboTokens } from '@/lib/kbd'
+import { comboTokens } from '@/lib/keybinds/combo'
 import { cn } from '@/lib/utils'
 
-// Keyboard-cap chips (ported from desktop `components/ui/kbd.tsx`). <KbdGroup>
-// renders one cap per token; <KbdCombo> resolves a combo string first.
 const COMPACT_KEY = /^[\p{L}\p{N}⌘⌥⇧⌃↵⇥⌫↑↓←→@/?]$/u
 
 const kbdSurface = [
@@ -26,6 +24,12 @@ const kbdVariants = cva(
           'text-[color-mix(in_srgb,var(--dt-foreground)_38%,transparent)]',
           'bg-[color-mix(in_srgb,var(--ui-bg-elevated)_72%,var(--dt-foreground)_3%)]',
           'border-[color-mix(in_srgb,var(--ui-stroke-tertiary)_80%,transparent)]'
+        ],
+        capturing: [
+          'border-[color-mix(in_srgb,var(--theme-primary)_50%,var(--ui-stroke-secondary))]',
+          'bg-[color-mix(in_srgb,var(--theme-primary)_10%,var(--ui-bg-elevated))]',
+          'text-[color-mix(in_srgb,var(--theme-primary)_88%,transparent)]',
+          'shadow-none'
         ],
         inverted: [
           'border-[color-mix(in_srgb,currentColor_22%,transparent)]',

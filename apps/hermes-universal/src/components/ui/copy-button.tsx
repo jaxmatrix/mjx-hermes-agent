@@ -5,17 +5,19 @@ import { ContextMenuItem } from '@/components/ui/context-menu'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
+import { triggerHaptic } from '@/lib/haptics'
 import { Check, Copy, X } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import { triggerHaptic } from '@/store/haptics'
 
 type CopyPayload = string | (() => Promise<string> | string)
 type CopyButtonAppearance = 'button' | 'icon' | 'inline' | 'menu-item' | 'context-menu-item' | 'tool-row'
 type CopyStatus = 'copied' | 'error' | 'idle'
 const COPIED_RESET_MS = 1_500
 
-// Universal writes through the webview's async Clipboard API (Tauri exposes it);
-// the desktop `window.hermesDesktop.writeClipboard` Electron bridge is dropped.
+// Verbatim copy of desktop's, minus its `window.hermesDesktop.writeClipboard`
+// branch: that is the Electron preload bridge, which has no counterpart in the
+// Tauri webview. Universal goes straight to the async Clipboard API, which is
+// the same fallback desktop lands on.
 export async function writeClipboardText(text: string) {
   if (!text) {
     return
@@ -105,7 +107,7 @@ export function CopyButton({
         await writeClipboardText(value)
 
         if (haptic) {
-          void triggerHaptic('select')
+          triggerHaptic('selection')
         }
 
         if (resetRef.current !== null) {

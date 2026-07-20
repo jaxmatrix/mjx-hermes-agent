@@ -10,7 +10,8 @@ import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $completionSoundVariantId, setCompletionSoundVariantId } from '@/store/completion-sound'
-import { $hapticsMuted, triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
+import { $hapticsMuted } from '@/store/haptics'
 import {
   $nativeNotifyPrefs,
   NATIVE_NOTIFICATION_KINDS,
@@ -44,7 +45,7 @@ function ToggleRow(props: {
           checked={props.checked}
           disabled={props.disabled}
           onCheckedChange={on => {
-            void triggerHaptic('select')
+            void triggerHaptic('selection')
             props.onChange(on)
           }}
         />
@@ -104,7 +105,7 @@ export function NotificationsSection() {
 
                 setCompletionSoundVariantId(variantId)
                 previewCompletionSound(variantId)
-                void triggerHaptic('select')
+                void triggerHaptic('selection')
               }}
               value={String(completionSoundVariantId)}
             >
@@ -125,7 +126,7 @@ export function NotificationsSection() {
               className="gap-1.5"
               onClick={() => {
                 previewCompletionSound()
-                void triggerHaptic('select')
+                void triggerHaptic('selection')
               }}
               size="sm"
               type="button"

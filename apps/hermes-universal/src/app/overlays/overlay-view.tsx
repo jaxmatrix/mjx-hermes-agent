@@ -2,7 +2,7 @@ import { type ReactNode, useEffect } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 
 // Ported from apps/desktop/src/app/overlays/overlay-view.tsx. The full-screen
@@ -29,7 +29,7 @@ export function OverlayView({
   rootClassName
 }: OverlayViewProps) {
   const closeOverlay = () => {
-    void triggerHaptic('select')
+    void triggerHaptic('selection')
     onClose()
   }
 
@@ -42,7 +42,7 @@ export function OverlayView({
       }
 
       event.preventDefault()
-      void triggerHaptic('select')
+      void triggerHaptic('selection')
       onClose()
     }
 

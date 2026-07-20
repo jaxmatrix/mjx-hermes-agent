@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 
 interface UseComposerUrlDialogOptions {
   insertText: (text: string) => void

@@ -5,7 +5,7 @@ import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $approval } from '@/store/chat'
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 import { $threadJumpButtonVisible, requestScrollToBottom } from '@/store/thread-scroll'
 
 /**
@@ -56,7 +56,7 @@ export function ScrollToBottomButton() {
       )}
       data-state={state}
       onClick={() => {
-        void triggerHaptic('select')
+        void triggerHaptic('selection')
         requestScrollToBottom()
       }}
       style={{

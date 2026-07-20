@@ -5,7 +5,6 @@ import { cn } from '@/lib/utils'
 // Shared raw-log viewer: no bg, hairline border, tight padding, small mono.
 // One style everywhere we surface logs. Pass a max-h-* via className.
 // Selectable by default — logs exist to be read and copied.
-// Ported from apps/desktop/src/components/ui/log-view.tsx.
 export function LogView({ className, ...props }: ComponentProps<'div'>) {
   return (
     <div

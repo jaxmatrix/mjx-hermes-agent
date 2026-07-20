@@ -5,7 +5,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { useI18n } from '@/i18n'
 import { Check, Palette } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import { triggerHaptic } from '@/store/haptics'
+import { triggerHaptic } from '@/lib/haptics'
 import { resolveTheme, type ThemeMode, useTheme } from '@/themes'
 
 // Mobile appearance picker: a bottom Sheet with a light/dark/system segmented
@@ -23,12 +23,12 @@ export function ThemeControls() {
   const { t } = useI18n()
 
   const selectMode = (next: ThemeMode) => {
-    triggerHaptic('select')
+    triggerHaptic('selection')
     setMode(next)
   }
 
   const selectSkin = (name: string) => {
-    triggerHaptic('select')
+    triggerHaptic('selection')
     setTheme(name)
   }
 

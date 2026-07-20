@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
 import { Loader2 } from '@/lib/icons'
 import { useStore } from '@/store/atom'
@@ -48,11 +49,11 @@ export function GatewayConnectingScreen() {
           {g.reconnectingTo(targetLabel())}
         </div>
 
-        {error ? <div className="error-line mt-1">{error}</div> : null}
+        {error ? <div className="mt-1 text-[0.8125rem] text-destructive">{error}</div> : null}
 
-        <button className="btn btn-text mt-4" onClick={() => cancelRestore()} type="button">
+        <Button className="mt-4" onClick={() => cancelRestore()} size="sm" type="button" variant="text">
           {g.useDifferentGateway}
-        </button>
+        </Button>
       </div>
     </main>
   )

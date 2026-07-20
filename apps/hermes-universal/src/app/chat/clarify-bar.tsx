@@ -1,5 +1,8 @@
 import { useState } from 'react'
 
+import { RequestBar, RequestBarActions, RequestBarDescription } from '@/app/chat/request-bar'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { type ClarifyRequest, respondClarify } from '@/store/chat'
 
 export function ClarifyBar({ request }: { request: ClarifyRequest }) {
@@ -8,24 +11,20 @@ export function ClarifyBar({ request }: { request: ClarifyRequest }) {
     if (answer.trim()) void respondClarify(answer.trim())
   }
   return (
-    <div className="approval">
-      <div className="approval-head">Clarification needed</div>
-      <div className="approval-desc" style={{ fontFamily: 'inherit' }}>
-        {request.prompt}
-      </div>
-      <input
+    <RequestBar title="Clarification needed">
+      <RequestBarDescription>{request.prompt}</RequestBarDescription>
+      <Input
         autoFocus
-        className="field"
         onChange={e => setAnswer(e.target.value)}
         onKeyDown={e => e.key === 'Enter' && submit()}
         placeholder="Your answer"
         value={answer}
       />
-      <div className="approval-actions">
-        <button className="btn btn-sm btn-primary" disabled={!answer.trim()} onClick={submit}>
+      <RequestBarActions>
+        <Button disabled={!answer.trim()} onClick={submit} size="sm">
           Send
-        </button>
-      </div>
-    </div>
+        </Button>
+      </RequestBarActions>
+    </RequestBar>
   )
 }

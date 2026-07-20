@@ -3,8 +3,6 @@ import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
-// Ported from apps/desktop/src/components/ui/scroll-area.tsx (already on the A2
-// token contract).
 function ScrollArea({ className, children, ...props }: React.ComponentProps<typeof ScrollAreaPrimitive.Root>) {
   return (
     <ScrollAreaPrimitive.Root className={cn('relative overflow-hidden', className)} data-slot="scroll-area" {...props}>
