@@ -1,4 +1,4 @@
-import { escapeCurrencyDollars, normalizeMathDelimiters } from '@assistant-ui/react-streamdown'
+import { normalizeMathDelimiters } from '@assistant-ui/react-streamdown'
 
 import { isLikelyProseFence, sanitizeLanguageTag } from '@/lib/markdown-code'
 import { stripPreviewTargets } from '@/lib/preview-targets'
@@ -181,6 +181,123 @@ function findClosingFence(lines: string[], start: number, marker: string): numbe
 // `tex`) — GitHub markup uses ```math for "render" and ```latex for "source".
 const MATH_FENCE_LANGUAGES = new Set(['math'])
 
+// A `$` that opens a currency amount (`$5`, `$19.99`, `$1,299`). Same shape as
+// streamdown's `escapeCurrencyDollars`: an even run of backslashes before it
+// (so an already-escaped `\$` is left alone), and a digit after.
+const CURRENCY_DOLLAR_RE = /(^|[^\\$])((?:\\\\)*)\$(?=\d)/g
+
+// Characters that only appear in TeX, never in prose arithmetic. Used to tell
+// `$10^2$` (math) from `$5 + $10` (two prices). Deliberately EXCLUDES `+`, `-`
+// and `=`, which show up constantly in sentences about money.
+const TEX_ONLY_RE = /[\\^_{}]/
+
+// How far ahead to look for a closing `$`. Long enough for a real inline
+// equation, short enough that two prices in one sentence don't pair up.
+const INLINE_MATH_LOOKAHEAD = 60
+
+/**
+ * Escapes a `$` that opens a currency amount, so remark-math's single-dollar
+ * mode doesn't eat prices as math delimiters.
+ *
+ * Replaces streamdown's `escapeCurrencyDollars`, which escapes EVERY `$` before
+ * a digit and so mangles perfectly good math that happens to start with one.
+ * That is not hypothetical: a table row of `$5$–$50\,\Omega$` rendered as
+ * literal text, because the leading `$5` looked like a price.
+ *
+ * The extra signal used here is the closing delimiter. A `$` before a digit is
+ * treated as MATH (left unescaped) when a closing `$` follows on the same line
+ * within a short window AND the enclosed body looks like TeX rather than prose:
+ *
+ *   - no whitespace at all (`$5$`, `$0.8$`, `$10^2$`), or
+ *   - a character that only occurs in TeX (`$50\,\Omega$`, `$10^3\,\mu F$`)
+ *
+ * Everything else is currency and gets escaped. So `$5 + $10 = $15` still
+ * escapes (the body `5 + ` has whitespace and no TeX character), and so does
+ * `costs $5 to $10`. The residual false-negative is an expression that both
+ * opens with a digit and contains spaces but no TeX, e.g. `$5x = 10$` — that
+ * was already broken by the upstream version, so this is strictly an
+ * improvement, not a new trade-off.
+ */
+export function escapeCurrencyDollars(text: string): string {
+  return text.replace(CURRENCY_DOLLAR_RE, (match, before: string, slashes: string, offset: number) => {
+    // Index of the `$` itself: after the leading context and backslash run.
+    const dollar = offset + before.length + slashes.length
+    const lineEnd = text.indexOf('\n', dollar)
+    const limit = Math.min(lineEnd === -1 ? text.length : lineEnd, dollar + 1 + INLINE_MATH_LOOKAHEAD)
+    const close = text.indexOf('$', dollar + 1)
+
+    if (close !== -1 && close < limit) {
+      const body = text.slice(dollar + 1, close)
+
+      if (!/\s/.test(body) || TEX_ONLY_RE.test(body)) {
+        return match
+      }
+    }
+
+    return `${before}${slashes}\\$`
+  })
+}
+
+// A line that is nothing but `$$…$$`. Up to three leading spaces is markdown's
+// paragraph indent allowance; four or more would be an indented code block, and
+// a list/quote marker (`-`, `>`) means the line isn't a bare paragraph, so
+// neither can match here.
+const STANDALONE_DISPLAY_MATH_RE = /^[ \t]{0,3}\$\$(.+)\$\$[ \t]*$/
+
+/**
+ * Rewrites a paragraph consisting solely of `$$…$$` into the multi-line form.
+ *
+ * remark-math only emits `math-display` when the `$$` delimiters sit on their
+ * OWN lines; a single-line `$$x$$` is classed `math-inline` and renders as small
+ * in-flow math instead of a centred block. (Stock rehype-katex branches on the
+ * same classes, so this isn't specific to our renderer.) Models emit the
+ * single-line form constantly — it's what a standalone equation almost always
+ * looks like in an LLM answer — so without this, most display math in a chat
+ * didn't render as display math.
+ *
+ * Conservative on purpose. The line must be its own paragraph: blank (or
+ * absent) lines on both sides, and no other `$$` inside the body. That leaves
+ * mid-sentence `$$x$$` inline, where promoting it would wrongly split the
+ * paragraph.
+ */
+export function promoteStandaloneDisplayMath(text: string): string {
+  if (!text.includes('$$')) {
+    return text
+  }
+
+  const lines = text.split('\n')
+  let changed = false
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = lines[i].match(STANDALONE_DISPLAY_MATH_RE)
+
+    if (!match) {
+      continue
+    }
+
+    const body = match[1].trim()
+
+    // A body containing `$$` means the line holds more than one expression (or
+    // an empty `$$$$`), which this rewrite has no safe reading of.
+    if (!body || body.includes('$$')) {
+      continue
+    }
+
+    // Its own paragraph: nothing but blank lines adjacent. A segment edge counts
+    // as blank — segments are split at fence boundaries, so the edge is a break.
+    const isolated = (i === 0 || !lines[i - 1].trim()) && (i === lines.length - 1 || !lines[i + 1].trim())
+
+    if (!isolated) {
+      continue
+    }
+
+    lines[i] = `$$\n${body}\n$$`
+    changed = true
+  }
+
+  return changed ? lines.join('\n') : text
+}
+
 function isMathFence(language: string): boolean {
   return MATH_FENCE_LANGUAGES.has(language.toLowerCase())
 }
@@ -312,8 +429,10 @@ export function preprocessMarkdown(text: string): string {
       const trailing = part.match(/\s*$/)?.[0] ?? ''
 
       // Run only on prose segments so `$5` literals and `\(` inside code stay.
+      // Order matters: promote AFTER normalizeMathDelimiters, so a `\[…\]`
+      // display block (already rewritten to `$$…$$` by then) gets promoted too.
       const transformed = normalizeVisibleProse(
-        stripPreviewTargets(normalizeMathDelimiters(escapeCurrencyDollars(part)))
+        stripPreviewTargets(promoteStandaloneDisplayMath(normalizeMathDelimiters(escapeCurrencyDollars(part))))
       )
 
       return leading + transformed + trailing

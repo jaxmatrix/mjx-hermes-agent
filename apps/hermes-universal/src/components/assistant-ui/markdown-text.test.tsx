@@ -46,18 +46,34 @@ describe('MarkdownTextContent math rendering', () => {
     expect(container.querySelector('.katex-host')?.getAttribute('data-display')).toBe('true')
   })
 
-  // PRE-EXISTING BEHAVIOUR, pinned here deliberately rather than "fixed" as a
-  // side effect of a perf change. remark-math classes a single-line `$$x$$` as
-  // math-inline (only the multi-line form gets math-display), and stock
-  // rehype-katex branches on exactly the same classes — so this rendered inline
-  // before this rewrite too. The `data-display` attribute merely made it
-  // visible. It is arguably wrong (most renderers treat a lone `$$x$$`
-  // paragraph as display math, and models emit that form constantly), but
-  // changing it is a rendering-semantics decision, not a performance one.
-  it('renders single-line $$…$$ inline, matching remark-math/rehype-katex', async () => {
+  // remark-math classes a single-line `$$x$$` as math-inline — only the
+  // multi-line form gets math-display — so a standalone equation rendered as
+  // small in-flow math. `promoteStandaloneDisplayMath` in the preprocess
+  // rewrites a whole-paragraph `$$x$$` to the multi-line form to fix that.
+  it('renders a standalone single-line $$…$$ as display math', async () => {
     const container = await renderMarkdown('$$ECSA = \\frac{C_{dl}}{C_s}$$')
 
+    expect(container.querySelector('.katex-host')?.getAttribute('data-display')).toBe('true')
+  })
+
+  // The promotion is paragraph-scoped: mid-sentence it must stay inline, since
+  // promoting there would split the paragraph rather than restyle an equation.
+  it('leaves mid-sentence $$…$$ inline', async () => {
+    const container = await renderMarkdown('the identity $$x^2$$ holds here')
+
     expect(container.querySelector('.katex-host')?.getAttribute('data-display')).toBe('false')
+  })
+
+  // The upstream currency escape ate any math opening with a digit; this row
+  // used to render as literal `$5–\50,\Omega$` text.
+  it('renders digit-leading math in a table instead of escaping it as currency', async () => {
+    const container = await renderMarkdown('| a | b |\n| --- | --- |\n| $R_s$ | $5$–$50\\,\\Omega$ |')
+
+    // Three equations in the row; the old behaviour escaped the digit-leading
+    // two into prose, leaving only `$R_s$` as real math.
+    expect(container.querySelectorAll('.katex-host')).toHaveLength(3)
+    // A leaked currency escape shows up as a literal backslash-dollar.
+    expect(container.textContent).not.toContain('\\$')
   })
 
   it('does not leak KaTeX markup as visible text', async () => {
