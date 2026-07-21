@@ -1,5 +1,5 @@
 import type { ChatMessage, ChatPart, ToolCallPart } from '@/store/chat'
-import type { SessionMessage } from '@/types/hermes'
+import type { SessionMessage, SessionResumeResponse } from '@/types/hermes'
 
 // Hydrate a stored transcript (SessionMessage[]) into our lean assistant-ui parts
 // model (Hc1). Lean port of desktop apps/desktop/src/lib/chat-messages.ts
@@ -89,10 +89,22 @@ function toolPartFromStoredCall(call: unknown, fallbackIndex: number): ToolCallP
 }
 
 function matchesTool(part: ChatPart, toolCallId: string | undefined, toolName: string): boolean {
-  return (
-    part.type === 'tool-call' &&
-    ((toolCallId != null && part.toolCallId === toolCallId) || (toolCallId == null && part.toolName === toolName))
-  )
+  if (part.type !== 'tool-call') {
+    return false
+  }
+
+  if (toolCallId != null) {
+    return part.toolCallId === toolCallId
+  }
+
+  // Id-less rows (the gateway's reduced resume payload, and legacy transcripts)
+  // can only be matched by NAME — so a row that already carries a result is off
+  // limits, or the second `terminal` result overwrites the first instead of
+  // opening its own row, and the backwards scan in applyResultToMessages can
+  // rewrite a settled row from an earlier turn. Diverges from desktop's stored
+  // path, which has no such guard; it matches the rule desktop's LIVE matcher
+  // uses (findToolPartIndex → `result === undefined`, see lib/chat-tool-parts).
+  return part.toolName === toolName && part.result === undefined
 }
 
 function applyResultToParts(parts: ChatPart[], toolMessage: SessionMessage): ChatPart[] | null {
@@ -255,4 +267,65 @@ export function toChatMessages(messages: SessionMessage[]): ChatMessage[] {
   return withUniqueToolCallIds(
     result.filter(m => messageText(m).trim() || m.parts.some(part => part.type !== 'text'))
   )
+}
+
+/**
+ * Append the backend-only tail of a live turn to a stored transcript.
+ * (Ported from desktop's use-session-actions/utils.ts appendLiveSessionProjection.)
+ *
+ * Session history is committed only when a turn finishes. During a resume,
+ * `inflight` is therefore the authority for the currently running user/assistant
+ * pair, while `queued` is an accepted next-turn prompt waiting in gateway
+ * memory. The projected assistant carries `pending: true` while the turn streams
+ * so the live reducer keeps appending into IT — without it, the turn's remaining
+ * tool events open an orphan bubble that never settles.
+ *
+ * Desktop's fuller reconcile stack (reconcileResumeMessages /
+ * preserveLocalPendingTurnMessages) is deliberately not ported: openSession
+ * clears $messages up front, so there is no local tail to reconcile against.
+ */
+export function appendLiveSessionProjection(
+  messages: ChatMessage[],
+  projection: Pick<SessionResumeResponse, 'inflight' | 'queued' | 'session_id'>
+): ChatMessage[] {
+  const inflightUser = projection.inflight?.user?.trim() ?? ''
+  const inflightAssistant = projection.inflight?.assistant ?? ''
+  const inflightStreaming = Boolean(projection.inflight?.streaming)
+  const queuedUser = projection.queued?.user?.trim() ?? ''
+
+  if (!inflightUser && !inflightAssistant && !inflightStreaming && !queuedUser) {
+    return messages
+  }
+
+  const sessionId = projection.session_id || 'session'
+  const projected: ChatMessage[] = []
+
+  if (inflightUser) {
+    projected.push({
+      id: `user-inflight-${sessionId}`,
+      parts: [{ text: inflightUser, type: 'text' }],
+      role: 'user'
+    })
+  }
+
+  // Keep a pending assistant boundary even before the first delta when a
+  // queued user turn follows it. This preserves the two distinct turns.
+  if (inflightAssistant || inflightStreaming || (inflightUser && queuedUser)) {
+    projected.push({
+      id: `assistant-stream-${sessionId}`,
+      parts: inflightAssistant ? [{ text: inflightAssistant, type: 'text' }] : [],
+      pending: inflightStreaming,
+      role: 'assistant'
+    })
+  }
+
+  if (queuedUser) {
+    projected.push({
+      id: `user-queued-${sessionId}`,
+      parts: [{ text: queuedUser, type: 'text' }],
+      role: 'user'
+    })
+  }
+
+  return projected.length ? [...messages, ...projected] : messages
 }

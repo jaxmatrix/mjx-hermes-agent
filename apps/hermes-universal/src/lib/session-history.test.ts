@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { ChatPart, ToolCallPart } from '@/store/chat'
 import type { SessionMessage } from '@/types/hermes'
 
-import { toChatMessages } from './session-history'
+import { appendLiveSessionProjection, toChatMessages } from './session-history'
 
 const msg = (m: Partial<SessionMessage>): SessionMessage => m as SessionMessage
 const tools = (parts: ChatPart[]): ToolCallPart[] => parts.filter((p): p is ToolCallPart => p.type === 'tool-call')
@@ -62,5 +62,113 @@ describe('toChatMessages', () => {
     const ids = tools(out.flatMap(m => m.parts)).map(t => t.toolCallId)
     expect(ids).toHaveLength(2)
     expect(new Set(ids).size).toBe(2)
+  })
+})
+
+describe('appendLiveSessionProjection', () => {
+  it('is a no-op when nothing is in flight', () => {
+    const stored = toChatMessages([msg({ role: 'user', content: 'hi' })])
+
+    expect(appendLiveSessionProjection(stored, { session_id: 's1' })).toBe(stored)
+  })
+
+  // The committed transcript ends before the running turn, so a mid-turn resume
+  // needs the pending assistant back — otherwise the turn's remaining tool
+  // events open a fresh bubble that never settles.
+  it('projects the running turn with a pending assistant', () => {
+    const out = appendLiveSessionProjection(toChatMessages([msg({ role: 'user', content: 'older' })]), {
+      inflight: { assistant: 'working on it', streaming: true, user: 'do the thing' },
+      session_id: 's1'
+    })
+
+    expect(out.slice(-2)).toMatchObject([
+      { role: 'user', parts: [{ type: 'text', text: 'do the thing' }] },
+      { role: 'assistant', pending: true, parts: [{ type: 'text', text: 'working on it' }] }
+    ])
+  })
+
+  it('projects an accepted queued prompt after the running turn', () => {
+    const out = appendLiveSessionProjection([], {
+      inflight: { streaming: true, user: 'first' },
+      queued: { user: 'second' },
+      session_id: 's1'
+    })
+
+    expect(out.map(m => m.role)).toEqual(['user', 'assistant', 'user'])
+    expect(out[2]).toMatchObject({ parts: [{ type: 'text', text: 'second' }] })
+  })
+})
+
+describe('restoring a multi-step turn', () => {
+  // Each model step is stored as its own assistant row (reasoning + tool_calls)
+  // followed by its tool results; they hydrate into ONE bubble whose parts keep
+  // the original thinking → tool → thinking → tool chronology.
+  it('keeps every thinking and tool block in order', () => {
+    const out = toChatMessages([
+      msg({ role: 'user', content: 'do it' }),
+      msg({
+        role: 'assistant',
+        content: '',
+        reasoning: 'think 1',
+        tool_calls: [{ id: 'a', function: { name: 'terminal' } }]
+      }),
+      msg({ role: 'tool', tool_call_id: 'a', tool_name: 'terminal', content: 'ok' }),
+      msg({
+        role: 'assistant',
+        content: '',
+        reasoning: 'think 2',
+        tool_calls: [{ id: 'b', function: { name: 'execute_code' } }]
+      }),
+      msg({ role: 'tool', tool_call_id: 'b', tool_name: 'execute_code', content: 'Traceback' }),
+      msg({ role: 'assistant', content: 'Done.', reasoning: 'think 3' })
+    ])
+
+    const assistant = out.filter(m => m.role === 'assistant')
+    expect(assistant).toHaveLength(1)
+    expect(assistant[0].parts.map(p => (p.type === 'tool-call' ? `tool:${p.toolName}` : `${p.type}`))).toEqual([
+      'reasoning',
+      'tool:terminal',
+      'reasoning',
+      'tool:execute_code',
+      'reasoning',
+      'text'
+    ])
+  })
+})
+
+// The gateway's `session.resume` payload is display-REDUCED
+// (`_history_to_messages`): assistant rows that only made tool calls are gone,
+// and every tool result is flattened to {role, name, context} with no id. It is
+// only the fallback now (openSession hydrates from REST), but it must still not
+// collapse repeated calls to the same tool into one row.
+describe('reduced (session.resume) transcripts', () => {
+  it('keeps one row per call when the tool rows carry no ids', () => {
+    const out = toChatMessages([
+      msg({ role: 'user', content: 'do it' }),
+      msg({ role: 'tool', name: 'terminal', context: 'ls -la' }),
+      msg({ role: 'tool', name: 'execute_code', context: 'python x.py' }),
+      msg({ role: 'tool', name: 'terminal', context: 'git status' }),
+      msg({ role: 'tool', name: 'terminal', context: 'git diff' }),
+      msg({ role: 'assistant', content: 'Done.', reasoning: 'wrapping up' })
+    ])
+
+    const toolParts = tools(out.flatMap(m => m.parts))
+    expect(toolParts.map(t => t.toolName)).toEqual(['terminal', 'execute_code', 'terminal', 'terminal'])
+    expect(new Set(toolParts.map(t => t.toolCallId)).size).toBe(4)
+  })
+
+  it('does not let a later result rewrite a settled row from an earlier turn', () => {
+    const out = toChatMessages([
+      msg({ role: 'user', content: 'first' }),
+      msg({ role: 'tool', name: 'terminal', context: 'ls' }),
+      msg({ role: 'assistant', content: 'first answer' }),
+      msg({ role: 'user', content: 'second' }),
+      msg({ role: 'tool', name: 'terminal', context: 'pwd' }),
+      msg({ role: 'assistant', content: 'second answer' })
+    ])
+
+    const toolParts = tools(out.flatMap(m => m.parts))
+    expect(toolParts).toHaveLength(2)
+    expect(toolParts.map(t => t.args?.context)).toEqual(['ls', 'pwd'])
   })
 })

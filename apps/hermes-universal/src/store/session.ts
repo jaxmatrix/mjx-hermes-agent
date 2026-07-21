@@ -7,7 +7,7 @@ import {
   searchSessions,
   setSessionArchived
 } from '@/hermes'
-import { toChatMessages } from '@/lib/session-history'
+import { appendLiveSessionProjection, toChatMessages } from '@/lib/session-history'
 import { atom, computed } from '@/store/atom'
 import { $busy, $clarify, $currentCwd, $messages, $sessionId, $statusLine, resetChat, setCurrentCwd } from '@/store/chat'
 import { requestGateway } from '@/store/gateway'
@@ -172,8 +172,30 @@ export async function loadMoreSessions(): Promise<void> {
   await refreshSessions()
 }
 
-/** Resume a stored session: hydrate its transcript + bind the runtime id. */
+// Only the newest open may write chat state. Two async sources (the REST
+// transcript + the resume RPC) mean a fast switch can land the SLOWER response
+// of the chat you just left after the newer one already painted — desktop's
+// `isCurrentResume` guard, in miniature.
+let openGeneration = 0
+const isCurrentOpen = (generation: number): boolean => generation === openGeneration
+
+/**
+ * Resume a stored session: hydrate its transcript + bind the runtime id.
+ *
+ * AUTHORITY: the transcript comes from the REST endpoint
+ * (`GET /api/sessions/{id}/messages` → `db.get_messages`), NOT from the resume
+ * RPC. `session.resume` returns a display-REDUCED history
+ * (`_history_to_messages` in tui_gateway/server.py): assistant rows that only
+ * made tool calls are dropped outright — taking that step's reasoning with them
+ * — and each tool result is flattened to `{role, name, context}` with no
+ * `tool_call_id` and no output. Hydrating from it lost every intermediate
+ * thinking block and collapsed repeated same-name tool calls into one row.
+ * The resume payload is still what binds the runtime id, the cwd, and the
+ * in-flight turn; its messages are only a fallback when REST is unavailable.
+ */
 export async function openSession(storedId: string): Promise<void> {
+  const generation = ++openGeneration
+
   $activeStoredSessionId.set(storedId)
   $messages.set([])
   $busy.set(true)
@@ -183,28 +205,76 @@ export async function openSession(storedId: string): Promise<void> {
   // immediately; the resume response's runtime info supersedes it below with the
   // authoritative value.
   setCurrentCwd($sessions.get().find(session => session.id === storedId)?.cwd)
+  // A session resumed MID-TURN stays busy: the committed transcript ends before
+  // the running turn, and `inflight` carries its tail. Settle to idle otherwise.
+  let stillRunning = false
+
+  // The REST transcript and the resume RPC are independent, so run them
+  // concurrently (desktop does the same): wall time is max(), not sum, and the
+  // transcript paints as soon as it lands instead of waiting on the agent build.
+  // `.then(...)` rather than a bare call so a synchronous throw inside the REST
+  // client can't take the resume down with it.
+  const transcriptPromise = Promise.resolve()
+    .then(() => getSessionMessages(storedId))
+    .catch(() => null)
+  const resumePromise = requestGateway<SessionResumeResponse>('session.resume', {
+    session_id: storedId,
+    cols: 96
+  })
+
+  // The rejection is consumed by the `await` below; this only keeps it from
+  // surfacing as an unhandled rejection while the transcript fetch settles.
+  resumePromise.catch(() => undefined)
+
   try {
-    const resumed = await requestGateway<SessionResumeResponse>('session.resume', {
-      session_id: storedId,
-      cols: 96
-    })
-    $messages.set(toChatMessages(resumed.messages ?? []))
+    const transcript = await transcriptPromise
+    const hydrated = transcript?.messages?.length ? toChatMessages(transcript.messages) : []
+    // Only treat REST as the authority when it actually yielded a transcript —
+    // an empty result falls through to the resume payload rather than painting
+    // an empty chat.
+    const restMessages = hydrated.length ? hydrated : null
+
+    if (restMessages && isCurrentOpen(generation)) {
+      $messages.set(restMessages)
+    }
+
+    const resumed = await resumePromise
+
+    if (!isCurrentOpen(generation)) {
+      return
+    }
+
+    // Project the still-running turn onto the committed transcript, so its
+    // pending assistant exists for the live reducer to keep filling — otherwise
+    // the turn's remaining tool events land in a fresh bubble that never settles.
+    // The REST transcript is the authority when we have it (see AUTHORITY note).
+    $messages.set(appendLiveSessionProjection(restMessages ?? toChatMessages(resumed.messages ?? []), resumed))
     $sessionId.set(resumed.session_id ?? storedId)
+    stillRunning = Boolean(resumed.inflight?.streaming ?? resumed.running)
 
     if (resumed.info?.cwd) {
       setCurrentCwd(resumed.info.cwd)
     }
-  } catch {
-    // Fallback: static transcript (no live runtime binding).
-    try {
-      const res = await getSessionMessages(storedId)
-      $messages.set(toChatMessages(res.messages ?? []))
+  } catch (err) {
+    if (!isCurrentOpen(generation)) {
+      return
+    }
+
+    // The resume RPC failed. Fall back to the REST transcript alone (already
+    // painted above when it resolved) so the chat at least shows its history,
+    // with no live runtime binding.
+    const transcript = await transcriptPromise
+
+    if (transcript) {
+      $messages.set(toChatMessages(transcript.messages ?? []))
       $sessionId.set(storedId)
-    } catch (err) {
+    } else {
       $statusLine.set(err instanceof Error ? err.message : 'Failed to open session')
     }
   } finally {
-    $busy.set(false)
+    if (isCurrentOpen(generation)) {
+      $busy.set(stillRunning)
+    }
   }
 }
 
