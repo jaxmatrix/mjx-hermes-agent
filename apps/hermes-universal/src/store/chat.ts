@@ -1,5 +1,9 @@
 import type { GatewayEvent } from '@/gateway'
 import { translateNow } from '@/i18n'
+import { type GatewayToolPayload, toolIdFromPayload, upsertToolPart } from '@/lib/chat-tool-parts'
+import { coerceThinkingText } from '@/lib/chat-runtime'
+import { resolveGatewayEventSessionId } from '@/lib/gateway-events'
+import { recordToolDiff } from '@/store/tool-diffs'
 import { playCompletionSound } from '@/lib/completion-sound'
 import { speakNow, stopSpeaking } from '@/lib/tts'
 import { atom } from '@/store/atom'
@@ -18,10 +22,8 @@ import type { ContextBreakdown, SessionCreateResponse, UsageStats } from '@/type
 //
 // Parts are exactly assistant-ui's content-part shapes (text / reasoning /
 // tool-call), so conversion is trivial. The streaming reducers are a lean,
-// mobile-adapted version of the desktop chat-messages.ts logic.
-// FIXME(G): the desktop appendStreamPart coalesces across the opposite channel
-// and upsertToolPart matches on arg/context overlap; this is the simpler
-// last-part / id-or-name matcher. Port the full logic if interleaving misbehaves.
+// mobile-adapted version of the desktop chat-messages.ts logic — except the
+// tool-call reducer, which is now the full desktop port (@/lib/chat-tool-parts).
 
 export type Role = 'assistant' | 'system' | 'user'
 
@@ -143,24 +145,6 @@ function coerceText(value: unknown): string {
   return ''
 }
 
-function pickArgs(payload: Record<string, unknown>): Record<string, unknown> | undefined {
-  const raw = payload.args ?? payload.arguments ?? payload.input
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>
-  if (typeof raw === 'string') {
-    try {
-      const parsed = JSON.parse(raw) as unknown
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
-    } catch {
-      /* not JSON */
-    }
-  }
-  return undefined
-}
-
-function pickResult(payload: Record<string, unknown>): unknown {
-  return payload.result ?? payload.summary ?? payload.message ?? payload.output ?? undefined
-}
-
 function update(fn: (messages: ChatMessage[]) => ChatMessage[]): void {
   $messages.set(fn($messages.get()))
 }
@@ -193,22 +177,19 @@ function patchActive(messages: ChatMessage[], patch: (m: ChatMessage) => ChatMes
 }
 
 // Append a streaming delta into the tail part when it's the same channel, else
-// open a new part. `replace` swaps the tail same-type part instead of appending
-// (used by reasoning.available / moa.reference).
-function appendStreamPart(parts: ChatPart[], type: 'reasoning' | 'text', delta: string, replace = false): ChatPart[] {
+// open a new part.
+function appendStreamPart(parts: ChatPart[], type: 'reasoning' | 'text', delta: string): ChatPart[] {
   if (!delta) return parts
   // Coalesce into the most recent same-type part within the current segment
   // (bounded by non-streaming parts like tool calls). The opposite streaming
-  // channel (text<->reasoning) is TRANSPARENT — so a final reasoning burst
-  // (reasoning.available) that arrives AFTER the response text merges back into
-  // the existing reasoning part instead of spawning a duplicate "thinking" block
-  // at the end. `replace` swaps the accumulated text for the final version.
+  // channel (text<->reasoning) is TRANSPARENT — so a reasoning burst between two
+  // content deltas can't shred one sentence into text / Thinking / text.
   // (Ported from desktop lib/chat-messages.ts appendStreamPart.)
   for (let i = parts.length - 1; i >= 0; i--) {
     const part = parts[i]
     if (part.type === type) {
       const copy = parts.slice()
-      copy[i] = { type, text: replace ? delta : part.text + delta }
+      copy[i] = { type, text: part.text + delta }
       return copy
     }
     if (part.type !== 'text' && part.type !== 'reasoning') {
@@ -218,32 +199,98 @@ function appendStreamPart(parts: ChatPart[], type: 'reasoning' | 'text', delta: 
   return [...parts, { type, text: delta }]
 }
 
-function upsertToolPart(parts: ChatPart[], payload: Record<string, unknown>, phase: 'complete' | 'running'): ChatPart[] {
-  const nameFromPayload = coerceText(payload.name)
-  const id =
-    coerceText(payload.tool_id) ||
-    coerceText(payload.tool_call_id) ||
-    coerceText(payload.id) ||
-    `${nameFromPayload || 'tool'}-${parts.length}`
-  const args = pickArgs(payload)
-  const done = phase === 'complete' ? { result: pickResult(payload), isError: payload.is_error === true } : {}
+// A settled reasoning burst (`reasoning.available` / `moa.reference`): the FULL
+// text of one model step's scratchpad, capped at 500 chars by the gateway
+// (agent/conversation_loop.py). A multi-step turn emits one per step, so this
+// must never overwrite an earlier step's thinking block — the bug that left only
+// the last blocks visible.
+//
+// Three cases, in order:
+//  1. Already streamed via reasoning.delta (the burst is that text, or a capped
+//     prefix of it) → drop it, it would be a duplicate "Thinking" block. This is
+//     what desktop approximates with its "message already has text → skip" rule.
+//  2. The live reasoning block is still open (nothing but reasoning since) →
+//     swap in the authoritative full text.
+//  3. Prose or a tool call already followed → open a NEW block, preserving the
+//     chronology of the turn instead of clobbering the previous step.
+function applySettledReasoning(parts: ChatPart[], text: string): ChatPart[] {
+  const settled = text.trim()
 
-  const idx = parts.findIndex(
-    p => p.type === 'tool-call' && (p.toolCallId === id || (nameFromPayload && p.toolName === nameFromPayload && p.result === undefined))
-  )
-  const copy = parts.slice()
-  if (idx >= 0) {
-    const existing = copy[idx] as ToolCallPart
-    // A complete event often omits name/args — keep what start supplied.
-    copy[idx] = { ...existing, toolName: nameFromPayload || existing.toolName, args: args ?? existing.args, ...done }
-  } else {
-    copy.push({ type: 'tool-call', toolCallId: id, toolName: nameFromPayload || 'tool', args, ...done })
+  if (!settled) return parts
+
+  if (parts.some(part => part.type === 'reasoning' && part.text.trim().includes(settled))) {
+    return parts
   }
-  return copy
+
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i]
+
+    if (part.type === 'reasoning') {
+      const copy = parts.slice()
+      copy[i] = { type: 'reasoning', text }
+      return copy
+    }
+    // Any prose or tool call closes the previous thinking block.
+    break
+  }
+
+  return [...parts, { type: 'reasoning', text }]
 }
+
+// Route a tool event into the transcript. While a turn is live the parts land on
+// the pending assistant; a LATE event (one that arrives after message.complete —
+// a trailing completion, a sub-agent mirror) must merge into the last assistant
+// instead of opening a fresh `pending: true` bubble that nothing ever settles.
+// Desktop gets this from `pending: m => phase !== 'complete' || (m.pending ?? false)`
+// in use-message-stream; universal has no per-message patcher, so we branch here.
+function applyToolEvent(payload: GatewayToolPayload, phase: 'complete' | 'running'): void {
+  update(messages => {
+    const last = messages[messages.length - 1]
+    const settledAssistant = !$busy.get() && last?.role === 'assistant' && !last.pending
+
+    if (settledAssistant) {
+      const copy = messages.slice()
+      copy[copy.length - 1] = { ...last, parts: upsertToolPart(last.parts, payload, phase) }
+
+      return copy
+    }
+
+    return patchActive(messages, m => ({ ...m, parts: upsertToolPart(m.parts, payload, phase) }))
+  })
+}
+
+// The session that owns the current unscoped stream — pinned on message.start,
+// released on message.complete/error (see lib/gateway-events).
+let unscopedStreamSessionId: null | string = null
 
 export function handleGatewayEvent(event: GatewayEvent): void {
   const payload = (event.payload ?? {}) as Record<string, unknown>
+
+  // Which chat does this event belong to? Universal keeps ONE transcript, so an
+  // event owned by another session must not be reduced into it (a background
+  // turn's tool rows, or the previous turn's tail after a mid-turn chat switch).
+  const route = resolveGatewayEventSessionId({
+    activeSessionId: $sessionId.get(),
+    eventType: event.type,
+    explicitSessionId: event.session_id || '',
+    unscopedStreamSessionId
+  })
+
+  unscopedStreamSessionId = route.nextUnscopedStreamSessionId
+
+  if (route.drop) {
+    return
+  }
+
+  // Conservative: only reject when BOTH ids are known and disagree, so a gateway
+  // that omits session ids behaves exactly as before. `session.title` carries its
+  // own stored id (it also patches the sidebar list for other sessions), so it is
+  // exempt from the active-session gate.
+  const activeSessionId = $sessionId.get()
+
+  if (event.type !== 'session.title' && route.sessionId && activeSessionId && route.sessionId !== activeSessionId) {
+    return
+  }
 
   switch (event.type) {
     case 'message.start':
@@ -259,12 +306,17 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       break
 
     case 'reasoning.delta':
-      update(messages => patchActive(messages, m => ({ ...m, parts: appendStreamPart(m.parts, 'reasoning', coerceText(payload.text)) })))
+      update(messages =>
+        patchActive(messages, m => ({
+          ...m,
+          parts: appendStreamPart(m.parts, 'reasoning', coerceThinkingText(payload.text))
+        }))
+      )
       break
 
     case 'reasoning.available':
       update(messages =>
-        patchActive(messages, m => ({ ...m, parts: appendStreamPart(m.parts, 'reasoning', coerceText(payload.text), true) }))
+        patchActive(messages, m => ({ ...m, parts: applySettledReasoning(m.parts, coerceThinkingText(payload.text)) }))
       )
       break
 
@@ -273,18 +325,35 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       const idx = coerceText(payload.index)
       const total = coerceText(payload.total)
       const header = `◇ Reference ${idx}/${total}${label ? ` — ${label}` : ''}\n`
-      update(messages => patchActive(messages, m => ({ ...m, parts: appendStreamPart(m.parts, 'reasoning', header + coerceText(payload.text)) })))
+      // A reference block is its own labelled thinking block — never merged into
+      // the neighbouring one (desktop appends it as a settled burst too).
+      update(messages =>
+        patchActive(messages, m => ({
+          ...m,
+          parts: [...m.parts, { type: 'reasoning', text: header + coerceThinkingText(payload.text) }]
+        }))
+      )
       break
     }
 
     case 'tool.start':
     case 'tool.progress':
     case 'tool.generating':
-      update(messages => patchActive(messages, m => ({ ...m, parts: upsertToolPart(m.parts, payload, 'running') })))
+      applyToolEvent(payload, 'running')
       break
 
-    case 'tool.complete':
-      update(messages => patchActive(messages, m => ({ ...m, parts: upsertToolPart(m.parts, payload, 'complete') })))
+    case 'tool.complete': {
+      applyToolEvent(payload, 'complete')
+      // Live side-channel diff: the gateway renders the edit diff itself and
+      // ships it on tool.complete (server.py `_on_tool_complete`). The renderer
+      // prefers this over one parsed out of the result, keyed by the SAME id the
+      // part adopted in upsertToolPart.
+      const inlineDiff = coerceText(payload.inline_diff)
+
+      if (inlineDiff.trim()) {
+        recordToolDiff(toolIdFromPayload(payload), inlineDiff)
+      }
+
       // A file-mutating tool just finished — nudge the git-mirroring surfaces
       // (coding rail, review pane, file tree) to refresh. Event-driven, not
       // polled: fires exactly when the agent touches the tree. (Desktop does the
@@ -297,6 +366,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         void notifyWorkspaceChangeFromTool(payload)
       }
       break
+    }
 
     case 'message.complete':
       $busy.set(false)
@@ -307,7 +377,11 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       // Read the reply aloud when auto-TTS is on (K9).
       if ($autoSpeakReplies.get()) {
         const last = [...$messages.get()].reverse().find(m => m.role === 'assistant')
-        const text = last?.parts.filter(p => p.type === 'text').map(p => (p as TextPart).text).join(' ') ?? ''
+        const text =
+          last?.parts
+            .filter(p => p.type === 'text')
+            .map(p => (p as TextPart).text)
+            .join(' ') ?? ''
         if (text.trim()) {
           void speakNow(text)
         }
@@ -367,7 +441,9 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       $busy.set(false)
       $turnStartedAt.set(null)
       $statusLine.set(coerceText(payload.message) || 'Something went wrong')
-      update(messages => messages.map(m => (m.pending ? { ...m, pending: false, error: coerceText(payload.message) } : m)))
+      update(messages =>
+        messages.map(m => (m.pending ? { ...m, pending: false, error: coerceText(payload.message) } : m))
+      )
       dispatchNativeNotification({
         kind: 'turnError',
         title: translateNow('notifications.native.turnErrorTitle'),
