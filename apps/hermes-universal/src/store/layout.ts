@@ -45,6 +45,36 @@ export function toggleRightSidebar(): void {
   $rightSidebarOpen.set(!$rightSidebarOpen.get())
 }
 
+// POSITIONAL toggles (desktop parity — see desktop's `titlebar-controls.tsx`):
+// each titlebar button / keybind shows-hides everything on its PHYSICAL side of
+// main, so it stays truthful through a swap. Unflipped: left ≙ chat sidebar,
+// right ≙ the file/editor/terminal rails; flipped, the two trade places.
+export const $leftEdgeOpen: ReadableAtom<boolean> = computed(
+  [$panesFlipped, $sidebarOpen, $rightSidebarOpen],
+  (flipped, sidebarOpen, rightOpen) => (flipped ? rightOpen : sidebarOpen)
+)
+
+export const $rightEdgeOpen: ReadableAtom<boolean> = computed(
+  [$panesFlipped, $sidebarOpen, $rightSidebarOpen],
+  (flipped, sidebarOpen, rightOpen) => (flipped ? sidebarOpen : rightOpen)
+)
+
+export function toggleLeftEdge(): void {
+  if ($panesFlipped.get()) {
+    toggleRightSidebar()
+  } else {
+    toggleSidebarOpen()
+  }
+}
+
+export function toggleRightEdge(): void {
+  if ($panesFlipped.get()) {
+    toggleSidebarOpen()
+  } else {
+    toggleRightSidebar()
+  }
+}
+
 // ── Right pane geometry + terminal ──────────────────────────────────────────
 export const FILE_TREE_PANE_ID = 'file-tree'
 export const PREVIEW_PANE_ID = 'preview'

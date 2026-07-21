@@ -11,11 +11,12 @@ import {
   NEW_SESSION_FLASH_EVENT,
   requestSessionSearchFocus,
   setTerminalOpen,
+  toggleLeftEdge,
   togglePanesFlipped,
-  toggleSidebarOpen
+  toggleRightEdge
 } from '@/store/layout'
 import { setModelPickerOpen } from '@/store/model'
-import { setPaneOpen, togglePane } from '@/store/panes'
+import { setPaneOpen } from '@/store/panes'
 import { cycleProfile, switchProfileToSlot, switchToDefaultProfile } from '@/store/profiles'
 import { toggleReview } from '@/store/review'
 import { newSession, toggleSelectedPin } from '@/store/session'
@@ -144,9 +145,12 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
     'session.togglePin': toggleSelectedPin,
 
     // Narrow-viewport reveal is handled inside the store toggles now.
-    'view.toggleSidebar': toggleSidebarOpen,
+    // Both are POSITIONAL (see `store/layout.ts`): ⌘B drives whatever sits on the
+    // left of main, ⌘J the right — so they track the titlebar buttons through a
+    // pane swap instead of staying pinned to one sidebar.
+    'view.toggleSidebar': toggleLeftEdge,
     // ⌘J toggles the file browser — the "secondary panel" toggle.
-    'view.toggleRightSidebar': () => togglePane(FILE_TREE_PANE_ID),
+    'view.toggleRightSidebar': toggleRightEdge,
     'view.toggleReview': toggleReview,
     'view.showFiles': showFiles,
     'view.showTerminal': () => setTerminalOpen(!$terminalOpen.get()),
