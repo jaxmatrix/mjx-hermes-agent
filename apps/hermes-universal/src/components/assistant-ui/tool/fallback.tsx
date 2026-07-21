@@ -609,7 +609,7 @@ function ToolEntry({ part }: ToolEntryProps) {
 
 // A back-to-back run of this many tool calls collapses into the bounded,
 // auto-scrolling window; fewer than this stays a plain inline stack.
-const TOOL_GROUP_SCROLL_THRESHOLD = 3
+const TOOL_GROUP_SCROLL_THRESHOLD = 6
 
 // Tools whose body (an interactive form, a full-size image) must never be
 // trapped behind the window's max-height + fade mask. A run holding any of
