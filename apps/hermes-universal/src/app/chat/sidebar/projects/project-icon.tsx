@@ -1,6 +1,7 @@
 import { Codicon } from '@/components/ui/codicon'
 
 import { SIDEBAR_LEAD_ICON_SIZE } from '../chrome'
+
 import type { SidebarProjectTree } from './model'
 
 // A project's lead glyph: a tinted dot for a color-only project, else its

@@ -11,11 +11,11 @@ import {
   submitOAuthCode,
   validateProviderCredential
 } from '@/hermes'
+import type { RecommendedDefaultModel } from '@/hermes'
 import { openExternalLink } from '@/lib/external-link'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { atom } from '@/store/atom'
 import { requestGateway } from '@/store/gateway'
-import type { RecommendedDefaultModel } from '@/hermes'
 import type { OAuthProvider } from '@/types/hermes'
 
 // First-run provider-setup wizard state. Adapted (leaned) from apps/desktop/src/
@@ -47,7 +47,15 @@ export interface OnboardingState {
   error: string | null
 }
 
-const INITIAL: OnboardingState = { step: 'picker', option: null, providerSlug: null, recommended: null, oauth: null, busy: false, error: null }
+const INITIAL: OnboardingState = {
+  step: 'picker',
+  option: null,
+  providerSlug: null,
+  recommended: null,
+  oauth: null,
+  busy: false,
+  error: null
+}
 
 // Persisted "user has been through (or dismissed) onboarding" flag — the mobile
 // equivalent of desktop's hermes-desktop-onboarded / onboarding-skipped keys.
@@ -71,6 +79,7 @@ function stopPolling() {
   if (pollTimer) {
     clearTimeout(pollTimer)
   }
+
   pollTimer = null
   pollSession = null
 }
@@ -83,15 +92,19 @@ async function onProviderConnected(provider: OAuthProvider) {
 
 function pollDeviceCode(provider: OAuthProvider, sessionId: string, intervalMs: number) {
   pollSession = sessionId
+
   const tick = async () => {
     if (pollSession !== sessionId) {
       return
     }
+
     try {
       const res = await pollOAuthSession(provider.id, sessionId)
+
       if (pollSession !== sessionId) {
         return
       }
+
       if (res.status === 'approved') {
         void onProviderConnected(provider)
       } else if (res.status === 'pending') {
@@ -106,11 +119,13 @@ function pollDeviceCode(provider: OAuthProvider, sessionId: string, intervalMs: 
       pollTimer = setTimeout(() => void tick(), intervalMs)
     }
   }
+
   pollTimer = setTimeout(() => void tick(), intervalMs)
 }
 
 const setOAuth = (next: Partial<OAuthFlowState>) => {
   const oauth = $onboarding.get().oauth
+
   if (oauth) {
     patch({ oauth: { ...oauth, ...next } })
   }
@@ -139,13 +154,17 @@ export async function checkConfigured(): Promise<void> {
   if ($onboardingSeen.get()) {
     return
   }
+
   try {
     const { providers } = await getGlobalModelOptions()
     const configured = (providers ?? []).some(p => p.authenticated !== false && (p.models?.length ?? 0) > 0)
+
     if (configured) {
       $onboardingSeen.set(true)
+
       return
     }
+
     $onboarding.set(INITIAL)
     $onboardingActive.set(true)
   } catch {
@@ -160,9 +179,11 @@ export function selectApiKeyProvider(option: ApiKeyOption) {
 export function backToPicker() {
   const oauth = $onboarding.get().oauth
   stopPolling()
+
   if (oauth) {
     void cancelOAuthSession(oauth.sessionId).catch(() => {})
   }
+
   patch({ step: 'picker', option: null, oauth: null, error: null })
 }
 
@@ -179,18 +200,28 @@ export async function startProviderOAuth(provider: OAuthProvider): Promise<void>
       error: null,
       oauth: { provider, sessionId: '', flow: 'external', url: '', status: 'external_pending' }
     })
+
     return
   }
 
   patch({ busy: true, error: null })
+
   try {
     const start = await startOAuthLogin(provider.id)
     void openExternalLink(start.flow === 'pkce' ? start.auth_url : start.verification_url)
+
     if (start.flow === 'device_code') {
       patch({
         busy: false,
         step: 'oauth',
-        oauth: { provider, sessionId: start.session_id, flow: 'device_code', url: start.verification_url, userCode: start.user_code, status: 'pending' }
+        oauth: {
+          provider,
+          sessionId: start.session_id,
+          flow: 'device_code',
+          url: start.verification_url,
+          userCode: start.user_code,
+          status: 'pending'
+        }
       })
       pollDeviceCode(provider, start.session_id, Math.max(1, start.poll_interval || 3) * 1000)
     } else {
@@ -220,9 +251,11 @@ export function beginProviderConnect(provider: OAuthProvider): void {
 export function cancelProviderConnect(): void {
   stopPolling()
   const oauth = $onboarding.get().oauth
+
   if (oauth && oauth.sessionId) {
     void cancelOAuthSession(oauth.sessionId).catch(() => {})
   }
+
   $onboarding.set(INITIAL)
   $connectProvider.set(null)
 }
@@ -233,6 +266,7 @@ export function cancelProviderConnect(): void {
  *  hint. Mirrors desktop `recheckExternalSignin`. */
 export async function recheckExternalSignin(): Promise<void> {
   const oauth = $onboarding.get().oauth
+
   if (!oauth || oauth.flow !== 'external') {
     return
   }
@@ -248,6 +282,7 @@ export async function recheckExternalSignin(): Promise<void> {
 
     if (fresh?.status.logged_in) {
       await onProviderConnected(fresh)
+
       return
     }
 
@@ -268,23 +303,31 @@ export async function recheckExternalSignin(): Promise<void> {
 /** Submit a PKCE authorization code the user pasted from the browser. */
 export async function submitOnboardingCode(code: string): Promise<boolean> {
   const oauth = $onboarding.get().oauth
+
   if (!oauth || !code.trim()) {
     return false
   }
+
   setOAuth({ status: 'submitting' })
   patch({ busy: true, error: null })
+
   try {
     const res = await submitOAuthCode(oauth.provider.id, oauth.sessionId, code.trim())
+
     if (res.ok && res.status === 'approved') {
       await onProviderConnected(oauth.provider)
+
       return true
     }
+
     setOAuth({ status: 'awaiting_code' })
     patch({ busy: false, error: res.message || 'Sign-in failed. Try again.' })
+
     return false
   } catch (err) {
     setOAuth({ status: 'awaiting_code' })
     patch({ busy: false, error: err instanceof Error ? err.message : 'Sign-in failed. Try again.' })
+
     return false
   }
 }
@@ -292,28 +335,43 @@ export async function submitOnboardingCode(code: string): Promise<boolean> {
 /** Save a provider's API key (or wire a local endpoint), then advance. */
 export async function saveApiKey(option: ApiKeyOption, value: string, localApiKey?: string): Promise<boolean> {
   const trimmed = value.trim()
+
   if (!trimmed) {
     return false
   }
+
   patch({ busy: true, error: null })
+
   try {
     if (option.envKey === LOCAL_ENV_KEY) {
       const res = await validateProviderCredential(LOCAL_ENV_KEY, trimmed, localApiKey)
+
       if (!res.reachable || !res.models?.length) {
         patch({ busy: false, error: res.message || 'Endpoint unreachable' })
+
         return false
       }
-      await setModelAssignment({ scope: 'main', provider: 'custom', base_url: trimmed, model: res.models[0], api_key: localApiKey })
+
+      await setModelAssignment({
+        scope: 'main',
+        provider: 'custom',
+        base_url: trimmed,
+        model: res.models[0],
+        api_key: localApiKey
+      })
       finish()
+
       return true
     }
 
     await setEnvVar(option.envKey, trimmed)
     const recommended = await getRecommendedDefaultModel(option.id).catch(() => null)
     patch({ busy: false, step: 'confirm', providerSlug: option.id, recommended })
+
     return true
   } catch (err) {
     patch({ busy: false, error: err instanceof Error ? err.message : 'Could not save credential.' })
+
     return false
   }
 }
@@ -321,18 +379,28 @@ export async function saveApiKey(option: ApiKeyOption, value: string, localApiKe
 /** Confirm the recommended default model for the chosen provider, then done. */
 export async function confirmModel(): Promise<boolean> {
   const { providerSlug, recommended } = $onboarding.get()
+
   if (!providerSlug) {
     return false
   }
+
   patch({ busy: true, error: null })
+
   try {
     if (recommended?.model) {
-      await setModelAssignment({ scope: 'main', provider: recommended.provider || providerSlug, model: recommended.model })
+      await setModelAssignment({
+        scope: 'main',
+        provider: recommended.provider || providerSlug,
+        model: recommended.model
+      })
     }
+
     finish()
+
     return true
   } catch (err) {
     patch({ busy: false, error: err instanceof Error ? err.message : 'Could not set the model.' })
+
     return false
   }
 }

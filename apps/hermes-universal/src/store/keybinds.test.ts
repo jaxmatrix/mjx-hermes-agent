@@ -2,7 +2,15 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { canonicalizeCombo } from '@/lib/keybinds/combo'
 
-import { $bindings, $comboIndex, bindingsFor, conflictsFor, resetAllBindings, resetBinding, setBinding } from './keybinds'
+import {
+  $bindings,
+  $comboIndex,
+  bindingsFor,
+  conflictsFor,
+  resetAllBindings,
+  resetBinding,
+  setBinding
+} from './keybinds'
 
 afterEach(resetAllBindings)
 

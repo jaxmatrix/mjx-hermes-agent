@@ -7,9 +7,13 @@ import { respondSecret, type SecretRequest } from '@/store/chat'
 
 export function SecretBar({ request }: { request: SecretRequest }) {
   const [value, setValue] = useState('')
+
   const submit = () => {
-    if (value) void respondSecret(value)
+    if (value) {
+      void respondSecret(value)
+    }
   }
+
   return (
     <RequestBar title={`Secret required${request.envVar ? `: ${request.envVar}` : ''}`}>
       {request.prompt && <RequestBarDescription>{request.prompt}</RequestBarDescription>}

@@ -8,8 +8,8 @@ import { useStore } from '@/store/atom'
 import {
   $activeStoredSessionId,
   $searchLoading,
-  $sessionSearch,
   $sessions,
+  $sessionSearch,
   $sessionsLoading,
   $sessionsTotal,
   loadMoreSessions,
@@ -47,11 +47,14 @@ export function SessionSheet({ open, onOpenChange }: { open: boolean; onOpenChan
   const [query, setQuery] = useState('')
 
   useEffect(() => {
-    if (open) void refreshSessions()
+    if (open) {
+      void refreshSessions()
+    }
   }, [open])
 
   useEffect(() => {
     const timer = setTimeout(() => void searchSessionsQuery(query), 200)
+
     return () => clearTimeout(timer)
   }, [query])
 
@@ -70,8 +73,12 @@ export function SessionSheet({ open, onOpenChange }: { open: boolean; onOpenChan
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {isSearching ? (
             <>
-              {searching && searchResults.length === 0 && <div className="p-3 text-sm text-muted-foreground">Searching…</div>}
-              {!searching && searchResults.length === 0 && <div className="p-3 text-sm text-muted-foreground">No matches.</div>}
+              {searching && searchResults.length === 0 && (
+                <div className="p-3 text-sm text-muted-foreground">Searching…</div>
+              )}
+              {!searching && searchResults.length === 0 && (
+                <div className="p-3 text-sm text-muted-foreground">No matches.</div>
+              )}
               {searchResults.map(r => (
                 <SearchRow key={r.session_id} onOpen={close} result={r} />
               ))}
@@ -79,7 +86,9 @@ export function SessionSheet({ open, onOpenChange }: { open: boolean; onOpenChan
           ) : (
             <>
               {loading && sessions.length === 0 && <div className="p-3 text-sm text-muted-foreground">Loading…</div>}
-              {!loading && sessions.length === 0 && <div className="p-3 text-sm text-muted-foreground">No conversations yet.</div>}
+              {!loading && sessions.length === 0 && (
+                <div className="p-3 text-sm text-muted-foreground">No conversations yet.</div>
+              )}
               {sessions.map(s => (
                 <SessionRow active={s.id === activeId} key={s.id} onOpen={close} session={s} />
               ))}

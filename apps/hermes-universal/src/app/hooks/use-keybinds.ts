@@ -20,7 +20,6 @@ import { setPaneOpen } from '@/store/panes'
 import { cycleProfile, switchProfileToSlot, switchToDefaultProfile } from '@/store/profiles'
 import { toggleReview } from '@/store/review'
 import { newSession, toggleSelectedPin } from '@/store/session'
-import { closeActiveTerminal, createTerminal, cycleTerminal } from '@/store/terminals'
 import {
   $switcherOpen,
   closeSwitcher,
@@ -32,6 +31,7 @@ import {
   switcherActive,
   switcherJustClosed
 } from '@/store/session-switcher'
+import { closeActiveTerminal, createTerminal, cycleTerminal } from '@/store/terminals'
 import { useTheme } from '@/themes/context'
 
 import { requestComposerFocus, requestVoiceToggle } from '../chat/composer/focus'

@@ -1,6 +1,6 @@
 import type { StagedAttachment } from '@/app/chat/attachments'
-import { Codecs, persistentAtom } from '@/lib/persisted'
 import { triggerHaptic } from '@/lib/haptics'
+import { Codecs, persistentAtom } from '@/lib/persisted'
 import { atom } from '@/store/atom'
 
 // ===========================================================================
@@ -36,7 +36,11 @@ export function clearStaged(): void {
 
 export function pushHistory(text: string): void {
   const value = text.trim()
-  if (!value) return
+
+  if (!value) {
+    return
+  }
+
   const prev = $history.get().filter(h => h !== value)
   $history.set([value, ...prev].slice(0, MAX_HISTORY))
 }
@@ -47,17 +51,27 @@ export function enqueue(text: string): void {
 
 export function dequeue(): string | undefined {
   const q = $queue.get()
-  if (q.length === 0) return undefined
+
+  if (q.length === 0) {
+    return undefined
+  }
+
   $queue.set(q.slice(1))
+
   return q[0]
 }
 
 /** Remove and return the queued prompt at `index` (queue-panel send-now/delete). */
 export function removeQueuedAt(index: number): string | undefined {
   const q = $queue.get()
-  if (index < 0 || index >= q.length) return undefined
+
+  if (index < 0 || index >= q.length) {
+    return undefined
+  }
+
   const removed = q[index]
   $queue.set([...q.slice(0, index), ...q.slice(index + 1)])
+
   return removed
 }
 

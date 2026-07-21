@@ -24,8 +24,8 @@ import {
   renameSessionLocal
 } from './session'
 
-const row = (id: string, title: string): SessionInfo => ({ id, title } as unknown as SessionInfo)
-const rowWithCwd = (id: string, cwd: null | string): SessionInfo => ({ id, cwd } as unknown as SessionInfo)
+const row = (id: string, title: string): SessionInfo => ({ id, title }) as unknown as SessionInfo
+const rowWithCwd = (id: string, cwd: null | string): SessionInfo => ({ id, cwd }) as unknown as SessionInfo
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -184,7 +184,9 @@ describe('openSession transcript source', () => {
 
   it('ignores a stale open that resolves after a newer one', async () => {
     vi.mocked(getSessionMessages).mockResolvedValue({ messages: [], session_id: 'x' } as never)
+
     let releaseSlow: (value: unknown) => void = () => {}
+
     const slow = new Promise(resolve => {
       releaseSlow = resolve
     })

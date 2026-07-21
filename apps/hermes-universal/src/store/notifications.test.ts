@@ -1,12 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  $notifications,
-  clearNotifications,
-  dismissNotification,
-  notify,
-  notifyError
-} from './notifications'
+import { $notifications, clearNotifications, dismissNotification, notify, notifyError } from './notifications'
 
 describe('notifications store', () => {
   beforeEach(() => clearNotifications())
@@ -23,7 +17,10 @@ describe('notifications store', () => {
   })
 
   it('newest first, capped at 4', () => {
-    for (let i = 0; i < 6; i++) notify({ kind: 'error', message: `m${i}` })
+    for (let i = 0; i < 6; i++) {
+      notify({ kind: 'error', message: `m${i}` })
+    }
+
     const list = $notifications.get()
     expect(list).toHaveLength(4)
     expect(list[0].message).toBe('m5')

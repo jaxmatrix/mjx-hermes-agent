@@ -11,9 +11,7 @@ describe('promoteStandaloneDisplayMath', () => {
   })
 
   it('promotes when the line is the whole input', () => {
-    expect(promoteStandaloneDisplayMath('$$ECSA = \\frac{C_{dl}}{C_s}$$')).toBe(
-      '$$\nECSA = \\frac{C_{dl}}{C_s}\n$$'
-    )
+    expect(promoteStandaloneDisplayMath('$$ECSA = \\frac{C_{dl}}{C_s}$$')).toBe('$$\nECSA = \\frac{C_{dl}}{C_s}\n$$')
   })
 
   it('tolerates up to three leading spaces (markdown paragraph indent)', () => {

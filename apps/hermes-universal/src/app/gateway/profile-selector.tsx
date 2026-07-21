@@ -29,27 +29,35 @@ export function ProfileSelector() {
 
   function onChange(value: string): void {
     const target = value === OWN ? null : value
-    if (target === active) return
+
+    if (target === active) {
+      return
+    }
+
     setActiveProfile(target)
-    if (!connection) return
+
+    if (!connection) {
+      return
+    }
 
     const name = target ? `"${target}"` : 'the default profile'
+
     if (mode === 'local') {
       notify({
         kind: 'info',
         message: `Restart the backend as ${name} to apply it to chat?`,
-        action: { label: 'Restart', onClick: () => void connectLocal(target) },
+        action: { label: 'Restart', onClick: () => void connectLocal(target) }
       })
     } else {
       notify({
         kind: 'info',
-        message: `Settings and skills now use ${name}. The live chat still runs the gateway's own profile.`,
+        message: `Settings and skills now use ${name}. The live chat still runs the gateway's own profile.`
       })
     }
   }
 
   return (
-    <Select value={active ?? OWN} onValueChange={onChange}>
+    <Select onValueChange={onChange} value={active ?? OWN}>
       <SelectTrigger className="w-full">
         <SelectValue />
       </SelectTrigger>

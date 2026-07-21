@@ -1,6 +1,7 @@
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type * as PlatformModule from '@/lib/platform'
 import { $sessionId } from '@/store/chat'
 import { $panesFlipped, $rightSidebarOpen, $terminalOpen, setSidebarOpen } from '@/store/layout'
 import { $reviewOpen } from '@/store/review'
@@ -8,7 +9,7 @@ import { $reviewOpen } from '@/store/review'
 // The titlebar-clearing inset is desktop-only chrome; jsdom reports no Tauri
 // runtime, so force IS_DESKTOP while keeping the rest of the module real.
 vi.mock('@/lib/platform', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/platform')>()),
+  ...(await importOriginal<typeof PlatformModule>()),
   IS_DESKTOP: true
 }))
 

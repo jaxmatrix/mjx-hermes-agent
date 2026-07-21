@@ -41,12 +41,20 @@ export function useVoiceRecorder(onTranscript: (text: string) => void): VoiceRec
     const type = recorderRef.current?.mimeType || 'audio/webm'
     const blob = new Blob(chunksRef.current, { type })
     stopTracks()
-    if (!blob.size) return
+
+    if (!blob.size) {
+      return
+    }
+
     setTranscribing(true)
+
     try {
       const dataUrl = await blobToDataUrl(blob)
       const res = await transcribeAudio(dataUrl, blob.type)
-      if (res.transcript) onTranscript(res.transcript)
+
+      if (res.transcript) {
+        onTranscript(res.transcript)
+      }
     } catch {
       /* mic/transcribe unavailable */
     } finally {
@@ -60,9 +68,13 @@ export function useVoiceRecorder(onTranscript: (text: string) => void): VoiceRec
       streamRef.current = stream
       const recorder = new MediaRecorder(stream)
       chunksRef.current = []
+
       recorder.ondataavailable = e => {
-        if (e.data.size > 0) chunksRef.current.push(e.data)
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data)
+        }
       }
+
       recorder.onstop = () => void finish()
       recorder.start()
       recorderRef.current = recorder

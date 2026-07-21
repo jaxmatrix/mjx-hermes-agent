@@ -19,7 +19,12 @@ export const LOCAL_ENV_KEY = 'OPENAI_BASE_URL'
 
 export const API_KEY_OPTIONS: ApiKeyOption[] = [
   { id: 'openrouter', name: 'OpenRouter', envKey: 'OPENROUTER_API_KEY', docsUrl: 'https://openrouter.ai/keys' },
-  { id: 'fireworks', name: 'Fireworks AI', envKey: 'FIREWORKS_API_KEY', docsUrl: 'https://app.fireworks.ai/settings/users/api-keys' },
+  {
+    id: 'fireworks',
+    name: 'Fireworks AI',
+    envKey: 'FIREWORKS_API_KEY',
+    docsUrl: 'https://app.fireworks.ai/settings/users/api-keys'
+  },
   { id: 'openai', name: 'OpenAI', envKey: 'OPENAI_API_KEY', docsUrl: 'https://platform.openai.com/api-keys' },
   { id: 'gemini', name: 'Google Gemini', envKey: 'GEMINI_API_KEY', docsUrl: 'https://aistudio.google.com/app/apikey' },
   { id: 'xai', name: 'xAI Grok', envKey: 'XAI_API_KEY', docsUrl: 'https://console.x.ai/' },
@@ -40,12 +45,14 @@ export function useApiKeyCatalog(): ApiKeyOption[] {
 
   const seen = new Set(API_KEY_OPTIONS.map(o => o.envKey))
   const derived: ApiKeyOption[] = []
+
   for (const provider of data?.providers ?? []) {
     if (provider.auth_type === 'api_key' && provider.key_env && !seen.has(provider.key_env)) {
       seen.add(provider.key_env)
       derived.push({ id: provider.slug, name: provider.name || prettyName(provider.slug), envKey: provider.key_env })
     }
   }
+
   return [...API_KEY_OPTIONS, ...derived]
 }
 
@@ -53,5 +60,6 @@ export function useApiKeyCatalog(): ApiKeyOption[] {
 // excluded — they need a terminal, which mobile doesn't have (FIXME(K11)).
 export function useOAuthProviders(): OAuthProvider[] {
   const { data } = useQuery({ queryKey: ['oauth-providers'], queryFn: listOAuthProviders, staleTime: 60_000 })
+
   return (data?.providers ?? []).filter(p => p.flow !== 'external' && !p.status.logged_in)
 }

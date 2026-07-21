@@ -1,15 +1,6 @@
 import { JsonRpcGatewayClient } from '@/gateway'
-
 import { api } from '@/lib/api'
-
 import type {
-  DefaultCwdResult,
-  FsWriteResult,
-  GitRootResult,
-  ReadDataUrlResult,
-  ReadDirResult,
-  ReadFileTextResult,
-  RepoStatus,
   ActionResponse,
   ActionStatusResponse,
   AnalyticsResponse,
@@ -24,8 +15,11 @@ import type {
   CronJobUpdates,
   CuratorStatusResponse,
   DebugShareResponse,
+  DefaultCwdResult,
   ElevenLabsVoicesResponse,
   EnvVarInfo,
+  FsWriteResult,
+  GitRootResult,
   HermesConfig,
   HermesConfigRecord,
   LogsResponse,
@@ -51,6 +45,10 @@ import type {
   ProfileSetupCommand,
   ProfileSoul,
   ProfilesResponse,
+  ReadDataUrlResult,
+  ReadDirResult,
+  ReadFileTextResult,
+  RepoStatus,
   SessionInfo,
   SessionMessagesResponse,
   SessionSearchResponse,

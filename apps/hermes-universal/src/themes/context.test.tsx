@@ -5,6 +5,7 @@ import { ThemeProvider, useTheme } from './context'
 
 function Harness() {
   const { themeName, resolvedMode, setMode, setTheme } = useTheme()
+
   return (
     <div>
       <span data-testid="state">{`${themeName}:${resolvedMode}`}</span>

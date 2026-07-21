@@ -52,7 +52,14 @@ describe('checkPetGenAvailable', () => {
 
 describe('generateDrafts', () => {
   it('populates drafts + selects the first on success', async () => {
-    rpc.mockResolvedValue({ ok: true, token: 'tok', drafts: [{ index: 0, dataUri: 'a' }, { index: 1, dataUri: 'b' }] } as never)
+    rpc.mockResolvedValue({
+      ok: true,
+      token: 'tok',
+      drafts: [
+        { index: 0, dataUri: 'a' },
+        { index: 1, dataUri: 'b' }
+      ]
+    } as never)
     const ok = await generateDrafts('a friendly cat')
     expect(ok).toBe(true)
     expect($petGenStatus.get()).toBe('ready')
@@ -81,7 +88,12 @@ describe('hatchSelected', () => {
     rpc.mockResolvedValueOnce({ ok: true, token: 'tok', drafts: [{ index: 0, dataUri: 'a' }] } as never)
     await generateDrafts('a cat')
 
-    rpc.mockResolvedValueOnce({ ok: true, slug: 'cat-1', displayName: 'Cat', pet: { enabled: true, slug: 'cat-1', spritesheetBase64: 'xxx' } } as never)
+    rpc.mockResolvedValueOnce({
+      ok: true,
+      slug: 'cat-1',
+      displayName: 'Cat',
+      pet: { enabled: true, slug: 'cat-1', spritesheetBase64: 'xxx' }
+    } as never)
     const ok = await hatchSelected('Cat')
     expect(ok).toBe(true)
     expect($petGenStatus.get()).toBe('preview')

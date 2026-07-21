@@ -1,8 +1,8 @@
 import type { Element, Root } from 'hast'
 import katex from 'katex'
 import { unified } from 'unified'
-import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VFile } from 'vfile'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createMemoizedMathPlugin, KATEX_HTML_TAG } from './katex-memo'
 

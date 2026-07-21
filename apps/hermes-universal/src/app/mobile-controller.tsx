@@ -6,16 +6,16 @@ import { ArtifactsView } from '@/app/artifacts'
 import { ChatScreen } from '@/app/chat/chat-screen'
 import { CommandCenterView } from '@/app/command-center'
 import { ConnectScreen } from '@/app/connect-screen'
-import { GatewayConnectingScreen } from '@/app/gateway/gateway-connecting-screen'
 import { CronView } from '@/app/cron'
+import { GatewayConnectingScreen } from '@/app/gateway/gateway-connecting-screen'
 import { MessagingView } from '@/app/messaging'
 import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
-import { ProfilesView } from '@/app/profiles'
-import { SkillsView } from '@/app/skills'
-import { StarmapView } from '@/app/starmap'
 import { FloatingPet } from '@/app/pet/floating-pet'
+import { ProfilesView } from '@/app/profiles'
 import { ProviderConnectOverlay } from '@/app/settings/provider-connect-overlay'
 import { SettingsView } from '@/app/settings/settings-view'
+import { SkillsView } from '@/app/skills'
+import { StarmapView } from '@/app/starmap'
 import { NotificationStack } from '@/components/notifications'
 import { IS_DESKTOP } from '@/lib/platform'
 import { useStore } from '@/store/atom'
@@ -66,10 +66,12 @@ export function MobileController() {
   // Zoom stays outside the rebindable registry — desktop keeps it out too.
   useEffect(() => {
     initZoom()
+
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) {
         return
       }
+
       if (event.key === '=' || event.key === '+') {
         event.preventDefault()
         bumpZoom(10)
@@ -81,7 +83,9 @@ export function MobileController() {
         setZoomPercent(100)
       }
     }
+
     window.addEventListener('keydown', onKey)
+
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
@@ -103,6 +107,7 @@ export function MobileController() {
   // desktop's shell/hooks/use-overlay-routing.
   const { pathname } = useLocation()
   const navigate = useNavigate()
+
   const {
     agentsOpen,
     closeOverlayToPreviousRoute,
@@ -119,8 +124,7 @@ export function MobileController() {
   // ⌘G/⌘N and ⌘K listeners this app used to carry. Mounted unconditionally so
   // the keys work on the connect / onboarding screens too.
   useKeybinds({
-    toggleCommandCenter: () =>
-      commandCenterOpen ? closeOverlayToPreviousRoute() : navigate(COMMAND_CENTER_ROUTE)
+    toggleCommandCenter: () => (commandCenterOpen ? closeOverlayToPreviousRoute() : navigate(COMMAND_CENTER_ROUTE))
   })
 
   // Only the Gateway settings page is usable while disconnected (it's the
@@ -130,6 +134,7 @@ export function MobileController() {
   const settingsGatewayOpen = pathname === '/settings/gateway'
 
   let content: ReactNode
+
   if (phase !== 'ready') {
     // Not connected. Priority: a boot restore shows the connecting screen; if the
     // user is in Settings (e.g. they just signed out on the gateway page) keep a
@@ -267,7 +272,11 @@ export function MobileController() {
         {connected && <ProviderConnectOverlay />}
         {/* Floating pet — a top-level draggable + roaming mascot (fixed z-60) that
             floats over ALL routes. It patrols the Settings overlay's edge when open. */}
-        {connected && <FloatingPet overlayOpen={settingsOpen || agentsOpen || commandCenterOpen || cronOpen || profilesOpen || starmapOpen} />}
+        {connected && (
+          <FloatingPet
+            overlayOpen={settingsOpen || agentsOpen || commandCenterOpen || cronOpen || profilesOpen || starmapOpen}
+          />
+        )}
       </div>
     </SidebarProvider>
   )

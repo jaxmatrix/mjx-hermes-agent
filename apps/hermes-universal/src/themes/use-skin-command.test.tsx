@@ -6,6 +6,7 @@ import { useSkinCommand } from './use-skin-command'
 
 function Harness() {
   const run = useSkinCommand()
+
   return (
     <div>
       <button onClick={() => (screen.getByTestId('out').textContent = run('ember'))}>set</button>

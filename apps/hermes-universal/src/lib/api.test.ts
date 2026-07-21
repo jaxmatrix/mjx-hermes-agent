@@ -46,7 +46,11 @@ describe('api', () => {
     mockHttp.mockResolvedValue({ status: 200, headers: {}, body: '{}' })
 
     await api({ path: '/api/model/options?refresh=1', profile: 'work' })
-    expect(mockHttp).toHaveBeenCalledWith('GET', 'http://host:1/api/model/options?refresh=1&profile=work', expect.anything())
+    expect(mockHttp).toHaveBeenCalledWith(
+      'GET',
+      'http://host:1/api/model/options?refresh=1&profile=work',
+      expect.anything()
+    )
   })
 
   it('omits ?profile= for the default profile (null/current)', async () => {

@@ -31,7 +31,13 @@ interface CodeEditorProps {
 
 function baseName(filePath: string): string {
   const cleaned = filePath.replace(/[\\/]+$/, '')
-  return cleaned.slice(cleaned.lastIndexOf('/') + 1).split('\\').pop() ?? cleaned
+
+  return (
+    cleaned
+      .slice(cleaned.lastIndexOf('/') + 1)
+      .split('\\')
+      .pop() ?? cleaned
+  )
 }
 
 const MONO_FONT = 'var(--font-mono)'
@@ -76,7 +82,15 @@ const LAYOUT_THEME = EditorView.theme({
   '.cm-scroller': { fontFamily: MONO_FONT, fontSize: CODE_SIZE, lineHeight: ROW_HEIGHT, overflow: 'auto' }
 })
 
-export function CodeEditor({ className, disabled = false, filePath, initialValue, onCancel, onChange, onSave }: CodeEditorProps) {
+export function CodeEditor({
+  className,
+  disabled = false,
+  filePath,
+  initialValue,
+  onCancel,
+  onChange,
+  onSave
+}: CodeEditorProps) {
   const { resolvedMode } = useTheme()
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -92,11 +106,16 @@ export function CodeEditor({ className, disabled = false, filePath, initialValue
 
   useEffect(() => {
     const host = hostRef.current
-    if (!host) return
+
+    if (!host) {
+      return
+    }
 
     const isDark = resolvedMode === 'dark'
+
     const save = () => {
       onSaveRef.current?.()
+
       return true
     }
 
@@ -117,8 +136,12 @@ export function CodeEditor({ className, disabled = false, filePath, initialValue
           {
             key: 'Escape',
             run: () => {
-              if (!onCancelRef.current) return false
+              if (!onCancelRef.current) {
+                return false
+              }
+
               onCancelRef.current()
+
               return true
             }
           }
@@ -127,7 +150,9 @@ export function CodeEditor({ className, disabled = false, filePath, initialValue
         themeConf.current.of(githubEditorTheme(isDark)),
         editableConf.current.of(EditorState.readOnly.of(disabled)),
         EditorView.updateListener.of(update => {
-          if (update.docChanged) onChangeRef.current(update.state.doc.toString())
+          if (update.docChanged) {
+            onChangeRef.current(update.state.doc.toString())
+          }
         }),
         LAYOUT_THEME
       ]
@@ -152,6 +177,7 @@ export function CodeEditor({ className, disabled = false, filePath, initialValue
 
     if (!description) {
       viewRef.current?.dispatch({ effects: languageConf.current.reconfigure([]) })
+
       return
     }
 

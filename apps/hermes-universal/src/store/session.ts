@@ -9,7 +9,16 @@ import {
 } from '@/hermes'
 import { appendLiveSessionProjection, toChatMessages } from '@/lib/session-history'
 import { atom, computed } from '@/store/atom'
-import { $busy, $clarify, $currentCwd, $messages, $sessionId, $statusLine, resetChat, setCurrentCwd } from '@/store/chat'
+import {
+  $busy,
+  $clarify,
+  $currentCwd,
+  $messages,
+  $sessionId,
+  $statusLine,
+  resetChat,
+  setCurrentCwd
+} from '@/store/chat'
 import { requestGateway } from '@/store/gateway'
 import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
 import { notifyError } from '@/store/notifications'
@@ -37,9 +46,8 @@ export const $searchLoading = atom(false)
 // the active row while a turn streams, and "needs input" = the active row while
 // a clarify prompt is pending. (Desktop tracks these across many sessions via
 // gateway events; the sidebar row API is the same Set/array shape.)
-export const $workingSessionIds = computed(
-  [$busy, $activeStoredSessionId],
-  (busy, activeId) => (busy && activeId ? new Set([activeId]) : new Set<string>())
+export const $workingSessionIds = computed([$busy, $activeStoredSessionId], (busy, activeId) =>
+  busy && activeId ? new Set([activeId]) : new Set<string>()
 )
 export const $attentionSessionIds = computed([$clarify, $activeStoredSessionId], (clarify, activeId) =>
   clarify && activeId ? [activeId] : []
@@ -49,9 +57,13 @@ export const $attentionSessionIds = computed([$clarify, $activeStoredSessionId],
  *  parity with desktop's `sessionTitle`. Empty for a fresh/unsaved chat — the
  *  titlebar / mobile header show their brand fallback then. Drives the topbar. */
 export const $activeSessionTitle = computed([$sessions, $activeStoredSessionId], (sessions, activeId) => {
-  if (!activeId) return ''
+  if (!activeId) {
+    return ''
+  }
+
   const session = sessions.find(s => s.id === activeId)
-  return session ? (session.title?.trim() || session.preview?.trim() || '') : ''
+
+  return session ? session.title?.trim() || session.preview?.trim() || '' : ''
 })
 
 /** Functional setter for optimistic row edits (rename dialog etc.). */
@@ -154,6 +166,7 @@ export async function refreshMessagingSessions(): Promise<void> {
 
 export async function refreshSessions(): Promise<void> {
   $sessionsLoading.set(true)
+
   try {
     const res = await listSessions($sessionsLimit.get(), 1, 'exclude', 'recent')
     $sessions.set(res.sessions)
@@ -217,6 +230,7 @@ export async function openSession(storedId: string): Promise<void> {
   const transcriptPromise = Promise.resolve()
     .then(() => getSessionMessages(storedId))
     .catch(() => null)
+
   const resumePromise = requestGateway<SessionResumeResponse>('session.resume', {
     session_id: storedId,
     cols: 96
@@ -293,6 +307,7 @@ export function newSession(): void {
  */
 export function registerNewSession(id: string, firstMessage: string): void {
   const now = Math.floor(Date.now() / 1000)
+
   const stub: SessionInfo = {
     // Seed the row's project directory (ensureSession just adopted the runtime's
     // resolved cwd) so re-opening this chat later restores the same directory,
@@ -312,6 +327,7 @@ export function registerNewSession(id: string, firstMessage: string): void {
     title: null,
     tool_call_count: 0
   }
+
   $sessions.set([stub, ...$sessions.get().filter(s => s.id !== id)])
   $activeStoredSessionId.set(id)
 }
@@ -326,6 +342,7 @@ export function setSessionPickerOpen(_open: boolean): void {
 export async function renameSessionLocal(id: string, title: string): Promise<void> {
   const prev = $sessions.get()
   $sessions.set(prev.map(s => (s.id === id ? { ...s, title } : s)))
+
   try {
     await renameSession(id, title)
   } catch (err) {
@@ -338,7 +355,11 @@ export async function deleteSessionLocal(id: string): Promise<void> {
   const prev = $sessions.get()
   $sessions.set(prev.filter(s => s.id !== id))
   $sessionsTotal.set(Math.max(0, $sessionsTotal.get() - 1))
-  if ($activeStoredSessionId.get() === id) newSession()
+
+  if ($activeStoredSessionId.get() === id) {
+    newSession()
+  }
+
   try {
     await deleteSession(id)
   } catch (err) {
@@ -351,7 +372,11 @@ export async function deleteSessionLocal(id: string): Promise<void> {
 export async function archiveSessionLocal(id: string): Promise<void> {
   const prev = $sessions.get()
   $sessions.set(prev.filter(s => s.id !== id))
-  if ($activeStoredSessionId.get() === id) newSession()
+
+  if ($activeStoredSessionId.get() === id) {
+    newSession()
+  }
+
   try {
     await setSessionArchived(id, true)
   } catch (err) {
@@ -362,11 +387,15 @@ export async function archiveSessionLocal(id: string): Promise<void> {
 
 export async function searchSessionsQuery(query: string): Promise<void> {
   const q = query.trim()
+
   if (!q) {
     $sessionSearch.set([])
+
     return
   }
+
   $searchLoading.set(true)
+
   try {
     const res = await searchSessions(q)
     $sessionSearch.set(res.results ?? [])

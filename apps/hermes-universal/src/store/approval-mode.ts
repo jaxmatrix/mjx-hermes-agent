@@ -6,10 +6,7 @@ import { atom } from '@/store/atom'
 // callers pass the active profile so a switch shows the right mode.
 
 export type ApprovalMode = 'manual' | 'off' | 'smart'
-export type ApprovalModeRequester = (
-  method: string,
-  params?: Record<string, unknown>
-) => Promise<unknown>
+export type ApprovalModeRequester = (method: string, params?: Record<string, unknown>) => Promise<unknown>
 
 const APPROVAL_MODES = new Set<ApprovalMode>(['manual', 'smart', 'off'])
 const revisions = new Map<string, number>()

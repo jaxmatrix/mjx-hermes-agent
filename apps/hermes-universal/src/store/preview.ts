@@ -24,6 +24,7 @@ export interface PreviewServerRestart {
 
 function baseName(path: string): string {
   const cleaned = path.replace(/[\\/]+$/, '')
+
   return cleaned.slice(cleaned.lastIndexOf('/') + 1) || cleaned
 }
 
@@ -39,14 +40,18 @@ export const $activePreviewTarget = computed(
 
 export function setPreviewTarget(path: string): void {
   const tabs = $previewTabs.get()
+
   if (!tabs.some(tab => tab.path === path)) {
     $previewTabs.set([...tabs, { name: baseName(path), path }])
   }
+
   $activePreviewPath.set(path)
 }
 
 export function selectPreviewTab(path: string): void {
-  if ($previewTabs.get().some(tab => tab.path === path)) $activePreviewPath.set(path)
+  if ($previewTabs.get().some(tab => tab.path === path)) {
+    $activePreviewPath.set(path)
+  }
 }
 
 // Opened from a composer attachment pill (ported from desktop, where it set a
@@ -60,7 +65,10 @@ export function setCurrentSessionPreviewTarget(
   target: string
 ): void {
   const path = target || (typeof preview.target === 'string' ? preview.target : '')
-  if (path) setPreviewTarget(path)
+
+  if (path) {
+    setPreviewTarget(path)
+  }
 }
 
 export function requestPreviewReload(): void {
@@ -69,6 +77,7 @@ export function requestPreviewReload(): void {
 
 function afterClose(remaining: PreviewTarget[], closed: string): void {
   $previewTabs.set(remaining)
+
   if ($activePreviewPath.get() === closed) {
     $activePreviewPath.set(remaining.length ? remaining[remaining.length - 1].path : null)
   }

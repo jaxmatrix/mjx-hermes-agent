@@ -193,7 +193,9 @@ const report = {
 if (process.argv.includes('--json')) {
   console.log(JSON.stringify(report, null, 2))
 } else {
-  console.log(`fixture: ${report.fixtureChars} chars, ~${report.approxMathSpans} math spans, ${ITERATIONS} iterations\n`)
+  console.log(
+    `fixture: ${report.fixtureChars} chars, ~${report.approxMathSpans} math spans, ${ITERATIONS} iterations\n`
+  )
 
   for (const { label, ms } of results) {
     console.log(`  ${label.padEnd(42)} ${ms.toFixed(2).padStart(8)} ms`)

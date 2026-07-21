@@ -24,6 +24,7 @@ export function AboutSection() {
     void getVersion()
       .then(v => !cancelled && setAppVersion(v))
       .catch(() => !cancelled && setAppVersion(null))
+
     return () => void (cancelled = true)
   }, [])
 
@@ -31,9 +32,7 @@ export function AboutSection() {
     <SettingsContent>
       <div className="flex flex-col items-center gap-1 pt-8 pb-4 text-center">
         <div className="text-lg font-bold tracking-[0.18em] text-primary uppercase">Hermes</div>
-        <div className="text-sm text-muted-foreground">
-          {appVersion ? a.version(appVersion) : a.versionUnavailable}
-        </div>
+        <div className="text-sm text-muted-foreground">{appVersion ? a.version(appVersion) : a.versionUnavailable}</div>
       </div>
 
       {status?.version && <ListRow description={String(status.version)} title="Gateway" />}

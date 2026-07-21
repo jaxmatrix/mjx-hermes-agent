@@ -59,7 +59,10 @@ export const VirtualSessionList: FC<VirtualSessionListProps> = ({
 
   const rows = virtualItems.map(virtualItem => {
     const session = sessions[virtualItem.index]
-    if (!session) return null
+
+    if (!session) {
+      return null
+    }
 
     const commonProps = {
       isPinned: pinned,

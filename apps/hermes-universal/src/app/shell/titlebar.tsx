@@ -2,9 +2,9 @@ import { useNavigate } from 'react-router-dom'
 
 import { Codicon } from '@/components/ui/codicon'
 import { useI18n } from '@/i18n'
-import { $hapticsMuted } from '@/store/haptics'
-import { openCommandMenu } from '@/store/command-menu'
 import { useStore } from '@/store/atom'
+import { openCommandMenu } from '@/store/command-menu'
+import { $hapticsMuted } from '@/store/haptics'
 import {
   $leftEdgeOpen,
   $panesFlipped,

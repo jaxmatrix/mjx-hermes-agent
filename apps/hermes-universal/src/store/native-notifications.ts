@@ -95,10 +95,12 @@ async function ensurePermission(): Promise<boolean> {
     }
 
     permissionGranted = granted
+
     return granted
   } catch {
     // No Tauri host (web dev) or the plugin is unavailable.
     permissionGranted = false
+
     return false
   }
 }
@@ -147,6 +149,7 @@ export async function sendTestNativeNotification(title: string, body: string): P
 
   try {
     sendNotification({ title, body })
+
     return true
   } catch {
     return false

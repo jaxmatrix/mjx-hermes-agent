@@ -29,8 +29,14 @@ describe('pet-gallery store', () => {
 
   it('loads local then the full gallery', async () => {
     rpc.mockImplementation(async (method: string) => {
-      if (method === 'pet.gallery') return gallery() as never
-      if (method === 'pet.info') return { enabled: false } as never
+      if (method === 'pet.gallery') {
+        return gallery() as never
+      }
+
+      if (method === 'pet.info') {
+        return { enabled: false } as never
+      }
+
       return {} as never
     })
     await loadPetGallery()

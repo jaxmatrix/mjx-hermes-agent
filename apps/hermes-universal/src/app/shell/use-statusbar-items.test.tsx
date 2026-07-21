@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // poller / getVersion / getStatus (network) — we drive $appVersion directly.
 vi.mock('@/store/system-status', async () => {
   const { atom } = await import('nanostores')
+
   return {
     $appVersion: atom<string | null>('1.2.3'),
     $gatewayRestarting: atom(false),

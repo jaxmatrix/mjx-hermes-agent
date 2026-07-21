@@ -117,7 +117,6 @@ export interface Translations {
     changed: (count: number) => string
   }
 
-
   // Mobile-only: the remote workspace file browser (K13).
   files: {
     title: string

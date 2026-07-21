@@ -2,37 +2,35 @@ import { createContext, type ReactNode, useContext, useMemo, useState } from 're
 
 import { ChatSidebar } from '@/app/chat/sidebar'
 import { RightSidebarPane } from '@/app/right-pane'
-import { ReviewPane } from '@/app/right-pane/review'
 import { PreviewRail } from '@/app/right-pane/preview/preview-rail'
+import { ReviewPane } from '@/app/right-pane/review'
 import { TerminalArea } from '@/app/right-pane/terminal/terminal-area'
 import { Pane, PaneMain, PaneShell } from '@/components/pane-shell'
-import { normalizeOrLocalPreviewTarget } from '@/lib/local-preview'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { Menu } from '@/lib/icons'
+import { normalizeOrLocalPreviewTarget } from '@/lib/local-preview'
 import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $currentCwd } from '@/store/chat'
-import { $reviewOpen, REVIEW_PANE_ID } from '@/store/review'
-import { $previewTabs, setCurrentSessionPreviewTarget } from '@/store/preview'
 import {
+  $panesFlipped,
+  $rightSidebarOpen,
+  $terminalOpen,
   CHAT_SIDEBAR_PANE_ID,
   FILE_TREE_DEFAULT_WIDTH,
   FILE_TREE_MAX_WIDTH,
   FILE_TREE_MIN_WIDTH,
   FILE_TREE_PANE_ID,
-  $panesFlipped,
-  $rightSidebarOpen,
-  $terminalOpen,
   PREVIEW_DEFAULT_WIDTH,
   PREVIEW_MAX_WIDTH,
   PREVIEW_MIN_WIDTH,
   PREVIEW_PANE_ID,
+  setSidebarOverlayMounted,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
-  setSidebarOverlayMounted,
   TERMINAL_COLUMN_DEFAULT_WIDTH,
   TERMINAL_COLUMN_MAX_WIDTH,
   TERMINAL_COLUMN_MIN_WIDTH,
@@ -42,6 +40,8 @@ import {
   TERMINAL_MIN_HEIGHT,
   TERMINAL_PANE_ID
 } from '@/store/layout'
+import { $previewTabs, setCurrentSessionPreviewTarget } from '@/store/preview'
+import { $reviewOpen, REVIEW_PANE_ID } from '@/store/review'
 
 // The rich chat sidebar (ported from desktop) renders as a resizable/hover-reveal
 // docked PANE on md+ and as a left `Sheet` DRAWER on phones — one shared
@@ -60,22 +60,29 @@ const SidebarContext = createContext<SidebarCtx | null>(null)
 
 export function useSidebar(): SidebarCtx {
   const ctx = useContext(SidebarContext)
-  if (!ctx) throw new Error('useSidebar must be used within <SidebarProvider>')
+
+  if (!ctx) {
+    throw new Error('useSidebar must be used within <SidebarProvider>')
+  }
+
   return ctx
 }
 
 export function SidebarProvider({ children }: { children: ReactNode }) {
   const [openMobile, setOpenMobile] = useState(false)
+
   const value = useMemo<SidebarCtx>(
     () => ({ openMobile, setOpenMobile, toggleMobile: () => setOpenMobile(v => !v) }),
     [openMobile]
   )
+
   return <SidebarContext.Provider value={value}>{children}</SidebarContext.Provider>
 }
 
 /** Hamburger that opens the phone drawer. Screens drop this into their own header (usually `md:hidden`). */
 export function SidebarTrigger({ className }: { className?: string }) {
   const { toggleMobile } = useSidebar()
+
   return (
     <Button aria-label="Open navigation" className={className} onClick={toggleMobile} size="icon-sm" variant="ghost">
       <Menu className="size-5" />

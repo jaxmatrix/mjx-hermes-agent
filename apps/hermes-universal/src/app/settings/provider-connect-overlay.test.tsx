@@ -25,7 +25,15 @@ const provider: OAuthProvider = {
 }
 
 const resetOnboarding = () =>
-  $onboarding.set({ step: 'picker', option: null, providerSlug: null, recommended: null, oauth: null, busy: false, error: null })
+  $onboarding.set({
+    step: 'picker',
+    option: null,
+    providerSlug: null,
+    recommended: null,
+    oauth: null,
+    busy: false,
+    error: null
+  })
 
 function renderOverlay() {
   return render(
@@ -76,7 +84,13 @@ describe('ProviderConnectOverlay', () => {
       recommended: null,
       busy: false,
       error: null,
-      oauth: { provider: { ...provider, flow: 'pkce' }, sessionId: 's2', flow: 'pkce', url: 'https://x', status: 'awaiting_code' }
+      oauth: {
+        provider: { ...provider, flow: 'pkce' },
+        sessionId: 's2',
+        flow: 'pkce',
+        url: 'https://x',
+        status: 'awaiting_code'
+      }
     })
 
     renderOverlay()
@@ -109,6 +123,7 @@ describe('ProviderConnectOverlay', () => {
       flow: 'external',
       status: { logged_in: false }
     }
+
     $connectProvider.set(qwen)
     $onboarding.set({
       step: 'oauth',

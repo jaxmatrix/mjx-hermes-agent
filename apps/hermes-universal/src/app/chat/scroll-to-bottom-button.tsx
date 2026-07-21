@@ -2,10 +2,10 @@ import { useRef } from 'react'
 
 import { Codicon } from '@/components/ui/codicon'
 import { useI18n } from '@/i18n'
+import { triggerHaptic } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $approval } from '@/store/chat'
-import { triggerHaptic } from '@/lib/haptics'
 import { $threadJumpButtonVisible, requestScrollToBottom } from '@/store/thread-scroll'
 
 /**

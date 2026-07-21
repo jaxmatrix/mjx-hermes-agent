@@ -1,10 +1,9 @@
-import { atom, computed } from '@/store/atom'
-
 import { $registryVersion } from '@/contrib/registry'
 import { allKeybindActions, defaultBindings, keybindAction, type KeybindBindings } from '@/lib/keybinds/actions'
 import { canonicalizeCombo } from '@/lib/keybinds/combo'
 import { readKey, writeKey } from '@/lib/persist'
 import { arraysEqual } from '@/lib/storage'
+import { atom, computed } from '@/store/atom'
 
 // Ported verbatim from desktop `store/keybinds.ts`. Only seam: universal's
 // `lib/storage.ts` has no storedString/persistString, so the two reads/writes go

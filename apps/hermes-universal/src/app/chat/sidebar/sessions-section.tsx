@@ -32,7 +32,15 @@ interface SidebarSectionHeaderProps {
   collapsible?: boolean
 }
 
-function SidebarSectionHeader({ label, open, onToggle, action, meta, icon, collapsible = true }: SidebarSectionHeaderProps) {
+function SidebarSectionHeader({
+  label,
+  open,
+  onToggle,
+  action,
+  meta,
+  icon,
+  collapsible = true
+}: SidebarSectionHeaderProps) {
   const labelBody = (
     <>
       {icon}
@@ -135,9 +143,12 @@ export function SidebarSessionsSection(props: SidebarSessionsSectionProps) {
   const sectionOpen = collapsible ? open : true
   const hasProjectOverview = Boolean(projectOverview?.length)
   const hasProjectContent = Boolean(projectContent && projectContent.sessionCount > 0)
+
   const showEmptyState =
     forceEmptyState || (!hasProjectOverview && !hasProjectContent && !projectContent && sessions.length === 0)
+
   const sessionsDraggable = sortable && !!onReorderSessions
+
   const flatVirtualized =
     !showEmptyState && !projectOverview?.length && !projectContent && sessions.length >= VIRTUALIZE_THRESHOLD
 
@@ -183,6 +194,7 @@ export function SidebarSessionsSection(props: SidebarSessionsSectionProps) {
   } else if (projectOverview?.length) {
     const projectsDraggable = projectOverview.length > 1 && !!onReorderProjects
     const Row = projectsDraggable ? SortableProjectOverviewRow : ProjectOverviewRow
+
     const rows = projectOverview.map(project => (
       <Row
         activeProjectId={activeProjectId}

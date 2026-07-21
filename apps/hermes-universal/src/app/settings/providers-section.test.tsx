@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { atom } from 'nanostores'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -91,7 +91,9 @@ describe('ProvidersSection', () => {
   it('accounts view: disconnect calls the RPC after confirm', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     providers.mockResolvedValue({
-      providers: [oauthProvider({ id: 'openai-codex', name: 'OpenAI', status: { logged_in: true }, disconnectable: true })]
+      providers: [
+        oauthProvider({ id: 'openai-codex', name: 'OpenAI', status: { logged_in: true }, disconnectable: true })
+      ]
     })
 
     renderProviders('accounts')
@@ -102,7 +104,12 @@ describe('ProvidersSection', () => {
 
   it('api keys view: renders a provider-grouped credential card', async () => {
     envVars.mockResolvedValue({
-      ANTHROPIC_API_KEY: envVar({ provider: 'anthropic', provider_label: 'Anthropic', is_set: true, redacted_value: 'sk-…abcd' })
+      ANTHROPIC_API_KEY: envVar({
+        provider: 'anthropic',
+        provider_label: 'Anthropic',
+        is_set: true,
+        redacted_value: 'sk-…abcd'
+      })
     })
 
     renderProviders('keys')

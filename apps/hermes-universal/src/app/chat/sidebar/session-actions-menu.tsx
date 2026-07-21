@@ -4,7 +4,14 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
@@ -177,10 +184,12 @@ function RenameSessionDialog({ open, onOpenChange, sessionId, currentTitle }: Re
 
     if (!sessionId || submitting || next === currentTitle.trim()) {
       onOpenChange(false)
+
       return
     }
 
     setSubmitting(true)
+
     try {
       await renameSessionLocal(sessionId, next)
       notify({ durationMs: 2_000, kind: 'success', message: r.renamed })

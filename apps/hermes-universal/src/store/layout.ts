@@ -1,6 +1,6 @@
-import { atom, computed, type ReadableAtom } from '@/store/atom'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { arraysEqual, insertUniqueId } from '@/lib/storage'
+import { atom, computed, type ReadableAtom } from '@/store/atom'
 
 import { $paneStates, ensurePaneRegistered, setPaneOpen, setPaneWidthOverride, togglePane } from './panes'
 
@@ -162,7 +162,11 @@ export const $sidebarRecentsOpen = atom(true)
 export const $sidebarCronOpen = persistentAtom('hermes.sidebarCronOpen', false, Codecs.bool)
 // Messaging platform sections collapse by default; we persist ids the user has
 // explicitly expanded, so the default stays collapsed.
-export const $sidebarMessagingOpenIds = persistentAtom('hermes.sidebarMessagingOpen', [] as string[], Codecs.stringArray)
+export const $sidebarMessagingOpenIds = persistentAtom(
+  'hermes.sidebarMessagingOpen',
+  [] as string[],
+  Codecs.stringArray
+)
 export const $sidebarAgentsGrouped = persistentAtom('hermes.agentsGroupedByWorkspace', false, Codecs.bool)
 
 // Set by the PaneShell hover-reveal overlay while the sidebar is collapsed; kept
@@ -253,7 +257,9 @@ export function setSidebarCronOpen(open: boolean) {
 export function toggleSidebarMessagingOpen(sourceId: string) {
   const current = $sidebarMessagingOpenIds.get()
 
-  $sidebarMessagingOpenIds.set(current.includes(sourceId) ? current.filter(id => id !== sourceId) : [...current, sourceId])
+  $sidebarMessagingOpenIds.set(
+    current.includes(sourceId) ? current.filter(id => id !== sourceId) : [...current, sourceId]
+  )
 }
 
 export function setSidebarAgentsGrouped(grouped: boolean) {

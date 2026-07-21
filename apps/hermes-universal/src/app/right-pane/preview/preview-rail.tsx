@@ -1,16 +1,16 @@
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Codicon } from '@/components/ui/codicon'
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { useI18n } from '@/i18n'
 import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import {
-  type PreviewTarget,
   $activePreviewTarget,
   $previewTabs,
   closeAllPreviewTabs,
   closeOtherPreviewTabs,
   closePreviewTab,
+  type PreviewTarget,
   selectPreviewTab
 } from '@/store/preview'
 import { $dirtyPreviewPaths } from '@/store/preview-edit'
@@ -64,7 +64,9 @@ function PreviewTab({ active, dirty, tab }: { active: boolean; dirty: boolean; t
         <div
           className={cn(
             'group/tab flex min-w-0 max-w-40 shrink-0 cursor-pointer items-center gap-1.5 border-r border-(--ui-stroke-tertiary) px-2 text-xs',
-            active ? 'bg-(--ui-editor-surface-background) text-foreground' : 'text-(--ui-text-tertiary) hover:text-foreground'
+            active
+              ? 'bg-(--ui-editor-surface-background) text-foreground'
+              : 'text-(--ui-text-tertiary) hover:text-foreground'
           )}
           onAuxClick={event => {
             if (event.button === 1) {
@@ -85,9 +87,7 @@ function PreviewTab({ active, dirty, tab }: { active: boolean; dirty: boolean; t
             }}
             type="button"
           >
-            {dirty ? (
-              <span aria-hidden className="size-1.5 rounded-full bg-amber-500 group-hover/tab:hidden" />
-            ) : null}
+            {dirty ? <span aria-hidden className="size-1.5 rounded-full bg-amber-500 group-hover/tab:hidden" /> : null}
             <Codicon className={cn(dirty && 'hidden group-hover/tab:inline')} name="close" size="0.7rem" />
           </button>
         </div>

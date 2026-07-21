@@ -1,9 +1,9 @@
 import { getVersion } from '@tauri-apps/api/app'
 
+import { getStatus, restartGateway } from '@/hermes'
 import { translateNow } from '@/i18n'
 import { runAction } from '@/lib/action-poll'
 import { evaluateRuntimeReadiness, type RuntimeReadinessResult } from '@/lib/runtime-readiness'
-import { getStatus, restartGateway } from '@/hermes'
 import { atom, onMount } from '@/store/atom'
 import { $gatewayState, requestGateway } from '@/store/gateway'
 import { notify } from '@/store/notifications'
@@ -24,7 +24,9 @@ export const $appVersion = atom<string | null>(null)
 const POLL_MS = 30_000
 
 async function refreshSystemStatus(): Promise<void> {
-  if ($gatewayState.get() !== 'open') return
+  if ($gatewayState.get() !== 'open') {
+    return
+  }
 
   try {
     $statusSnapshot.set(await getStatus())
@@ -53,8 +55,11 @@ onMount($statusSnapshot, () => {
 
   void refreshSystemStatus()
   const timer = window.setInterval(() => void refreshSystemStatus(), POLL_MS)
+
   const unsubscribe = $gatewayState.listen(state => {
-    if (state === 'open') void refreshSystemStatus()
+    if (state === 'open') {
+      void refreshSystemStatus()
+    }
   })
 
   return () => {
@@ -65,8 +70,12 @@ onMount($statusSnapshot, () => {
 
 /** Restart the gateway; surfaces progress via the statusbar spinner + a toast. */
 export async function runGatewayRestart(): Promise<void> {
-  if ($gatewayRestarting.get()) return
+  if ($gatewayRestarting.get()) {
+    return
+  }
+
   $gatewayRestarting.set(true)
+
   try {
     const { ok } = await runAction(() => restartGateway())
     notify({

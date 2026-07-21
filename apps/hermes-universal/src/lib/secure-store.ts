@@ -31,6 +31,7 @@ type SecretKey = 'token' | 'password' | 'cookies'
 // The plugin's service name is set once per process (a Rust OnceLock), so init is
 // memoized. On failure the cached promise is cleared so a later call can retry.
 let initPromise: Promise<void> | null = null
+
 function ensureInit(): Promise<void> {
   if (!initPromise) {
     initPromise = invoke<void>('plugin:keyring|initialize_keyring', { serviceName: SERVICE }).catch(err => {
@@ -38,11 +39,13 @@ function ensureInit(): Promise<void> {
       throw err
     })
   }
+
   return initPromise
 }
 
 async function kHas(username: SecretKey): Promise<boolean> {
   await ensureInit()
+
   return invoke<boolean>('plugin:keyring|has_password', { username })
 }
 
@@ -50,12 +53,17 @@ async function kHas(username: SecretKey): Promise<boolean> {
 // return null for "not set" (matching the old contract).
 async function kGet(username: SecretKey): Promise<string | null> {
   await ensureInit()
-  if (!(await kHas(username))) return null
+
+  if (!(await kHas(username))) {
+    return null
+  }
+
   return invoke<string>('plugin:keyring|get_password', { username })
 }
 
 async function writeKey(key: SecretKey, value: string | undefined): Promise<void> {
   await ensureInit()
+
   if (value) {
     await invoke<void>('plugin:keyring|set_password', { username: key, password: value })
   } else {
@@ -72,7 +80,10 @@ async function writeKey(key: SecretKey, value: string | undefined): Promise<void
 // Windows Credential Manager), so OAuth/cloud sessions now persist on desktop too.
 // A missing Secret Service daemon on Linux simply throws → caught → no-persistence.
 async function safe<T>(op: () => Promise<T>, fallback: T): Promise<T> {
-  if (!IS_TAURI) return fallback
+  if (!IS_TAURI) {
+    return fallback
+  }
+
   try {
     return await op()
   } catch {
@@ -84,6 +95,7 @@ async function safe<T>(op: () => Promise<T>, fallback: T): Promise<T> {
 export async function secureStoreAvailable(): Promise<boolean> {
   return safe(async () => {
     await kHas('token') // reachable if this resolves
+
     return true
   }, false)
 }
@@ -93,6 +105,7 @@ export async function saveSecrets(secrets: Secrets): Promise<boolean> {
   return safe(async () => {
     await writeKey('token', secrets.token)
     await writeKey('password', secrets.password)
+
     return true
   }, false)
 }
@@ -101,7 +114,11 @@ export async function saveSecrets(secrets: Secrets): Promise<boolean> {
 export async function loadSecrets(): Promise<Secrets | null> {
   return safe(async () => {
     const [token, password] = await Promise.all([kGet('token'), kGet('password')])
-    if (!token && !password) return null
+
+    if (!token && !password) {
+      return null
+    }
+
     return { token: token ?? undefined, password: password ?? undefined }
   }, null)
 }
@@ -112,6 +129,7 @@ export async function clearSecrets(): Promise<void> {
     await writeKey('token', undefined)
     await writeKey('password', undefined)
     await writeKey('cookies', undefined)
+
     return undefined
   }, undefined)
 }
@@ -124,6 +142,7 @@ export async function clearSecrets(): Promise<void> {
 export async function saveSessionCookies(json: string): Promise<boolean> {
   return safe(async () => {
     await writeKey('cookies', json)
+
     return true
   }, false)
 }

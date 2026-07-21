@@ -2,8 +2,8 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog'
 
 import type { SidebarProjectTree } from '@/app/chat/sidebar/projects/model'
 import { translateNow } from '@/i18n'
-import { IS_DESKTOP } from '@/lib/platform'
 import { persistentAtom } from '@/lib/persisted'
+import { IS_DESKTOP } from '@/lib/platform'
 import { atom } from '@/store/atom'
 import { $sessionId } from '@/store/chat'
 import { requestGateway } from '@/store/gateway'
@@ -28,6 +28,7 @@ export const $projectsRpcAvailable = atom<boolean | null>(null)
 
 function isMissingRpcMethod(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+
   return msg.includes('method not found') || msg.includes('-32601') || msg.includes('unknown method')
 }
 
@@ -67,6 +68,7 @@ interface ProjectTreePayload {
 
 export async function refreshProjectTree(): Promise<void> {
   $projectTreeLoading.set(true)
+
   try {
     const res = await requestGateway<ProjectTreePayload>('projects.tree', { preview_limit: 3 })
     $projectTree.set(res.projects ?? [])
@@ -84,6 +86,7 @@ export async function fetchProjectSessions(projectId: string): Promise<SidebarPr
     const res = await requestGateway<{ project: SidebarProjectTree | null }>('projects.project_sessions', {
       project_id: projectId
     })
+
     return res.project ?? null
   } catch {
     return null
@@ -100,6 +103,7 @@ export const $projectScope = persistentAtom<string>('hermes.projectScope', ALL_P
 
 export function enterProject(id: string): void {
   $projectScope.set(id)
+
   if (id.startsWith('p_')) {
     void setActiveProject(id).catch(() => undefined)
   }
@@ -175,6 +179,7 @@ export async function generateProjectIdea(name: string, seed = ''): Promise<stri
   try {
     const nonce = Math.random().toString(36).slice(2, 10)
     const direction = seed.trim()
+
     const focus = [
       name.trim() ? `Project name: ${name.trim()}.` : '',
       direction
@@ -198,11 +203,13 @@ export async function generateProjectIdea(name: string, seed = ''): Promise<stri
       // small/unconfigured → terse or failed generation.
       session_id: $sessionId.get() || undefined
     })
+
     return (res.text || '').trim()
   } catch (err) {
     // Surface the reason (e.g. "gateway not connected" / no model) instead of a
     // silent no-op, so the sparkle spinning-then-nothing isn't a mystery.
     notifyError(err, translateNow('sidebar.projects.ideaFailed'))
+
     return ''
   }
 }
@@ -213,6 +220,7 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectI
   }
 
   let res: { project: ProjectInfo | null }
+
   try {
     res = await requestGateway<{ project: ProjectInfo | null }>('projects.create', {
       name: input.name,
@@ -228,6 +236,7 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectI
       $projectsRpcAvailable.set(false)
       throw staleBackendError()
     }
+
     throw err
   }
 
@@ -238,16 +247,20 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectI
     if (!$projects.get().some(p => p.id === created.id)) {
       $projects.set([...$projects.get(), created])
     }
+
     if (!$projectTree.get().some(node => node.id === created.id)) {
       $projectTree.set([projectInfoToTreeNode(created), ...$projectTree.get()])
     }
+
     if (input.use) {
       $activeProjectId.set(created.id)
     }
+
     setSidebarAgentsGrouped(true)
   }
 
   reconcile()
+
   return created
 }
 
@@ -304,9 +317,11 @@ export async function deleteProject(id: string): Promise<void> {
 
   $projects.set(snap.projects.filter(p => p.id !== id))
   $projectTree.set(snap.tree.filter(node => node.id !== id))
+
   if (snap.active === id) {
     $activeProjectId.set(null)
   }
+
   if (wasScoped) {
     exitProjectScope()
     newSession()
@@ -335,8 +350,10 @@ export const $projectDialog = atom<null | ProjectDialogState>(null)
 export function openProjectCreate(): void {
   if ($projectsRpcAvailable.get() === false) {
     notify({ kind: 'warning', message: translateNow('sidebar.projects.staleBackend') })
+
     return
   }
+
   $projectDialog.set({ mode: 'create' })
 }
 
@@ -358,8 +375,10 @@ export async function pickProjectFolder(): Promise<null | string> {
   if (!IS_DESKTOP) {
     return null
   }
+
   try {
     const dir = await openDialog({ directory: true, multiple: false })
+
     return typeof dir === 'string' ? dir : null
   } catch {
     return null

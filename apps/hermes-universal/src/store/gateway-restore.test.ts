@@ -6,7 +6,7 @@ vi.mock('@/store/connection', () => ({
   connectCloud: vi.fn().mockResolvedValue(undefined),
   connectLocal: vi.fn().mockResolvedValue(undefined),
   disconnect: vi.fn(),
-  loadSavedLogin: vi.fn().mockResolvedValue({ token: 'T', password: 'P' }),
+  loadSavedLogin: vi.fn().mockResolvedValue({ token: 'T', password: 'P' })
 }))
 
 import { connect, connectCloud, connectLocal } from '@/store/connection'
@@ -16,7 +16,7 @@ import {
   autoRestoreConnection,
   clearGatewayTarget,
   loadGatewayTarget,
-  saveGatewayTarget,
+  saveGatewayTarget
 } from './gateway-restore'
 
 beforeEach(() => {

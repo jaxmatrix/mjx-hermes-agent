@@ -8,10 +8,12 @@ import { useComposerScope } from '../scope'
 // CodingStatusRow is a no-op stub, so these are local no-ops keeping this hook's
 // shape identical to desktop's. FLAG(chat-port).
 const requestStartWorkSession = (_path: string, _text: string): void => {}
+
 const startWorkInRepo = async (
   _repoPath: string,
   _opts: { base?: string; branch?: string; name?: string; existingBranch?: string }
 ): Promise<{ path: string } | null> => null
+
 const switchBranchInRepo = async (_repoPath: string, _branch: string): Promise<void> => {}
 const listRepoBranches = async (_repoPath: string): Promise<string[]> => []
 

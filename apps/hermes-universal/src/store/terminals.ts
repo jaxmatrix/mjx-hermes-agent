@@ -21,23 +21,35 @@ export function createTerminal(): string {
   const id = `term-${counter}`
   $terminals.set([...$terminals.get(), { id, title: `Terminal ${counter}` }])
   $activeTerminalId.set(id)
+
   return id
 }
 
 /** Ensure at least one terminal exists + is active (called when the area opens). */
 export function ensureTerminal(): void {
-  if ($terminals.get().length === 0) createTerminal()
-  else if (!$activeTerminalId.get()) $activeTerminalId.set($terminals.get()[0].id)
+  if ($terminals.get().length === 0) {
+    createTerminal()
+  } else if (!$activeTerminalId.get()) {
+    $activeTerminalId.set($terminals.get()[0].id)
+  }
 }
 
 export function selectTerminal(id: string): void {
-  if ($terminals.get().some(term => term.id === id)) $activeTerminalId.set(id)
+  if ($terminals.get().some(term => term.id === id)) {
+    $activeTerminalId.set(id)
+  }
 }
 
 function afterRemoval(next: TerminalEntry[], removedActive: boolean): void {
   $terminals.set(next)
-  if (removedActive) $activeTerminalId.set(next.length ? next[next.length - 1].id : null)
-  if (next.length === 0) setTerminalOpen(false)
+
+  if (removedActive) {
+    $activeTerminalId.set(next.length ? next[next.length - 1].id : null)
+  }
+
+  if (next.length === 0) {
+    setTerminalOpen(false)
+  }
 }
 
 export function closeTerminal(id: string): void {

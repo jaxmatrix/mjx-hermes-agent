@@ -20,7 +20,9 @@ describe('hermes REST client', () => {
 
   it('getSession(id) → /api/sessions/{id}', async () => {
     await getSession('abc')
-    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('/api/sessions/abc') }))
+    expect(mockApi).toHaveBeenCalledWith(
+      expect.objectContaining({ path: expect.stringContaining('/api/sessions/abc') })
+    )
   })
 
   it('getHermesConfig → /api/config', async () => {

@@ -4,11 +4,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionInfo } from '@/types/hermes'
 
 const session = (over: Partial<SessionInfo>): SessionInfo =>
-  ({ id: 'x', title: null, preview: null, message_count: 0, ended_at: null, input_tokens: 0, archived: true, ...over }) as SessionInfo
+  ({
+    id: 'x',
+    title: null,
+    preview: null,
+    message_count: 0,
+    ended_at: null,
+    input_tokens: 0,
+    archived: true,
+    ...over
+  }) as SessionInfo
 
 vi.mock('@/hermes', () => ({
   listSessions: vi.fn(async () => ({
-    sessions: [session({ id: 's1', title: 'Old chat', message_count: 3 }), session({ id: 's2', title: 'Another', message_count: 1 })],
+    sessions: [
+      session({ id: 's1', title: 'Old chat', message_count: 3 }),
+      session({ id: 's2', title: 'Another', message_count: 1 })
+    ],
     total: 2,
     offset: 0
   })),

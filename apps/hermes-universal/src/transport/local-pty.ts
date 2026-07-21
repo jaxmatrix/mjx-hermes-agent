@@ -54,6 +54,7 @@ export class LocalPtySocket {
       if (this.closed) {
         void invoke('pty_kill', { id: this.id }).catch(() => undefined)
         this.teardown()
+
         return
       }
 
@@ -63,6 +64,7 @@ export class LocalPtySocket {
         id: this.id,
         rows: this.options.rows
       })) as { shell?: string }
+
       this.live = true
       this.handlers.onSpawn(result?.shell ?? 'shell')
     } catch (err) {
@@ -74,11 +76,15 @@ export class LocalPtySocket {
 
   /** Send keystrokes (UTF-8) to the shell. */
   write(data: string): void {
-    if (this.live) void invoke('pty_write', { data, id: this.id }).catch(() => undefined)
+    if (this.live) {
+      void invoke('pty_write', { data, id: this.id }).catch(() => undefined)
+    }
   }
 
   resize(cols: number, rows: number): void {
-    if (this.live) void invoke('pty_resize', { cols, id: this.id, rows }).catch(() => undefined)
+    if (this.live) {
+      void invoke('pty_resize', { cols, id: this.id, rows }).catch(() => undefined)
+    }
   }
 
   get isLive(): boolean {
@@ -101,6 +107,7 @@ export class LocalPtySocket {
         // ignore
       }
     }
+
     this.unlisten = []
   }
 }

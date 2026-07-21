@@ -128,6 +128,7 @@ export function MarkdownBench() {
     setBusy(true)
 
     const el = stageRef.current
+
     // Animate the column's own width: the general "the viewport changed shape"
     // case, covering a window resize as well as a pane drag.
     const { relayoutMs, worstFrameMs } = await measureFrames(40, el, i => {

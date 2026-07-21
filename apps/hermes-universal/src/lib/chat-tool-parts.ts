@@ -266,6 +266,7 @@ function toolResult(
   prevArgs?: unknown
 ): Record<string, unknown> {
   const parsedResult = parseMaybeJsonObject(payload?.result)
+
   // Divergence from desktop, deliberately: `parseMaybeJsonObject` flattens a
   // NON-JSON string result to `{}`, which would throw away the whole output of
   // every tool that answers in plain text. Keep it under `output` — a

@@ -2,12 +2,7 @@ import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Archive, MoreVertical, Pencil, Trash } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -15,14 +10,28 @@ import { archiveSessionLocal, deleteSessionLocal, openSession, renameSessionLoca
 import type { SessionInfo } from '@/types/hermes'
 
 function relTime(value: number): string {
-  if (!value) return ''
+  if (!value) {
+    return ''
+  }
+
   const ms = value < 1e12 ? value * 1000 : value
   const diff = Date.now() - ms
   const minutes = Math.floor(diff / 60_000)
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes}m ago`
+
+  if (minutes < 1) {
+    return 'just now'
+  }
+
+  if (minutes < 60) {
+    return `${minutes}m ago`
+  }
+
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
+
+  if (hours < 24) {
+    return `${hours}h ago`
+  }
+
   return `${Math.floor(hours / 24)}d ago`
 }
 

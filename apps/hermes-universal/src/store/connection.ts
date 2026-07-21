@@ -6,15 +6,15 @@ import {
   oauthStatus,
   passwordLogin,
   portalAgentSignIn,
-  portalLogout,
+  portalLogout
 } from '@/lib/auth'
 import { loadString, saveString } from '@/lib/persist'
 import { clearSecrets, loadSecrets, saveSecrets, type Secrets } from '@/lib/secure-store'
 import { persistSessionCookies } from '@/lib/session-persist'
 import { atom } from '@/store/atom'
+import { $gatewayState, closeGateway, connectGateway } from '@/store/gateway'
 import { chooseGatedAuth, type Connection } from '@/store/gateway-config'
 import { saveGatewayTarget } from '@/store/gateway-restore'
-import { $gatewayState, closeGateway, connectGateway } from '@/store/gateway'
 import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import { httpRequest } from '@/transport/http'
 
@@ -86,7 +86,11 @@ export function forgetSavedLogin(): Promise<void> {
 
 export function normalizeBaseUrl(raw: string): string {
   let value = raw.trim()
-  if (!/^https?:\/\//i.test(value)) value = `http://${value}`
+
+  if (!/^https?:\/\//i.test(value)) {
+    value = `http://${value}`
+  }
+
   return value.replace(/\/+$/, '')
 }
 
@@ -94,9 +98,11 @@ export function normalizeBaseUrl(raw: string): string {
 export async function probeStatus(rawUrl: string): Promise<StatusInfo> {
   const base = normalizeBaseUrl(rawUrl)
   const res = await httpRequest('GET', `${base}/api/status`, { timeoutMs: 8000 })
+
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`Backend responded HTTP ${res.status}`)
   }
+
   return JSON.parse(res.body) as StatusInfo
 }
 
@@ -112,6 +118,7 @@ export async function connect(input: ConnectInput): Promise<void> {
 
     let conn: Connection
     let oauthProvider: string | undefined
+
     if (status.auth_required) {
       // Gated: pick the concrete path from the advertised providers. Password
       // login (→ ticket) wins only when the operator supplied credentials AND a
@@ -124,6 +131,7 @@ export async function connect(input: ConnectInput): Promise<void> {
         if (!input.username || !input.password) {
           throw new Error('This backend requires a username and password')
         }
+
         // password-login sets the session cookie in Rust; the WS authorizes with
         // a per-connect ?ticket= (built in connectGateway).
         await passwordLogin(base, input.username, input.password, choice.provider)
@@ -133,9 +141,11 @@ export async function connect(input: ConnectInput): Promise<void> {
         // Reuse a still-live session (e.g. a restored cookie jar, R2b) rather than
         // forcing an interactive sign-in; only open the webview when signed out.
         const live = await oauthStatus(base).catch(() => ({ signedIn: false }))
+
         if (!live.signedIn) {
           await oauthLogin(base, oauthProvider)
         }
+
         conn = { baseUrl: base, mode: 'remote', authMode: 'oauth' }
       }
     } else if (input.token && input.token.trim()) {
@@ -146,6 +156,7 @@ export async function connect(input: ConnectInput): Promise<void> {
 
     $connection.set(conn)
     $connectionPhase.set('connecting')
+
     try {
       await connectGateway(conn)
     } catch (err) {
@@ -186,15 +197,18 @@ export async function connectLocal(profile?: null | string): Promise<void> {
   armReconnect()
   $connectionError.set(null)
   $connectionPhase.set('connecting')
+
   try {
     const backend = await spawnLocalBackend(profile)
+
     const conn: Connection = {
       baseUrl: backend.baseUrl,
       mode: 'local',
       authMode: 'token',
       token: backend.token,
-      profile: profile ?? null,
+      profile: profile ?? null
     }
+
     $connection.set(conn)
     await connectGateway(conn)
     $connectionPhase.set('ready')
@@ -219,14 +233,17 @@ export async function connectCloud(baseUrl: string, profile?: null | string): Pr
   armReconnect()
   $connectionError.set(null)
   $connectionPhase.set('connecting')
+
   try {
     const conn: Connection = {
       baseUrl: normalizeBaseUrl(baseUrl),
       mode: 'cloud',
       authMode: 'oauth',
-      profile: profile ?? null,
+      profile: profile ?? null
     }
+
     $connection.set(conn)
+
     try {
       await connectGateway(conn)
     } catch (err) {
@@ -239,6 +256,7 @@ export async function connectCloud(baseUrl: string, profile?: null | string): Pr
         throw err
       }
     }
+
     $connectionPhase.set('ready')
     await persistSessionCookies()
     // Remember this target so the next launch auto-reconnects (D8). connectCloudAgent
@@ -258,10 +276,12 @@ export function disconnect(): void {
   // A deliberate disconnect ends the session: the root gate falls back to the
   // connect picker (not the reconnecting screen) next.
   $hasConnected.set(false)
+
   // If we were on a local-spawned backend, stop the child too.
   if ($connection.get()?.mode === 'local') {
     void stopLocalBackend().catch(() => {})
   }
+
   closeGateway()
   $connection.set(null)
   $connectionPhase.set('idle')
@@ -276,8 +296,15 @@ export function disconnect(): void {
  */
 export async function signOut(): Promise<void> {
   const conn = $connection.get()
-  if (conn?.authMode === 'oauth') await oauthLogout(conn.baseUrl).catch(() => {})
-  if (conn?.mode === 'cloud') await portalLogout().catch(() => {})
+
+  if (conn?.authMode === 'oauth') {
+    await oauthLogout(conn.baseUrl).catch(() => {})
+  }
+
+  if (conn?.mode === 'cloud') {
+    await portalLogout().catch(() => {})
+  }
+
   await forgetSavedLogin().catch(() => {})
   disconnect()
 }
@@ -307,26 +334,43 @@ const reconnectDelay = (attempt: number): number => Math.min(30_000, 2 ** attemp
 const wait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
 async function reauthForReconnect(conn: Connection): Promise<void> {
-  if (conn.mode === 'cloud') await portalAgentSignIn(conn.baseUrl)
-  else await oauthLogin(conn.baseUrl)
+  if (conn.mode === 'cloud') {
+    await portalAgentSignIn(conn.baseUrl)
+  } else {
+    await oauthLogin(conn.baseUrl)
+  }
 }
 
 async function runReconnectLoop(): Promise<void> {
   reconnecting = true
   let attempt = 0
+
   while (!intentionalClose) {
     const conn = $connection.get()
-    if (!conn) break
+
+    if (!conn) {
+      break
+    }
+
     await wait(reconnectDelay(attempt))
-    if (intentionalClose || !$connection.get()) break
+
+    if (intentionalClose || !$connection.get()) {
+      break
+    }
+
     $connectionPhase.set('connecting')
+
     try {
       await connectGateway(conn)
+
       if (intentionalClose || !$connection.get()) {
         closeGateway()
+
         break
       }
+
       $connectionPhase.set('ready')
+
       break
     } catch (err) {
       if (conn.authMode === 'oauth' && isGatewayReauthRequired(err)) {
@@ -334,14 +378,17 @@ async function runReconnectLoop(): Promise<void> {
           await reauthForReconnect(conn)
           await connectGateway(conn)
           $connectionPhase.set('ready')
+
           break
         } catch {
           // fall through to backoff
         }
       }
+
       attempt++
     }
   }
+
   reconnecting = false
 }
 
@@ -355,5 +402,7 @@ $gatewayState.subscribe(state => {
 // local/cloud connect, and each successful auto-reconnect). One place covers them
 // all; `disconnect()` clears it.
 $connectionPhase.subscribe(phase => {
-  if (phase === 'ready') $hasConnected.set(true)
+  if (phase === 'ready') {
+    $hasConnected.set(true)
+  }
 })

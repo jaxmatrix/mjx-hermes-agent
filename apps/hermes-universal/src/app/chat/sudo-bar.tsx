@@ -7,9 +7,13 @@ import { respondSudo, type SudoRequest } from '@/store/chat'
 
 export function SudoBar({ request }: { request: SudoRequest }) {
   const [password, setPassword] = useState('')
+
   const submit = () => {
-    if (password) void respondSudo(password)
+    if (password) {
+      void respondSudo(password)
+    }
   }
+
   return (
     <RequestBar title="Sudo password required">
       <RequestBarDescription>{request.prompt}</RequestBarDescription>

@@ -132,13 +132,20 @@ let cwdInflight: Promise<string> | null = null
 
 export function ensureWorkspaceCwd(): Promise<string> {
   const existing = $workspaceCwd.get()
-  if (existing) return Promise.resolve(existing)
-  if (cwdInflight) return cwdInflight
+
+  if (existing) {
+    return Promise.resolve(existing)
+  }
+
+  if (cwdInflight) {
+    return cwdInflight
+  }
 
   cwdInflight = getDefaultCwd()
     .then(({ branch, cwd }) => {
       $workspaceCwd.set(cwd)
       $workspaceBranch.set(branch)
+
       return cwd
     })
     .catch(() => '')

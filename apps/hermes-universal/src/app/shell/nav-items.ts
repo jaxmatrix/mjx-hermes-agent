@@ -2,6 +2,7 @@ import type { ComponentType } from 'react'
 
 import {
   AGENTS_ROUTE,
+  type AppView,
   ARTIFACTS_ROUTE,
   COMMAND_CENTER_ROUTE,
   CRON_ROUTE,
@@ -10,8 +11,7 @@ import {
   PROFILES_ROUTE,
   SETTINGS_ROUTE,
   SKILLS_ROUTE,
-  STARMAP_ROUTE,
-  type AppView
+  STARMAP_ROUTE
 } from '@/app/routes'
 import { useI18n } from '@/i18n'
 import type { Translations } from '@/i18n'
@@ -51,5 +51,6 @@ export const NAV_ITEMS: NavItem[] = [
 // Nav items with labels resolved against the active locale.
 export function useNavItems(): NavItem[] {
   const { t } = useI18n()
+
   return NAV_ITEMS.map(item => ({ ...item, label: t.nav[item.labelKey] }))
 }

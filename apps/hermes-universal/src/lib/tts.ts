@@ -14,29 +14,37 @@ export function stopSpeaking(): void {
     current.src = ''
     current = null
   }
+
   $ttsSpeaking.set(false)
 }
 
 export async function speakNow(text: string): Promise<void> {
   const trimmed = text.trim()
+
   if (!trimmed || typeof Audio === 'undefined') {
     return
   }
+
   stopSpeaking()
+
   try {
     const res = await speakText(trimmed)
+
     if (!res.ok || !res.data_url) {
       return
     }
+
     const audio = new Audio(res.data_url)
     current = audio
     $ttsSpeaking.set(true)
+
     const clear = () => {
       if (current === audio) {
         current = null
         $ttsSpeaking.set(false)
       }
     }
+
     audio.onended = clear
     audio.onerror = clear
     await audio.play().catch(clear)

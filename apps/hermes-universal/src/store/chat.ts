@@ -1,19 +1,19 @@
 import type { GatewayEvent } from '@/gateway'
 import { translateNow } from '@/i18n'
-import { type GatewayToolPayload, toolIdFromPayload, upsertToolPart } from '@/lib/chat-tool-parts'
 import { coerceThinkingText } from '@/lib/chat-runtime'
-import { resolveGatewayEventSessionId } from '@/lib/gateway-events'
-import { recordToolDiff } from '@/store/tool-diffs'
+import { type GatewayToolPayload, toolIdFromPayload, upsertToolPart } from '@/lib/chat-tool-parts'
 import { playCompletionSound } from '@/lib/completion-sound'
+import { resolveGatewayEventSessionId } from '@/lib/gateway-events'
+import { triggerHaptic } from '@/lib/haptics'
 import { speakNow, stopSpeaking } from '@/lib/tts'
 import { atom } from '@/store/atom'
-import { $autoSpeakReplies } from '@/store/voice-prefs'
 import { cwdForNewSession } from '@/store/default-project-dir'
 import { requestGateway } from '@/store/gateway'
-import { triggerHaptic } from '@/lib/haptics'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notifyError } from '@/store/notifications'
 import { $subagentsBySession, upsertSubagent } from '@/store/subagents'
+import { recordToolDiff } from '@/store/tool-diffs'
+import { $autoSpeakReplies } from '@/store/voice-prefs'
 import type { ContextBreakdown, SessionCreateResponse, UsageStats } from '@/types/hermes'
 
 // Chat model over the assistant-ui parts vocabulary. The gateway-event reducer
@@ -121,7 +121,11 @@ export const $currentUsage = atom<UsageStats>(EMPTY_USAGE)
 // Best-effort — keep the prior value on failure.
 async function refreshCurrentUsage(): Promise<void> {
   const sessionId = $sessionId.get()
-  if (!sessionId) return
+
+  if (!sessionId) {
+    return
+  }
+
   try {
     const b = await requestGateway<ContextBreakdown>('session.context_breakdown', { session_id: sessionId })
     $currentUsage.set({
@@ -140,8 +144,14 @@ let messageCounter = 0
 const nextId = (): string => `m${++messageCounter}-${Date.now()}`
 
 function coerceText(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (Array.isArray(value)) return value.map(coerceText).join('')
+  if (typeof value === 'string') {
+    return value
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(coerceText).join('')
+  }
+
   return ''
 }
 
@@ -155,7 +165,11 @@ function newAssistant(): ChatMessage {
 
 function withActiveAssistant(messages: ChatMessage[]): ChatMessage[] {
   const last = messages[messages.length - 1]
-  if (last && last.role === 'assistant' && last.pending) return messages
+
+  if (last && last.role === 'assistant' && last.pending) {
+    return messages
+  }
+
   return [...messages, newAssistant()]
 }
 
@@ -173,13 +187,17 @@ function patchActive(messages: ChatMessage[], patch: (m: ChatMessage) => ChatMes
   const index = next.length - 1
   const copy = next.slice()
   copy[index] = patch(next[index])
+
   return copy
 }
 
 // Append a streaming delta into the tail part when it's the same channel, else
 // open a new part.
 function appendStreamPart(parts: ChatPart[], type: 'reasoning' | 'text', delta: string): ChatPart[] {
-  if (!delta) return parts
+  if (!delta) {
+    return parts
+  }
+
   // Coalesce into the most recent same-type part within the current segment
   // (bounded by non-streaming parts like tool calls). The opposite streaming
   // channel (text<->reasoning) is TRANSPARENT — so a reasoning burst between two
@@ -187,15 +205,19 @@ function appendStreamPart(parts: ChatPart[], type: 'reasoning' | 'text', delta: 
   // (Ported from desktop lib/chat-messages.ts appendStreamPart.)
   for (let i = parts.length - 1; i >= 0; i--) {
     const part = parts[i]
+
     if (part.type === type) {
       const copy = parts.slice()
       copy[i] = { type, text: part.text + delta }
+
       return copy
     }
+
     if (part.type !== 'text' && part.type !== 'reasoning') {
       break
     }
   }
+
   return [...parts, { type, text: delta }]
 }
 
@@ -216,7 +238,9 @@ function appendStreamPart(parts: ChatPart[], type: 'reasoning' | 'text', delta: 
 function applySettledReasoning(parts: ChatPart[], text: string): ChatPart[] {
   const settled = text.trim()
 
-  if (!settled) return parts
+  if (!settled) {
+    return parts
+  }
 
   if (parts.some(part => part.type === 'reasoning' && part.text.trim().includes(settled))) {
     return parts
@@ -228,8 +252,10 @@ function applySettledReasoning(parts: ChatPart[], text: string): ChatPart[] {
     if (part.type === 'reasoning') {
       const copy = parts.slice()
       copy[i] = { type: 'reasoning', text }
+
       return copy
     }
+
     // Any prose or tool call closes the previous thinking block.
     break
   }
@@ -299,10 +325,14 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       $statusLine.set('')
       stopSpeaking() // interrupt any TTS from the previous turn
       update(withActiveAssistant)
+
       break
 
     case 'message.delta':
-      update(messages => patchActive(messages, m => ({ ...m, parts: appendStreamPart(m.parts, 'text', coerceText(payload.text)) })))
+      update(messages =>
+        patchActive(messages, m => ({ ...m, parts: appendStreamPart(m.parts, 'text', coerceText(payload.text)) }))
+      )
+
       break
 
     case 'reasoning.delta':
@@ -312,14 +342,15 @@ export function handleGatewayEvent(event: GatewayEvent): void {
           parts: appendStreamPart(m.parts, 'reasoning', coerceThinkingText(payload.text))
         }))
       )
+
       break
 
     case 'reasoning.available':
       update(messages =>
         patchActive(messages, m => ({ ...m, parts: applySettledReasoning(m.parts, coerceThinkingText(payload.text)) }))
       )
-      break
 
+      break
     case 'moa.reference': {
       const label = coerceText(payload.label)
       const idx = coerceText(payload.index)
@@ -333,15 +364,18 @@ export function handleGatewayEvent(event: GatewayEvent): void {
           parts: [...m.parts, { type: 'reasoning', text: header + coerceThinkingText(payload.text) }]
         }))
       )
+
       break
     }
 
     case 'tool.start':
+
     case 'tool.progress':
+
     case 'tool.generating':
       applyToolEvent(payload, 'running')
-      break
 
+      break
     case 'tool.complete': {
       applyToolEvent(payload, 'complete')
       // Live side-channel diff: the gateway renders the edit diff itself and
@@ -365,6 +399,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       if (payload) {
         void notifyWorkspaceChangeFromTool(payload)
       }
+
       break
     }
 
@@ -374,18 +409,22 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       $statusLine.set('')
       void refreshCurrentUsage()
       update(messages => messages.map(m => (m.pending ? { ...m, pending: false } : m)))
+
       // Read the reply aloud when auto-TTS is on (K9).
       if ($autoSpeakReplies.get()) {
         const last = [...$messages.get()].reverse().find(m => m.role === 'assistant')
+
         const text =
           last?.parts
             .filter(p => p.type === 'text')
             .map(p => (p as TextPart).text)
             .join(' ') ?? ''
+
         if (text.trim()) {
           void speakNow(text)
         }
       }
+
       dispatchNativeNotification({
         kind: 'turnDone',
         title: translateNow('notifications.native.turnDoneTitle'),
@@ -394,10 +433,12 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       })
       // Turn-end audio cue (gated by $hapticsMuted). Mirrors desktop gateway-event.
       playCompletionSound()
+
       break
 
     case 'status.update':
       $statusLine.set(coerceText(payload.status) || coerceText(payload.message) || '')
+
       break
 
     case 'approval.request':
@@ -413,6 +454,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         body: coerceText(payload.command) || coerceText(payload.description),
         sessionId: $sessionId.get()
       })
+
       break
 
     case 'clarify.request':
@@ -420,6 +462,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         requestId: coerceText(payload.request_id),
         prompt: coerceText(payload.prompt) || coerceText(payload.message)
       })
+
       break
 
     case 'sudo.request':
@@ -427,6 +470,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         requestId: coerceText(payload.request_id),
         prompt: coerceText(payload.prompt) || coerceText(payload.command) || 'Enter your sudo password'
       })
+
       break
 
     case 'secret.request':
@@ -435,6 +479,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         envVar: coerceText(payload.env_var),
         prompt: coerceText(payload.prompt) || coerceText(payload.message)
       })
+
       break
 
     case 'error':
@@ -450,8 +495,8 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         body: coerceText(payload.message),
         sessionId: $sessionId.get()
       })
-      break
 
+      break
     case 'session.title': {
       // Live auto-title push (titler runs async, after the turn). Update the
       // current session's live title so the chat header reflects it on the fly,
@@ -460,14 +505,17 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       // here would cycle).
       const sid = coerceText(payload.session_id)
       const title = coerceText(payload.title).trim()
+
       if (title && (!sid || sid === $sessionId.get())) {
         $liveSessionTitle.set(title)
       }
+
       if (sid && title) {
         void import('@/store/session')
           .then(m => m.setSessions(prev => prev.map(s => (s.id === sid ? { ...s, title } : s))))
           .catch(() => {})
       }
+
       break
     }
 
@@ -498,6 +546,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         const createIfMissing = event.type === 'subagent.spawn_requested' || event.type === 'subagent.start'
         upsertSubagent(sid, payload, createIfMissing, event.type)
       }
+
       // gateway.ready, session.info, thinking.delta, moa.aggregating handled elsewhere.
       // FIXME(G): richer status/session handling.
       break
@@ -514,16 +563,20 @@ export function handleGatewayEvent(event: GatewayEvent): void {
  */
 export async function ensureSession(): Promise<{ id: string; storedId: string }> {
   const existing = $sessionId.get()
+
   if (existing) {
     return { id: existing, storedId: existing }
   }
+
   // A configured default project directory pre-attaches new LOCAL chats to that
   // folder (desktop parity); the gateway resolves its own default cwd otherwise.
   const cwd = cwdForNewSession()
+
   const created = await requestGateway<SessionCreateResponse>('session.create', {
     cols: 96,
     ...(cwd && { cwd })
   })
+
   const id = created.session_id
   $sessionId.set(id)
   // Adopt the runtime's resolved working directory — it normalizes (or defaults)
@@ -534,12 +587,17 @@ export async function ensureSession(): Promise<{ id: string; storedId: string }>
   // timer). Resumed/loaded sessions have no reliable start on this client, so
   // the timer stays hidden for them.
   $sessionStartedAt.set(Date.now())
+
   return { id, storedId: created.stored_session_id ?? id }
 }
 
 export async function sendPrompt(text: string): Promise<void> {
   const trimmed = text.trim()
-  if (!trimmed || $busy.get()) return
+
+  if (!trimmed || $busy.get()) {
+    return
+  }
+
   stopSpeaking() // silence any TTS when the user sends a new prompt
 
   update(messages => [...messages, { id: nextId(), role: 'user', parts: [{ type: 'text', text: trimmed }] }])
@@ -550,15 +608,15 @@ export async function sendPrompt(text: string): Promise<void> {
   try {
     const wasNew = !$sessionId.get()
     const { id: sessionId, storedId } = await ensureSession()
+
     if (wasNew) {
       // New chat: optimistically add it to the sidebar list + mark active, keyed
       // on the STORED id (what the list refresh + session.title use), with the
       // first message as the provisional title (preview). Dynamic import —
       // store/session imports store/chat, so a static import here would cycle.
-      void import('@/store/session')
-        .then(m => m.registerNewSession(storedId, trimmed))
-        .catch(() => {})
+      void import('@/store/session').then(m => m.registerNewSession(storedId, trimmed)).catch(() => {})
     }
+
     await requestGateway('prompt.submit', { session_id: sessionId, text: trimmed }, PROMPT_SUBMIT_TIMEOUT_MS)
   } catch (err) {
     $busy.set(false)
@@ -571,6 +629,7 @@ export async function sendPrompt(text: string): Promise<void> {
 export async function respondApproval(choice: ApprovalChoice): Promise<void> {
   const sessionId = $sessionId.get()
   $approval.set(null)
+
   try {
     await requestGateway('approval.respond', { choice, session_id: sessionId ?? undefined })
   } catch {
@@ -581,7 +640,11 @@ export async function respondApproval(choice: ApprovalChoice): Promise<void> {
 export async function respondClarify(answer: string): Promise<void> {
   const req = $clarify.get()
   $clarify.set(null)
-  if (!req) return
+
+  if (!req) {
+    return
+  }
+
   try {
     await requestGateway('clarify.respond', { request_id: req.requestId, answer })
   } catch {
@@ -592,7 +655,11 @@ export async function respondClarify(answer: string): Promise<void> {
 export async function respondSudo(password: string): Promise<void> {
   const req = $sudo.get()
   $sudo.set(null)
-  if (!req) return
+
+  if (!req) {
+    return
+  }
+
   try {
     await requestGateway('sudo.respond', { request_id: req.requestId, password })
   } catch {
@@ -603,7 +670,11 @@ export async function respondSudo(password: string): Promise<void> {
 export async function respondSecret(value: string): Promise<void> {
   const req = $secret.get()
   $secret.set(null)
-  if (!req) return
+
+  if (!req) {
+    return
+  }
+
   try {
     await requestGateway('secret.respond', { request_id: req.requestId, value })
   } catch {

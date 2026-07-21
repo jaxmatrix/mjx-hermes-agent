@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { ListRow } from '@/app/settings/primitives'
 import { COMMAND_CENTER_ROUTE } from '@/app/routes'
+import { ListRow } from '@/app/settings/primitives'
 import { Button } from '@/components/ui/button'
 import { LogView } from '@/components/ui/log-view'
 import { getLogs, getStatus } from '@/hermes'
@@ -32,11 +32,13 @@ export function GatewayDiagnostics() {
 
   const refresh = async () => {
     setLoading(true)
+
     try {
       const [nextStatus, nextLogs] = await Promise.all([
         getStatus(),
-        getLogs({ file: 'gui', lines: LOG_LINES }).catch(() => ({ lines: [] as string[] })),
+        getLogs({ file: 'gui', lines: LOG_LINES }).catch(() => ({ lines: [] as string[] }))
       ])
+
       setStatus(nextStatus)
       setLogs(
         nextLogs.lines

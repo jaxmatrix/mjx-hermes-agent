@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/store/gateway', async () => {
   const { atom } = await import('@/store/atom')
+
   return { requestGateway: vi.fn(), $gatewayState: atom('idle') }
 })
 import { requestGateway } from '@/store/gateway'

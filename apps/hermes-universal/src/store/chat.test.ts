@@ -4,6 +4,7 @@ import type { GatewayEvent } from '@/gateway'
 
 vi.mock('@/store/gateway', async () => {
   const { atom } = await import('@/store/atom')
+
   return { requestGateway: vi.fn().mockResolvedValue({}), $gatewayState: atom('idle') }
 })
 import { requestGateway } from '@/store/gateway'
@@ -22,7 +23,7 @@ import {
 } from './chat'
 
 const ev = (type: string, payload: Record<string, unknown>): GatewayEvent =>
-  ({ type, payload } as unknown as GatewayEvent)
+  ({ type, payload }) as unknown as GatewayEvent
 
 beforeEach(() => resetChat())
 
@@ -106,7 +107,7 @@ describe('tool events outside the live turn', () => {
 
 describe('gateway event session routing', () => {
   const sessionEv = (type: string, sessionId: string, payload: Record<string, unknown> = {}): GatewayEvent =>
-    ({ type, payload, session_id: sessionId } as unknown as GatewayEvent)
+    ({ type, payload, session_id: sessionId }) as unknown as GatewayEvent
 
   it('ignores tool events belonging to another session', () => {
     $sessionId.set('runtime-1')

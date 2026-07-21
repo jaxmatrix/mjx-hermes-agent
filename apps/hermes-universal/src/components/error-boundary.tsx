@@ -58,6 +58,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
 function RootErrorFallback({ error, reset }: ErrorBoundaryFallbackProps) {
   const { t } = useI18n()
+
   return (
     <div className="fixed inset-0 z-[1500] grid place-items-center bg-background p-6">
       <div className="flex w-full max-w-md flex-col items-center gap-4 text-center">

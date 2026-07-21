@@ -29,10 +29,13 @@ describe('store engine (real nanostores)', () => {
 
   it('useStore re-renders a component on set', () => {
     const $count = atom(0)
+
     function View() {
       const count = useStore($count)
+
       return <span>count:{count}</span>
     }
+
     render(<View />)
     expect(screen.getByText('count:0')).toBeInTheDocument()
     act(() => $count.set(7))

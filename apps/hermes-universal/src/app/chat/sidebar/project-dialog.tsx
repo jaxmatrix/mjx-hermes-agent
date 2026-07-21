@@ -2,13 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
 import { GenerateButton } from '@/components/ui/generate-button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useI18n } from '@/i18n'
 import { IS_DESKTOP } from '@/lib/platform'
-import { randomIdeaTemplates, type ProjectIdeaTemplate } from '@/lib/project-idea-templates'
+import { type ProjectIdeaTemplate, randomIdeaTemplates } from '@/lib/project-idea-templates'
 import { useStore } from '@/store/atom'
 import { notifyError } from '@/store/notifications'
 import {
@@ -45,13 +52,16 @@ export function ProjectDialog() {
       setIdea('')
       setTemplates(randomIdeaTemplates())
       setManualPath('')
+
       if (dialog.mode !== 'add-folder') {
         window.setTimeout(() => nameRef.current?.select(), 0)
       }
     }
   }, [dialog])
 
-  if (!dialog) return null
+  if (!dialog) {
+    return null
+  }
 
   const mode = dialog.mode
   const isCreate = mode === 'create'
@@ -71,12 +81,19 @@ export function ProjectDialog() {
   // below is the reliable cross-platform way to add + see a folder.
   const pickFolder = async () => {
     const dir = await pickProjectFolder()
-    if (dir) addResolvedFolder(dir)
+
+    if (dir) {
+      addResolvedFolder(dir)
+    }
   }
 
   const addManualFolder = () => {
     const dir = manualPath.trim()
-    if (!dir) return
+
+    if (!dir) {
+      return
+    }
+
     addResolvedFolder(dir)
     setManualPath('')
   }
@@ -84,8 +101,12 @@ export function ProjectDialog() {
   const canSubmit = name.trim().length > 0 && (!isCreate || folders.length > 0)
 
   const submit = async () => {
-    if (submitting || !canSubmit) return
+    if (submitting || !canSubmit) {
+      return
+    }
+
     setSubmitting(true)
+
     try {
       if (isRename && dialog.projectId) {
         await renameProject(dialog.projectId, name.trim())
@@ -98,6 +119,7 @@ export function ProjectDialog() {
           use: true
         })
       }
+
       closeProjectDialog()
     } catch (err) {
       notifyError(err, p.createFailed)
@@ -107,12 +129,19 @@ export function ProjectDialog() {
   }
 
   const generateIdea = async () => {
-    if (generatingIdea) return
+    if (generatingIdea) {
+      return
+    }
+
     setGeneratingIdea(true)
+
     try {
       // Build on the current idea/template when present, else invent a fresh one.
       const text = await generateProjectIdea(name, idea)
-      if (text) setIdea(text)
+
+      if (text) {
+        setIdea(text)
+      }
     } finally {
       setGeneratingIdea(false)
     }

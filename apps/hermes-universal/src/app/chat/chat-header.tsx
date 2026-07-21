@@ -14,7 +14,13 @@ import {
   unpinSession
 } from '@/store/layout'
 import { $reviewOpen } from '@/store/review'
-import { $activeStoredSessionId, $sessions, archiveSessionLocal, deleteSessionLocal, sessionPinId } from '@/store/session'
+import {
+  $activeStoredSessionId,
+  $sessions,
+  archiveSessionLocal,
+  deleteSessionLocal,
+  sessionPinId
+} from '@/store/session'
 
 // The chat title header — ported from desktop's in-pane ChatHeader
 // (apps/desktop/src/app/chat/index.tsx + `titlebarHeaderBaseClass`). It's the
@@ -70,6 +76,7 @@ export function ChatHeader() {
   // a new session), so it stayed "New session".
   const lookupId = activeId ?? runtimeSessionId
   const session = lookupId ? sessions.find(s => s.id === lookupId) : null
+
   // Until the session is in `sessions`, fall back to the live auto-title (pushed
   // by the backend's session.title event) so the heading stops saying "New
   // session" as soon as the title lands.
@@ -95,6 +102,7 @@ export function ChatHeader() {
     (() => {
       const pinId = sessionPinId(session)
       const isPinned = pinnedIds.includes(pinId)
+
       const actions = {
         sessionId: session.id,
         title,

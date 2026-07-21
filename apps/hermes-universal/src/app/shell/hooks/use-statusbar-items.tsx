@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
+import { AGENTS_ROUTE, appViewForPath, COMMAND_CENTER_ROUTE, CRON_ROUTE } from '@/app/routes'
 import { useApprovalModeStatusbarItem } from '@/app/shell/approval-mode-menu'
 import { ContextUsagePanel } from '@/app/shell/context-usage-panel'
 import { GatewayMenuPanel } from '@/app/shell/gateway-menu-panel'
@@ -13,15 +14,14 @@ import { revealPathInFileManager } from '@/lib/reveal-path'
 import { contextBarLabel, LiveDuration, usageContextLabel } from '@/lib/statusbar'
 import { cn } from '@/lib/utils'
 import { workspaceLabel } from '@/lib/workspace-path'
-import { AGENTS_ROUTE, appViewForPath, COMMAND_CENTER_ROUTE, CRON_ROUTE } from '@/app/routes'
 import { useStore } from '@/store/atom'
-import { $terminalOpen, revealFileInTree, toggleTerminalOpen } from '@/store/layout'
 import { $busy, $currentUsage, $sessionId, $sessionStartedAt, $turnStartedAt } from '@/store/chat'
 import { $connection, $status } from '@/store/connection'
 import { $gatewayState, requestGateway } from '@/store/gateway'
+import { $terminalOpen, revealFileInTree, toggleTerminalOpen } from '@/store/layout'
 import { notify } from '@/store/notifications'
 import { $activeProfile } from '@/store/profiles'
-import { activeSubagentCount, failedSubagentCount, $subagentsBySession } from '@/store/subagents'
+import { $subagentsBySession, activeSubagentCount, failedSubagentCount } from '@/store/subagents'
 import { $appVersion, $gatewayRestarting, $inferenceStatus, $statusSnapshot } from '@/store/system-status'
 import { $effectiveCwd, ensureWorkspaceCwd } from '@/store/workspace-events'
 
@@ -94,7 +94,9 @@ export function useStatusbarItems(): {
   // the gateway (re)opens: `resetWorkspaceCwd` clears it on reconnect, and
   // `ensureWorkspaceCwd` no-ops when it's already loaded.
   useEffect(() => {
-    if (gatewayOpen) void ensureWorkspaceCwd()
+    if (gatewayOpen) {
+      void ensureWorkspaceCwd()
+    }
   }, [gatewayOpen])
 
   const gatewayDetail = gatewayOpen

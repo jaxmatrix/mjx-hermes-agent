@@ -16,7 +16,10 @@ import { loadSessionCookies, saveSessionCookies } from '@/lib/secure-store'
 export async function persistSessionCookies(): Promise<void> {
   try {
     const json = await invoke<string>('cookies_export')
-    if (json && json.trim()) await saveSessionCookies(json)
+
+    if (json && json.trim()) {
+      await saveSessionCookies(json)
+    }
   } catch {
     // No Tauri runtime or empty jar — nothing to persist.
   }
@@ -26,7 +29,10 @@ export async function persistSessionCookies(): Promise<void> {
 export async function restoreSessionCookies(): Promise<void> {
   try {
     const json = await loadSessionCookies()
-    if (json && json.trim()) await invoke('cookies_import', { json })
+
+    if (json && json.trim()) {
+      await invoke('cookies_import', { json })
+    }
   } catch {
     // No saved session or no runtime — start with an empty jar.
   }

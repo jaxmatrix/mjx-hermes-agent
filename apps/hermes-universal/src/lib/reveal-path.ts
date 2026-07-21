@@ -5,7 +5,9 @@ import { IS_TAURI } from '@/lib/platform'
 // vitest). Callers should only surface this on desktop with a local backend —
 // the path must exist on THIS machine's disk (a remote backend's cwd doesn't).
 export async function revealPathInFileManager(path: string): Promise<void> {
-  if (!IS_TAURI) return
+  if (!IS_TAURI) {
+    return
+  }
 
   try {
     const { invoke } = await import('@tauri-apps/api/core')

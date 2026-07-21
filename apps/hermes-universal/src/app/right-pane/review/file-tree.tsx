@@ -18,6 +18,7 @@ import { useI18n } from '@/i18n'
 import { isDesktopFsRemoteMode } from '@/lib/desktop-fs'
 import { normalizeOrLocalPreviewTarget } from '@/lib/local-preview'
 import { cn } from '@/lib/utils'
+import { $currentCwd } from '@/store/chat'
 import { $renamingPath, copyFilePath, revealFile, toRelativePath } from '@/store/file-actions'
 import { $sidebarWorkspaceCollapsedIds, revealFileInTree, toggleWorkspaceNodeCollapsed } from '@/store/layout'
 import { notifyError } from '@/store/notifications'
@@ -33,7 +34,6 @@ import {
   stageReviewFile,
   unstageReviewFile
 } from '@/store/review'
-import { $currentCwd } from '@/store/chat'
 
 import { pickRevealLabel } from '../file-actions'
 

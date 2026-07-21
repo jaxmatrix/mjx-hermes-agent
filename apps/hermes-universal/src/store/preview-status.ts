@@ -1,6 +1,5 @@
-import { atom } from '@/store/atom'
-
 import { previewName } from '@/lib/preview-targets'
+import { atom } from '@/store/atom'
 
 // Ported from apps/desktop/src/store/preview-status.ts.
 //

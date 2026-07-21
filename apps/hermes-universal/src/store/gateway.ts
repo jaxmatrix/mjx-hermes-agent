@@ -1,8 +1,8 @@
 import { type ConnectionState, JsonRpcGatewayClient, type WebSocketLike } from '@/gateway'
 import type { HermesGateway } from '@/hermes'
+import { atom } from '@/store/atom'
 import { handleGatewayEvent } from '@/store/chat'
 import { type Connection, resolveWsUrl } from '@/store/gateway-config'
-import { atom } from '@/store/atom'
 import { TauriWebSocket } from '@/transport/tauri-websocket'
 
 // Holds the single live gateway client. The client itself is the reused
@@ -33,6 +33,7 @@ export async function connectGateway(conn: Connection): Promise<void> {
   const next = new JsonRpcGatewayClient({
     socketFactory: (url: string) => new TauriWebSocket(url) as unknown as WebSocketLike
   })
+
   next.onState(state => $gatewayState.set(state))
   next.onAny(event => handleGatewayEvent(event))
   client = next
@@ -53,7 +54,10 @@ export function requestGateway<T = unknown>(
   params: Record<string, unknown> = {},
   timeoutMs?: number
 ): Promise<T> {
-  if (!client) return Promise.reject(new Error('Hermes gateway is not connected'))
+  if (!client) {
+    return Promise.reject(new Error('Hermes gateway is not connected'))
+  }
+
   return client.request<T>(method, params, timeoutMs)
 }
 
@@ -71,6 +75,9 @@ export function getGatewayClient(): HermesGateway | null {
 // that don't flow through the chat reducer). Returns an unsubscribe fn; a no-op
 // when no client is live. Used by the pet-generate flow (pet.*.progress).
 export function subscribeGateway<P = unknown>(type: string, handler: (payload: P) => void): () => void {
-  if (!client) return () => {}
+  if (!client) {
+    return () => {}
+  }
+
   return client.on<P>(type, event => handler(event.payload as P))
 }

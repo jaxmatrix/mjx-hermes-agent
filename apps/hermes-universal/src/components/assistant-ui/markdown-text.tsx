@@ -65,7 +65,8 @@ const KatexHtml = memo(
     return (
       <span
         className="katex-host"
-        // eslint-disable-next-line react/no-danger -- KaTeX-generated markup only; see above.
+        // KaTeX-generated markup only — see the safety argument above and in
+        // katex-memo's `renderMath`.
         dangerouslySetInnerHTML={{ __html: html }}
         data-display={display ? 'true' : 'false'}
       />

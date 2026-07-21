@@ -36,6 +36,7 @@ export function ProviderConnectOverlay() {
   const oauth = state.oauth
 
   const copyCode = () => void navigator.clipboard?.writeText(oauth?.userCode ?? '').catch(() => {})
+
   const copyCommand = () =>
     void navigator.clipboard
       ?.writeText(provider.cli_command ?? '')
@@ -50,10 +51,16 @@ export function ProviderConnectOverlay() {
   if (state.step === 'confirm') {
     body = (
       <div className="flex flex-col">
-        <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{t.onboarding.defaultModel}</div>
+        <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          {t.onboarding.defaultModel}
+        </div>
         <div className="mt-1 rounded-lg border border-border bg-muted/40 p-3">
-          <div className="text-sm font-medium text-foreground">{state.recommended?.model ?? t.onboarding.recommended}</div>
-          {state.recommended?.provider && <div className="text-xs text-muted-foreground">{state.recommended.provider}</div>}
+          <div className="text-sm font-medium text-foreground">
+            {state.recommended?.model ?? t.onboarding.recommended}
+          </div>
+          {state.recommended?.provider && (
+            <div className="text-xs text-muted-foreground">{state.recommended.provider}</div>
+          )}
         </div>
         {state.error && <p className="mt-2 text-xs text-destructive">{state.error}</p>}
         <Button
@@ -95,7 +102,12 @@ export function ProviderConnectOverlay() {
             <Button onClick={() => cancelProviderConnect()} size="sm" type="button" variant="ghost">
               {t.common.cancel}
             </Button>
-            <Button disabled={oauth.status === 'rechecking'} onClick={() => void recheckExternalSignin()} size="sm" type="button">
+            <Button
+              disabled={oauth.status === 'rechecking'}
+              onClick={() => void recheckExternalSignin()}
+              size="sm"
+              type="button"
+            >
               {oauth.status === 'rechecking' && <Loader2 className="size-3.5 animate-spin" />}
               {t.onboarding.signedIn}
             </Button>
@@ -128,7 +140,12 @@ export function ProviderConnectOverlay() {
           <>
             <p className="text-sm text-muted-foreground">{t.onboarding.openedBrowser(title)}</p>
             <p className="text-sm text-muted-foreground">{t.onboarding.copyAuthCode}</p>
-            <Input className="mt-3" onChange={e => setCode(e.target.value)} placeholder={t.onboarding.pasteAuthCode} value={code} />
+            <Input
+              className="mt-3"
+              onChange={e => setCode(e.target.value)}
+              placeholder={t.onboarding.pasteAuthCode}
+              value={code}
+            />
           </>
         )}
 

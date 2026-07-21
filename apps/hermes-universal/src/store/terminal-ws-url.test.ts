@@ -9,6 +9,7 @@ describe('resolveTerminalWsUrl', () => {
       { authMode: 'token', baseUrl: 'http://localhost:8788', token: 'abc' },
       { cwd: '/repo' }
     )
+
     expect(url).toContain('ws://localhost:8788/api/shell-pty')
     expect(url).toContain('cwd=%2Frepo')
     expect(url).toContain('token=abc')

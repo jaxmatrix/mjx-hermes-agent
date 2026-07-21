@@ -27,7 +27,14 @@ vi.mock('@/lib/query-client', () => ({ queryClient: { invalidateQueries: vi.fn()
 import { deleteProfile, setApiRequestProfile } from '@/hermes'
 import { queryClient } from '@/lib/query-client'
 
-import { $activeProfile, $profiles, isValidProfileName, refreshProfiles, removeProfile, setActiveProfile } from './profiles'
+import {
+  $activeProfile,
+  $profiles,
+  isValidProfileName,
+  refreshProfiles,
+  removeProfile,
+  setActiveProfile
+} from './profiles'
 
 const del = vi.mocked(deleteProfile)
 const setScope = vi.mocked(setApiRequestProfile)

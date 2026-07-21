@@ -11,6 +11,7 @@ import { useKeybinds } from './use-keybinds'
 
 function Harness() {
   useKeybinds({ toggleCommandCenter: () => {} })
+
   return null
 }
 

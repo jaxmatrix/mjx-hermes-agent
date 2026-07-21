@@ -69,6 +69,7 @@ export function ComposerStatusStack({ queue, sessionId }: ComposerStatusStackPro
 
     if (!visible || !el) {
       root.style.removeProperty('--status-stack-measured-height')
+
       return
     }
 

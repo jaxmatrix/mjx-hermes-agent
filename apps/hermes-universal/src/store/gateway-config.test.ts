@@ -4,7 +4,6 @@ vi.mock('@/lib/auth', () => ({ mintWsTicket: vi.fn() }))
 
 import { isGatewayReauthRequired } from '@/gateway'
 import { mintWsTicket } from '@/lib/auth'
-
 import type { AuthProvider } from '@/lib/auth'
 
 import { authModeFromStatus, chooseGatedAuth, type Connection, modeIsRemoteLike, resolveWsUrl } from './gateway-config'
@@ -12,7 +11,7 @@ import { authModeFromStatus, chooseGatedAuth, type Connection, modeIsRemoteLike,
 const provider = (name: string, supports_password: boolean): AuthProvider => ({
   name,
   display_name: name,
-  supports_password,
+  supports_password
 })
 
 const mockMint = vi.mocked(mintWsTicket)
@@ -21,7 +20,11 @@ beforeEach(() => {
   mockMint.mockReset()
 })
 
-const conn = (over: Partial<Connection>): Connection => ({ baseUrl: 'https://gw.example.com', authMode: 'none', ...over })
+const conn = (over: Partial<Connection>): Connection => ({
+  baseUrl: 'https://gw.example.com',
+  authMode: 'none',
+  ...over
+})
 
 describe('authModeFromStatus', () => {
   it('maps auth_required=true to oauth (interactive default)', () => {

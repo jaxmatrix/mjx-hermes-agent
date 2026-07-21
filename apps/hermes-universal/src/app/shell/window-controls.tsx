@@ -19,17 +19,20 @@ export function WindowControls() {
   useEffect(() => {
     let active = true
     let unlisten: (() => void) | undefined
+
     const sync = () => {
       void win
         .isMaximized()
         .then(v => active && setMaximized(v))
         .catch(() => {})
     }
+
     sync()
     void win
       .onResized(sync)
       .then(fn => (active ? (unlisten = fn) : fn()))
       .catch(() => {})
+
     return () => {
       active = false
       unlisten?.()

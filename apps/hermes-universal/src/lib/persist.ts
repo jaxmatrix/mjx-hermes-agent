@@ -19,6 +19,7 @@ export function readKey(key: string): string | null {
 export function writeKey(key: string, value: string | null): void {
   if (value === null) {
     removeKey(key)
+
     return
   }
 

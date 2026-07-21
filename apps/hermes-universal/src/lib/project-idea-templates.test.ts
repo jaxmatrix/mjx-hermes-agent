@@ -7,6 +7,7 @@ describe('randomIdeaTemplates', () => {
     const picked = randomIdeaTemplates(6)
     expect(picked).toHaveLength(6)
     expect(new Set(picked.map(t => t.label)).size).toBe(6)
+
     for (const t of picked) {
       expect(PROJECT_IDEA_TEMPLATES).toContainEqual(t)
     }

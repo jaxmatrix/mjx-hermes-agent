@@ -15,35 +15,35 @@ import { selectableCardClass } from '@/lib/selectable-card'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import {
-  changeCloudOrg,
-  cloudSignIn,
-  cloudSignOut,
-  connectCloudAgent,
   $cloudAgents,
   $cloudConnectingId,
   $cloudDiscover,
   $cloudOrg,
   $cloudOrgs,
   $portalSignedIn,
+  changeCloudOrg,
   type CloudAgent,
+  cloudSignIn,
+  cloudSignOut,
+  connectCloudAgent,
   discoverCloud,
   refreshCloud,
-  selectCloudOrg,
+  selectCloudOrg
 } from '@/store/cloud'
 import {
-  connect,
-  connectLocal,
   $connection,
   $connectionPhase,
+  connect,
+  connectLocal,
   lastUrl,
   loadSavedLogin,
   normalizeBaseUrl,
   probeStatus,
-  signOut,
+  signOut
 } from '@/store/connection'
 import { type Connection, type GatewayMode } from '@/store/gateway-config'
-import { $gatewayMode, setGatewayMode } from '@/store/gateway-switch'
 import { saveGatewayTarget } from '@/store/gateway-restore'
+import { $gatewayMode, setGatewayMode } from '@/store/gateway-switch'
 import { notify, notifyError } from '@/store/notifications'
 
 // Shared gateway configurator — the single mode-grid + per-mode connect surface
@@ -70,7 +70,7 @@ function ModeCard({
   hint,
   icon: Icon,
   onSelect,
-  title,
+  title
 }: {
   active: boolean
   description: string
@@ -116,7 +116,7 @@ const CLOUD_STATUS_DOT: Record<string, string> = {
   active: 'bg-green-500',
   degraded: 'bg-yellow-500',
   down: 'bg-red-500',
-  unknown: 'bg-muted-foreground',
+  unknown: 'bg-muted-foreground'
 }
 
 const normalizeCloudUrl = (url: string) => url.trim().replace(/\/+$/, '').toLowerCase()
@@ -157,10 +157,14 @@ export function GatewayConfigurator({ variant = 'settings' }: { variant?: 'onboa
   useEffect(() => {
     let live = true
     void loadSavedLogin().then(saved => {
-      if (!live) return
+      if (!live) {
+        return
+      }
+
       const tok = saved?.token?.trim()
       setSavedTokenPreview(tok ? `••••${tok.slice(-4)}` : null)
     })
+
     return () => {
       live = false
     }
@@ -173,24 +177,37 @@ export function GatewayConfigurator({ variant = 'settings' }: { variant?: 'onboa
       setProbeState('idle')
       setAuthRequired(false)
       setProviders([])
+
       return
     }
 
     const seq = ++probeSeq.current
     setProbeState('probing')
+
     const timer = setTimeout(() => {
       void (async () => {
         try {
           const base = normalizeBaseUrl(trimmedUrl)
           const status = await probeStatus(base)
-          if (seq !== probeSeq.current) return
+
+          if (seq !== probeSeq.current) {
+            return
+          }
+
           const gated = Boolean(status.auth_required)
           setAuthRequired(gated)
           setProviders(gated ? await fetchAuthProviders(base).catch(() => []) : [])
-          if (seq !== probeSeq.current) return
+
+          if (seq !== probeSeq.current) {
+            return
+          }
+
           setProbeState('done')
         } catch {
-          if (seq !== probeSeq.current) return
+          if (seq !== probeSeq.current) {
+            return
+          }
+
           setAuthRequired(false)
           setProviders([])
           setProbeState('error')
@@ -203,15 +220,24 @@ export function GatewayConfigurator({ variant = 'settings' }: { variant?: 'onboa
 
   // On selecting cloud mode, read the portal session + auto-discover.
   useEffect(() => {
-    if (pendingMode === 'cloud') void refreshCloud()
+    if (pendingMode === 'cloud') {
+      void refreshCloud()
+    }
   }, [pendingMode])
 
   // Provider label + password detection (drives the sign-in copy).
   const providerLabel = useMemo(() => {
-    if (providers.length === 1) return providers[0].display_name || providers[0].name
-    if (providers.length > 1) return providers.map(p => p.display_name || p.name).join(' / ')
+    if (providers.length === 1) {
+      return providers[0].display_name || providers[0].name
+    }
+
+    if (providers.length > 1) {
+      return providers.map(p => p.display_name || p.name).join(' / ')
+    }
+
     return null
   }, [providers])
+
   const isPasswordProvider = useMemo(
     () => providers.length > 0 && providers.every(p => p.supports_password),
     [providers]
@@ -243,22 +269,29 @@ export function GatewayConfigurator({ variant = 'settings' }: { variant?: 'onboa
   // because $hasConnected stays latched. Re-throws for the caller's failure toast.
   const runConnect = (fn: () => Promise<void>): Promise<void> => {
     setGatewayMode(pendingMode)
+
     return fn()
   }
 
   const doConnectRemote = async () => {
     if (!trimmedUrl) {
       notify({ kind: 'warning', title: g.incompleteTitle, message: g.enterUrlFirst })
+
       return
     }
+
     setBusy(true)
     setLastTest(null)
+
     try {
       await runConnect(() =>
         connect({ url: trimmedUrl, token: authRequired ? undefined : remoteToken.trim() || undefined })
       )
       setRemoteToken('')
-      if (isSettings) notify({ kind: 'success', title: g.restartingTitle, message: g.restartingMessage })
+
+      if (isSettings) {
+        notify({ kind: 'success', title: g.restartingTitle, message: g.restartingMessage })
+      }
     } catch (err) {
       notifyError(err, g.applyFailed)
     } finally {
@@ -268,9 +301,13 @@ export function GatewayConfigurator({ variant = 'settings' }: { variant?: 'onboa
 
   const doConnectLocal = async () => {
     setBusy(true)
+
     try {
       await runConnect(() => connectLocal())
-      if (isSettings) notify({ kind: 'success', title: g.restartingTitle, message: g.restartingMessage })
+
+      if (isSettings) {
+        notify({ kind: 'success', title: g.restartingTitle, message: g.restartingMessage })
+      }
     } catch (err) {
       notifyError(err, g.applyFailed)
     } finally {
@@ -286,18 +323,26 @@ export function GatewayConfigurator({ variant = 'settings' }: { variant?: 'onboa
   const doSaveForRestart = async () => {
     if (pendingMode === 'remote' && !trimmedUrl) {
       notify({ kind: 'warning', title: g.incompleteTitle, message: g.enterUrlFirst })
+
       return
     }
+
     setBusy(true)
+
     try {
       setGatewayMode(pendingMode)
+
       if (pendingMode === 'local') {
         saveGatewayTarget({ mode: 'local', profile: null })
       } else if (pendingMode === 'remote') {
         saveGatewayTarget({ mode: 'remote', url: trimmedUrl })
         const token = remoteToken.trim()
-        if (token) await saveSecrets({ token })
+
+        if (token) {
+          await saveSecrets({ token })
+        }
       }
+
       notify({ kind: 'success', title: g.savedTitle, message: g.savedMessage })
     } catch (err) {
       notifyError(err, g.saveFailed)
@@ -308,6 +353,7 @@ export function GatewayConfigurator({ variant = 'settings' }: { variant?: 'onboa
 
   const doSignOut = async () => {
     setBusy(true)
+
     try {
       await signOut()
       notify({ kind: 'success', title: g.signedOutTitle, message: g.signedOutMessage })
@@ -321,10 +367,13 @@ export function GatewayConfigurator({ variant = 'settings' }: { variant?: 'onboa
   const testRemote = async () => {
     if (!trimmedUrl) {
       notify({ kind: 'warning', title: g.incompleteTitle, message: g.enterUrlFirst })
+
       return
     }
+
     setTesting(true)
     setLastTest(null)
+
     try {
       const status = await probeStatus(trimmedUrl)
       const version = typeof status.version === 'string' ? status.version : undefined
@@ -524,7 +573,7 @@ export function GatewayConfigurator({ variant = 'settings' }: { variant?: 'onboa
 function CloudPanel({
   connectAgent,
   connection,
-  g,
+  g
 }: {
   connectAgent: (agent: CloudAgent) => Promise<void>
   connection: Connection | null
@@ -540,11 +589,13 @@ function CloudPanel({
 
   const connectedCloudUrl =
     connection?.mode === 'cloud' && connection.baseUrl ? normalizeCloudUrl(connection.baseUrl) : ''
+
   const isConnectedAgent = (agent: CloudAgent) =>
     Boolean(connectedCloudUrl && agent.dashboardUrl && normalizeCloudUrl(agent.dashboardUrl) === connectedCloudUrl)
 
   const doCloudSignOut = async () => {
     setSigning(true)
+
     try {
       await cloudSignOut()
       notify({ kind: 'success', title: g.cloudSignedOutTitle, message: g.cloudSignedOutMessage })
@@ -555,6 +606,7 @@ function CloudPanel({
 
   const doCloudSignIn = async () => {
     setSigning(true)
+
     try {
       await cloudSignIn()
     } finally {
@@ -657,6 +709,7 @@ function CloudPanel({
               <div className="grid gap-1">
                 {agents.map(agent => {
                   const connected = isConnectedAgent(agent)
+
                   return (
                     <div
                       className={cn('rounded-md px-2', connected && 'bg-primary/5 ring-1 ring-primary/25')}

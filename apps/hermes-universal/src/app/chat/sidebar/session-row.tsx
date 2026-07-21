@@ -2,10 +2,10 @@ import type * as React from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
-import { useI18n, type Translations } from '@/i18n'
+import { type Translations, useI18n } from '@/i18n'
+import { triggerHaptic } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
-import { triggerHaptic } from '@/lib/haptics'
 import { $attentionSessionIds } from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 
@@ -38,11 +38,19 @@ function formatAge(seconds: number, r: Translations['sidebar']['row']): string {
   const ms = Date.now() - (seconds < 1e12 ? seconds * 1000 : seconds)
   const minutes = Math.floor(ms / 60_000)
 
-  if (minutes < 1) return r.ageNow
-  if (minutes < 60) return `${minutes}${r[AGE_KEY.minute]}`
+  if (minutes < 1) {
+    return r.ageNow
+  }
+
+  if (minutes < 60) {
+    return `${minutes}${r[AGE_KEY.minute]}`
+  }
 
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}${r[AGE_KEY.hour]}`
+
+  if (hours < 24) {
+    return `${hours}${r[AGE_KEY.hour]}`
+  }
 
   return `${Math.floor(hours / 24)}${r[AGE_KEY.day]}`
 }
@@ -135,6 +143,7 @@ export function SidebarSessionRow({
               event.stopPropagation()
               void triggerHaptic('selection')
               onPin()
+
               return
             }
 

@@ -8,7 +8,18 @@ const DEFAULT_FRAME_H = 208
 const DEFAULT_FRAMES = 6
 const DEFAULT_LOOP_MS = 1100
 const DEFAULT_SCALE = 0.33
-const DEFAULT_ROWS = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review']
+
+const DEFAULT_ROWS = [
+  'idle',
+  'running-right',
+  'running-left',
+  'waving',
+  'jumping',
+  'failed',
+  'waiting',
+  'running',
+  'review'
+]
 
 /**
  * Pick the running row + mirror for a horizontal travel direction.
@@ -35,9 +46,11 @@ export function roamWalkRow(dir: -1 | 0 | 1, stateRows?: string[]): { row?: stri
     if (hasLeft) {
       return { mirror: true, row: 'running-left' }
     }
+
     if (hasRight) {
       return { mirror: false, row: 'running-right' }
     }
+
     return { mirror: false }
   }
 
@@ -45,9 +58,11 @@ export function roamWalkRow(dir: -1 | 0 | 1, stateRows?: string[]): { row?: stri
   if (hasRight) {
     return { mirror: true, row: 'running-right' }
   }
+
   if (hasLeft) {
     return { mirror: false, row: 'running-left' }
   }
+
   return { mirror: true }
 }
 
@@ -78,10 +93,13 @@ export function PetSprite({
 
   useEffect(() => {
     const canvas = canvasRef.current
+
     if (!canvas || !enabled || !info.spritesheetBase64) {
       return
     }
+
     const ctx = canvas.getContext('2d')
+
     if (!ctx) {
       return
     }
@@ -98,12 +116,15 @@ export function PetSprite({
 
     const rowFor = (s: 'idle' | 'run') => {
       const keys = s === 'run' ? ['running-right', 'running', 'run'] : ['idle']
+
       for (const k of keys) {
         const i = rows.indexOf(k)
+
         if (i >= 0) {
           return { index: i, key: k }
         }
       }
+
       return { index: 0, key: 'idle' }
     }
 
@@ -121,29 +142,49 @@ export function PetSprite({
       const ovIdx = override ? rows.indexOf(override) : -1
       const { index, key } = ovIdx >= 0 ? { index: ovIdx, key: override! } : rowFor(stateRef.current)
       const count = Math.max(1, info.framesByState?.[key] ?? info.framesPerState ?? DEFAULT_FRAMES)
+
       if (index !== activeRow) {
         activeRow = index
         frame = 0
         last = now
       }
+
       if (now - last >= loopMs / count) {
         frame = (frame + 1) % count
         last = now
       }
+
       ctx.clearRect(0, 0, drawW, drawH)
+
       if (img.complete && img.naturalWidth > 0) {
         ctx.imageSmoothingEnabled = false
         ctx.drawImage(img, frame * frameW, index * frameH, frameW, frameH, 0, 0, drawW, drawH)
       }
+
       raf = requestAnimationFrame(draw)
     }
+
     raf = requestAnimationFrame(draw)
 
     return () => cancelAnimationFrame(raf)
-  }, [enabled, info.spritesheetBase64, info.spritesheetRevision, info.mime, info.frameW, info.frameH, info.loopMs, info.scale, info.framesPerState, info.stateRows, info.framesByState, zoom])
+  }, [
+    enabled,
+    info.spritesheetBase64,
+    info.spritesheetRevision,
+    info.mime,
+    info.frameW,
+    info.frameH,
+    info.loopMs,
+    info.scale,
+    info.framesPerState,
+    info.stateRows,
+    info.framesByState,
+    zoom
+  ])
 
   if (!enabled) {
     return null
   }
+
   return <canvas className="[image-rendering:pixelated]" ref={canvasRef} />
 }

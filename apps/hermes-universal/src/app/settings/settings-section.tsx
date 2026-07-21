@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom'
 
+import { PetSection } from '@/app/pet/pet-section'
 import { useI18n } from '@/i18n'
 import { ChevronLeft } from '@/lib/icons'
 
@@ -8,17 +9,15 @@ import { AppearanceSection } from './appearance-section'
 import { ArchivedSection } from './archived-section'
 import { ConfigSection } from './config-section'
 import { GatewaySection } from './gateway-section'
+import { KeybindSettings } from './keybind-settings'
 import { KeysSection } from './keys-section'
 import { MemorySection } from './memory-section'
 import { ModelSection } from './model-section'
-import { PetSection } from '@/app/pet/pet-section'
-import { ProvidersSection } from './providers-section'
-import { VoiceSection } from './voice-section'
-
 import { NotificationsSection } from './notifications-section'
-import { KeybindSettings } from './keybind-settings'
 import { EmptyState, SettingsContent } from './primitives'
+import { ProvidersSection } from './providers-section'
 import { useSettingsNav } from './settings-nav'
+import { VoiceSection } from './voice-section'
 
 // The per-section body. Each Track-J chunk replaces its placeholder case with a
 // real renderer (Jc8 appearance, Jc9 notifications, Jc10 keys, …). Exported so
@@ -33,8 +32,11 @@ export function SectionBody({ section }: { section: string }) {
   switch (group) {
     // Schema-driven config sections (Jc4).
     case 'chat':
+
     case 'workspace':
+
     case 'safety':
+
     case 'advanced':
       return <ConfigSection sectionId={group} />
 
@@ -85,6 +87,7 @@ export function SectionBody({ section }: { section: string }) {
     // Archived chats (Jc11). `sessions` is the desktop nav id; until the full
     // Sessions page lands it renders the archived list (its current subset).
     case 'archived':
+
     case 'sessions':
       return <ArchivedSection />
 

@@ -31,6 +31,7 @@ function ResetToDefaults() {
 
   const reset = async () => {
     setBusy(true)
+
     try {
       const defaults = await getHermesConfigDefaults()
       await saveHermesConfig(defaults)
@@ -86,10 +87,11 @@ export function SettingsIndex() {
         <div className="pt-1">
           {nav.map(entry => {
             const Icon = entry.icon
+
             return (
               <Link
-                key={entry.id}
                 className="flex items-center gap-3 border-b border-border/60 py-3.5 text-sm text-foreground transition-colors last:border-b-0 hover:text-primary"
+                key={entry.id}
                 to={`/settings/${entry.id}`}
               >
                 <Icon className="size-5 shrink-0 text-muted-foreground" />

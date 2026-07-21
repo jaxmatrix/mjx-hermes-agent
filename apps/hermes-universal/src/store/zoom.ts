@@ -11,6 +11,7 @@ export const ZOOM_MAX = 200
 const numberCodec: Codec<number> = {
   decode: raw => {
     const n = Number(raw)
+
     return Number.isFinite(n) ? n : 100
   },
   encode: value => String(value)
@@ -23,6 +24,7 @@ export async function applyZoom(percent: number): Promise<void> {
   if (!IS_TAURI) {
     return
   }
+
   try {
     const { getCurrentWebview } = await import('@tauri-apps/api/webview')
     await getCurrentWebview().setZoom(percent / 100)

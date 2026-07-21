@@ -26,6 +26,7 @@ function persistString(key: string, value: string): void {
 
 function storedBoolean(key: string, fallback: boolean): boolean {
   const raw = storedString(key)
+
   return raw === null ? fallback : raw === 'true'
 }
 

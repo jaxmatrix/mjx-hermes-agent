@@ -23,7 +23,9 @@ describe('voice-prefs (auto-speak)', () => {
     load.mockResolvedValueOnce({ voice: { provider: 'edge' }, model: 'x' } as never)
     await setAutoSpeakReplies(true)
     expect($autoSpeakReplies.get()).toBe(true)
-    expect(save).toHaveBeenCalledWith(expect.objectContaining({ model: 'x', voice: expect.objectContaining({ provider: 'edge', auto_tts: true }) }))
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'x', voice: expect.objectContaining({ provider: 'edge', auto_tts: true }) })
+    )
   })
 
   it('reverts optimistically when the config write fails', async () => {

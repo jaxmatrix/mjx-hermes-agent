@@ -1,24 +1,39 @@
 import { useCallback, useEffect } from 'react'
 
 import { ApprovalBar } from '@/app/chat/approval-bar'
-import { pickAttachment, pickFolderAttachment, type StagedAttachment, stagedToComposerAttachment } from '@/app/chat/attachments'
+import {
+  pickAttachment,
+  pickFolderAttachment,
+  type StagedAttachment,
+  stagedToComposerAttachment
+} from '@/app/chat/attachments'
 import { ChatDropOverlay } from '@/app/chat/chat-drop-overlay'
 import { ChatHeader } from '@/app/chat/chat-header'
 import { ClarifyBar } from '@/app/chat/clarify-bar'
 import { ChatBar } from '@/app/chat/composer'
 import { ChatRuntimeProvider } from '@/app/chat/runtime'
 import { ScrollToBottomButton } from '@/app/chat/scroll-to-bottom-button'
-import { useFileDrop } from '@/app/chat/use-file-drop'
 import { SecretBar } from '@/app/chat/secret-bar'
 import { SudoBar } from '@/app/chat/sudo-bar'
-import { transcribeAudio } from '@/hermes'
+import { useFileDrop } from '@/app/chat/use-file-drop'
 import { ModelMenuPanel } from '@/app/shell/model-menu-panel'
 import { Thread } from '@/components/assistant-ui/thread/thread'
+import { transcribeAudio } from '@/hermes'
+import { triggerHaptic } from '@/lib/haptics'
 import { useStore } from '@/store/atom'
-import { $busy, $currentCwd, $sessionId, $statusLine, $approval, $clarify, $secret, $sudo, sendPrompt } from '@/store/chat'
+import {
+  $approval,
+  $busy,
+  $clarify,
+  $currentCwd,
+  $secret,
+  $sessionId,
+  $statusLine,
+  $sudo,
+  sendPrompt
+} from '@/store/chat'
 import { type ComposerAttachment, mainComposerScope } from '@/store/composer'
 import { $gatewayState, getGatewayClient, requestGateway } from '@/store/gateway'
-import { triggerHaptic } from '@/lib/haptics'
 import { $currentModel, $currentProvider, refreshCurrentModel, selectModel } from '@/store/model'
 import { useSkinCommand } from '@/themes'
 
@@ -62,9 +77,11 @@ export function ChatScreen() {
   const onSubmit = useCallback(
     async (text: string, options?: { attachments?: ComposerAttachment[] }): Promise<boolean> => {
       const skin = text.match(/^\/skin(?:\s+(.*))?$/i)
+
       if (skin) {
         void triggerHaptic('success')
         runSkin(skin[1] ?? '')
+
         return true
       }
 
@@ -76,6 +93,7 @@ export function ChatScreen() {
       }
 
       await sendPrompt(full)
+
       return true
     },
     [runSkin]
@@ -85,6 +103,7 @@ export function ChatScreen() {
   // session.interrupt simply rejects and the turn keeps running.
   const onCancel = useCallback(() => {
     const sid = $sessionId.get()
+
     if (sid) {
       void requestGateway('session.interrupt', { session_id: sid }).catch(() => {})
     }
@@ -104,6 +123,7 @@ export function ChatScreen() {
   const onTranscribeAudio = useCallback(async (audio: Blob): Promise<string> => {
     const dataUrl = await blobToDataUrl(audio)
     const res = await transcribeAudio(dataUrl, audio.type || undefined)
+
     return res.transcript ?? ''
   }, [])
 
@@ -125,9 +145,7 @@ export function ChatScreen() {
         <ScrollToBottomButton />
         {barsPresent && (
           <div className="composer-bars">
-            {busy && statusLine && (
-              <div className="pl-0.5 text-[0.8125rem] text-muted-foreground">{statusLine}</div>
-            )}
+            {busy && statusLine && <div className="pl-0.5 text-[0.8125rem] text-muted-foreground">{statusLine}</div>}
             {approval && <ApprovalBar request={approval} />}
             {clarify && <ClarifyBar request={clarify} />}
             {sudo && <SudoBar request={sudo} />}

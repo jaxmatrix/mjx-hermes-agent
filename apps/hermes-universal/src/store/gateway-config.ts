@@ -1,8 +1,4 @@
-import {
-  buildHermesWebSocketUrl,
-  type GatewayWsConnection,
-  resolveGatewayWsUrl,
-} from '@/gateway'
+import { buildHermesWebSocketUrl, type GatewayWsConnection, resolveGatewayWsUrl } from '@/gateway'
 import { type AuthProvider, mintWsTicket } from '@/lib/auth'
 
 // Reconciled gateway model (D5.a) — the single source of truth for how the app
@@ -71,10 +67,13 @@ export interface GatedAuthChoice {
  *  falling back to the first advertised, else the conventional `nous`. Pure. */
 export function chooseGatedAuth(providers: AuthProvider[], hasPasswordCreds: boolean): GatedAuthChoice {
   const passwordProvider = providers.find(p => p.supports_password)
+
   if (hasPasswordCreds && passwordProvider) {
     return { authMode: 'ticket', provider: passwordProvider.name }
   }
+
   const oauthProvider = providers.find(p => !p.supports_password) ?? providers[0]
+
   return { authMode: 'oauth', provider: oauthProvider?.name ?? 'nous' }
 }
 
@@ -84,11 +83,18 @@ const WS_PATH = '/api/ws'
  *  from the session cookie the Rust jar holds. Used by both `ticket` and `oauth`. */
 export function ticketMintDeps(baseUrl: string): { getGatewayWsUrl: (profile?: null | string) => Promise<string> } {
   const u = new URL(baseUrl)
+
   return {
     getGatewayWsUrl: async (): Promise<string> => {
       const ticket = await mintWsTicket(baseUrl)
-      return buildHermesWebSocketUrl({ protocol: u.protocol, host: u.host, path: WS_PATH, authParam: ['ticket', ticket] })
-    },
+
+      return buildHermesWebSocketUrl({
+        protocol: u.protocol,
+        host: u.host,
+        path: WS_PATH,
+        authParam: ['ticket', ticket]
+      })
+    }
   }
 }
 
@@ -97,19 +103,24 @@ export function ticketMintDeps(baseUrl: string): { getGatewayWsUrl: (profile?: n
  *  `GatewayReauthRequiredError` (→ re-open sign-in) rather than silently degrading. */
 export async function resolveWsUrl(conn: Connection): Promise<string> {
   const u = new URL(conn.baseUrl)
+
   const build = (authParam?: readonly [string, string]): string =>
     buildHermesWebSocketUrl({ protocol: u.protocol, host: u.host, path: WS_PATH, authParam })
 
   switch (conn.authMode) {
     case 'none':
       return build()
+
     case 'token':
       return conn.token ? build(['token', conn.token]) : build()
     case 'oauth': {
       const wsConn: GatewayWsConnection = { authMode: 'oauth', profile: conn.profile ?? null, wsUrl: build() }
+
       return resolveGatewayWsUrl(ticketMintDeps(conn.baseUrl), wsConn)
     }
+
     case 'ticket':
+
     default:
       // Mint directly and throw on failure (no ticketless fallback — a gated
       // backend would reject it at the handshake anyway).
@@ -124,20 +135,25 @@ const SHELL_PTY_PATH = '/api/shell-pty'
  *  args (e.g. `{ cwd }`). Mirrors `resolveWsUrl`. */
 export async function resolveTerminalWsUrl(conn: Connection, params: Record<string, string> = {}): Promise<string> {
   const u = new URL(conn.baseUrl)
+
   const build = (authParam?: readonly [string, string]): string =>
     buildHermesWebSocketUrl({ protocol: u.protocol, host: u.host, path: SHELL_PTY_PATH, authParam, params })
 
   switch (conn.authMode) {
     case 'none':
       return build()
+
     case 'token':
       return conn.token ? build(['token', conn.token]) : build()
     case 'oauth': {
       const mint = { getGatewayWsUrl: async () => build(['ticket', await mintWsTicket(conn.baseUrl)]) }
       const wsConn: GatewayWsConnection = { authMode: 'oauth', profile: conn.profile ?? null, wsUrl: build() }
+
       return resolveGatewayWsUrl(mint, wsConn)
     }
+
     case 'ticket':
+
     default:
       return build(['ticket', await mintWsTicket(conn.baseUrl)])
   }

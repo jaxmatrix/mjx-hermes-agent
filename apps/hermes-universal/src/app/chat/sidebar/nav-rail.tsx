@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
-import { appViewForPath, ARTIFACTS_ROUTE, MESSAGING_ROUTE, NEW_CHAT_ROUTE, SKILLS_ROUTE, type AppView } from '@/app/routes'
+import {
+  type AppView,
+  appViewForPath,
+  ARTIFACTS_ROUTE,
+  MESSAGING_ROUTE,
+  NEW_CHAT_ROUTE,
+  SKILLS_ROUTE
+} from '@/app/routes'
 import { Codicon } from '@/components/ui/codicon'
 import { KbdGroup } from '@/components/ui/kbd'
 import { useI18n } from '@/i18n'
@@ -53,9 +60,12 @@ export function SidebarNavRail({ variant, onNavigate }: { variant: 'pane' | 'she
     const onFlash = () => {
       setKbdFlash(true)
       const timer = window.setTimeout(() => setKbdFlash(false), 140)
+
       return () => window.clearTimeout(timer)
     }
+
     window.addEventListener(NEW_SESSION_FLASH_EVENT, onFlash)
+
     return () => window.removeEventListener(NEW_SESSION_FLASH_EVENT, onFlash)
   }, [])
 
@@ -98,7 +108,11 @@ export function SidebarNavRail({ variant, onNavigate }: { variant: 'pane' | 'she
               />
               <span className="min-w-0 flex-1 truncate">{label}</span>
               {isNewSession && (
-                <KbdGroup className={cn('ml-auto opacity-55', kbdFlash && 'opacity-100!')} keys={NEW_SESSION_KBD} size="sm" />
+                <KbdGroup
+                  className={cn('ml-auto opacity-55', kbdFlash && 'opacity-100!')}
+                  keys={NEW_SESSION_KBD}
+                  size="sm"
+                />
               )}
             </button>
           )

@@ -6,8 +6,11 @@ import '@testing-library/jest-dom/vitest'
 // while opening. Stub them so component tests can drive those overlays.
 if (typeof Element !== 'undefined') {
   Element.prototype.hasPointerCapture ??= () => false
+
   Element.prototype.setPointerCapture ??= () => {}
+
   Element.prototype.releasePointerCapture ??= () => {}
+
   Element.prototype.scrollIntoView ??= () => {}
 }
 

@@ -52,23 +52,31 @@ export const $cloudConnectingId = atom<string | null>(null)
 
 const portalStatus = () => invoke<PortalStatus>('portal_status')
 const portalLogin = () => invoke<PortalStatus>('portal_login')
-const portalDiscover = (org?: string | null) =>
-  invoke<DiscoverResult>('portal_discover_agents', { org: org ?? null })
+
+const portalDiscover = (org?: string | null) => invoke<DiscoverResult>('portal_discover_agents', { org: org ?? null })
 
 function applyDiscover(result: DiscoverResult): void {
   if (result.needsLogin) {
     $portalSignedIn.set(false)
     $cloudDiscover.set('idle')
+
     return
   }
+
   if (result.needsOrgSelection) {
     $cloudOrgs.set(result.orgs)
     $cloudDiscover.set('done')
+
     return
   }
+
   $cloudAgents.set(result.agents)
   $cloudOrg.set(result.org ?? null)
-  if (result.org) $cloudOrgs.set([])
+
+  if (result.org) {
+    $cloudOrgs.set([])
+  }
+
   $cloudDiscover.set('done')
 }
 
@@ -76,6 +84,7 @@ function applyDiscover(result: DiscoverResult): void {
 export async function discoverCloud(org?: string | null): Promise<void> {
   $cloudError.set(null)
   $cloudDiscover.set('loading')
+
   try {
     applyDiscover(await portalDiscover(org))
   } catch (err) {
@@ -87,10 +96,14 @@ export async function discoverCloud(org?: string | null): Promise<void> {
 /** On entering cloud mode: check the portal session, then discover if signed in. */
 export async function refreshCloud(): Promise<void> {
   $cloudError.set(null)
+
   try {
     const status = await portalStatus()
     $portalSignedIn.set(status.signedIn)
-    if (status.signedIn) await discoverCloud()
+
+    if (status.signedIn) {
+      await discoverCloud()
+    }
   } catch (err) {
     $cloudError.set(err instanceof Error ? err.message : String(err))
   }
@@ -99,10 +112,14 @@ export async function refreshCloud(): Promise<void> {
 /** Interactive portal sign-in, then discover. */
 export async function cloudSignIn(): Promise<void> {
   $cloudError.set(null)
+
   try {
     const status = await portalLogin()
     $portalSignedIn.set(status.signedIn)
-    if (status.signedIn) await discoverCloud()
+
+    if (status.signedIn) {
+      await discoverCloud()
+    }
   } catch (err) {
     $cloudError.set(err instanceof Error ? err.message : String(err))
   }
@@ -129,6 +146,7 @@ export async function changeCloudOrg(): Promise<void> {
 /** Sign out of the Nous portal and clear all discovery state. */
 export async function cloudSignOut(): Promise<void> {
   $cloudError.set(null)
+
   try {
     await portalLogout()
   } catch (err) {
@@ -146,17 +164,29 @@ export async function cloudSignOut(): Promise<void> {
 export async function connectCloudAgent(agent: CloudAgent): Promise<void> {
   if (!agent.dashboardUrl) {
     $cloudError.set('This agent has no reachable dashboard yet.')
+
     return
   }
+
   $cloudError.set(null)
   $cloudConnectingId.set(agent.id)
+
   try {
     const result = await portalAgentSignIn(agent.dashboardUrl)
-    if (!result.connected) throw new Error('Could not sign in to this agent')
+
+    if (!result.connected) {
+      throw new Error('Could not sign in to this agent')
+    }
+
     await connectCloud(result.baseUrl)
     // Enrich the saved restore target (connectCloud persisted the baseUrl) with the
     // agent id/name so the boot connecting screen can label it (D8).
-    saveGatewayTarget({ mode: 'cloud', cloudBaseUrl: result.baseUrl, cloudAgentId: agent.id, cloudAgentName: agent.name })
+    saveGatewayTarget({
+      mode: 'cloud',
+      cloudBaseUrl: result.baseUrl,
+      cloudAgentId: agent.id,
+      cloudAgentName: agent.name
+    })
   } catch (err) {
     $cloudError.set(err instanceof Error ? err.message : String(err))
   } finally {
