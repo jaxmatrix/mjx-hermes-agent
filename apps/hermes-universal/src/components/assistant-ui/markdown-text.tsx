@@ -7,26 +7,33 @@ import {
   tailBoundedRemend
 } from '@assistant-ui/react-streamdown'
 import { code } from '@streamdown/code'
-import { createMathPlugin } from '@streamdown/math'
 import { type ComponentProps, memo, useMemo } from 'react'
 
 import { ExpandableBlock } from '@/components/chat/expandable-block'
 import { chunkByLines, SyntaxHighlighter } from '@/components/chat/shiki-highlighter'
 import { ZoomableImage } from '@/components/chat/zoomable-image'
 import { normalizeExternalUrl, openExternalLink, PrettyLink } from '@/lib/external-link'
+import { createMemoizedMathPlugin } from '@/lib/katex-memo'
 import { preprocessMarkdown } from '@/lib/markdown-preprocess'
 import { cn } from '@/lib/utils'
 
 import { detectEmbed, extractAlert, MarkdownAlert, RichCodeBlock, UrlEmbed } from './embeds'
 
-// Math rendering plugin (KaTeX). `singleDollarTextMath: true` enables `$x^2$`
-// inline math (the de-facto LLM convention).
+// Math rendering plugin (KaTeX). Configured once at module scope — the plugin
+// is stateless beyond its internal cache, so re-creating it per render would
+// only thrash that cache.
 //
-// FIXME(chat-port): desktop uses a memoized rehype-katex wrapper (lib/katex-memo)
-// that re-renders only changed equations during streaming. That pulls in
-// remark-math + hast utils for a streaming perf win with byte-identical output;
-// deferred. The stock @streamdown/math plugin renders identically.
-const mathPlugin = createMathPlugin({ singleDollarTextMath: true })
+// The memoizing rehype-katex wrapper (lib/katex-memo, ported from desktop)
+// keys every equation on (displayMode, source) in a process-global LRU. The
+// stock @streamdown/math plugin re-runs KaTeX over EVERY equation on every
+// markdown commit — each streaming token, and each remount (session switch,
+// message-list churn) — so a math-heavy transcript pays the full render cost
+// again and again. Memoized, the steady-state work is proportional to "new
+// equations arriving" instead of "equations × commits".
+//
+// `singleDollarTextMath: true` enables `$x^2$` inline math (the de-facto LLM
+// convention); the default only accepts `$$…$$`.
+const mathPlugin = createMemoizedMathPlugin({ singleDollarTextMath: true })
 
 // Replaces Streamdown's `parseIncompleteMarkdown` (full-text remend per flush)
 // with a tail-bounded repair over our own preprocessing. Module-scope so the

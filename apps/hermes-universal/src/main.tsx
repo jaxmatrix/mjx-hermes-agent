@@ -6,6 +6,7 @@ import { App } from './app'
 import { ErrorBoundary } from './components/error-boundary'
 import { HapticsProvider } from './components/haptics-provider'
 import { I18nProvider } from './i18n'
+import { warmKatexFonts } from './lib/katex-fonts'
 import { queryClient } from './lib/query-client'
 import { restoreSessionCookies } from './lib/session-persist'
 import { autoRestoreConnection } from './store/gateway-restore'
@@ -23,6 +24,11 @@ import './styles.css'
 void restoreSessionCookies().finally(() => {
   void autoRestoreConnection()
 })
+
+// Pull KaTeX's faces in at idle. They are `font-display: block`, so the first
+// equation of a session otherwise renders INVISIBLE until they land (see
+// lib/katex-fonts).
+warmKatexFonts()
 
 const container = document.getElementById('root')
 if (!container) {

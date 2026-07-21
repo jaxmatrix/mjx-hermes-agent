@@ -50,9 +50,6 @@ importers:
       '@streamdown/code':
         specifier: ^1.1.1
         version: 1.1.1(react@19.2.7)
-      '@streamdown/math':
-        specifier: ^1.0.2
-        version: 1.0.2(react@19.2.7)
       '@streamdown/mermaid':
         specifier: ^1.0.2
         version: 1.0.2(react@19.2.7)
@@ -119,6 +116,12 @@ importers:
       dompurify:
         specifier: ^3.4.11
         version: 3.4.12
+      hast-util-from-html-isomorphic:
+        specifier: ^2.0.0
+        version: 2.0.0
+      hast-util-to-text:
+        specifier: ^4.0.2
+        version: 4.0.2
       ignore:
         specifier: ^7.0.6
         version: 7.0.6
@@ -149,6 +152,9 @@ importers:
       react-shiki:
         specifier: ^0.9.3
         version: 0.9.3(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      remark-math:
+        specifier: ^6.0.0
+        version: 6.0.0
       shiki:
         specifier: ^4.3.1
         version: 4.3.1
@@ -161,9 +167,18 @@ importers:
       unicode-animations:
         specifier: ^1.0.3
         version: 1.0.3
+      unified:
+        specifier: ^11.0.5
+        version: 11.0.5
+      unist-util-visit-parents:
+        specifier: ^6.0.2
+        version: 6.0.2
       use-stick-to-bottom:
         specifier: ^1.1.6
         version: 1.1.6(react@19.2.7)
+      vfile:
+        specifier: ^6.0.3
+        version: 6.0.3
       web-haptics:
         specifier: ^0.0.6
         version: 0.0.6(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -186,6 +201,9 @@ importers:
       '@types/d3-force':
         specifier: ^3.0.10
         version: 3.0.10
+      '@types/hast':
+        specifier: ^3.0.5
+        version: 3.0.5
       '@types/react':
         specifier: ^19.2.14
         version: 19.2.17
@@ -4859,6 +4877,7 @@ snapshots:
       remark-math: 6.0.0
     transitivePeerDependencies:
       - supports-color
+    optional: true
 
   '@streamdown/mermaid@1.0.2(react@19.2.7)':
     dependencies:
@@ -6614,6 +6633,7 @@ snapshots:
       katex: 0.16.47
       unist-util-visit-parents: 6.0.2
       vfile: 6.0.3
+    optional: true
 
   rehype-raw@7.0.0:
     dependencies:
