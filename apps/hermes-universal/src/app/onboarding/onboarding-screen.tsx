@@ -3,14 +3,14 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
-import { ChevronLeft, ChevronRight } from '@/lib/icons'
 import { openExternalLink } from '@/lib/external-link'
+import { ChevronLeft, ChevronRight } from '@/lib/icons'
 import { useStore } from '@/store/atom'
 import {
+  $onboarding,
   backToPicker,
   chooseLater,
   confirmModel,
-  $onboarding,
   saveApiKey,
   selectApiKeyProvider,
   startProviderOAuth,
@@ -54,22 +54,26 @@ function Picker() {
       <div className="flex flex-col gap-2">
         {oauthProviders.map(provider => (
           <button
-            key={provider.id}
             className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary"
+            key={provider.id}
             onClick={() => void startProviderOAuth(provider)}
             type="button"
           >
             <span className="min-w-0 flex-1">
-              <span className="truncate text-sm font-medium text-foreground">{t.onboarding.signInWith(provider.name)}</span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">{t.onboarding.flowSubtitles[provider.flow]}</span>
+              <span className="truncate text-sm font-medium text-foreground">
+                {t.onboarding.signInWith(provider.name)}
+              </span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                {t.onboarding.flowSubtitles[provider.flow]}
+              </span>
             </span>
             <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
           </button>
         ))}
         {options.map(option => (
           <button
-            key={option.id}
             className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary"
+            key={option.id}
             onClick={() => selectApiKeyProvider(option)}
             type="button"
           >
@@ -107,13 +111,18 @@ function ApiKeyForm({ option }: { option: ApiKeyOption | null }) {
   if (!option) {
     return null
   }
+
   const isLocal = option.envKey === LOCAL_ENV_KEY
 
   const submit = () => void saveApiKey(option, value, isLocal ? localApiKey : undefined)
 
   return (
     <div className="flex flex-1 flex-col">
-      <button className="-ml-1 mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground" onClick={() => backToPicker()} type="button">
+      <button
+        className="-ml-1 mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground"
+        onClick={() => backToPicker()}
+        type="button"
+      >
         <ChevronLeft className="size-4" />
         {t.onboarding.backToSignIn}
       </button>
@@ -161,6 +170,7 @@ function OAuthPanel() {
   const state = useStore($onboarding)
   const [code, setCode] = useState('')
   const oauth = state.oauth
+
   if (!oauth) {
     return null
   }
@@ -170,7 +180,11 @@ function OAuthPanel() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <button className="-ml-1 mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground" onClick={() => backToPicker()} type="button">
+      <button
+        className="-ml-1 mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground"
+        onClick={() => backToPicker()}
+        type="button"
+      >
         <ChevronLeft className="size-4" />
         {t.onboarding.pickDifferentProvider}
       </button>
@@ -196,7 +210,12 @@ function OAuthPanel() {
         <>
           <p className="mt-3 text-sm text-muted-foreground">{t.onboarding.openedBrowser(providerName)}</p>
           <p className="text-sm text-muted-foreground">{t.onboarding.copyAuthCode}</p>
-          <Input className="mt-3" onChange={e => setCode(e.target.value)} placeholder={t.onboarding.pasteAuthCode} value={code} />
+          <Input
+            className="mt-3"
+            onChange={e => setCode(e.target.value)}
+            placeholder={t.onboarding.pasteAuthCode}
+            value={code}
+          />
         </>
       )}
 
@@ -207,7 +226,11 @@ function OAuthPanel() {
       </Button>
 
       {oauth.flow === 'pkce' && (
-        <Button className="mt-auto w-full" disabled={state.busy || !code.trim()} onClick={() => void submitOnboardingCode(code)}>
+        <Button
+          className="mt-auto w-full"
+          disabled={state.busy || !code.trim()}
+          onClick={() => void submitOnboardingCode(code)}
+        >
           {state.busy ? t.onboarding.connecting : t.common.continue}
         </Button>
       )}
@@ -221,10 +244,16 @@ function ConfirmModel() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{t.onboarding.defaultModel}</div>
+      <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+        {t.onboarding.defaultModel}
+      </div>
       <div className="mt-1 rounded-lg border border-border bg-card p-3">
-        <div className="text-sm font-medium text-foreground">{state.recommended?.model ?? t.onboarding.recommended}</div>
-        {state.recommended?.provider && <div className="text-xs text-muted-foreground">{state.recommended.provider}</div>}
+        <div className="text-sm font-medium text-foreground">
+          {state.recommended?.model ?? t.onboarding.recommended}
+        </div>
+        {state.recommended?.provider && (
+          <div className="text-xs text-muted-foreground">{state.recommended.provider}</div>
+        )}
       </div>
 
       {state.error && <p className="mt-2 text-xs text-destructive">{state.error}</p>}

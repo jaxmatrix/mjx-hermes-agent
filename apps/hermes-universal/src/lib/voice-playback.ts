@@ -1,9 +1,5 @@
 import { speakNow, stopSpeaking } from '@/lib/tts'
-import {
-  $voicePlayback,
-  resetVoicePlayback,
-  type VoicePlaybackSource
-} from '@/store/voice-playback'
+import { $voicePlayback, resetVoicePlayback, type VoicePlaybackSource } from '@/store/voice-playback'
 
 // Read-aloud driver. Mirrors desktop's `@/lib/voice-playback` contract closely
 // enough that the ported action-bar `ReadAloudItem` runs unchanged, but plays

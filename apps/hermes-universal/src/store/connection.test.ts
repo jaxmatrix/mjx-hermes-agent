@@ -12,6 +12,7 @@ vi.mock('@/lib/auth', () => ({
 }))
 vi.mock('@/store/gateway', async () => {
   const { atom } = await import('@/store/atom')
+
   return {
     connectGateway: vi.fn().mockResolvedValue(undefined),
     closeGateway: vi.fn(),
@@ -29,10 +30,18 @@ vi.mock('@/store/local-backend', () => ({
   stopLocalBackend: vi.fn().mockResolvedValue(undefined)
 }))
 
-import { fetchAuthProviders, oauthLogin, oauthLogout, oauthStatus, passwordLogin, portalAgentSignIn, portalLogout } from '@/lib/auth'
+import {
+  fetchAuthProviders,
+  oauthLogin,
+  oauthLogout,
+  oauthStatus,
+  passwordLogin,
+  portalAgentSignIn,
+  portalLogout
+} from '@/lib/auth'
 import { clearSecrets, saveSecrets } from '@/lib/secure-store'
-import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import { $gatewayState, connectGateway } from '@/store/gateway'
+import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import { httpRequest } from '@/transport/http'
 
 import { $connection, connect, connectCloud, connectLocal, disconnect, loadSavedLogin, signOut } from './connection'

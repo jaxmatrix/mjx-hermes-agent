@@ -17,8 +17,8 @@ import { getHermesConfigRecord, saveHermesConfig } from '@/hermes'
 import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 
-import { getNested } from './helpers'
 import { ConfigSection } from './config-section'
+import { getNested } from './helpers'
 
 const save = vi.mocked(saveHermesConfig)
 

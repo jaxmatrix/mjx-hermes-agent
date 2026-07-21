@@ -385,10 +385,24 @@ export interface SessionMessagesResponse {
 }
 
 export interface SessionResumeResponse {
+  // The turn that is STILL RUNNING on the gateway. Session history is committed
+  // only when a turn finishes, so on a mid-turn resume this snapshot is the only
+  // record of the live user/assistant pair (`_inflight_snapshot` in
+  // tui_gateway/server.py); `queued` is an accepted next-turn prompt still
+  // waiting in gateway memory.
+  inflight?: null | {
+    assistant?: string
+    streaming?: boolean
+    user?: string
+  }
   info?: SessionRuntimeInfo
   message_count: number
   messages: SessionMessage[]
+  queued?: null | {
+    user?: string
+  }
   resumed: string
+  running?: boolean
   session_id: string
 }
 

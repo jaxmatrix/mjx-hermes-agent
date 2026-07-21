@@ -15,17 +15,31 @@ import { cancelRestore, loadGatewayTarget } from '@/store/gateway-restore'
 /** Human label for the gateway being (re)connected to, for the status line. */
 function targetLabel(): string {
   const target = loadGatewayTarget()
-  if (!target) return 'Hermes'
-  if (target.mode === 'local') return 'the local backend'
+
+  if (!target) {
+    return 'Hermes'
+  }
+
+  if (target.mode === 'local') {
+    return 'the local backend'
+  }
+
   if (target.mode === 'cloud') {
-    if (target.cloudAgentName) return target.cloudAgentName
+    if (target.cloudAgentName) {
+      return target.cloudAgentName
+    }
+
     return hostOf(target.cloudBaseUrl) ?? 'Hermes Cloud'
   }
+
   return hostOf(target.url) ?? 'the remote gateway'
 }
 
 function hostOf(url?: string): null | string {
-  if (!url) return null
+  if (!url) {
+    return null
+  }
+
   try {
     return new URL(/^https?:\/\//i.test(url) ? url : `http://${url}`).host
   } catch {

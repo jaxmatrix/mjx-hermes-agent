@@ -1,5 +1,5 @@
-import { atom, computed, type ReadableAtom } from '@/store/atom'
 import { type Codec, persistentAtom } from '@/lib/persisted'
+import { atom, computed, type ReadableAtom } from '@/store/atom'
 
 // Tool-call display mode (mirrors desktop `store/tool-view.ts`). `product` hides
 // raw tool payloads; `technical` shows full input/output. Persisted per-device.

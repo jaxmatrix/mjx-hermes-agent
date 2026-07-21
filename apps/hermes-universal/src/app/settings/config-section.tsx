@@ -173,7 +173,12 @@ export function ConfigField({
 
   return row(
     isLong ? (
-      <Textarea className="min-h-24 resize-y" onChange={e => onChange(e.target.value)} placeholder={c.notSet} value={String(value ?? '')} />
+      <Textarea
+        className="min-h-24 resize-y"
+        onChange={e => onChange(e.target.value)}
+        placeholder={c.notSet}
+        value={String(value ?? '')}
+      />
     ) : (
       <Input onChange={e => onChange(e.target.value)} placeholder={c.notSet} value={String(value ?? '')} />
     ),
@@ -272,6 +277,7 @@ export function ConfigSection({
     }
 
     const section = SECTIONS.find(s => s.id === sectionId)
+
     return (section?.keys ?? []).flatMap(k => (schema[k] ? [[k, schema[k]] as [string, ConfigFieldSchema]] : []))
   }, [schema, sectionId])
 
@@ -304,7 +310,9 @@ export function ConfigSection({
     <SettingsContent>
       {headerSlot && <div className="pt-1">{headerSlot}</div>}
       {visibleFields.length === 0 ? (
-        headerSlot ? null : <EmptyState description={c.emptyDesc} title={c.emptyTitle} />
+        headerSlot ? null : (
+          <EmptyState description={c.emptyDesc} title={c.emptyTitle} />
+        )
       ) : (
         <div className="grid gap-1 pt-1">
           {visibleFields.map(([key, field]) => (

@@ -9,11 +9,7 @@ import { Codecs, persistentAtom } from '@/lib/persisted'
 // `cwd` field of the `session.create` RPC (store/chat.ts ensureSession), which the
 // gateway honors — cwd is a create-time param, not a backend-spawn one. Local mode
 // only: a local path is meaningless to a remote/cloud gateway.
-export const $defaultProjectDir = persistentAtom<null | string>(
-  'hermes.defaultProjectDir',
-  null,
-  Codecs.nullableText
-)
+export const $defaultProjectDir = persistentAtom<null | string>('hermes.defaultProjectDir', null, Codecs.nullableText)
 
 /** Set (or clear, with null) the default project directory. */
 export function setDefaultProjectDir(dir: null | string): void {
@@ -30,6 +26,10 @@ export function setDefaultProjectDir(dir: null | string): void {
  */
 export function cwdForNewSession(): string | undefined {
   const dir = $defaultProjectDir.get()?.trim()
-  if (!dir) return undefined
+
+  if (!dir) {
+    return undefined
+  }
+
   return loadString('hermes.gateway.mode') === 'local' ? dir : undefined
 }

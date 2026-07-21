@@ -37,6 +37,7 @@ export const setCronFocusJobId = (id: null | string) => $cronFocusJobId.set(id)
 export async function refreshCronJobs(): Promise<void> {
   $cronLoading.set(true)
   $cronLoadError.set(null)
+
   try {
     $cronJobs.set(await getCronJobs())
   } catch (err) {
@@ -54,6 +55,7 @@ function replace(job: CronJob) {
 export async function setCronEnabled(id: string, enabled: boolean): Promise<void> {
   const prev = $cronJobs.get()
   $cronJobs.set(prev.map(j => (j.id === id ? { ...j, enabled } : j)))
+
   try {
     const updated = enabled ? await resumeCronJob(id) : await pauseCronJob(id)
     replace(updated)
@@ -74,6 +76,7 @@ export async function triggerCron(id: string): Promise<void> {
 export async function removeCron(id: string): Promise<void> {
   const prev = $cronJobs.get()
   $cronJobs.set(prev.filter(j => j.id !== id))
+
   try {
     await deleteCronJob(id)
   } catch (err) {
@@ -83,19 +86,18 @@ export async function removeCron(id: string): Promise<void> {
 }
 
 /** Create a new job or update an existing one, then reflect it in the list. */
-export async function saveCron(
-  jobId: string | null,
-  payload: CronJobCreatePayload & CronJobUpdates
-): Promise<boolean> {
+export async function saveCron(jobId: string | null, payload: CronJobCreatePayload & CronJobUpdates): Promise<boolean> {
   try {
     if (jobId) {
       replace(await updateCronJob(jobId, payload))
     } else {
       $cronJobs.set([await createCronJob(payload), ...$cronJobs.get()])
     }
+
     return true
   } catch (err) {
     notifyError(err, jobId ? 'Update failed' : 'Create failed')
+
     return false
   }
 }

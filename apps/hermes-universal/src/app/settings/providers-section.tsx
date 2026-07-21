@@ -10,11 +10,11 @@ import { Check, ChevronDown, ChevronRight, Key, Loader2, Terminal, Trash } from 
 import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
-import { $connectProvider, beginProviderConnect } from '@/store/onboarding'
 import { notify, notifyError } from '@/store/notifications'
+import { $connectProvider, beginProviderConnect } from '@/store/onboarding'
 import type { EnvVarInfo, OAuthProvider } from '@/types/hermes'
 
-import { isKeyVar, ProviderKeyRows, type ProviderKeyRowGroup } from './credential-key-ui'
+import { isKeyVar, type ProviderKeyRowGroup, ProviderKeyRows } from './credential-key-ui'
 import { SettingsCategoryHeading, useEnvCredentials } from './env-credentials'
 import { providerGroup, providerMeta, providerPriority } from './helpers'
 import { FEATURED_ID, providerTitle, sortProviders } from './oauth-provider-display'
@@ -92,7 +92,13 @@ function ConnectedTag() {
 const PROVIDER_ROW_CLASS =
   'group flex w-full items-center justify-between gap-3 rounded-[6px] px-3 py-2.5 text-left transition-colors hover:bg-(--ui-control-hover-background)'
 
-function FeaturedProviderRow({ onSelect, provider }: { onSelect: (p: OAuthProvider) => void; provider: OAuthProvider }) {
+function FeaturedProviderRow({
+  onSelect,
+  provider
+}: {
+  onSelect: (p: OAuthProvider) => void
+  provider: OAuthProvider
+}) {
   const { t } = useI18n()
 
   return (

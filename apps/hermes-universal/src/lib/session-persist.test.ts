@@ -22,7 +22,10 @@ describe('session-persist', () => {
   it('persist exports the jar and writes it to the cookies keyring entry', async () => {
     const jar = '[{"raw_cookie":"hermes_session_rt=abc"}]'
     setImpl(cmd => {
-      if (cmd === 'cookies_export') return Promise.resolve(jar)
+      if (cmd === 'cookies_export') {
+        return Promise.resolve(jar)
+      }
+
       return Promise.resolve() // keyring init + set
     })
 
@@ -49,12 +52,20 @@ describe('session-persist', () => {
 
   it('restore reads the keyring blob and imports it into the jar', async () => {
     const jar = '[{"raw_cookie":"hermes_session_rt=abc"}]'
-    setImpl((cmd, args) => {
-      if (cmd === 'plugin:keyring|has_password') return Promise.resolve(true)
-      if (cmd === 'plugin:keyring|get_password') return Promise.resolve(jar)
-      if (cmd === 'cookies_import') return Promise.resolve()
+    setImpl(cmd => {
+      if (cmd === 'plugin:keyring|has_password') {
+        return Promise.resolve(true)
+      }
+
+      if (cmd === 'plugin:keyring|get_password') {
+        return Promise.resolve(jar)
+      }
+
+      if (cmd === 'cookies_import') {
+        return Promise.resolve()
+      }
+
       return Promise.resolve() // init
-      void args
     })
 
     await restoreSessionCookies()

@@ -7,17 +7,16 @@
 // Accepts (and ignores) the desktop ChatBar's handler props so index.tsx wires
 // up verbatim; every prop is optional so the null render never touches them.
 interface CodingStatusRowProps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ignored handlers; `any` accepts desktop's typed callbacks
   onBranchOff?: (...args: any[]) => any
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   onConvertBranch?: (...args: any[]) => any
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   onListBranches?: (...args: any[]) => any
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   onOpen?: (...args: any[]) => any
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   onOpenWorktree?: (...args: any[]) => any
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   onSwitchBranch?: (...args: any[]) => any
 }
 

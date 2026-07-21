@@ -35,7 +35,9 @@ function normalizeEntries(value: unknown): FallbackEntry[] {
     if (typeof item === 'string') {
       const slash = item.indexOf('/')
 
-      return slash > 0 ? { provider: item.slice(0, slash), model: item.slice(slash + 1) } : { provider: '', model: item }
+      return slash > 0
+        ? { provider: item.slice(0, slash), model: item.slice(slash + 1) }
+        : { provider: '', model: item }
     }
 
     return { provider: '', model: '' }

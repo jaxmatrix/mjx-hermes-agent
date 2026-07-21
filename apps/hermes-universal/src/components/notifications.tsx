@@ -3,10 +3,10 @@ import { createPortal } from 'react-dom'
 
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
+import { triggerHaptic } from '@/lib/haptics'
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
-import { triggerHaptic } from '@/lib/haptics'
 import { $notifications, type AppNotification, dismissNotification, type NotificationKind } from '@/store/notifications'
 
 // Lean mobile toast stack (the desktop NotificationStack's dual-placement +
@@ -30,10 +30,13 @@ export function NotificationStack() {
   // Haptic pulse when a new toast arrives (mobile has no 'error' intent → warning).
   useEffect(() => {
     const latest = notifications[0]
+
     if (!latest || latest.id === lastIdRef.current) {
       return
     }
+
     lastIdRef.current = latest.id
+
     if (latest.kind === 'success') {
       void triggerHaptic('success')
     } else if (latest.kind === 'error' || latest.kind === 'warning') {
@@ -52,7 +55,7 @@ export function NotificationStack() {
       role="region"
     >
       {notifications.map(n => (
-        <NotificationItem key={n.id} dismissLabel={t.notifications.dismiss} notification={n} />
+        <NotificationItem dismissLabel={t.notifications.dismiss} key={n.id} notification={n} />
       ))}
     </div>,
     document.body

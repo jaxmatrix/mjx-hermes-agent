@@ -7,7 +7,15 @@ import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 import type { SessionInfo } from '@/types/hermes'
 
-import { SidebarCount, SidebarRowCluster, SidebarRowLead, SidebarRowLink, SidebarRowNest, SidebarRowShell } from '../chrome'
+import {
+  SidebarCount,
+  SidebarRowCluster,
+  SidebarRowLead,
+  SidebarRowLink,
+  SidebarRowNest,
+  SidebarRowShell
+} from '../chrome'
+
 import { latestProjectSessions, PROJECT_PREVIEW_COUNT, type SidebarProjectTree } from './model'
 import { ProjectIcon } from './project-icon'
 import { ProjectMenu } from './project-menu'

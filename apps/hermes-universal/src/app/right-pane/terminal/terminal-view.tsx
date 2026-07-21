@@ -1,18 +1,18 @@
+import '@xterm/xterm/css/xterm.css'
+
 import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
-import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef, useState } from 'react'
-
-import type { DesktopTheme } from '@/themes/types'
 
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { $effectiveCwd } from '@/store/workspace-events'
-import { LocalPtySocket } from '@/transport/local-pty'
 import { useTheme } from '@/themes/context'
+import type { DesktopTheme } from '@/themes/types'
+import { LocalPtySocket } from '@/transport/local-pty'
 
 import { terminalTheme, withSurface } from './terminal-theme'
 
@@ -24,6 +24,7 @@ import { terminalTheme, withSurface } from './terminal-theme'
 
 // SGR mouse reports (from xterm's own mouse tracking) must not be forwarded to
 // the PTY — the shell would double-handle them.
+// eslint-disable-next-line no-control-regex -- ESC (\x1b) is the sequence being matched; that's the point.
 const SGR_MOUSE_RE = /^\x1b\[<\d+;\d+;\d+[Mm]$/
 
 type Status = 'closed' | 'connecting' | 'open'
@@ -36,6 +37,7 @@ type Status = 'closed' | 'connecting' | 'open'
 // (set on the Terminal) then clamps every glyph readable against the surface.
 function buildTerminalTheme(theme: DesktopTheme, mode: 'light' | 'dark') {
   const palette = mode === 'dark' ? (theme.darkTerminal ?? theme.terminal) : theme.terminal
+
   return withSurface(terminalTheme(mode, palette))
 }
 
@@ -53,7 +55,10 @@ export function TerminalView() {
   // Build the xterm instance once.
   useEffect(() => {
     const host = hostRef.current
-    if (!host) return
+
+    if (!host) {
+      return
+    }
 
     const term = new Terminal({
       allowProposedApi: true,
@@ -75,6 +80,7 @@ export function TerminalView() {
       scrollback: 5000,
       theme: buildTerminalTheme(appTheme, renderedMode)
     })
+
     const fit = new FitAddon()
     term.loadAddon(fit)
     const unicode = new Unicode11Addon()
@@ -82,6 +88,7 @@ export function TerminalView() {
     term.unicode.activeVersion = '11'
     term.loadAddon(new WebLinksAddon())
     term.open(host)
+
     // WebGL renders oversized cells on narrow/mobile hosts — canvas fallback there.
     if (host.clientWidth >= 768) {
       try {
@@ -96,11 +103,13 @@ export function TerminalView() {
         /* fall back to the default renderer */
       }
     }
+
     try {
       fit.fit()
     } catch {
       /* host not laid out yet */
     }
+
     termRef.current = term
     fitRef.current = fit
 
@@ -112,8 +121,12 @@ export function TerminalView() {
     void document.fonts
       ?.load('12px "JetBrains Mono"')
       .then(() => {
-        if (disposed) return
+        if (disposed) {
+          return
+        }
+
         term.clearTextureAtlas()
+
         try {
           fit.fit()
         } catch {
@@ -125,12 +138,17 @@ export function TerminalView() {
       })
 
     const onData = term.onData(data => {
-      if (SGR_MOUSE_RE.test(data)) return
+      if (SGR_MOUSE_RE.test(data)) {
+        return
+      }
+
       socketRef.current?.write(data)
     })
+
     const onResize = term.onResize(({ cols, rows }) => socketRef.current?.resize(cols, rows))
 
     let raf = 0
+
     const ro = new ResizeObserver(() => {
       cancelAnimationFrame(raf)
       raf = requestAnimationFrame(() => {
@@ -141,6 +159,7 @@ export function TerminalView() {
         }
       })
     })
+
     ro.observe(host)
 
     return () => {
@@ -163,9 +182,13 @@ export function TerminalView() {
     let disposed = false
 
     const term = termRef.current
-    if (!term) return
+
+    if (!term) {
+      return
+    }
 
     setStatus('connecting')
+
     try {
       fitRef.current?.fit()
     } catch {
@@ -180,18 +203,25 @@ export function TerminalView() {
         onData: bytes => termRef.current?.write(bytes),
         onError: () => {},
         onExit: () => {
-          if (!disposed) setStatus('closed')
+          if (!disposed) {
+            setStatus('closed')
+          }
         },
         onSpawn: () => {
-          if (disposed) return
+          if (disposed) {
+            return
+          }
+
           setStatus('open')
           const t = termRef.current
+
           if (t) {
             try {
               fitRef.current?.fit()
             } catch {
               /* ignore */
             }
+
             socketRef.current?.resize(t.cols, t.rows)
           }
         }
@@ -208,27 +238,31 @@ export function TerminalView() {
   // Re-apply the WHOLE profile (text, bg, cursor, selection, all 16 ANSI) when
   // the skin or painted mode changes — not just the background.
   useEffect(() => {
-    if (!termRef.current) return
+    if (!termRef.current) {
+      return
+    }
+
     // rAF so ThemeProvider's CSS-variable repaint (a sibling effect that runs
     // after this one) has landed before resolveSurfaceColor probes the surface.
     const raf = requestAnimationFrame(() => {
       const term = termRef.current
-      if (!term) return
+
+      if (!term) {
+        return
+      }
+
       term.options.theme = buildTerminalTheme(appTheme, renderedMode)
       // WebGL caches glyph colors in a texture atlas, so a mode/skin switch
       // leaves already-drawn cells stale until the atlas is cleared (no-op on the
       // DOM fallback).
       webglRef.current?.clearTextureAtlas()
     })
+
     return () => cancelAnimationFrame(raf)
   }, [appTheme, renderedMode])
 
   const statusLabel =
-    status === 'open'
-      ? null
-      : status === 'closed'
-        ? t.rightSidebar.terminalClosed
-        : t.rightSidebar.terminalConnecting
+    status === 'open' ? null : status === 'closed' ? t.rightSidebar.terminalClosed : t.rightSidebar.terminalConnecting
 
   return (
     <div className="relative h-full min-h-0 bg-(--ui-editor-surface-background) p-2 text-foreground">

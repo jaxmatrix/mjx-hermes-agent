@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { PlatformAvatar } from '@/app/messaging/platform-icon'
 import { CRON_ROUTE } from '@/app/routes'
+import { Codicon } from '@/components/ui/codicon'
 import { SearchField } from '@/components/ui/search-field'
 import { useI18n } from '@/i18n'
 import { sessionMatchesSearch } from '@/lib/session-search'
 import { useStore } from '@/store/atom'
 import { $busy, $sessionId } from '@/store/chat'
+import { $cronJobs, refreshCronJobs, triggerCron } from '@/store/cron'
 import {
   $dismissedAutoProjectIds,
   $pinnedSessionIds,
@@ -29,11 +32,12 @@ import {
   toggleSidebarMessagingOpen,
   unpinSession
 } from '@/store/layout'
+import { $sidebarCronOpen, setSidebarCronOpen } from '@/store/layout'
 import {
   $activeProjectId,
+  $projectScope,
   $projectTree,
   $projectTreeLoading,
-  $projectScope,
   ALL_PROJECTS,
   enterProject,
   exitProjectScope,
@@ -47,8 +51,8 @@ import {
   $messagingSessions,
   $searchLoading,
   $sessions,
-  $sessionsLoading,
   $sessionSearch,
+  $sessionsLoading,
   $sessionsTotal,
   $workingSessionIds,
   archiveSessionLocal,
@@ -64,16 +68,11 @@ import {
 } from '@/store/session'
 import type { SessionInfo, SessionSearchResult } from '@/types/hermes'
 
-import { Codicon } from '@/components/ui/codicon'
-import { PlatformAvatar } from '@/app/messaging/platform-icon'
-import { $cronJobs, refreshCronJobs, triggerCron } from '@/store/cron'
-import { $sidebarCronOpen, setSidebarCronOpen } from '@/store/layout'
-
 import { countLabel } from './chrome'
 import { SidebarCronJobsSection } from './cron-jobs-section'
 import { SidebarLoadMoreRow } from './load-more-row'
 import { ProjectDialog } from './project-dialog'
-import { sortProjectsForOverview, type SidebarProjectTree } from './projects/model'
+import { type SidebarProjectTree, sortProjectsForOverview } from './projects/model'
 import { ProjectBackRow } from './projects/overview-row'
 import { SidebarPinnedEmptyState } from './section-states'
 import { SidebarSessionsSection } from './sessions-section'
@@ -112,10 +111,13 @@ function applyManualOrder<T extends { id: string }>(items: T[], ids: string[]): 
   const pos = new Map(ids.map((id, i) => [id, i]))
   const known = items.filter(item => pos.has(item.id)).sort((a, b) => (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0))
   const fresh = items.filter(item => !pos.has(item.id))
+
   return [...fresh, ...known]
 }
 
-const SESSIONS_CONTENT_CLASS = 'flex min-h-0 flex-1 flex-col gap-px overflow-y-auto overflow-x-hidden overscroll-contain pb-1 pr-1.5'
+const SESSIONS_CONTENT_CLASS =
+  'flex min-h-0 flex-1 flex-col gap-px overflow-y-auto overflow-x-hidden overscroll-contain pb-1 pr-1.5'
+
 const SESSIONS_ROOT_CLASS = 'flex min-h-0 flex-1 flex-col p-0'
 
 // The scroll body: search + (query) merged Results, else the Sessions/recents
@@ -159,6 +161,7 @@ export function SidebarScrollBody({ onNavigate }: { onNavigate?: () => void }) {
   useEffect(() => {
     void refreshMessagingSessions()
     const timer = setInterval(() => void refreshMessagingSessions(), 10_000)
+
     return () => clearInterval(timer)
   }, [])
 
@@ -166,6 +169,7 @@ export function SidebarScrollBody({ onNavigate }: { onNavigate?: () => void }) {
   useEffect(() => {
     void refreshCronJobs()
     const timer = setInterval(() => void refreshCronJobs(), 30_000)
+
     return () => clearInterval(timer)
   }, [])
 
@@ -192,8 +196,12 @@ export function SidebarScrollBody({ onNavigate }: { onNavigate?: () => void }) {
   // changes, so the new session shows in recents AND the entered project without
   // a manual refresh. Also covers the initial mount (busy is false at rest).
   useEffect(() => {
-    if (busy) return
+    if (busy) {
+      return
+    }
+
     void refreshSessions()
+
     if (grouped && scope !== ALL_PROJECTS) {
       void fetchProjectSessions(scope).then(setEnteredProject)
     }
@@ -201,54 +209,73 @@ export function SidebarScrollBody({ onNavigate }: { onNavigate?: () => void }) {
 
   useEffect(() => {
     const timer = setTimeout(() => void searchSessionsQuery(query), 200)
+
     return () => clearTimeout(timer)
   }, [query])
 
   useEffect(() => {
     const onFocus = () => searchInputRef.current?.focus()
     window.addEventListener(SESSION_SEARCH_FOCUS_EVENT, onFocus)
+
     return () => window.removeEventListener(SESSION_SEARCH_FOCUS_EVENT, onFocus)
   }, [])
 
   const trimmed = query.trim()
 
   const results = useMemo(() => {
-    if (!trimmed) return []
+    if (!trimmed) {
+      return []
+    }
+
     const clientMatches = sessions.filter(session => sessionMatchesSearch(session, trimmed))
     const seen = new Set(clientMatches.map(session => session.id))
+
     return [...clientMatches, ...serverResults.filter(r => !seen.has(r.session_id)).map(searchResultToSession)]
   }, [trimmed, sessions, serverResults])
 
   // Pinned = loaded sessions whose durable id is pinned, in the stored pin order.
   const pinnedSessions = useMemo(() => {
     const byPinId = new Map(sessions.map(session => [sessionPinId(session), session]))
+
     return pinnedIds.map(id => byPinId.get(id)).filter((s): s is SessionInfo => Boolean(s))
   }, [sessions, pinnedIds])
 
   // Recents = loaded sessions minus pinned, newest-first (or the manual order).
   const recents = useMemo(() => {
     const pinnedSet = new Set(pinnedIds)
+
     const base = sessions
       .filter(session => !pinnedSet.has(sessionPinId(session)))
       // Cron runs + messaging-platform threads have their own sidebar regions
       // (the Cron section + per-platform groups), so keep them out of recents.
       .filter(session => session.source !== 'cron' && !isMessagingSource(session.source))
       .sort((a, b) => (b.started_at || 0) - (a.started_at || 0))
+
     return orderManual && orderIds.length ? applyManualOrder(base, orderIds) : base
   }, [sessions, pinnedIds, orderManual, orderIds])
 
   // Per-platform messaging groups (Discord, Telegram, …), busiest first.
   const messagingGroups = useMemo(() => {
     const map = new Map<string, SessionInfo[]>()
+
     for (const session of messagingSessions) {
       const src = (session.source ?? '').toLowerCase()
-      if (!src) continue
+
+      if (!src) {
+        continue
+      }
+
       const arr = map.get(src) ?? []
       arr.push(session)
       map.set(src, arr)
     }
+
     return [...map.entries()]
-      .map(([sourceId, groupSessions]) => ({ label: messagingSourceLabel(sourceId), sessions: groupSessions, sourceId }))
+      .map(([sourceId, groupSessions]) => ({
+        label: messagingSourceLabel(sourceId),
+        sessions: groupSessions,
+        sourceId
+      }))
       .sort((a, b) => b.sessions.length - a.sessions.length)
   }, [messagingSessions])
 
@@ -260,6 +287,7 @@ export function SidebarScrollBody({ onNavigate }: { onNavigate?: () => void }) {
     const dismissedSet = new Set(dismissedProjects)
     const filtered = projectTree.filter(project => !(project.isAuto && dismissedSet.has(project.id)))
     const sorted = sortProjectsForOverview(filtered, activeProjectId)
+
     return projectOrder.length ? applyManualOrder(sorted, projectOrder) : sorted
   }, [projectTree, dismissedProjects, activeProjectId, projectOrder])
 
@@ -355,7 +383,10 @@ export function SidebarScrollBody({ onNavigate }: { onNavigate?: () => void }) {
                   aria-label={grouped ? s.showSessions : s.showProjects}
                   className="grid size-5 place-items-center rounded-sm text-(--ui-text-tertiary) opacity-70 transition-colors hover:bg-(--ui-control-hover-background) hover:text-foreground hover:opacity-100"
                   onClick={() => {
-                    if (grouped) exitProjectScope()
+                    if (grouped) {
+                      exitProjectScope()
+                    }
+
                     setSidebarAgentsGrouped(!grouped)
                   }}
                   title={grouped ? s.groupTitleGrouped : s.groupTitleUngrouped}
@@ -365,7 +396,13 @@ export function SidebarScrollBody({ onNavigate }: { onNavigate?: () => void }) {
                 </button>
               </div>
             }
-            label={inProject ? enteredProject?.label ?? s.projects.sectionLabel : grouped ? s.projects.sectionLabel : s.sessions}
+            label={
+              inProject
+                ? (enteredProject?.label ?? s.projects.sectionLabel)
+                : grouped
+                  ? s.projects.sectionLabel
+                  : s.sessions
+            }
             labelMeta={grouped ? undefined : countLabel(recents.length, total)}
             onEnterProject={enterProject}
             onReorderProjects={ids => setSidebarProjectOrderIds(ids)}
@@ -396,6 +433,7 @@ export function SidebarScrollBody({ onNavigate }: { onNavigate?: () => void }) {
           {!grouped &&
             messagingGroups.map(group => {
               const shown = messagingReveal[group.sourceId] ?? 3
+
               return (
                 <SidebarSessionsSection
                   {...rowHandlers}

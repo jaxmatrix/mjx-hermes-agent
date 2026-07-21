@@ -4,6 +4,7 @@ import type { GatewayEvent } from '@/gateway'
 
 vi.mock('@/store/gateway', async () => {
   const { atom } = await import('@/store/atom')
+
   return { requestGateway: vi.fn().mockResolvedValue({}), $gatewayState: atom('idle') }
 })
 import { requestGateway } from '@/store/gateway'
@@ -22,7 +23,7 @@ import {
 } from './chat'
 
 const ev = (type: string, payload: Record<string, unknown>): GatewayEvent =>
-  ({ type, payload } as unknown as GatewayEvent)
+  ({ type, payload }) as unknown as GatewayEvent
 
 beforeEach(() => resetChat())
 
@@ -43,10 +44,13 @@ describe('chat reducer (parts model)', () => {
     expect(m.pending).toBe(false)
     expect(m.parts.find(p => p.type === 'text')).toMatchObject({ type: 'text', text: 'Hello' })
     expect(m.parts.find(p => p.type === 'reasoning')).toMatchObject({ type: 'reasoning', text: 'hmm' })
+    // The result is always normalized to an OBJECT (see lib/chat-tool-parts):
+    // `result === undefined` is what marks a row as still running, and a plain
+    // string result is kept under `output` so nothing is lost.
     expect(m.parts.find(p => p.type === 'tool-call')).toMatchObject({
       type: 'tool-call',
       toolName: 'grep',
-      result: 'done'
+      result: { output: 'done' }
     })
   })
 
@@ -85,6 +89,57 @@ describe('chat reducer (parts model)', () => {
   })
 })
 
+describe('tool events outside the live turn', () => {
+  // Regression: a trailing tool.complete used to open a brand-new `pending`
+  // assistant that nothing ever settled — an orphan bubble spinning forever.
+  it('merges a late completion into the finished assistant', () => {
+    handleGatewayEvent(ev('message.start', {}))
+    handleGatewayEvent(ev('tool.start', { name: 'grep', tool_id: 't1', context: 'needle' }))
+    handleGatewayEvent(ev('message.complete', {}))
+    handleGatewayEvent(ev('tool.complete', { name: 'grep', tool_id: 't1', result: { matches: 1 } }))
+
+    const msgs = $messages.get()
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].pending).toBe(false)
+    expect(msgs[0].parts.filter(p => p.type === 'tool-call')).toHaveLength(1)
+  })
+})
+
+describe('gateway event session routing', () => {
+  const sessionEv = (type: string, sessionId: string, payload: Record<string, unknown> = {}): GatewayEvent =>
+    ({ type, payload, session_id: sessionId }) as unknown as GatewayEvent
+
+  it('ignores tool events belonging to another session', () => {
+    $sessionId.set('runtime-1')
+    handleGatewayEvent(sessionEv('message.start', 'runtime-1'))
+    handleGatewayEvent(sessionEv('tool.start', 'other-runtime', { name: 'grep', tool_id: 'x1' }))
+
+    expect($messages.get()[0].parts.filter(p => p.type === 'tool-call')).toHaveLength(0)
+  })
+
+  it('still reduces events for the active session', () => {
+    $sessionId.set('runtime-1')
+    handleGatewayEvent(sessionEv('message.start', 'runtime-1'))
+    handleGatewayEvent(sessionEv('tool.start', 'runtime-1', { name: 'grep', tool_id: 'x1' }))
+
+    expect($messages.get()[0].parts.filter(p => p.type === 'tool-call')).toHaveLength(1)
+  })
+
+  // When the gateway does NOT stamp ids, the whole stream pins to whichever
+  // session was active at message.start, so a mid-turn chat switch can't drag
+  // the old turn's tool events into the newly opened transcript.
+  it('pins unscoped stream events to the session that started the turn', () => {
+    $sessionId.set('runtime-1')
+    handleGatewayEvent(ev('message.start', {}))
+    // The user switches chats mid-turn; the old turn's tail keeps arriving.
+    $sessionId.set('runtime-2')
+    $messages.set([])
+    handleGatewayEvent(ev('tool.start', { name: 'grep', tool_id: 'x1' }))
+
+    expect($messages.get().some(m => m.parts.some(p => p.type === 'tool-call'))).toBe(false)
+  })
+})
+
 describe('session.info cwd tracking', () => {
   it('follows the active session relocating itself', () => {
     $sessionId.set('runtime-1')
@@ -114,5 +169,54 @@ describe('session.info cwd tracking', () => {
     $currentCwd.set('/home/me/project-a')
     handleGatewayEvent(ev('session.info', { session_id: 'runtime-1', cwd: '' }))
     expect($currentCwd.get()).toBe('/home/me/project-a')
+  })
+})
+
+describe('reasoning blocks across a multi-step turn', () => {
+  const reasoningTexts = () =>
+    $messages
+      .get()
+      .flatMap(m => m.parts)
+      .filter((p): p is Extract<typeof p, { type: 'reasoning' }> => p.type === 'reasoning')
+      .map(p => p.text)
+
+  // Each model step can emit its own scratchpad burst (`reasoning.available`,
+  // agent/conversation_loop.py). A later burst must never overwrite an earlier
+  // thinking block that prose has already followed.
+  it('keeps an earlier thinking block once narration follows it', () => {
+    handleGatewayEvent(ev('message.start', {}))
+    handleGatewayEvent(ev('reasoning.available', { text: 'think 1' }))
+    handleGatewayEvent(ev('message.delta', { text: 'Checking the repo.' }))
+    handleGatewayEvent(ev('reasoning.available', { text: 'think 2' }))
+
+    expect(reasoningTexts()).toEqual(['think 1', 'think 2'])
+  })
+
+  it('still replaces the live block while the same burst is streaming', () => {
+    handleGatewayEvent(ev('message.start', {}))
+    handleGatewayEvent(ev('reasoning.delta', { text: 'partial thou' }))
+    handleGatewayEvent(ev('reasoning.available', { text: 'partial thought, complete' }))
+
+    expect(reasoningTexts()).toEqual(['partial thought, complete'])
+  })
+
+  it('drops a final burst the stream already showed', () => {
+    handleGatewayEvent(ev('message.start', {}))
+    handleGatewayEvent(ev('reasoning.delta', { text: 'a long thought that streamed in full' }))
+    handleGatewayEvent(ev('message.delta', { text: 'Answer.' }))
+    // The gateway caps `reasoning.available` at 500 chars, so the burst is a
+    // prefix of what already streamed — not a second thinking block.
+    handleGatewayEvent(ev('reasoning.available', { text: 'a long thought that streamed' }))
+
+    expect(reasoningTexts()).toEqual(['a long thought that streamed in full'])
+  })
+
+  it('strips the kawaii spinner prefix and placeholder echoes', () => {
+    handleGatewayEvent(ev('message.start', {}))
+    handleGatewayEvent(ev('reasoning.delta', { text: '◉_◉ processing... weighing the options' }))
+    handleGatewayEvent(ev('tool.start', { name: 'grep', tool_id: 'z1' }))
+    handleGatewayEvent(ev('reasoning.delta', { text: "I don't see any current thinking to rewrite" }))
+
+    expect(reasoningTexts()).toEqual(['weighing the options'])
   })
 })

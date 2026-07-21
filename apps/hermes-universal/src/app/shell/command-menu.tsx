@@ -36,7 +36,10 @@ export function CommandMenu() {
     <Dialog
       onOpenChange={next => {
         $commandMenuOpen.set(next)
-        if (!next) setQuery('')
+
+        if (!next) {
+          setQuery('')
+        }
       }}
       open={open}
     >
@@ -61,6 +64,7 @@ export function CommandMenu() {
         <div className="flex max-h-72 flex-col gap-px overflow-y-auto">
           {filtered.map(item => {
             const Icon = item.icon
+
             return (
               <button
                 className={cn(

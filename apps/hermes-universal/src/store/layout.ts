@@ -1,6 +1,6 @@
-import { atom, computed, type ReadableAtom } from '@/store/atom'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { arraysEqual, insertUniqueId } from '@/lib/storage'
+import { atom, computed, type ReadableAtom } from '@/store/atom'
 
 import { $paneStates, ensurePaneRegistered, setPaneOpen, setPaneWidthOverride, togglePane } from './panes'
 
@@ -43,6 +43,36 @@ export const $rightSidebarOpen = persistentAtom<boolean>('hermes.rightSidebarOpe
 
 export function toggleRightSidebar(): void {
   $rightSidebarOpen.set(!$rightSidebarOpen.get())
+}
+
+// POSITIONAL toggles (desktop parity — see desktop's `titlebar-controls.tsx`):
+// each titlebar button / keybind shows-hides everything on its PHYSICAL side of
+// main, so it stays truthful through a swap. Unflipped: left ≙ chat sidebar,
+// right ≙ the file/editor/terminal rails; flipped, the two trade places.
+export const $leftEdgeOpen: ReadableAtom<boolean> = computed(
+  [$panesFlipped, $sidebarOpen, $rightSidebarOpen],
+  (flipped, sidebarOpen, rightOpen) => (flipped ? rightOpen : sidebarOpen)
+)
+
+export const $rightEdgeOpen: ReadableAtom<boolean> = computed(
+  [$panesFlipped, $sidebarOpen, $rightSidebarOpen],
+  (flipped, sidebarOpen, rightOpen) => (flipped ? sidebarOpen : rightOpen)
+)
+
+export function toggleLeftEdge(): void {
+  if ($panesFlipped.get()) {
+    toggleRightSidebar()
+  } else {
+    toggleSidebarOpen()
+  }
+}
+
+export function toggleRightEdge(): void {
+  if ($panesFlipped.get()) {
+    toggleSidebarOpen()
+  } else {
+    toggleRightSidebar()
+  }
 }
 
 // ── Right pane geometry + terminal ──────────────────────────────────────────
@@ -132,7 +162,11 @@ export const $sidebarRecentsOpen = atom(true)
 export const $sidebarCronOpen = persistentAtom('hermes.sidebarCronOpen', false, Codecs.bool)
 // Messaging platform sections collapse by default; we persist ids the user has
 // explicitly expanded, so the default stays collapsed.
-export const $sidebarMessagingOpenIds = persistentAtom('hermes.sidebarMessagingOpen', [] as string[], Codecs.stringArray)
+export const $sidebarMessagingOpenIds = persistentAtom(
+  'hermes.sidebarMessagingOpen',
+  [] as string[],
+  Codecs.stringArray
+)
 export const $sidebarAgentsGrouped = persistentAtom('hermes.agentsGroupedByWorkspace', false, Codecs.bool)
 
 // Set by the PaneShell hover-reveal overlay while the sidebar is collapsed; kept
@@ -223,7 +257,9 @@ export function setSidebarCronOpen(open: boolean) {
 export function toggleSidebarMessagingOpen(sourceId: string) {
   const current = $sidebarMessagingOpenIds.get()
 
-  $sidebarMessagingOpenIds.set(current.includes(sourceId) ? current.filter(id => id !== sourceId) : [...current, sourceId])
+  $sidebarMessagingOpenIds.set(
+    current.includes(sourceId) ? current.filter(id => id !== sourceId) : [...current, sourceId]
+  )
 }
 
 export function setSidebarAgentsGrouped(grouped: boolean) {

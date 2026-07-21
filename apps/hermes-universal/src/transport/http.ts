@@ -15,11 +15,7 @@ export interface HttpRequestOptions {
   timeoutMs?: number
 }
 
-export async function httpRequest(
-  method: string,
-  url: string,
-  opts: HttpRequestOptions = {}
-): Promise<HttpResponse> {
+export async function httpRequest(method: string, url: string, opts: HttpRequestOptions = {}): Promise<HttpResponse> {
   return invoke<HttpResponse>('http_request', {
     req: {
       method,
@@ -34,8 +30,10 @@ export async function httpRequest(
 /** Convenience: JSON GET that throws on non-2xx and parses the body. */
 export async function getJson<T>(url: string, opts: HttpRequestOptions = {}): Promise<T> {
   const res = await httpRequest('GET', url, opts)
+
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`GET ${url} → HTTP ${res.status}: ${res.body.slice(0, 200)}`)
   }
+
   return JSON.parse(res.body) as T
 }

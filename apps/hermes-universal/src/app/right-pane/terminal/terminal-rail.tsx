@@ -12,14 +12,14 @@ import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { setTerminalOpen } from '@/store/layout'
 import {
-  type TerminalEntry,
   $activeTerminalId,
   $terminals,
   closeAllTerminals,
   closeOtherTerminals,
   closeTerminal,
   createTerminal,
-  selectTerminal
+  selectTerminal,
+  type TerminalEntry
 } from '@/store/terminals'
 
 // Ported/adapted from desktop's terminal/rail.tsx: a thin vertical icon strip on
@@ -42,7 +42,13 @@ export function TerminalRail() {
         role="tablist"
       >
         {terminals.map((term, index) => (
-          <TerminalRailItem active={term.id === activeId} canCloseOthers={terminals.length > 1} index={index} key={term.id} term={term} />
+          <TerminalRailItem
+            active={term.id === activeId}
+            canCloseOthers={terminals.length > 1}
+            index={index}
+            key={term.id}
+            term={term}
+          />
         ))}
         <li className="flex w-full justify-center">
           <Tip label={t.rightSidebar.terminalNew}>
@@ -92,7 +98,9 @@ function TerminalRailItem({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <li className="relative flex w-full justify-center">
-          {active && <span aria-hidden className="absolute inset-y-0.5 right-0 w-0.5 rounded-l-sm bg-(--ui-stroke-primary)" />}
+          {active && (
+            <span aria-hidden className="absolute inset-y-0.5 right-0 w-0.5 rounded-l-sm bg-(--ui-stroke-primary)" />
+          )}
           <Tip label={label}>
             <button
               aria-label={label}

@@ -21,7 +21,11 @@ export function SidebarLoadMoreRow({ step, onClick, loading = false }: SidebarLo
       onClick={onClick}
       type="button"
     >
-      <Codicon className={loading ? 'animate-spin' : undefined} name={loading ? 'loading' : 'ellipsis'} size="0.75rem" />
+      <Codicon
+        className={loading ? 'animate-spin' : undefined}
+        name={loading ? 'loading' : 'ellipsis'}
+        size="0.75rem"
+      />
     </button>
   )
 }

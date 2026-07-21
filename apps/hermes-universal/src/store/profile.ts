@@ -4,9 +4,9 @@
 // backed by universal's `$activeProfile`, so the desktop imports resolve verbatim.
 import { getProfiles } from '@/hermes'
 import { Codecs, persistentAtom } from '@/lib/persisted'
-import type { ProfileInfo } from '@/types/hermes'
 import { computed } from '@/store/atom'
 import { $activeProfile, $profiles, setActiveProfile as setUniversalActiveProfile } from '@/store/profiles'
+import type { ProfileInfo } from '@/types/hermes'
 
 // Canonical key for a profile: trimmed, empty/null → "default". Verbatim from
 // desktop store/profile.ts — used to key profile-scoped caches (analytics badges).
@@ -33,11 +33,7 @@ export const $profileScope = $activeGatewayProfile
 // Verbatim from desktop store/profile.ts, on universal's `persistentAtom` seam.
 // Optional per-profile color override; absent names fall back to the
 // deterministic hue from profileColor() in `@/lib/profile-color`.
-export const $profileColors = persistentAtom<Record<string, string>>(
-  'hermes.profileColors',
-  {},
-  Codecs.stringRecord
-)
+export const $profileColors = persistentAtom<Record<string, string>>('hermes.profileColors', {}, Codecs.stringRecord)
 
 /** Set (or, with null, clear) a profile's color override. */
 export function setProfileColor(name: string, color: null | string): void {

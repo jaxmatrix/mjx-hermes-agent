@@ -43,8 +43,7 @@ export interface SidebarProjectTree {
   previewSessions?: SessionInfo[]
 }
 
-export const sessionRecency = (session: SessionInfo): number =>
-  session.last_active || session.started_at || 0
+export const sessionRecency = (session: SessionInfo): number => session.last_active || session.started_at || 0
 
 const projectSessions = (project: SidebarProjectTree): SessionInfo[] =>
   project.repos.flatMap(repo => repo.groups.flatMap(group => group.sessions))
@@ -53,13 +52,17 @@ export const projectTreeCwd = (project: SidebarProjectTree): null | string =>
   project.path || project.repos.find(repo => repo.path)?.path || null
 
 const projectActivityTime = (project: SidebarProjectTree): number =>
-  Math.max(project.lastActive ?? 0, projectSessions(project).reduce((m, s) => Math.max(m, sessionRecency(s)), 0))
+  Math.max(
+    project.lastActive ?? 0,
+    projectSessions(project).reduce((m, s) => Math.max(m, sessionRecency(s)), 0)
+  )
 
 // The project's most-recent sessions for the overview preview: hydrated lanes
 // when entered, else the backend-supplied previews.
 export const latestProjectSessions = (project: SidebarProjectTree, limit: number): SessionInfo[] => {
   const loaded = projectSessions(project)
-  const source = loaded.length ? loaded : project.previewSessions ?? []
+  const source = loaded.length ? loaded : (project.previewSessions ?? [])
+
   return [...source].sort((a, b) => sessionRecency(b) - sessionRecency(a)).slice(0, limit)
 }
 
@@ -80,6 +83,7 @@ export function sortProjectsForOverview(
 
     const aActive = Boolean(activeProjectId && a.id === activeProjectId && !a.isAuto)
     const bActive = Boolean(activeProjectId && b.id === activeProjectId && !b.isAuto)
+
     if (aActive !== bActive) {
       return aActive ? -1 : 1
     }

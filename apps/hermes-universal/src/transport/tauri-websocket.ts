@@ -48,12 +48,14 @@ export class TauriWebSocket {
     try {
       const sub = (suffix: string) =>
         listen(`ws://${this.id}/${suffix}`, event => this.onRustEvent(suffix, event.payload))
+
       this.unlisten = await Promise.all([sub('open'), sub('message'), sub('close'), sub('error')])
 
       if (this.closed) {
         // close() was called before the socket finished opening.
         void invoke('ws_close', { id: this.id }).catch(() => undefined)
         this.teardown()
+
         return
       }
 
@@ -65,6 +67,7 @@ export class TauriWebSocket {
 
       const queued = this.sendQueue
       this.sendQueue = []
+
       for (const text of queued) {
         void invoke('ws_send', { id: this.id, text }).catch(() => undefined)
       }
@@ -81,24 +84,35 @@ export class TauriWebSocket {
       case 'open':
         this.readyState = this.OPEN
         this.dispatch('open', {})
+
         break
+
       case 'message':
         this.dispatch('message', { data: payload })
+
         break
+
       case 'close':
         this.readyState = this.CLOSED
         this.dispatch('close', {})
         this.teardown()
+
         break
+
       case 'error':
         this.dispatch('error', { message: String(payload) })
+
         break
     }
   }
 
   private dispatch(type: string, extra: { data?: unknown; message?: string }): void {
     const set = this.listeners.get(type)
-    if (!set) return
+
+    if (!set) {
+      return
+    }
+
     for (const handler of [...set]) {
       handler({ type, ...extra })
     }
@@ -112,15 +126,18 @@ export class TauriWebSocket {
         // ignore
       }
     }
+
     this.unlisten = []
   }
 
   addEventListener(type: string, handler: EventListenerLike): void {
     let set = this.listeners.get(type)
+
     if (!set) {
       set = new Set()
       this.listeners.set(type, set)
     }
+
     set.add(handler)
   }
 
@@ -138,7 +155,11 @@ export class TauriWebSocket {
 
   close(): void {
     this.closed = true
-    if (this.readyState === this.CLOSED) return
+
+    if (this.readyState === this.CLOSED) {
+      return
+    }
+
     this.readyState = this.CLOSING
     void invoke('ws_close', { id: this.id })
       .catch(() => undefined)

@@ -28,7 +28,9 @@ import {
 import { PetSprite } from './pet-sprite'
 
 function Spinner() {
-  return <span className="inline-block size-4 animate-spin rounded-full border-2 border-muted-foreground/40 border-t-primary" />
+  return (
+    <span className="inline-block size-4 animate-spin rounded-full border-2 border-muted-foreground/40 border-t-primary" />
+  )
 }
 
 export function PetGenerateSheet({ onOpenChange, open }: { onOpenChange: (open: boolean) => void; open: boolean }) {
@@ -49,6 +51,7 @@ export function PetGenerateSheet({ onOpenChange, open }: { onOpenChange: (open: 
   useEffect(() => {
     if (open) {
       void checkPetGenAvailable()
+
       if ($petGenStatus.get() === 'idle') {
         setPrompt('')
         setName('')
@@ -69,6 +72,7 @@ export function PetGenerateSheet({ onOpenChange, open }: { onOpenChange: (open: 
     if (status === 'idle' || status === 'error' || status === 'stale') {
       resetPetGen()
     }
+
     onOpenChange(false)
   }
 
@@ -78,12 +82,15 @@ export function PetGenerateSheet({ onOpenChange, open }: { onOpenChange: (open: 
     if (!stage) {
       return g.hatching
     }
+
     if (stage.phase === 'compose') {
       return g.hatchComposing
     }
+
     if (stage.phase === 'save') {
       return g.hatchSaving
     }
+
     return g.hatchRow(stage.state ?? '', stage.done ?? 0, stage.total ?? 0)
   }
 
@@ -153,12 +160,19 @@ export function PetGenerateSheet({ onOpenChange, open }: { onOpenChange: (open: 
                       onClick={() => $petGenSelected.set(d.index)}
                       type="button"
                     >
-                      <img alt="" className="aspect-square w-full bg-muted object-contain [image-rendering:pixelated]" src={d.dataUri} />
+                      <img
+                        alt=""
+                        className="aspect-square w-full bg-muted object-contain [image-rendering:pixelated]"
+                        src={d.dataUri}
+                      />
                     </button>
                   ))}
                   {status === 'generating' &&
                     Array.from({ length: Math.max(0, 4 - drafts.length) }).map((_, i) => (
-                      <div className="grid aspect-square place-items-center rounded-lg border-2 border-dashed border-border" key={`ph-${i}`}>
+                      <div
+                        className="grid aspect-square place-items-center rounded-lg border-2 border-dashed border-border"
+                        key={`ph-${i}`}
+                      >
                         <Spinner />
                       </div>
                     ))}
@@ -189,7 +203,11 @@ export function PetGenerateSheet({ onOpenChange, open }: { onOpenChange: (open: 
                     </Button>
                   </>
                 ) : (
-                  <Button className="flex-1" disabled={busy || !prompt.trim()} onClick={() => void generateDrafts(prompt)}>
+                  <Button
+                    className="flex-1"
+                    disabled={busy || !prompt.trim()}
+                    onClick={() => void generateDrafts(prompt)}
+                  >
                     {status === 'error' ? g.retry : g.generate}
                   </Button>
                 )}

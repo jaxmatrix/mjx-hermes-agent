@@ -1,13 +1,8 @@
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { type Locale, LOCALE_OPTIONS, useI18n } from '@/i18n'
+import { triggerHaptic } from '@/lib/haptics'
 import { Check, ChevronDown, Globe } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import { triggerHaptic } from '@/lib/haptics'
 
 // Adapted from apps/desktop/src/components/language-switcher.tsx. Trimmed for
 // mobile: only four locales, so we drop cmdk search/Popover in favour of the
@@ -53,6 +48,7 @@ export function LanguageSwitcher({ className, collapsed = false }: LanguageSwitc
       <DropdownMenuContent align="end" className="min-w-44">
         {LOCALE_OPTIONS.map(option => {
           const selected = option.id === locale
+
           return (
             <DropdownMenuItem
               className={cn(selected ? 'font-medium text-foreground' : 'text-muted-foreground')}

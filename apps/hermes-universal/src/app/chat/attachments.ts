@@ -34,7 +34,11 @@ function mimeFor(name: string): string {
 
 function toDataUrl(bytes: Uint8Array, mime: string): string {
   let binary = ''
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+
   return `data:${mime};base64,${btoa(binary)}`
 }
 
@@ -72,7 +76,10 @@ export async function stageAttachmentFromPath(path: string): Promise<StagedAttac
 /** Open the picker, stage the file via file.attach, return its prompt ref. */
 export async function pickAttachment(): Promise<StagedAttachment | null> {
   const path = await open({ multiple: false })
-  if (typeof path !== 'string') return null
+
+  if (typeof path !== 'string') {
+    return null
+  }
 
   return stageAttachmentFromPath(path)
 }
@@ -80,7 +87,10 @@ export async function pickAttachment(): Promise<StagedAttachment | null> {
 /** Pick a folder (no byte staging — folders resolve as `@folder:` refs). */
 export async function pickFolderAttachment(): Promise<StagedAttachment | null> {
   const path = await open({ directory: true, multiple: false })
-  if (typeof path !== 'string') return null
+
+  if (typeof path !== 'string') {
+    return null
+  }
 
   return { name: basename(path), ref: `@folder:${path}` }
 }
@@ -91,6 +101,7 @@ export async function pickFolderAttachment(): Promise<StagedAttachment | null> {
  */
 export function stagedToComposerAttachment(staged: StagedAttachment): ComposerAttachment {
   const ref = staged.ref
+
   const kind: ComposerAttachment['kind'] = ref.startsWith('@image:')
     ? 'image'
     : ref.startsWith('@folder:')

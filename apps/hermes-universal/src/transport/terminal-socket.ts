@@ -11,6 +11,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 function deriveOrigin(wsUrl: string): string | undefined {
   try {
     const u = new URL(wsUrl)
+
     return `${u.protocol === 'wss:' ? 'https:' : 'http:'}//${u.host}`
   } catch {
     return undefined
@@ -63,6 +64,7 @@ export class TerminalSocket {
       if (this.closed) {
         void invoke('ws_close', { id: this.id }).catch(() => undefined)
         this.teardown()
+
         return
       }
 
@@ -76,7 +78,9 @@ export class TerminalSocket {
 
   /** Send a UTF-8 string frame (keystrokes or the resize escape). */
   sendText(text: string): void {
-    if (this.open) void invoke('ws_send', { id: this.id, text }).catch(() => undefined)
+    if (this.open) {
+      void invoke('ws_send', { id: this.id, text }).catch(() => undefined)
+    }
   }
 
   get isOpen(): boolean {
@@ -99,6 +103,7 @@ export class TerminalSocket {
         // ignore
       }
     }
+
     this.unlisten = []
   }
 }

@@ -4,7 +4,11 @@ import { cn } from './utils'
 
 describe('cn', () => {
   it('drops falsy values and joins classes', () => {
-    expect(cn('a', false && 'b', undefined, 'c')).toBe('a c')
+    // Runtime-derived rather than a literal `false && 'b'`: the literal form is
+    // constant-folded before `cn` ever sees it, so it tested nothing.
+    const enabled = [].length > 0
+
+    expect(cn('a', enabled && 'b', undefined, 'c')).toBe('a c')
   })
 
   it('lets later Tailwind utilities win conflicts (tailwind-merge)', () => {

@@ -22,22 +22,38 @@ export interface ApiRequest {
 // merging with any existing query string.
 function withProfile(path: string, profile?: string | null): string {
   const p = profile?.trim()
-  if (!p || p === 'current') return path
+
+  if (!p || p === 'current') {
+    return path
+  }
+
   const sep = path.includes('?') ? '&' : '?'
+
   return `${path}${sep}profile=${encodeURIComponent(p)}`
 }
 
 export async function api<T = unknown>({ path, method = 'GET', body, timeoutMs, profile }: ApiRequest): Promise<T> {
   const conn = $connection.get()
-  if (!conn) throw new Error('Not connected to a Hermes backend')
+
+  if (!conn) {
+    throw new Error('Not connected to a Hermes backend')
+  }
 
   const headers: Record<string, string> = {}
-  if (body !== undefined) headers['Content-Type'] = 'application/json'
-  if (conn.token) headers['X-Hermes-Session-Token'] = conn.token
+
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+  }
+
+  if (conn.token) {
+    headers['X-Hermes-Session-Token'] = conn.token
+  }
 
   const res = await httpRequest(method, `${conn.baseUrl}${withProfile(path, profile)}`, { headers, body, timeoutMs })
+
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`${method} ${path} → HTTP ${res.status}: ${res.body.slice(0, 200)}`)
   }
+
   return (res.body ? JSON.parse(res.body) : undefined) as T
 }

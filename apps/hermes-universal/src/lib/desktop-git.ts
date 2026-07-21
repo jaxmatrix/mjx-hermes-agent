@@ -1,4 +1,3 @@
-import { api } from '@/lib/api'
 import type {
   HermesGitBaseBranch,
   HermesGitBranch,
@@ -8,6 +7,7 @@ import type {
   HermesReviewScope,
   HermesReviewShipInfo
 } from '@/global'
+import { api } from '@/lib/api'
 
 // Ported from apps/desktop/src/lib/desktop-git.ts — specifically its `remoteGit`
 // branch. Desktop runs git through Electron when it owns the filesystem, and

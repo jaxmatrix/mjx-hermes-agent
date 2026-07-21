@@ -28,6 +28,7 @@ export async function openExternalLink(url: string): Promise<void> {
     try {
       const { invoke } = await import('@tauri-apps/api/core')
       await invoke('open_external', { url })
+
       return
     } catch {
       // Native command unavailable — fall through to window.open.

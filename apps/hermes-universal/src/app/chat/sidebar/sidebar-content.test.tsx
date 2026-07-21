@@ -2,14 +2,14 @@ import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { $pinnedSessionIds, $sidebarAgentsGrouped } from '@/store/layout'
+import { $projectScope, $projectTree, ALL_PROJECTS } from '@/store/projects'
 // NOTE: import `@/store/session` (→ @/hermes → connection) before `@/store/projects`
 // (→ @/store/gateway). Entering the gateway↔connection import cycle via the
 // gateway side first leaves connection.ts's top-level `$gatewayState.subscribe`
 // reading a TDZ value. The running app always loads connection first (you connect
 // before the sidebar mounts), so this ordering only matters under cold test eval.
 import { $sessions } from '@/store/session'
-import { $pinnedSessionIds, $sidebarAgentsGrouped } from '@/store/layout'
-import { $projectScope, $projectTree, ALL_PROJECTS } from '@/store/projects'
 import type { SessionInfo } from '@/types/hermes'
 
 import type { SidebarProjectTree } from './projects/model'

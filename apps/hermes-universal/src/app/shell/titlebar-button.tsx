@@ -25,7 +25,7 @@ export function TitlebarButton({
       aria-label={label}
       aria-pressed={active}
       className={cn(
-        'size-7 rounded-[4px] bg-transparent text-muted-foreground/85 [&_.codicon]:text-[0.875rem] hover:bg-[var(--ui-control-hover-background)] hover:text-foreground',
+        'size-5 rounded-[4px] bg-transparent text-muted-foreground/85 [&_.codicon]:text-[0.875rem] hover:bg-[var(--ui-control-hover-background)] hover:text-foreground',
         active && 'bg-[var(--ui-control-active-background)] text-foreground',
         className
       )}

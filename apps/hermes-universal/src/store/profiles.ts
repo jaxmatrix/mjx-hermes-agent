@@ -25,7 +25,11 @@ setApiRequestProfile($activeProfile.get())
  *  NOT reconnect — the caller decides whether to prompt a session refresh. */
 export function setActiveProfile(name: null | string): void {
   const next = name || null
-  if (next === $activeProfile.get()) return
+
+  if (next === $activeProfile.get()) {
+    return
+  }
+
   setApiRequestProfile(next)
   $activeProfile.set(next)
   void queryClient.invalidateQueries()
@@ -78,6 +82,7 @@ export function cycleProfile(direction: 1 | -1): void {
 export async function refreshProfiles(): Promise<void> {
   $profilesLoading.set(true)
   $profilesError.set(null)
+
   try {
     $profiles.set((await getProfiles()).profiles)
   } catch (err) {
@@ -91,9 +96,11 @@ export async function createProfileLocal(payload: ProfileCreatePayload): Promise
   try {
     await createProfile(payload)
     await refreshProfiles()
+
     return true
   } catch (err) {
     notifyError(err, 'Failed to create profile')
+
     return false
   }
 }
@@ -102,9 +109,11 @@ export async function renameProfileLocal(name: string, newName: string): Promise
   try {
     await renameProfile(name, newName)
     await refreshProfiles()
+
     return true
   } catch (err) {
     notifyError(err, 'Failed to rename profile')
+
     return false
   }
 }
@@ -112,6 +121,7 @@ export async function renameProfileLocal(name: string, newName: string): Promise
 export async function removeProfile(name: string): Promise<void> {
   const prev = $profiles.get()
   $profiles.set(prev.filter(p => p.name !== name))
+
   try {
     await deleteProfile(name)
   } catch (err) {

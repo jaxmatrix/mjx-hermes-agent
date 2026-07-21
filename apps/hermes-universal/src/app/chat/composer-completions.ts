@@ -31,15 +31,19 @@ export interface CompletionResult {
 /** Detect a slash/@ trigger at the cursor, or null. */
 export function detectTrigger(text: string, cursor: number): TriggerQuery | null {
   const before = text.slice(0, cursor)
+
   // Slash: the whole input starts with '/', single line up to the cursor.
   if (/^\/[^\n]*$/.test(before)) {
     return { kind: 'slash', token: before, cursor }
   }
+
   // @-mention: the last '@…' run touching the cursor.
   const at = before.match(/@[\w:./-]*$/)
+
   if (at) {
     return { kind: 'path', token: at[0], cursor }
   }
+
   return null
 }
 
@@ -53,16 +57,24 @@ export async function fetchCompletions(query: TriggerQuery): Promise<CompletionR
       const res = await requestGateway<{ items?: CompletionEntry[]; replace_from?: number }>('complete.slash', {
         text: query.token
       })
+
       // replace_from is 1-based; >1 means arg completion (splice from that arg).
       const replaceFrom = typeof res.replace_from === 'number' && res.replace_from > 1 ? res.replace_from - 1 : 0
+
       return { items: res.items ?? [], replaceFrom }
     }
+
     const params: Record<string, unknown> = { word: query.token }
     const sid = $sessionId.get()
-    if (sid) params.session_id = sid
+
+    if (sid) {
+      params.session_id = sid
+    }
+
     const res = await requestGateway<{ items?: CompletionEntry[] }>('complete.path', params)
     // Replace from the '@' that starts the token.
     const replaceFrom = query.cursor - query.token.length
+
     return { items: res.items ?? [], replaceFrom }
   } catch {
     return { items: [], replaceFrom: query.cursor }
@@ -77,5 +89,6 @@ export function applyCompletion(
   entry: CompletionEntry
 ): { text: string; cursor: number } {
   const next = text.slice(0, replaceFrom) + entry.text + text.slice(cursor)
+
   return { text: next, cursor: replaceFrom + entry.text.length }
 }

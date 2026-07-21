@@ -27,11 +27,15 @@ export function Intro() {
   useLayoutEffect(() => {
     const fill = fillRef.current
     const measure = measureRef.current
-    if (!fill || !measure) return
+
+    if (!fill || !measure) {
+      return
+    }
 
     const fit = () => {
       const avail = fill.clientWidth
       const natural = measure.getBoundingClientRect().width // width at REF_PX
+
       if (avail > 0 && natural > 0) {
         setFontPx(Math.max(MIN_PX, Math.min(MAX_PX, (avail / natural) * REF_PX)))
       }
@@ -44,9 +48,12 @@ export function Intro() {
 
     // The webfont changes the measured width; re-fit once it's ready.
     let cancelled = false
+
     if (typeof document !== 'undefined' && document.fonts?.ready) {
       void document.fonts.ready.then(() => {
-        if (!cancelled) fit()
+        if (!cancelled) {
+          fit()
+        }
       })
     }
 

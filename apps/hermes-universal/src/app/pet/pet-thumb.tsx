@@ -11,6 +11,7 @@ export function PetThumb({ slug, url }: { slug: string; url?: string }) {
   useEffect(() => {
     let cancelled = false
     void loadPetThumb(slug, url).then(uri => !cancelled && setDataUri(uri))
+
     return () => void (cancelled = true)
   }, [slug, url])
 

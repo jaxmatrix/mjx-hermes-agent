@@ -1,5 +1,4 @@
 import { atom } from '@/store/atom'
-
 import type { SessionInfo } from '@/types/hermes'
 
 // Ported verbatim from desktop `store/session-switcher.ts`. Only seam: universal

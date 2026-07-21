@@ -6,7 +6,9 @@
  * is no leaf to take — e.g. a filesystem root — and to '' when there's no cwd.
  */
 export function workspaceLabel(cwd?: null | string): string {
-  if (!cwd) return ''
+  if (!cwd) {
+    return ''
+  }
 
   const normalized = cwd.replace(/[\\/]+$/, '')
   const leaf = normalized.split(/[\\/]/).filter(Boolean).pop()

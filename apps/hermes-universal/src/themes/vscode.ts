@@ -222,7 +222,13 @@ export function convertVscodeColorTheme(raw: VscodeColorTheme, opts: ConvertOpti
   )
 
   const elevated = take(
-    ['editorWidget.background', 'dropdown.background', 'menu.background', 'quickInput.background', 'editorSuggestWidget.background'],
+    [
+      'editorWidget.background',
+      'dropdown.background',
+      'menu.background',
+      'quickInput.background',
+      'editorSuggestWidget.background'
+    ],
     mix(background, foreground, dark ? 0.08 : 0.05)
   )
 
@@ -231,7 +237,10 @@ export function convertVscodeColorTheme(raw: VscodeColorTheme, opts: ConvertOpti
     mix(background, foreground, dark ? 0.04 : 0.025)
   )
 
-  const sidebar = take(['sideBar.background', 'activityBar.background'], mix(background, foreground, dark ? 0.02 : 0.012))
+  const sidebar = take(
+    ['sideBar.background', 'activityBar.background'],
+    mix(background, foreground, dark ? 0.02 : 0.012)
+  )
 
   const accent = ensureContrast(accentSource, sidebar, ACCENT_MIN_CONTRAST)
 
@@ -251,7 +260,12 @@ export function convertVscodeColorTheme(raw: VscodeColorTheme, opts: ConvertOpti
   )
 
   const destructive = take(
-    ['editorError.foreground', 'errorForeground', 'editorOverviewRuler.errorForeground', 'notificationsErrorIcon.foreground'],
+    [
+      'editorError.foreground',
+      'errorForeground',
+      'editorOverviewRuler.errorForeground',
+      'notificationsErrorIcon.foreground'
+    ],
     '#e25563'
   )
 

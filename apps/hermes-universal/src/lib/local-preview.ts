@@ -11,10 +11,7 @@ export interface LocalPreviewTarget {
   [key: string]: unknown
 }
 
-export async function normalizeOrLocalPreviewTarget(
-  target: string,
-  _cwd?: string
-): Promise<LocalPreviewTarget | null> {
+export async function normalizeOrLocalPreviewTarget(target: string, _cwd?: string): Promise<LocalPreviewTarget | null> {
   const trimmed = target.trim()
 
   return trimmed ? { target: trimmed } : null

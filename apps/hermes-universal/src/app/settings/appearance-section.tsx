@@ -6,6 +6,7 @@ import { LanguageSwitcher } from '@/components/language-switcher'
 import { Button } from '@/components/ui/button'
 import { SegmentedControl } from '@/components/ui/segmented-control'
 import { useI18n } from '@/i18n'
+import { triggerHaptic } from '@/lib/haptics'
 import { Check, Download, Loader2, Monitor, Moon, Palette, Sun, Trash } from '@/lib/icons'
 import { IS_DESKTOP, IS_TAURI } from '@/lib/platform'
 import { selectableCardClass } from '@/lib/selectable-card'
@@ -13,7 +14,6 @@ import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $embedAllowed, $embedMode, clearEmbedAllowed, type EmbedMode, setEmbedMode } from '@/store/embed-consent'
-import { triggerHaptic } from '@/lib/haptics'
 import { installFromMarketplace, type MarketplaceSearchItem, searchMarketplace } from '@/store/marketplace'
 import { $toolViewMode, setToolViewMode, type ToolViewMode } from '@/store/tool-view'
 import { $translucency, setTranslucency } from '@/store/translucency'
@@ -245,10 +245,12 @@ export function AppearanceSection() {
   const [query, setQuery] = useState('')
 
   const modeOptions = MODE_OPTIONS.map(({ id, icon }) => ({ icon, id, label: t.settings.modeOptions[id].label }))
+
   const toolOptions = [
     { id: 'product', label: a.product },
     { id: 'technical', label: a.technical }
   ] as const
+
   const embedOptions = [
     { id: 'ask', label: a.embedsAsk },
     { id: 'always', label: a.embedsAlways },
@@ -256,9 +258,12 @@ export function AppearanceSection() {
   ] as const satisfies readonly { id: EmbedMode; label: string }[]
 
   const uiScaleOptions = UI_SCALE_PRESETS.map(preset => ({ id: preset, label: `${preset}%` }))
-  const matchedScale = UI_SCALE_PRESETS.find(preset => Number(preset) === zoomPercent) ?? ('' as (typeof UI_SCALE_PRESETS)[number])
+
+  const matchedScale =
+    UI_SCALE_PRESETS.find(preset => Number(preset) === zoomPercent) ?? ('' as (typeof UI_SCALE_PRESETS)[number])
 
   const needle = normalize(query)
+
   const filteredThemes = availableThemes
     .filter(
       theme =>
@@ -306,6 +311,7 @@ export function AppearanceSection() {
                       {filteredThemes.map(theme => {
                         const active = themeName === theme.name
                         const removable = isUserTheme(theme.name)
+
                         return (
                           <div className="group relative" key={theme.name}>
                             <button
@@ -333,6 +339,7 @@ export function AppearanceSection() {
                                 onClick={() => {
                                   triggerHaptic('selection')
                                   removeUserTheme(theme.name)
+
                                   if (active) {
                                     setTheme(theme.name)
                                   }

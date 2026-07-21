@@ -3,9 +3,9 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { useI18n } from '@/i18n'
+import { triggerHaptic } from '@/lib/haptics'
 import { Check, Palette } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import { triggerHaptic } from '@/lib/haptics'
 import { resolveTheme, type ThemeMode, useTheme } from '@/themes'
 
 // Mobile appearance picker: a bottom Sheet with a light/dark/system segmented
@@ -41,9 +41,9 @@ export function ThemeControls() {
         <div className="grid grid-cols-3 gap-2">
           {MODES.map(m => (
             <Button
-              key={m}
               aria-pressed={mode === m}
               className={cn(mode === m && 'border-primary text-foreground')}
+              key={m}
               onClick={() => selectMode(m)}
               size="sm"
               variant={mode === m ? 'outline' : 'ghost'}
@@ -64,15 +64,16 @@ export function ThemeControls() {
             const seed = resolveTheme(theme.name)
             const swatchBg = seed?.colors.background ?? '#888'
             const swatchDot = seed?.colors.primary ?? seed?.colors.ring ?? '#888'
+
             return (
               <button
-                key={theme.name}
                 aria-label={theme.label}
                 aria-pressed={selected}
                 className={cn(
                   'flex items-center gap-2.5 rounded-lg border p-2.5 text-left transition-colors',
                   selected ? 'border-primary bg-accent' : 'border-border hover:bg-accent'
                 )}
+                key={theme.name}
                 onClick={() => selectSkin(theme.name)}
                 type="button"
               >

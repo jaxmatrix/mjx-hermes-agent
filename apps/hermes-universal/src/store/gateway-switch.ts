@@ -13,7 +13,7 @@ import type { GatewayMode } from '@/store/gateway-config'
 
 const modeCodec: Codec<GatewayMode> = {
   decode: raw => (raw === 'local' || raw === 'cloud' ? raw : 'remote'),
-  encode: value => value,
+  encode: value => value
 }
 
 /** The last-selected gateway mode; persisted so the app reopens into it. */
@@ -34,8 +34,12 @@ export function setGatewayMode(mode: GatewayMode): void {
 /** Switch gateway mode: drop the live connection so the target mode's connect flow
  *  can start fresh. No-op when already in `mode`. */
 export function switchGatewayMode(mode: GatewayMode): void {
-  if ($gatewayMode.get() === mode) return
+  if ($gatewayMode.get() === mode) {
+    return
+  }
+
   $gatewaySwitching.set(true)
+
   try {
     disconnect()
     $gatewayMode.set(mode)

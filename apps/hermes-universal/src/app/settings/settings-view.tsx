@@ -3,12 +3,7 @@ import { readFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
-import {
-  OverlayMain,
-  OverlayNav,
-  type OverlayNavGroup,
-  OverlaySplitLayout
-} from '@/app/overlays/overlay-split-layout'
+import { OverlayMain, OverlayNav, type OverlayNavGroup, OverlaySplitLayout } from '@/app/overlays/overlay-split-layout'
 import { OverlayView } from '@/app/overlays/overlay-view'
 import { Button } from '@/components/ui/button'
 import {
@@ -27,8 +22,8 @@ import { Download, Refresh, Upload } from '@/lib/icons'
 import { notify, notifyError } from '@/store/notifications'
 
 import { SECTIONS } from './constants'
-import { SectionBody } from './settings-section'
 import { useSettingsNavGroups } from './settings-nav'
+import { SectionBody } from './settings-section'
 import { invalidateHermesConfig, setHermesConfigCache } from './use-config-record'
 
 const DEFAULT_SECTION = SECTIONS[0]?.id ?? 'model'
@@ -44,7 +39,11 @@ function SettingsFooter() {
     try {
       const cfg = await getHermesConfigRecord()
       const path = await save({ defaultPath: 'hermes-config.json', filters: [{ extensions: ['json'], name: 'JSON' }] })
-      if (!path) return
+
+      if (!path) {
+        return
+      }
+
       await writeTextFile(path, JSON.stringify(cfg, null, 2))
       notify({ kind: 'success', message: t.settings.exportConfig })
     } catch (err) {
@@ -54,7 +53,11 @@ function SettingsFooter() {
 
   const importConfig = async () => {
     const path = await open({ filters: [{ extensions: ['json'], name: 'JSON' }], multiple: false })
-    if (!path || typeof path !== 'string') return
+
+    if (!path || typeof path !== 'string') {
+      return
+    }
+
     try {
       const parsed = JSON.parse(new TextDecoder().decode(await readFile(path)))
       await saveHermesConfig(parsed)
@@ -68,6 +71,7 @@ function SettingsFooter() {
 
   const reset = async () => {
     setBusy(true)
+
     try {
       const defaults = await getHermesConfigDefaults()
       await saveHermesConfig(defaults)

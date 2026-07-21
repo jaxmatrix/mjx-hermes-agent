@@ -1,10 +1,11 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
-
 // Load the connection/session graph before @/store/projects (→ @/store/gateway)
 // so the gateway↔connection import cycle resolves connection-first (see the same
 // note in sidebar-content.test.tsx).
 import '@/store/session'
+
+import { fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'vitest'
+
 import { PROJECT_IDEA_TEMPLATES } from '@/lib/project-idea-templates'
 import { $projectDialog, closeProjectDialog } from '@/store/projects'
 
@@ -24,6 +25,7 @@ describe('ProjectDialog (create)', () => {
     const chip = screen
       .getAllByRole('button')
       .find(b => PROJECT_IDEA_TEMPLATES.some(t => b.textContent?.includes(t.label)))
+
     expect(chip).toBeTruthy()
 
     const template = PROJECT_IDEA_TEMPLATES.find(t => chip!.textContent?.includes(t.label))!

@@ -5,7 +5,10 @@ import type { CronJob } from '@/types/hermes'
 const job = (over: Partial<CronJob>): CronJob => ({ id: 'x', enabled: true, ...over })
 
 vi.mock('@/hermes', () => ({
-  getCronJobs: vi.fn(async () => [job({ id: 'a', name: 'A', enabled: true }), job({ id: 'b', name: 'B', enabled: false })]),
+  getCronJobs: vi.fn(async () => [
+    job({ id: 'a', name: 'A', enabled: true }),
+    job({ id: 'b', name: 'B', enabled: false })
+  ]),
   pauseCronJob: vi.fn(async (id: string) => job({ id, enabled: false })),
   resumeCronJob: vi.fn(async (id: string) => job({ id, enabled: true })),
   triggerCronJob: vi.fn(async (id: string) => job({ id })),

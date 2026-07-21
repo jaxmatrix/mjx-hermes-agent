@@ -102,13 +102,18 @@ export const GeneratedImage: FC<{ aspectRatio?: string; result?: unknown }> = ({
     >
       <ZoomableImage
         alt="Generated image"
-        className={cn('size-full object-contain opacity-0 transition-opacity duration-500 ease-out', loaded && 'opacity-100')}
+        className={cn(
+          'size-full object-contain opacity-0 transition-opacity duration-500 ease-out',
+          loaded && 'opacity-100'
+        )}
         onError={() => setFailed(true)}
         onLoad={event => {
           const { naturalHeight, naturalWidth } = event.currentTarget
+
           if (naturalWidth && naturalHeight) {
             setRatio(naturalWidth / naturalHeight)
           }
+
           setLoaded(true)
         }}
         src={src}

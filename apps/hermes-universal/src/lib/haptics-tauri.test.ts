@@ -19,10 +19,12 @@ const mockImpact = vi.mocked(impactFeedback)
 // imported because HAPTIC_INTENTS is module-private there — which is the whole
 // reason this renderer sees patterns instead of intents.
 const SELECTION = [{ duration: 16, intensity: 0.52 }]
+
 const SUBMIT = [
   { duration: 24, intensity: 0.58 },
   { delay: 48, duration: 36, intensity: 0.82 }
 ]
+
 const SUCCESS = [
   { duration: 28, intensity: 0.5 },
   { delay: 42, duration: 30, intensity: 0.68 },
@@ -110,14 +112,18 @@ describe('tauriHapticTrigger (iOS)', () => {
   }
 
   it('maps pulse intensity onto impact styles, one per pulse', async () => {
-    await (await iosTrigger())(SUCCESS)
+    await (
+      await iosTrigger()
+    )(SUCCESS)
 
     expect(mockImpact.mock.calls.map(([style]) => style)).toEqual(['light', 'medium', 'rigid'])
     expect(mockVibrate).not.toHaveBeenCalled()
   })
 
   it('spans the full style range across the intensity scale', async () => {
-    await (await iosTrigger())([
+    await (
+      await iosTrigger()
+    )([
       { duration: 10, intensity: 0.1 },
       { duration: 10, intensity: 0.5 },
       { duration: 10, intensity: 0.7 },
@@ -129,19 +135,25 @@ describe('tauriHapticTrigger (iOS)', () => {
   })
 
   it('uses the options fallback for pulses with no intensity of their own', async () => {
-    await (await iosTrigger())([{ duration: 10 }], { intensity: 0.95 })
+    await (
+      await iosTrigger()
+    )([{ duration: 10 }], { intensity: 0.95 })
 
     expect(mockImpact).toHaveBeenCalledWith('heavy')
   })
 
   it("defaults that fallback to web-haptics' 0.5", async () => {
-    await (await iosTrigger())([{ duration: 10 }])
+    await (
+      await iosTrigger()
+    )([{ duration: 10 }])
 
     expect(mockImpact).toHaveBeenCalledWith('light')
   })
 
   it('does not let an explicit pulse intensity be overridden by options', async () => {
-    await (await iosTrigger())([{ duration: 10, intensity: 0.1 }], { intensity: 1 })
+    await (
+      await iosTrigger()
+    )([{ duration: 10, intensity: 0.1 }], { intensity: 1 })
 
     expect(mockImpact).toHaveBeenCalledWith('soft')
   })

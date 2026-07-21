@@ -27,8 +27,8 @@ import { useI18n } from '@/i18n'
 import { GitBranchIcon, Loader2Icon, Volume2Icon, VolumeXIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { playSpeechText, stopVoicePlayback } from '@/lib/voice-playback'
-import { newSession } from '@/store/session'
 import { notifyError } from '@/store/notifications'
+import { newSession } from '@/store/session'
 import { $voicePlayback } from '@/store/voice-playback'
 
 interface MessageActionProps {

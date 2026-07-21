@@ -4,12 +4,10 @@ import { atom } from '@/store/atom'
 // Live side-channel diffs keyed by toolCallId. The tool renderer prefers a diff
 // recorded here over one parsed out of the tool result.
 //
-// FIXME(chat-port): universal has no gateway side-channel feeding
-// recordToolDiff yet (desktop's chat-messages reducer records diffs from a
-// review-diff event stream — blocked, no universal event). The map therefore
-// stays empty in practice and the renderer falls back to the diff embedded in
-// the tool result, which is the common case. Wire recordToolDiff from the
-// gateway-event handler once universal surfaces a review-diff event.
+// Fed by the `tool.complete` handler in store/chat.ts: the gateway renders the
+// edit diff itself and ships it as `inline_diff` on that event
+// (tui_gateway/server.py `_on_tool_complete`), keyed by the same tool id the
+// part adopts in lib/chat-tool-parts.
 const $toolDiffs = atom<Record<string, string>>({})
 
 export function recordToolDiff(toolCallId: string, diff: string) {

@@ -37,8 +37,8 @@ import { AlertCircle, CheckCircle2 } from '@/lib/icons'
 import { normalize } from '@/lib/text'
 import { useEnterAnimation } from '@/lib/use-enter-animation'
 import { cn } from '@/lib/utils'
-import { recordPreviewArtifact } from '@/store/preview-status'
 import { $sessionId as $activeSessionId, $currentCwd } from '@/store/chat'
+import { recordPreviewArtifact } from '@/store/preview-status'
 import { $toolInlineDiffs } from '@/store/tool-diffs'
 import { $toolRowDismissed, dismissToolRow } from '@/store/tool-dismiss'
 import { $toolDisclosureOpen, $toolViewMode, setToolDisclosureOpen } from '@/store/tool-view'
@@ -609,7 +609,7 @@ function ToolEntry({ part }: ToolEntryProps) {
 
 // A back-to-back run of this many tool calls collapses into the bounded,
 // auto-scrolling window; fewer than this stays a plain inline stack.
-const TOOL_GROUP_SCROLL_THRESHOLD = 3
+const TOOL_GROUP_SCROLL_THRESHOLD = 6
 
 // Tools whose body (an interactive form, a full-size image) must never be
 // trapped behind the window's max-height + fade mask. A run holding any of

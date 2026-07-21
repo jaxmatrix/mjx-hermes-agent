@@ -47,17 +47,25 @@ function DefaultProjectDirSetting() {
     let alive = true
     void getDefaultCwd()
       .then(res => {
-        if (alive && res.cwd) setFallback(res.cwd)
+        if (alive && res.cwd) {
+          setFallback(res.cwd)
+        }
       })
       .catch(() => {})
+
     return () => void (alive = false)
   }, [])
 
   const choose = async () => {
     setBusy(true)
+
     try {
       const picked = await pickProjectFolder()
-      if (!picked) return
+
+      if (!picked) {
+        return
+      }
+
       setDefaultProjectDir(picked)
       notify({ kind: 'success', message: s.defaultDirUpdated })
     } catch (err) {
@@ -112,15 +120,23 @@ export function ArchivedSection() {
 
   useEffect(() => {
     let cancelled = false
+
     void (async () => {
       try {
         const res = await listSessions(200, 0, 'only', 'recent')
-        if (!cancelled) setSessions(res.sessions)
+
+        if (!cancelled) {
+          setSessions(res.sessions)
+        }
       } catch (err) {
-        if (!cancelled) setFailed(true)
+        if (!cancelled) {
+          setFailed(true)
+        }
+
         notifyError(err, s.failedLoad)
       }
     })()
+
     return () => void (cancelled = true)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
   }, [])
@@ -129,6 +145,7 @@ export function ArchivedSection() {
 
   const unarchive = async (id: string) => {
     setBusy(id)
+
     try {
       await setSessionArchived(id, false)
       drop(id)
@@ -144,6 +161,7 @@ export function ArchivedSection() {
   const remove = async (id: string) => {
     setConfirm(null)
     setBusy(id)
+
     try {
       await deleteSession(id)
       drop(id)
@@ -176,6 +194,7 @@ export function ArchivedSection() {
           {list.map(session => {
             const label = workspaceLabel(session.cwd)
             const meta = label ? `${label} · ${s.messages(session.message_count)}` : s.messages(session.message_count)
+
             return (
               <div className="scroll-mt-6 rounded-lg" id={`archived-session-${session.id}`} key={session.id}>
                 <ListRow

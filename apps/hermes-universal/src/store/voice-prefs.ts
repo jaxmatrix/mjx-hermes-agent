@@ -14,7 +14,9 @@ export async function seedAutoSpeak(): Promise<void> {
   if (seeded) {
     return
   }
+
   seeded = true
+
   try {
     const record = await getHermesConfigRecord()
     const voice = record.voice && typeof record.voice === 'object' ? (record.voice as Record<string, unknown>) : {}
@@ -28,10 +30,13 @@ export async function seedAutoSpeak(): Promise<void> {
  *  the same path Settings uses). Optimistic, reverts on write failure. */
 export async function setAutoSpeakReplies(enabled: boolean): Promise<void> {
   const previous = $autoSpeakReplies.get()
+
   if (previous === enabled) {
     return
   }
+
   $autoSpeakReplies.set(enabled)
+
   try {
     const record = await getHermesConfigRecord()
     const voice = record.voice && typeof record.voice === 'object' ? (record.voice as Record<string, unknown>) : {}

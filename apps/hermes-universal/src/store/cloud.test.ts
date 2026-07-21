@@ -14,14 +14,20 @@ import {
   $portalSignedIn,
   connectCloudAgent,
   discoverCloud,
-  refreshCloud,
+  refreshCloud
 } from './cloud'
 
 const mockInvoke = vi.mocked(invoke)
 type Impl = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
 const setImpl = (fn: Impl) => mockInvoke.mockImplementation(fn as never)
 
-const agent = { id: 'a1', name: 'Agent One', status: 'running', dashboardUrl: 'https://a1.example.com', dashboardGatewayState: 'active' }
+const agent = {
+  id: 'a1',
+  name: 'Agent One',
+  status: 'running',
+  dashboardUrl: 'https://a1.example.com',
+  dashboardGatewayState: 'active'
+}
 
 beforeEach(() => {
   mockInvoke.mockReset()
@@ -34,7 +40,9 @@ beforeEach(() => {
 
 describe('cloud discovery', () => {
   it('happy path populates the agent list', async () => {
-    setImpl(() => Promise.resolve({ agents: [agent], org: null, orgs: [], needsLogin: false, needsOrgSelection: false }))
+    setImpl(() =>
+      Promise.resolve({ agents: [agent], org: null, orgs: [], needsLogin: false, needsOrgSelection: false })
+    )
     await discoverCloud()
     expect($cloudAgents.get()).toHaveLength(1)
     expect($cloudAgents.get()[0].name).toBe('Agent One')
@@ -58,7 +66,10 @@ describe('cloud discovery', () => {
 describe('refreshCloud', () => {
   it('discovers when the portal session is live', async () => {
     setImpl(cmd => {
-      if (cmd === 'portal_status') return Promise.resolve({ signedIn: true, portalBaseUrl: 'https://portal' })
+      if (cmd === 'portal_status') {
+        return Promise.resolve({ signedIn: true, portalBaseUrl: 'https://portal' })
+      }
+
       return Promise.resolve({ agents: [agent], orgs: [], needsLogin: false, needsOrgSelection: false })
     })
     await refreshCloud()
@@ -70,7 +81,10 @@ describe('refreshCloud', () => {
 describe('connectCloudAgent', () => {
   it('signs in to the agent then connects in cloud mode', async () => {
     setImpl(cmd => {
-      if (cmd === 'portal_agent_sign_in') return Promise.resolve({ connected: true, baseUrl: 'https://a1.example.com' })
+      if (cmd === 'portal_agent_sign_in') {
+        return Promise.resolve({ connected: true, baseUrl: 'https://a1.example.com' })
+      }
+
       return Promise.resolve()
     })
     await connectCloudAgent(agent)

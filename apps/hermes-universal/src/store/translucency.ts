@@ -7,6 +7,7 @@ import { IS_DESKTOP } from '@/lib/platform'
 const numberCodec: Codec<number> = {
   decode: raw => {
     const n = Number(raw)
+
     return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : 0
   },
   encode: value => String(value)
@@ -18,6 +19,7 @@ export async function applyTranslucency(intensity: number): Promise<void> {
   if (!IS_DESKTOP) {
     return
   }
+
   try {
     const { invoke } = await import('@tauri-apps/api/core')
     await invoke('set_window_translucency', { intensity })

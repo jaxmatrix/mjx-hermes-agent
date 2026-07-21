@@ -5,6 +5,7 @@ import {
   type FC,
   memo,
   type ReactNode,
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -25,7 +26,7 @@ import {
 
 type ThreadMessageComponents = ComponentProps<typeof ThreadPrimitive.MessageByIndex>['components']
 
-type MessageGroup = { id: string; weight: number } & (
+export type MessageGroup = { id: string; weight: number } & (
   | { index: number; kind: 'standalone' }
   | { indices: number[]; kind: 'turn' }
 )
@@ -39,6 +40,12 @@ type MessageGroup = { id: string; weight: number } & (
 // fight use-stick-to-bottom (the single scroll owner).
 const RENDER_BUDGET = 300
 
+// On session switch, paint a small budget first (enough for the bottom turn(s)
+// the user actually sees after scroll-to-bottom), then bump to the full budget
+// in a requestAnimationFrame — defers the heavy markdown+KaTeX render past the
+// initial commit, so the switch feels instant.
+const FIRST_PAINT_BUDGET = 60
+
 interface ThreadMessageListProps {
   clampToComposer: boolean
   components: ThreadMessageComponents
@@ -50,7 +57,7 @@ interface ThreadMessageListProps {
 // Group each user message with the assistant turn(s) that follow it so the
 // human bubble can `position: sticky` against the scroller across its whole
 // turn (see StickyHumanMessageContainer in user-message.tsx).
-function buildGroups(signature: string): MessageGroup[] {
+export function buildGroups(signature: string): MessageGroup[] {
   if (!signature) {
     return []
   }
@@ -86,6 +93,24 @@ function buildGroups(signature: string): MessageGroup[] {
   return groups
 }
 
+// Walk turns newest-first, summing their part weights until the budget is met;
+// everything before the first kept turn is hidden. Returns the index of that
+// first visible group.
+export function firstVisibleGroupIndex(groups: readonly MessageGroup[], budget: number): number {
+  let firstVisible = groups.length
+
+  for (let i = groups.length - 1, weight = 0; i >= 0; i--) {
+    weight += groups[i].weight
+    firstVisible = i
+
+    if (weight >= budget) {
+      break
+    }
+  }
+
+  return firstVisible
+}
+
 const ThreadMessageListInner: FC<ThreadMessageListProps> = ({
   clampToComposer,
   components,
@@ -113,22 +138,57 @@ const ThreadMessageListInner: FC<ThreadMessageListProps> = ({
     resize: 'instant'
   })
 
-  const [renderBudget, setRenderBudget] = useState(RENDER_BUDGET)
+  const [renderBudget, setRenderBudget] = useState(FIRST_PAINT_BUDGET)
 
-  // Walk turns newest-first, summing their part weights until the budget is met;
-  // everything before that first kept turn is hidden.
-  let firstVisible = groups.length
+  // Cut the budget during RENDER, not in the post-commit layout effect. An
+  // effect-time cut is too late: React would first build the whole tree with
+  // the full budget (up to 300 parts of markdown + syntax highlighting),
+  // commit it, and only then re-render at the small budget. The render-phase
+  // state adjustment restarts this component immediately — before any child
+  // renders — so the heavy commit never happens.
+  //
+  // Two triggers, because the transcript swap arrives differently per path:
+  // a WARM switch publishes sessionKey + messages in one commit (the key
+  // branch), while a COLD switch changes sessionKey with an empty transcript
+  // and the hydrated messages land hundreds of ms later under the SAME key
+  // (the empty→non-empty branch).
+  const hasGroups = groups.length > 0
+  const [budgetSessionKey, setBudgetSessionKey] = useState(sessionKey)
+  const [hadGroups, setHadGroups] = useState(hasGroups)
 
-  for (let i = groups.length - 1, weight = 0; i >= 0; i--) {
-    weight += groups[i].weight
-    firstVisible = i
+  if (budgetSessionKey !== sessionKey) {
+    setBudgetSessionKey(sessionKey)
+    setHadGroups(hasGroups)
+    setRenderBudget(FIRST_PAINT_BUDGET)
+  } else if (hadGroups !== hasGroups) {
+    setHadGroups(hasGroups)
 
-    if (weight >= renderBudget) {
-      break
+    if (hasGroups) {
+      setRenderBudget(FIRST_PAINT_BUDGET)
     }
   }
 
-  const hiddenCount = firstVisible
+  // Backfill from FIRST_PAINT_BUDGET to the full budget after the small
+  // commit painted — as a TRANSITION, so the heavy markdown + KaTeX render of
+  // the older turns is interruptible instead of one long synchronous commit
+  // that freezes input right after the switch. "Show earlier" pages
+  // (budget > RENDER_BUDGET) never re-enter here.
+  useEffect(() => {
+    if (renderBudget >= RENDER_BUDGET) {
+      return
+    }
+
+    const rafId = requestAnimationFrame(() => {
+      // Functional max, not a plain set: an urgent "Show earlier" click can
+      // land between scheduling and committing this transition, and a plain
+      // set would rebase over it and shrink the budget back down.
+      startTransition(() => setRenderBudget(budget => Math.max(budget, RENDER_BUDGET)))
+    })
+
+    return () => cancelAnimationFrame(rafId)
+  }, [renderBudget])
+
+  const hiddenCount = firstVisibleGroupIndex(groups, renderBudget)
   const visibleGroups = hiddenCount > 0 ? groups.slice(hiddenCount) : groups
   const restoreFromBottomRef = useRef<number | null>(null)
 
@@ -165,15 +225,15 @@ const ThreadMessageListInner: FC<ThreadMessageListProps> = ({
   // New run → snap to the latest turn.
   useAuiEvent('thread.runStart', () => void scrollToBottom())
 
-  // Reset the cap and pin to bottom on mount + every session switch (messages
-  // swap in place on a long-lived runtime, so sessionKey is the only signal).
-  // The swap is multi-step and lays out over many frames; letting the library
-  // follow re-pins every frame to a moving target — visible as ~10 scroll jumps.
-  // Instead: quiet it, glue to the true bottom until the height holds steady,
-  // then hand back locked. Live streaming afterward uses the normal resize follow.
+  // Pin to bottom on mount + every session switch (messages swap in place on a
+  // long-lived runtime, so sessionKey is the only signal). The swap is
+  // multi-step and lays out over many frames; letting the library follow re-pins
+  // every frame to a moving target — visible as ~10 scroll jumps. Instead:
+  // quiet it, glue to the true bottom until the height holds steady, then hand
+  // back locked. Live streaming afterward uses the normal resize follow. (The
+  // render budget is cut during render above, not here — an effect-time cut
+  // would commit the full tree first.)
   useLayoutEffect(() => {
-    setRenderBudget(RENDER_BUDGET)
-
     const el = scrollRef.current
 
     if (!el) {
@@ -200,8 +260,10 @@ const ThreadMessageListInner: FC<ThreadMessageListProps> = ({
       lastHeight = height
       node.scrollTop = height
 
-      // ~5 steady frames ≈ layout has settled; the frame cap bounds slow loads.
-      if (stableFrames >= 5 || ++frame > 90) {
+      // Most session switches are synchronous and stabilize within 2 frames;
+      // a 90-frame ceiling only matters for slow async image loads. Cap at 15
+      // frames to minimize the settle loop racing markdown paint on every switch.
+      if (stableFrames >= 2 || ++frame > 15) {
         void scrollToBottom('instant')
 
         return
@@ -268,8 +330,22 @@ const ThreadMessageListInner: FC<ThreadMessageListProps> = ({
               </button>
             )}
             {visibleGroups.map(group => (
+              // content-visibility:auto — off-screen turns skip style recalc,
+              // layout, and paint. On a long transcript this is what keeps
+              // UNRELATED UI fast: any dialog/popover mount (Radix Presence
+              // reads getComputedStyle) forces a whole-document style recalc,
+              // measured ~650-730ms per open on a 1300-message session and
+              // ~100-200ms with this on. The same applies to any width change —
+              // toggling a sidebar re-lays-out every rendered turn, which on a
+              // KaTeX-heavy transcript (dozens-to-hundreds of inline-styled
+              // spans per equation) froze the window until this landed.
+              // contain-intrinsic-size keeps a placeholder height for
+              // never-rendered turns (auto: remembered real size once
+              // rendered), so scrollbar/anchoring stay stable. Sticky human
+              // bubbles are unaffected — their turn is rendered whenever any
+              // part of it intersects the viewport.
               <div
-                className="flex min-w-0 flex-col gap-(--conversation-turn-gap) pb-(--conversation-turn-gap)"
+                className="flex min-w-0 flex-col gap-(--conversation-turn-gap) pb-(--conversation-turn-gap) [contain-intrinsic-size:auto_37.5rem] [content-visibility:auto]"
                 key={group.id}
               >
                 <MessageRenderBoundary resetKey={messageSignature}>

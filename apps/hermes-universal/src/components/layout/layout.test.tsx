@@ -8,7 +8,7 @@ import { Stack } from './stack'
 describe('layout primitives (mobile-first)', () => {
   it('Container applies padding + size, no max-* walkbacks', () => {
     render(
-      <Container size="prose" data-testid="c">
+      <Container data-testid="c" size="prose">
         x
       </Container>
     )
@@ -25,7 +25,7 @@ describe('layout primitives (mobile-first)', () => {
   })
 
   it('Stack row stacks on mobile, becomes row from md up', () => {
-    render(<Stack direction="row" gap={6} data-testid="s" />)
+    render(<Stack data-testid="s" direction="row" gap={6} />)
     const el = screen.getByTestId('s')
     expect(el).toHaveClass('flex', 'flex-col', 'md:flex-row', 'gap-6')
   })

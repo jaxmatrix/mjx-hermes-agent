@@ -90,6 +90,7 @@ export function PetPanel() {
                     {shown.map(pet => {
                       const isActive = enabled && active === pet.slug
                       const isBusy = busy === pet.slug
+
                       return (
                         <button
                           className={cn(
@@ -103,7 +104,9 @@ export function PetPanel() {
                         >
                           <PetThumb slug={pet.slug} url={pet.spritesheetUrl} />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium text-foreground">{pet.displayName}</span>
+                            <span className="block truncate text-sm font-medium text-foreground">
+                              {pet.displayName}
+                            </span>
                             {pet.generated && <Pill>{p.generatedTag}</Pill>}
                           </span>
                           {isBusy && <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />}
@@ -125,7 +128,11 @@ export function PetPanel() {
           title={
             <div className="flex items-center justify-between gap-3">
               <span>{p.chooseTitle}</span>
-              <SegmentedControl onChange={id => void setPetEnabled(id === 'on')} options={onOff} value={enabled ? 'on' : 'off'} />
+              <SegmentedControl
+                onChange={id => void setPetEnabled(id === 'on')}
+                options={onOff}
+                value={enabled ? 'on' : 'off'}
+              />
             </div>
           }
           wide
@@ -158,7 +165,9 @@ export function PetPanel() {
 
         {enabled && (
           <ListRow
-            action={<SegmentedControl onChange={id => setPetRoam(id === 'on')} options={onOff} value={roam ? 'on' : 'off'} />}
+            action={
+              <SegmentedControl onChange={id => setPetRoam(id === 'on')} options={onOff} value={roam ? 'on' : 'off'} />
+            }
             description={p.roamDesc}
             title={p.roamTitle}
           />
@@ -179,6 +188,7 @@ export function PetSection() {
   if (status === 'loading' && !gallery) {
     return <LoadingState label={t.commandCenter.pets.loading} />
   }
+
   if (status === 'error' && !gallery) {
     return (
       <SettingsContent>

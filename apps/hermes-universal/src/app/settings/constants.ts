@@ -23,35 +23,179 @@ interface ProviderPrefix {
 }
 
 export const PROVIDER_GROUPS: ProviderPrefix[] = [
-  { prefix: 'NOUS_', name: 'Nous Portal', description: 'Hosted Hermes & Nous-trained models', docsUrl: 'https://portal.nousresearch.com', priority: 0 },
-  { prefix: 'OPENROUTER_', name: 'OpenRouter', description: 'Aggregator for hundreds of frontier models', docsUrl: 'https://openrouter.ai/keys', priority: 1 },
-  { prefix: 'ANTHROPIC_', name: 'Anthropic', description: 'Claude API access (Sonnet, Opus, Haiku)', docsUrl: 'https://console.anthropic.com/settings/keys', priority: 2 },
-  { prefix: 'XAI_', name: 'xAI', description: 'Grok models (use OAuth for SuperGrok / Premium+)', docsUrl: 'https://console.x.ai/', priority: 3 },
-  { prefix: 'GOOGLE_', name: 'Gemini', description: 'Google AI Studio (Gemini 1.5 / 2.0 / 2.5)', docsUrl: 'https://aistudio.google.com/app/apikey', priority: 4 },
+  {
+    prefix: 'NOUS_',
+    name: 'Nous Portal',
+    description: 'Hosted Hermes & Nous-trained models',
+    docsUrl: 'https://portal.nousresearch.com',
+    priority: 0
+  },
+  {
+    prefix: 'OPENROUTER_',
+    name: 'OpenRouter',
+    description: 'Aggregator for hundreds of frontier models',
+    docsUrl: 'https://openrouter.ai/keys',
+    priority: 1
+  },
+  {
+    prefix: 'ANTHROPIC_',
+    name: 'Anthropic',
+    description: 'Claude API access (Sonnet, Opus, Haiku)',
+    docsUrl: 'https://console.anthropic.com/settings/keys',
+    priority: 2
+  },
+  {
+    prefix: 'XAI_',
+    name: 'xAI',
+    description: 'Grok models (use OAuth for SuperGrok / Premium+)',
+    docsUrl: 'https://console.x.ai/',
+    priority: 3
+  },
+  {
+    prefix: 'GOOGLE_',
+    name: 'Gemini',
+    description: 'Google AI Studio (Gemini 1.5 / 2.0 / 2.5)',
+    docsUrl: 'https://aistudio.google.com/app/apikey',
+    priority: 4
+  },
   { prefix: 'GEMINI_', name: 'Gemini', priority: 4 },
-  { prefix: 'DEEPSEEK_', name: 'DeepSeek', description: 'Direct DeepSeek API (V3.x, R1)', docsUrl: 'https://platform.deepseek.com/api_keys', priority: 5 },
-  { prefix: 'DASHSCOPE_', name: 'DashScope (Qwen)', description: 'Alibaba Cloud DashScope — Qwen and multi-vendor models', docsUrl: 'https://modelstudio.console.alibabacloud.com/', priority: 6 },
+  {
+    prefix: 'DEEPSEEK_',
+    name: 'DeepSeek',
+    description: 'Direct DeepSeek API (V3.x, R1)',
+    docsUrl: 'https://platform.deepseek.com/api_keys',
+    priority: 5
+  },
+  {
+    prefix: 'DASHSCOPE_',
+    name: 'DashScope (Qwen)',
+    description: 'Alibaba Cloud DashScope — Qwen and multi-vendor models',
+    docsUrl: 'https://modelstudio.console.alibabacloud.com/',
+    priority: 6
+  },
   { prefix: 'HERMES_QWEN_', name: 'DashScope (Qwen)', priority: 6 },
-  { prefix: 'GLM_', name: 'GLM / Z.AI', description: 'Zhipu GLM-4.6 and Z.AI hosted endpoints', docsUrl: 'https://z.ai/', priority: 7 },
+  {
+    prefix: 'GLM_',
+    name: 'GLM / Z.AI',
+    description: 'Zhipu GLM-4.6 and Z.AI hosted endpoints',
+    docsUrl: 'https://z.ai/',
+    priority: 7
+  },
   { prefix: 'ZAI_', name: 'GLM / Z.AI', priority: 7 },
   { prefix: 'Z_AI_', name: 'GLM / Z.AI', priority: 7 },
-  { prefix: 'KIMI_', name: 'Kimi / Moonshot', description: 'Moonshot Kimi K2 / coding endpoints', docsUrl: 'https://platform.moonshot.cn/', priority: 8 },
-  { prefix: 'KIMI_CN_', name: 'Kimi (China)', description: 'Moonshot China endpoint', docsUrl: 'https://platform.moonshot.cn/', priority: 9 },
-  { prefix: 'MINIMAX_', name: 'MiniMax', description: 'MiniMax-M2 and Hailuo international endpoints', docsUrl: 'https://www.minimax.io/', priority: 10 },
-  { prefix: 'MINIMAX_CN_', name: 'MiniMax (China)', description: 'MiniMax mainland China endpoint', docsUrl: 'https://www.minimaxi.com/', priority: 11 },
-  { prefix: 'HF_', name: 'Hugging Face', description: 'Inference Providers — 20+ open models via router.huggingface.co', docsUrl: 'https://huggingface.co/settings/tokens', priority: 12 },
-  { prefix: 'OPENCODE_ZEN_', name: 'OpenCode Zen', description: 'Pay-as-you-go access to curated coding models', docsUrl: 'https://opencode.ai/auth', priority: 13 },
-  { prefix: 'OPENCODE_GO_', name: 'OpenCode Go', description: '$10/month subscription for open coding models', docsUrl: 'https://opencode.ai/auth', priority: 14 },
-  { prefix: 'NVIDIA_', name: 'NVIDIA NIM', description: 'build.nvidia.com or your own local NIM endpoint', docsUrl: 'https://build.nvidia.com/', priority: 15 },
-  { prefix: 'OLLAMA_', name: 'Ollama Cloud', description: 'Cloud-hosted open models from ollama.com', docsUrl: 'https://ollama.com/settings', priority: 16 },
-  { prefix: 'LM_', name: 'LM Studio', description: 'Local LM Studio server (OpenAI-compatible)', docsUrl: 'https://lmstudio.ai/docs/local-server', priority: 17 },
-  { prefix: 'STEPFUN_', name: 'StepFun', description: 'StepFun Step Plan coding models', docsUrl: 'https://platform.stepfun.com/', priority: 18 },
-  { prefix: 'XIAOMI_', name: 'Xiaomi MiMo', description: 'MiMo-V2.5 and Xiaomi proprietary models', docsUrl: 'https://platform.xiaomimimo.com', priority: 19 },
-  { prefix: 'ARCEEAI_', name: 'Arcee AI', description: 'Arcee-hosted small + medium models', docsUrl: 'https://chat.arcee.ai/', priority: 20 },
+  {
+    prefix: 'KIMI_',
+    name: 'Kimi / Moonshot',
+    description: 'Moonshot Kimi K2 / coding endpoints',
+    docsUrl: 'https://platform.moonshot.cn/',
+    priority: 8
+  },
+  {
+    prefix: 'KIMI_CN_',
+    name: 'Kimi (China)',
+    description: 'Moonshot China endpoint',
+    docsUrl: 'https://platform.moonshot.cn/',
+    priority: 9
+  },
+  {
+    prefix: 'MINIMAX_',
+    name: 'MiniMax',
+    description: 'MiniMax-M2 and Hailuo international endpoints',
+    docsUrl: 'https://www.minimax.io/',
+    priority: 10
+  },
+  {
+    prefix: 'MINIMAX_CN_',
+    name: 'MiniMax (China)',
+    description: 'MiniMax mainland China endpoint',
+    docsUrl: 'https://www.minimaxi.com/',
+    priority: 11
+  },
+  {
+    prefix: 'HF_',
+    name: 'Hugging Face',
+    description: 'Inference Providers — 20+ open models via router.huggingface.co',
+    docsUrl: 'https://huggingface.co/settings/tokens',
+    priority: 12
+  },
+  {
+    prefix: 'OPENCODE_ZEN_',
+    name: 'OpenCode Zen',
+    description: 'Pay-as-you-go access to curated coding models',
+    docsUrl: 'https://opencode.ai/auth',
+    priority: 13
+  },
+  {
+    prefix: 'OPENCODE_GO_',
+    name: 'OpenCode Go',
+    description: '$10/month subscription for open coding models',
+    docsUrl: 'https://opencode.ai/auth',
+    priority: 14
+  },
+  {
+    prefix: 'NVIDIA_',
+    name: 'NVIDIA NIM',
+    description: 'build.nvidia.com or your own local NIM endpoint',
+    docsUrl: 'https://build.nvidia.com/',
+    priority: 15
+  },
+  {
+    prefix: 'OLLAMA_',
+    name: 'Ollama Cloud',
+    description: 'Cloud-hosted open models from ollama.com',
+    docsUrl: 'https://ollama.com/settings',
+    priority: 16
+  },
+  {
+    prefix: 'LM_',
+    name: 'LM Studio',
+    description: 'Local LM Studio server (OpenAI-compatible)',
+    docsUrl: 'https://lmstudio.ai/docs/local-server',
+    priority: 17
+  },
+  {
+    prefix: 'STEPFUN_',
+    name: 'StepFun',
+    description: 'StepFun Step Plan coding models',
+    docsUrl: 'https://platform.stepfun.com/',
+    priority: 18
+  },
+  {
+    prefix: 'XIAOMI_',
+    name: 'Xiaomi MiMo',
+    description: 'MiMo-V2.5 and Xiaomi proprietary models',
+    docsUrl: 'https://platform.xiaomimimo.com',
+    priority: 19
+  },
+  {
+    prefix: 'ARCEEAI_',
+    name: 'Arcee AI',
+    description: 'Arcee-hosted small + medium models',
+    docsUrl: 'https://chat.arcee.ai/',
+    priority: 20
+  },
   { prefix: 'ARCEE_', name: 'Arcee AI', priority: 20 },
-  { prefix: 'GMI_', name: 'GMI Cloud', description: 'GMI Cloud GPU + model serving', docsUrl: 'https://www.gmicloud.ai/', priority: 21 },
-  { prefix: 'AZURE_FOUNDRY_', name: 'Azure Foundry', description: 'Azure AI Foundry custom endpoints (OpenAI / Anthropic-compatible)', docsUrl: 'https://ai.azure.com/', priority: 22 },
-  { prefix: 'AWS_', name: 'AWS Bedrock', description: 'Authenticate via AWS profile + region', docsUrl: 'https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-regions.html', priority: 23 }
+  {
+    prefix: 'GMI_',
+    name: 'GMI Cloud',
+    description: 'GMI Cloud GPU + model serving',
+    docsUrl: 'https://www.gmicloud.ai/',
+    priority: 21
+  },
+  {
+    prefix: 'AZURE_FOUNDRY_',
+    name: 'Azure Foundry',
+    description: 'Azure AI Foundry custom endpoints (OpenAI / Anthropic-compatible)',
+    docsUrl: 'https://ai.azure.com/',
+    priority: 22
+  },
+  {
+    prefix: 'AWS_',
+    name: 'AWS Bedrock',
+    description: 'Authenticate via AWS profile + region',
+    docsUrl: 'https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-regions.html',
+    priority: 23
+  }
 ]
 
 export const BUILTIN_PERSONALITIES = [
@@ -85,7 +229,18 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   'stt.local.model': ['tiny', 'base', 'small', 'medium', 'large-v3'],
   'stt.provider': ['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs'],
   'tts.openai.voice': ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'],
-  'tts.provider': ['edge', 'elevenlabs', 'openai', 'xai', 'minimax', 'mistral', 'gemini', 'neutts', 'kittentts', 'piper'],
+  'tts.provider': [
+    'edge',
+    'elevenlabs',
+    'openai',
+    'xai',
+    'minimax',
+    'mistral',
+    'gemini',
+    'neutts',
+    'kittentts',
+    'piper'
+  ],
   'stt.openai.model': ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
   'stt.mistral.model': ['voxtral-mini-latest', 'voxtral-mini-2602'],
   'tts.openai.model': ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'],
@@ -335,7 +490,13 @@ export const SECTIONS: DesktopConfigSection[] = [
     id: 'workspace',
     label: 'Workspace',
     icon: Monitor,
-    keys: ['terminal.cwd', 'code_execution.mode', 'terminal.persistent_shell', 'terminal.env_passthrough', 'file_read_max_chars']
+    keys: [
+      'terminal.cwd',
+      'code_execution.mode',
+      'terminal.persistent_shell',
+      'terminal.env_passthrough',
+      'file_read_max_chars'
+    ]
   },
   {
     id: 'safety',
@@ -441,4 +602,3 @@ export const SECTIONS: DesktopConfigSection[] = [
     ]
   }
 ]
-

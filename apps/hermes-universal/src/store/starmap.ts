@@ -16,6 +16,7 @@ export async function loadStarmapGraph(force = false): Promise<void> {
   if (inflight) {
     return inflight
   }
+
   if ($starmapGraph.get() && !force) {
     return
   }
@@ -40,13 +41,16 @@ export async function loadStarmapGraph(force = false): Promise<void> {
 /** Drop one node from the cached graph immediately; return a rollback. */
 export function evictStarmapNode(id: string): () => void {
   const prev = $starmapGraph.get()
+
   if (!prev) {
     return () => {}
   }
+
   $starmapGraph.set({
     ...prev,
     nodes: prev.nodes.filter(node => node.id !== id),
     edges: prev.edges.filter(edge => edge.source !== id && edge.target !== id)
   })
+
   return () => $starmapGraph.set(prev)
 }

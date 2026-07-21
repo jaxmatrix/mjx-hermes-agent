@@ -49,8 +49,10 @@ function persistPosition(p: Point): void {
 function loadPosition(): Point {
   try {
     const raw = localStorage.getItem(POSITION_KEY)
+
     if (raw) {
       const parsed = JSON.parse(raw) as Point
+
       if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
         return clampPoint(parsed.x, parsed.y, NOMINAL_PET_PX, NOMINAL_PET_PX)
       }
@@ -58,6 +60,7 @@ function loadPosition(): Point {
   } catch {
     // fall through to default
   }
+
   // Default: lower-left corner (top/left anchored).
   return clampPoint(24, (window.innerHeight || 600) - 220, NOMINAL_PET_PX, NOMINAL_PET_PX)
 }
@@ -104,23 +107,29 @@ export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) 
     const reclamp = () =>
       setPosition(prev => {
         const next = clamp(prev)
+
         if (next.x === prev.x && next.y === prev.y) {
           return prev
         }
+
         persistPosition(next)
+
         return next
       })
 
     reclamp()
     window.addEventListener('resize', reclamp)
+
     return () => window.removeEventListener('resize', reclamp)
   }, [clamp])
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     const el = containerRef.current
+
     if (!el) {
       return
     }
+
     const rect = el.getBoundingClientRect()
     dragRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top, x: rect.left, y: rect.top }
     el.setPointerCapture(e.pointerId)
@@ -131,15 +140,18 @@ export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) 
     (e: React.PointerEvent) => {
       const drag = dragRef.current
       const el = containerRef.current
+
       if (!drag || !el) {
         return
       }
+
       const next = clamp({ x: e.clientX - drag.dx, y: e.clientY - drag.dy })
       drag.x = next.x
       drag.y = next.y
       // Mutate the DOM directly — no setState, so no re-render while dragging.
       el.style.left = `${next.x}px`
       el.style.top = `${next.y}px`
+
       if (spriteWrapRef.current) {
         spriteWrapRef.current.style.transform = facing(next.x, petW)
       }
@@ -149,13 +161,16 @@ export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) 
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
     const drag = dragRef.current
+
     if (drag) {
       dragRef.current = null
       const committed = { x: drag.x, y: drag.y }
       setPosition(committed)
       persistPosition(committed)
     }
+
     const el = containerRef.current
+
     if (el) {
       el.style.cursor = 'grab'
       el.releasePointerCapture?.(e.pointerId)

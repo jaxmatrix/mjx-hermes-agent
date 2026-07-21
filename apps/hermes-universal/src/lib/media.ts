@@ -11,6 +11,7 @@ export function filePathFromMediaPath(path: string): string {
   if (!path.startsWith('file:')) {
     return path
   }
+
   try {
     return decodeURIComponent(new URL(path).pathname)
   } catch {
@@ -24,9 +25,11 @@ export function mediaExternalUrl(path: string): string {
   }
 
   const conn = $connection.get()
+
   if (conn?.baseUrl) {
     const file = encodeURIComponent(filePathFromMediaPath(path))
     const token = conn.token ? `&token=${encodeURIComponent(conn.token)}` : ''
+
     return `${conn.baseUrl}/api/files/download?path=${file}${token}`
   }
 

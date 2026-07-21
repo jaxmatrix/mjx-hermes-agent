@@ -48,9 +48,14 @@ export function saveGatewayTarget(target: GatewayTarget): void {
 /** Read the saved target, or null when absent/malformed. */
 export function loadGatewayTarget(): GatewayTarget | null {
   const raw = loadString(TARGET_KEY)
-  if (!raw) return null
+
+  if (!raw) {
+    return null
+  }
+
   try {
     const parsed = JSON.parse(raw) as GatewayTarget
+
     return isMode(parsed?.mode) ? parsed : null
   } catch {
     return null
@@ -97,8 +102,10 @@ export function cancelRestore(): void {
  */
 export async function autoRestoreConnection(): Promise<void> {
   const target = loadGatewayTarget()
+
   if (!target) {
     $restoring.set(false)
+
     return
   }
 
@@ -109,16 +116,22 @@ export async function autoRestoreConnection(): Promise<void> {
     if (target.mode === 'local') {
       await connectLocal(target.profile ?? null)
     } else if (target.mode === 'cloud') {
-      if (!target.cloudBaseUrl) throw new Error('No saved Hermes Cloud agent to reconnect to')
+      if (!target.cloudBaseUrl) {
+        throw new Error('No saved Hermes Cloud agent to reconnect to')
+      }
+
       await connectCloud(target.cloudBaseUrl, target.profile ?? null)
     } else {
-      if (!target.url?.trim()) throw new Error('No saved gateway URL to reconnect to')
+      if (!target.url?.trim()) {
+        throw new Error('No saved gateway URL to reconnect to')
+      }
+
       const saved = await loadSavedLogin().catch(() => null)
       await connect({
         url: target.url,
         username: target.username || undefined,
         token: saved?.token || undefined,
-        password: saved?.password || undefined,
+        password: saved?.password || undefined
       })
     }
   } catch {

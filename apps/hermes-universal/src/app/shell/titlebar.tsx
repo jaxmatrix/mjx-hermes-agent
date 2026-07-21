@@ -2,16 +2,16 @@ import { useNavigate } from 'react-router-dom'
 
 import { Codicon } from '@/components/ui/codicon'
 import { useI18n } from '@/i18n'
-import { $hapticsMuted } from '@/store/haptics'
-import { openCommandMenu } from '@/store/command-menu'
 import { useStore } from '@/store/atom'
+import { openCommandMenu } from '@/store/command-menu'
+import { $hapticsMuted } from '@/store/haptics'
 import {
+  $leftEdgeOpen,
   $panesFlipped,
-  $rightSidebarOpen,
-  $sidebarOpen,
-  toggleSidebarOpen,
+  $rightEdgeOpen,
+  toggleLeftEdge,
   togglePanesFlipped,
-  toggleRightSidebar
+  toggleRightEdge
 } from '@/store/layout'
 
 import { TitlebarButton } from './titlebar-button'
@@ -29,8 +29,10 @@ export function Titlebar({ connected }: { connected: boolean }) {
   const navigate = useNavigate()
   const hapticsMuted = useStore($hapticsMuted)
   const panesFlipped = useStore($panesFlipped)
-  const rightSidebarOpen = useStore($rightSidebarOpen)
-  const sidebarOpen = useStore($sidebarOpen)
+  // Positional, not pane-identity: each cluster's toggle drives whatever sits on
+  // its own side of main, so a swap never leaves a button lying about its pane.
+  const leftEdgeOpen = useStore($leftEdgeOpen)
+  const rightEdgeOpen = useStore($rightEdgeOpen)
 
   return (
     <div
@@ -42,9 +44,9 @@ export function Titlebar({ connected }: { connected: boolean }) {
       {connected && (
         <div className="pointer-events-auto flex items-center gap-0.5">
           <TitlebarButton
-            active={sidebarOpen}
-            label={sidebarOpen ? t.titlebar.hideSidebar : t.titlebar.showSidebar}
-            onClick={toggleSidebarOpen}
+            active={leftEdgeOpen}
+            label={leftEdgeOpen ? t.titlebar.hideSidebar : t.titlebar.showSidebar}
+            onClick={toggleLeftEdge}
           >
             <Codicon name="layout-sidebar-left" />
           </TitlebarButton>
@@ -81,9 +83,9 @@ export function Titlebar({ connected }: { connected: boolean }) {
             <Codicon name="settings-gear" />
           </TitlebarButton>
           <TitlebarButton
-            active={rightSidebarOpen}
-            label={rightSidebarOpen ? t.titlebar.hideRightSidebar : t.titlebar.showRightSidebar}
-            onClick={toggleRightSidebar}
+            active={rightEdgeOpen}
+            label={rightEdgeOpen ? t.titlebar.hideRightSidebar : t.titlebar.showRightSidebar}
+            onClick={toggleRightEdge}
           >
             <Codicon name="layout-sidebar-right" />
           </TitlebarButton>

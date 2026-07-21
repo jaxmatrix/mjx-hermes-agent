@@ -20,9 +20,19 @@ export async function passwordLogin(
     body: { provider, username, password, next: '' },
     timeoutMs: 10_000
   })
-  if (res.status === 401) throw new Error('Invalid username or password')
-  if (res.status === 404) throw new Error('This backend has no password login enabled')
-  if (res.status === 429) throw new Error('Too many login attempts — try again shortly')
+
+  if (res.status === 401) {
+    throw new Error('Invalid username or password')
+  }
+
+  if (res.status === 404) {
+    throw new Error('This backend has no password login enabled')
+  }
+
+  if (res.status === 429) {
+    throw new Error('Too many login attempts — try again shortly')
+  }
+
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`Login failed (HTTP ${res.status})`)
   }
@@ -34,14 +44,21 @@ export async function mintWsTicket(base: string): Promise<string> {
     headers: { Origin: base },
     timeoutMs: 10_000
   })
+
   if (res.status === 401) {
     throw new Error('Session expired — sign in again')
   }
+
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`Could not obtain a WebSocket ticket (HTTP ${res.status})`)
   }
+
   const data = JSON.parse(res.body) as { ticket?: string }
-  if (!data.ticket) throw new Error('ws-ticket response missing ticket')
+
+  if (!data.ticket) {
+    throw new Error('ws-ticket response missing ticket')
+  }
+
   return data.ticket
 }
 
@@ -61,11 +78,17 @@ export interface AuthProvider {
  *  back to the default provider. */
 export async function fetchAuthProviders(base: string): Promise<AuthProvider[]> {
   const res = await httpRequest('GET', `${base}/api/auth/providers`, { timeoutMs: 8_000 })
-  if (res.status === 503) return []
+
+  if (res.status === 503) {
+    return []
+  }
+
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`Could not load auth providers (HTTP ${res.status})`)
   }
+
   const data = JSON.parse(res.body) as { providers?: AuthProvider[] }
+
   return data.providers ?? []
 }
 

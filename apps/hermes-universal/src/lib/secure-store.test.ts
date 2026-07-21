@@ -37,8 +37,14 @@ describe('secure-store (keystore)', () => {
 
   it('loadSecrets reads back the entries; null when both empty', async () => {
     setImpl((cmd, args) => {
-      if (cmd === 'plugin:keyring|has_password') return Promise.resolve(true)
-      if (cmd === 'plugin:keyring|get_password') return Promise.resolve(args.username === 'token' ? 'T' : 'P')
+      if (cmd === 'plugin:keyring|has_password') {
+        return Promise.resolve(true)
+      }
+
+      if (cmd === 'plugin:keyring|get_password') {
+        return Promise.resolve(args.username === 'token' ? 'T' : 'P')
+      }
+
       return Promise.resolve()
     })
     expect(await loadSecrets()).toEqual({ token: 'T', password: 'P' })
@@ -48,7 +54,9 @@ describe('secure-store (keystore)', () => {
   })
 
   it('returns false/null (no throw) when the keystore rejects', async () => {
-    setImpl(cmd => (cmd === 'plugin:keyring|initialize_keyring' ? Promise.resolve() : Promise.reject(new Error('no keystore'))))
+    setImpl(cmd =>
+      cmd === 'plugin:keyring|initialize_keyring' ? Promise.resolve() : Promise.reject(new Error('no keystore'))
+    )
     expect(await saveSecrets({ token: 'T' })).toBe(false)
     expect(await loadSecrets()).toBeNull()
   })

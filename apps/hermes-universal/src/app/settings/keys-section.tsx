@@ -22,7 +22,7 @@ export type KeysView = 'settings' | 'tools'
 // only gateway-wide messaging rows (e.g. GATEWAY_PROXY) appear here with `setting`.
 const VIEW_CATEGORIES: Record<KeysView, readonly string[]> = {
   settings: ['setting', 'messaging'],
-  tools: ['tool'],
+  tools: ['tool']
 }
 
 export function KeysSection({ view }: { view: KeysView }) {
@@ -34,8 +34,12 @@ export function KeysSection({ view }: { view: KeysView }) {
   useEffect(() => setOpenKey(null), [view])
 
   const entries = useMemo(() => {
-    if (!vars) return []
+    if (!vars) {
+      return []
+    }
+
     const cats = VIEW_CATEGORIES[view]
+
     return Object.entries(vars)
       .filter(([, info]) => !info.channel_managed && cats.includes(info.category))
       .sort(([a], [b]) => a.localeCompare(b))
@@ -55,6 +59,7 @@ export function KeysSection({ view }: { view: KeysView }) {
         <div className="mt-3 grid gap-2">
           {entries.map(([key, info]) => {
             const label = credentialRowLabel(key, info)
+
             return (
               <CredentialKeyCard
                 expanded={openKey === key}

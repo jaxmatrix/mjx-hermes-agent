@@ -7,9 +7,13 @@ import { type ClarifyRequest, respondClarify } from '@/store/chat'
 
 export function ClarifyBar({ request }: { request: ClarifyRequest }) {
   const [answer, setAnswer] = useState('')
+
   const submit = () => {
-    if (answer.trim()) void respondClarify(answer.trim())
+    if (answer.trim()) {
+      void respondClarify(answer.trim())
+    }
   }
+
   return (
     <RequestBar title="Clarification needed">
       <RequestBarDescription>{request.prompt}</RequestBarDescription>

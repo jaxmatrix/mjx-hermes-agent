@@ -22,8 +22,12 @@ const INITIAL_VISIBLE_JOBS = 3
 const LOAD_MORE_STEP = 10
 
 function nextRunMs(job: CronJob): null | number {
-  if (!job.next_run_at) return null
+  if (!job.next_run_at) {
+    return null
+  }
+
   const ms = Date.parse(job.next_run_at)
+
   return Number.isNaN(ms) ? null : ms
 }
 
@@ -31,13 +35,26 @@ function nextRunMs(job: CronJob): null | number {
 function relativeTime(target: number, now: number): string {
   const diff = target - now
   const s = Math.round(Math.abs(diff) / 1000)
-  const unit = s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86_400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86_400)}d`
+
+  const unit =
+    s < 60
+      ? `${s}s`
+      : s < 3600
+        ? `${Math.floor(s / 60)}m`
+        : s < 86_400
+          ? `${Math.floor(s / 3600)}h`
+          : `${Math.floor(s / 86_400)}d`
+
   return diff >= 0 ? `in ${unit}` : `${unit} ago`
 }
 
 function formatRunTime(seconds?: null | number): string {
-  if (!seconds) return '—'
-  const date = new Date((seconds < 1e12 ? seconds * 1000 : seconds))
+  if (!seconds) {
+    return '—'
+  }
+
+  const date = new Date(seconds < 1e12 ? seconds * 1000 : seconds)
+
   return Number.isNaN(date.valueOf())
     ? '—'
     : date.toLocaleString(undefined, { day: 'numeric', hour: 'numeric', minute: '2-digit', month: 'short' })
@@ -69,8 +86,12 @@ export function SidebarCronJobsSection({
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_JOBS)
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      return
+    }
+
     const id = window.setInterval(() => setNowMs(Date.now()), 1000)
+
     return () => window.clearInterval(id)
   }, [open])
 
@@ -78,9 +99,19 @@ export function SidebarCronJobsSection({
     return [...jobs].sort((a, b) => {
       const an = nextRunMs(a)
       const bn = nextRunMs(b)
-      if (an !== null && bn !== null && an !== bn) return an - bn
-      if (an === null && bn !== null) return 1
-      if (an !== null && bn === null) return -1
+
+      if (an !== null && bn !== null && an !== bn) {
+        return an - bn
+      }
+
+      if (an === null && bn !== null) {
+        return 1
+      }
+
+      if (an !== null && bn === null) {
+        return -1
+      }
+
       return jobTitle(a).localeCompare(jobTitle(b))
     })
   }, [jobs])
@@ -155,7 +186,7 @@ function CronJobSidebarRow({
   const next = nextRunMs(job)
   const label = jobTitle(job)
 
-  const meta = INACTIVE_STATES.has(state) ? c.states[state] ?? state : next !== null ? relativeTime(next, nowMs) : '—'
+  const meta = INACTIVE_STATES.has(state) ? (c.states[state] ?? state) : next !== null ? relativeTime(next, nowMs) : '—'
 
   return (
     <div>
@@ -190,7 +221,9 @@ function CronJobSidebarRow({
           />
         </button>
         <div className="flex items-center gap-0.5 justify-self-end pr-1">
-          <span className="text-[0.6875rem] text-(--ui-text-tertiary) tabular-nums group-hover/cron:hidden">{meta}</span>
+          <span className="text-[0.6875rem] text-(--ui-text-tertiary) tabular-nums group-hover/cron:hidden">
+            {meta}
+          </span>
           <div className="hidden items-center gap-0.5 group-hover/cron:flex">
             <button
               aria-label={c.triggerNow}
@@ -230,15 +263,22 @@ function CronJobSidebarRuns({ jobId, onOpenRun }: { jobId: string; onOpenRun: (s
     const load = () =>
       getCronJobRuns(jobId, PEEK_RUN_LIMIT)
         .then(result => {
-          if (!cancelled) setRuns(result)
+          if (!cancelled) {
+            setRuns(result)
+          }
         })
         .catch(() => {
-          if (!cancelled) setRuns(prev => prev ?? [])
+          if (!cancelled) {
+            setRuns(prev => prev ?? [])
+          }
         })
 
     void load()
+
     const intervalId = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void load()
+      if (document.visibilityState === 'visible') {
+        void load()
+      }
     }, PEEK_POLL_INTERVAL_MS)
 
     return () => {

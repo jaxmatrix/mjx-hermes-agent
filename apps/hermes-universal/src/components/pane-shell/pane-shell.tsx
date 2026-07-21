@@ -446,12 +446,41 @@ export function Pane({
       document.body.style.cursor = axis === 'x' ? 'col-resize' : 'row-resize'
       document.body.style.userSelect = 'none'
 
+      // Coalesce moves to one write per frame. A pointermove burst can deliver
+      // several events between paints, and each write re-renders every Pane and
+      // rewrites the shell's gridTemplateColumns — which relays out the whole
+      // main column, transcript included. Doing that 2-3x per frame is pure
+      // waste: only the last value of a frame is ever seen.
+      let pending: null | number = null
+      let frame = 0
+
+      const flush = () => {
+        frame = 0
+
+        if (pending !== null) {
+          apply(id, pending)
+          pending = null
+        }
+      }
+
       const onMove = (e: PointerEvent) => {
         const next = base + ((axis === 'x' ? e.clientX : e.clientY) - start) * dir
-        apply(id, Math.round(Math.min(max, Math.max(min, next))))
+
+        pending = Math.round(Math.min(max, Math.max(min, next)))
+
+        if (!frame) {
+          frame = requestAnimationFrame(flush)
+        }
       }
 
       const cleanup = () => {
+        // Land the last position even if the pointer went up mid-frame,
+        // otherwise the pane settles a few px off where it was released.
+        if (frame) {
+          cancelAnimationFrame(frame)
+          flush()
+        }
+
         document.body.style.cursor = restoreCursor
         document.body.style.userSelect = restoreSelect
         handle.releasePointerCapture?.(pointerId)
