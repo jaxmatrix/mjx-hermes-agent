@@ -166,11 +166,36 @@ export function DetailPane({
     const max = Math.round(window.innerHeight * DETAIL_PANE_MAX_VH)
     setDragging(true)
 
+    // One write per frame, same reason as the shell's pane resize: a pointermove
+    // burst delivers several events per paint and only the last one is ever
+    // seen, but each intermediate write costs a relayout.
+    let pending: null | number = null
+    let frame = 0
+
+    const flush = () => {
+      frame = 0
+
+      if (pending !== null) {
+        setPaneHeightOverride(id, pending)
+        pending = null
+      }
+    }
+
     const onMove = (move: globalThis.PointerEvent) => {
-      setPaneHeightOverride(id, Math.min(max, Math.max(0, Math.round(startHeight + (startY - move.clientY)))))
+      pending = Math.min(max, Math.max(0, Math.round(startHeight + (startY - move.clientY))))
+
+      if (!frame) {
+        frame = requestAnimationFrame(flush)
+      }
     }
 
     const onUp = () => {
+      // Land the released position even if the pointer went up mid-frame.
+      if (frame) {
+        cancelAnimationFrame(frame)
+        flush()
+      }
+
       window.removeEventListener('pointermove', onMove)
       setDragging(false)
     }

@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect } from 'react'
+import { lazy, type ReactNode, Suspense, useEffect } from 'react'
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
 import { AgentsView } from '@/app/agents'
@@ -34,6 +34,23 @@ import { useOverlayRouting } from './shell/hooks/use-overlay-routing'
 import { AppShell, SidebarProvider } from './shell/sidebar'
 import { Statusbar } from './shell/statusbar'
 import { Titlebar } from './shell/titlebar'
+
+// Markdown/KaTeX perf bench (/dev/markdown-bench). Lazy + build-time guarded, so
+// neither the route, the bench, nor the LaTeX fixture reaches a real release
+// bundle — `dist/` is grepped for it as part of verification.
+//
+// Two ways in, because the bench has to be reachable from BOTH sides of the
+// comparison it exists to make:
+//   - `npm run dev`         → import.meta.env.DEV
+//   - `npm run dev:prodweb` → mode `benchmark` sets VITE_ENABLE_BENCH (.env.benchmark)
+// The second is a minified production frontend running under the Tauri dev
+// shell; without the env flag the bench would vanish from exactly the build
+// whose numbers matter most.
+const BENCH_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_BENCH === 'true'
+
+const MarkdownBench = BENCH_ENABLED
+  ? lazy(() => import('@/dev/markdown-bench').then(module => ({ default: module.MarkdownBench })))
+  : null
 
 // Connected-guard + routing. Until a gateway connection is ready we show the
 // full-screen ConnectScreen (no nav). Once ready, the first-run onboarding
@@ -173,6 +190,18 @@ export function MobileController() {
             {/* No /files or /review routes — desktop parity: Files is the
                 right-pane file tree and Review is the right-pane git diff, both
                 mounted in AppShell rather than routed. */}
+            {/* Dev-only perf bench; absent from production builds. Must sit
+                BEFORE the catch-all, which would otherwise swallow it. */}
+            {MarkdownBench && (
+              <Route
+                element={
+                  <Suspense fallback={null}>
+                    <MarkdownBench />
+                  </Suspense>
+                }
+                path="/dev/markdown-bench"
+              />
+            )}
             {/* Session ids (and anything else) resolve to chat, per routes.ts */}
             <Route element={<ChatScreen />} path="*" />
           </Routes>

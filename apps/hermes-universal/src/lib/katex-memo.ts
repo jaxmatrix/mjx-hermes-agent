@@ -1,33 +1,52 @@
 /**
- * Memoizing wrapper around `rehype-katex`.
+ * Memoizing wrapper around `rehype-katex` that collapses each equation to a
+ * SINGLE hast node carrying KaTeX's HTML as a string.
  *
- * Why: the default `@streamdown/math` plugin runs `rehype-katex` on every
- * markdown commit. During streaming, that means each new token re-runs
- * KaTeX on EVERY math node in the message — including equations that
- * haven't changed since the last token. For math-heavy responses (a
- * model deriving an equation step-by-step) this becomes a major source
- * of jank: 20 unchanged equations each pay ~5–20ms of katex.renderToString
- * work per token, adding up to hundreds of ms of CPU bound work that
- * delays the next streaming update.
+ * Two separate problems, one plugin.
  *
- * What this plugin does: walk the hast tree looking for the math nodes
- * that `remark-math` emits (`<code class="math-inline">…</code>` for
- * inline and `<pre><code class="math-display">…</code></pre>` for
- * display), key them by `(displayMode, value)`, and serve them from an
- * in-memory LRU cache when we've rendered the same equation before.
- * Cache misses still go through `katex.renderToString`; cache hits
- * return the previously generated hast subtree.
+ * 1. Repeat work. The default `@streamdown/math` plugin runs `rehype-katex` on
+ *    every markdown commit. During streaming that means each new token re-runs
+ *    KaTeX on EVERY math node in the message, including equations that haven't
+ *    changed. We key each equation on `(displayMode, value)` in a process-global
+ *    LRU, so a unique equation pays the KaTeX cost once and survives remounts
+ *    (session switch, message-list churn).
  *
- * Result: each unique equation only pays the katex cost once. Adding
- * one new equation to a paragraph re-renders just that one equation
- * instead of all of them. The cache is process-global so it survives
- * moves between messages (e.g., re-rendering a session).
+ * 2. Tree size — the bigger problem, and the reason this file no longer
+ *    produces hast subtrees at all. KaTeX emits ~65 `<span>`s for one display
+ *    equation. Handed to rehype as nodes, each one becomes a hast node, then a
+ *    React element, then an inline-styled DOM node. Measured on
+ *    `src/dev/fixtures/latex-heavy.md` (bench/pipeline-bench.mjs):
  *
- * Compatibility: the produced hast structure matches what `rehype-katex`
- * itself produces — we use the same `hast-util-from-html-isomorphic`
- * fragment parsing and the same parent-splice semantics, including the
- * `<pre>`-walk-up for display mode. Drop-in replacement for the math
- * slot in streamdown's PluginConfig.
+ *      hast nodes, no math render                  306
+ *      hast nodes, expanded KaTeX                 2528   (8.3x)
+ *      hast nodes, collapsed KaTeX                 306   (1x)
+ *
+ *      unified → hast, expanded KaTeX          23-31ms
+ *      unified → hast, collapsed KaTeX          ~9.5ms
+ *
+ *    That 8.3x is what made a math transcript expensive to BUILD (React walks
+ *    every node) and expensive to KEEP (every later style recalc / layout pass
+ *    walks every DOM node — which is why toggling a sidebar or resizing the
+ *    window stalled on a math-heavy chat but not a prose one).
+ *
+ *    Only ~a third of that difference is KaTeX itself; the rest was
+ *    `hast-util-from-html-isomorphic` parsing KaTeX's HTML string back into
+ *    hast (~0.61ms/equation, 3.4x the ~0.18ms render it follows) purely so the
+ *    result could be re-serialized into DOM. We never inspect those nodes, so
+ *    the round trip bought nothing.
+ *
+ * So: cache the HTML STRING, and splice in one `<katex-html>` element holding
+ * it. `markdown-text.tsx` registers a component for that tag which writes the
+ * string with `dangerouslySetInnerHTML` — one engine-side innerHTML parse
+ * instead of ~65 JS-driven createElement calls. KaTeX's own markup is
+ * unchanged; it just arrives inside one host element instead of as loose
+ * siblings, and the path from string to DOM is what moved.
+ *
+ * Everything else deliberately still mirrors `rehype-katex`: the same class
+ * detection, the same `<pre>`-walk-up for ```math fences, the same
+ * strict-then-lenient two-pass render with a VFile message on the first
+ * failure, and the same parent-splice semantics. Drop-in replacement for the
+ * math slot in streamdown's PluginConfig.
  *
  * Wire it in via `createMemoizedMathPlugin`:
  *
@@ -36,14 +55,24 @@
  *   <Streamdown plugins={{ math }} ... />
  */
 
-import type { Element, ElementContent, Parent, Root } from 'hast'
-import { fromHtmlIsomorphic } from 'hast-util-from-html-isomorphic'
+import type { Element, Parent, Root } from 'hast'
 import { toText } from 'hast-util-to-text'
 import katex from 'katex'
 import remarkMath from 'remark-math'
 import type { Pluggable } from 'unified'
 import { SKIP, visitParents } from 'unist-util-visit-parents'
 import type { VFile } from 'vfile'
+
+/**
+ * Tag name for the collapsed node. Must stay in sync with the component
+ * registered under the same key in
+ * `components/assistant-ui/markdown-text.tsx` — `hast-util-to-jsx-runtime`
+ * resolves components by an exact own-property lookup on `tagName`.
+ *
+ * A hyphen makes it a valid custom-element name, so if the component is ever
+ * missing the browser renders an inert unknown element rather than choking.
+ */
+export const KATEX_HTML_TAG = 'katex-html'
 
 interface KatexMemoOptions {
   /**
@@ -64,10 +93,17 @@ interface MathPluginConfig {
   errorColor?: string
 }
 
-/** Cached rendered hast — children to splice into the math node's parent. */
-type CachedRender = ElementContent[]
+/**
+ * Cached render — KaTeX's HTML for one equation, verbatim.
+ *
+ * A string, not a hast subtree: nothing downstream reads the structure, and
+ * keeping it as a string is what lets one equation cost one node.
+ */
+type CachedRender = string
 
-const CACHE_LIMIT = 512
+// Entries are now strings rather than ~65-node subtrees, so the cache is far
+// cheaper per entry than it was and can hold a whole long session's equations.
+const CACHE_LIMIT = 2048
 
 class LruCache<K, V> {
   private readonly map = new Map<K, V>()
@@ -104,30 +140,60 @@ class LruCache<K, V> {
 
 const cache = new LruCache<string, CachedRender>()
 
+/**
+ * Note what is NOT in the key: `errorColor`. The cache is module-global and
+ * shared by every plugin instance, and errorColor IS baked into the lenient
+ * pass's output — so two instances configured with different colors would share
+ * the first one's error markup. There is one instance today (markdown-text.tsx),
+ * so this is a latent trap rather than a bug; add it to the key if that changes.
+ *
+ * A cached FAILURE is fine — renderMath is deterministic in (value, displayMode)
+ * — but note the `file.message` diagnostic only fires on a miss, so a repeated
+ * broken equation reports once, not once per occurrence. Nothing reads
+ * `file.messages` today.
+ */
 function cacheKey(displayMode: boolean, value: string): string {
   // `\u0001` is a control character that (a) won't appear in normal
   // markdown and (b) is a single byte so the join is cheap.
   return `${displayMode ? 'd' : 'i'}\u0001${value}`
 }
 
-/**
- * Render one math expression with the same two-pass strategy `rehype-katex`
- * uses internally: try strict first (so genuine TeX errors get reported in
- * the VFile message stream), and on failure fall back to lenient mode so
- * the document still renders without a thrown exception. The lenient
- * fallback paints the equation in `errorColor` instead of erroring out.
- */
-function renderMath(
-  value: string,
-  displayMode: boolean,
-  errorColor: string,
-  file: VFile,
-  element: Element
-): ElementContent[] {
-  let html: string
+/** Minimal HTML-text escape for the last-resort error fallback. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
+/**
+ * Render one math expression to an HTML string, with the same two-pass strategy
+ * `rehype-katex` uses internally: try strict first (so genuine TeX errors get
+ * reported in the VFile message stream), and on failure fall back to lenient
+ * mode so the document still renders without a thrown exception. The lenient
+ * fallback paints the equation in `errorColor` instead of erroring out.
+ *
+ * SECURITY — this string is written to the DOM with `dangerouslySetInnerHTML`
+ * by the `katex-html` component, so what it may contain is load-bearing:
+ *
+ *   - `trust` is never passed, so it keeps KaTeX's default of `false`. That is
+ *     what disables `\href`, `\url`, `\htmlClass`, `\htmlId`, `\htmlStyle` and
+ *     `\includegraphics` — the only commands that can emit a URL or an
+ *     attribute derived from the TeX source. With trust off KaTeX renders them
+ *     as visible error text instead. DO NOT enable `trust`.
+ *   - Everything else KaTeX writes is escaped by KaTeX itself; the markup is
+ *     generated from its own parse tree, not interpolated from the source.
+ *   - The error branches below never interpolate raw input either: the source
+ *     text goes through `escapeHtml`.
+ *
+ * So the string is KaTeX-generated markup with no attacker-reachable sink. Any
+ * change that widens this (enabling `trust`, or accepting HTML from elsewhere)
+ * must be reviewed against the innerHTML write in markdown-text.tsx.
+ */
+function renderMath(value: string, displayMode: boolean, errorColor: string, file: VFile, element: Element): string {
   try {
-    html = katex.renderToString(value, { displayMode, throwOnError: true })
+    return katex.renderToString(value, { displayMode, throwOnError: true })
   } catch (error) {
     const cause = error as Error
 
@@ -139,34 +205,21 @@ function renderMath(
     })
 
     try {
-      html = katex.renderToString(value, {
+      return katex.renderToString(value, {
         displayMode,
         errorColor,
         strict: 'ignore',
         throwOnError: false
       })
     } catch {
-      // Last-resort fallback — render the source text inside a styled span
-      // so the user at least sees what was supposed to be there. Mirrors
+      // Last-resort fallback — render the source text inside a styled span so
+      // the user at least sees what was supposed to be there. Mirrors
       // rehype-katex's own escape hatch.
-      return [
-        {
-          type: 'element',
-          tagName: 'span',
-          properties: {
-            className: ['katex-error'],
-            style: `color:${errorColor}`,
-            title: String(error)
-          },
-          children: [{ type: 'text', value }]
-        }
-      ]
+      return `<span class="katex-error" style="color:${escapeHtml(errorColor)}" title="${escapeHtml(
+        String(error)
+      )}">${escapeHtml(value)}</span>`
     }
   }
-
-  const fragment = fromHtmlIsomorphic(html, { fragment: true })
-
-  return fragment.children as ElementContent[]
 }
 
 /**
@@ -214,27 +267,33 @@ function createMemoizedRehypeKatex(options: KatexMemoOptions = {}): Pluggable {
 
         const value = toText(scope, { whitespace: 'pre' })
         const key = cacheKey(displayMode, value)
-        let cached = cache.get(key)
+        let html = cache.get(key)
 
-        if (!cached) {
-          cached = renderMath(value, displayMode, errorColor, file, scope)
-          cache.set(key, cached)
+        if (html === undefined) {
+          html = renderMath(value, displayMode, errorColor, file, scope)
+          cache.set(key, html)
         }
 
-        // Splice CLONES of the cached children into the parent. Reusing
-        // the same node instances across renders would let downstream
-        // rehype plugins or toJsxRuntime mutate the cached subtree —
-        // breaking the next cache hit. structuredClone is ~100µs per
-        // equation, well below the ~5–20ms katex.renderToString cost
-        // we're avoiding.
-        const clonedChildren = cached.map(child => structuredClone(child))
-        const index = parent.children.indexOf(scope as ElementContent)
+        const index = parent.children.indexOf(scope as Element)
 
         if (index === -1) {
           return
         }
 
-        parent.children.splice(index, 1, ...clonedChildren)
+        // ONE node, carrying the HTML as text. A fresh object each time (the
+        // cached value is an immutable string, so nothing downstream can reach
+        // back and poison the cache the way a shared hast subtree could — which
+        // is why the old implementation had to structuredClone every render).
+        //
+        // `dataDisplay` becomes `data-display` on the rendered element; the
+        // component and the stylesheet both key off it, since display math
+        // needs block layout and inline math must stay in the text flow.
+        parent.children.splice(index, 1, {
+          type: 'element',
+          tagName: KATEX_HTML_TAG,
+          properties: { dataDisplay: displayMode ? 'true' : 'false' },
+          children: [{ type: 'text', value: html }]
+        })
 
         return SKIP
       })

@@ -29,6 +29,17 @@ export default defineConfig({
     strictPort: true,
     hmr: host ? { protocol: 'ws', host, port: 5177 } : undefined
   },
+  // Serves the PRODUCTION bundle from dist/. `npm run dev:prodweb` points the
+  // Tauri dev shell here instead of at the dev server, so the Rust side stays in
+  // dev (fast rebuilds, devtools) while the frontend is exactly what ships —
+  // minified, tree-shaken, no HMR runtime, no React dev-mode double-render.
+  // Fixed port so src-tauri/tauri.prodweb.conf.json's devUrl can match it;
+  // 5177 is taken by HMR on device builds, 5178 left as headroom.
+  preview: {
+    host: host || '0.0.0.0',
+    port: 5179,
+    strictPort: true
+  },
   build: {
     // Android System WebView baseline — keep the transpile target conservative.
     target: 'es2021',

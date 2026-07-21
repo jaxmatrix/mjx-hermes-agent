@@ -10,3 +10,15 @@ if (typeof Element !== 'undefined') {
   Element.prototype.releasePointerCapture ??= () => {}
   Element.prototype.scrollIntoView ??= () => {}
 }
+
+// jsdom has no ResizeObserver, and several chat components construct one in a
+// layout effect (expandable-block, user-message clamp, tool windows). A no-op
+// stub is enough: jsdom never lays anything out, so a real implementation would
+// only ever report zeroes anyway.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    disconnect() {}
+    observe() {}
+    unobserve() {}
+  } as unknown as typeof ResizeObserver
+}

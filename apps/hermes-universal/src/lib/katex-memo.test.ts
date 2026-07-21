@@ -1,10 +1,10 @@
-import type { Root } from 'hast'
+import type { Element, Root } from 'hast'
 import katex from 'katex'
 import { unified } from 'unified'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VFile } from 'vfile'
 
-import { createMemoizedMathPlugin } from './katex-memo'
+import { createMemoizedMathPlugin, KATEX_HTML_TAG } from './katex-memo'
 
 // Build the hast shape remark-math emits for `$x$` / `$$x$$`, so the plugin is
 // exercised through the same input rehype-katex would see.
@@ -39,6 +39,19 @@ const render = (value: string, display = false): Root => {
 }
 
 const html = (tree: Root): string => JSON.stringify(tree)
+
+// The single collapsed node the plugin splices in, and the KaTeX HTML it holds.
+const emitted = (tree: Root) => {
+  const wrapper = tree.children[0] as Element
+  const node = wrapper.children[0] as Element
+  const first = node.children[0]
+
+  return { html: first?.type === 'text' ? first.value : '', node }
+}
+
+// Count every node in the tree — the number this rewrite exists to hold down.
+const nodeCount = (node: { children?: unknown[] }): number =>
+  1 + ((node.children ?? []) as { children?: unknown[] }[]).reduce((sum, child) => sum + nodeCount(child), 0)
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -86,5 +99,94 @@ describe('createMemoizedMathPlugin', () => {
 
     expect(first.children[0]).not.toBe(second.children[0])
     expect(html(second)).toBe(html(first))
+  })
+})
+
+// Every hast node becomes a React element AND an inline-styled DOM node, and
+// every later style recalc / layout pass walks all of them — which is what made
+// resizing or toggling a sidebar stall on a math-heavy chat. So one equation
+// must cost exactly one node, with KaTeX's markup carried as a string.
+describe('collapsed output', () => {
+  it('emits a single node per equation, holding the KaTeX markup as text', () => {
+    const tree = render(String.raw`\zeta_{collapse}`)
+    const { html: markup, node } = emitted(tree)
+
+    expect(node.tagName).toBe(KATEX_HTML_TAG)
+    expect(node.children).toHaveLength(1)
+    expect(nodeCount(node)).toBe(2) // the element + its one text child
+    expect(markup).toContain('class="katex"')
+    // The ~65 spans KaTeX emits stay inside the string, out of the tree.
+    expect(markup.split('<span').length - 1).toBeGreaterThan(5)
+  })
+
+  it('marks display mode on the node so layout and styling can key off it', () => {
+    expect(emitted(render(String.raw`\eta_{inline}`, false)).node.properties?.dataDisplay).toBe('false')
+    expect(emitted(render(String.raw`\eta_{block}`, true)).node.properties?.dataDisplay).toBe('true')
+  })
+
+  it('renders a ```math fence as display math, replacing the whole <pre>', () => {
+    const tree: Root = {
+      type: 'root',
+      children: [
+        {
+          type: 'element',
+          tagName: 'pre',
+          properties: {},
+          children: [
+            {
+              type: 'element',
+              tagName: 'code',
+              properties: { className: ['language-math'] },
+              children: [{ type: 'text', value: String.raw`\theta_{fence}` }]
+            }
+          ]
+        }
+      ]
+    }
+
+    unified()
+      .use(plugin.rehypePlugin as never)
+      .runSync(tree, new VFile(''))
+
+    const node = tree.children[0] as Element
+
+    expect(node.tagName).toBe(KATEX_HTML_TAG)
+    expect(node.properties?.dataDisplay).toBe('true')
+  })
+
+  it('still reports broken TeX on the file and renders a lenient fallback', () => {
+    const file = new VFile('')
+    const tree = mathTree(String.raw`\frac{`)
+
+    unified()
+      .use(plugin.rehypePlugin as never)
+      .runSync(tree, file)
+
+    expect(file.messages).toHaveLength(1)
+    expect(file.messages[0].source).toBe('rehype-katex-memo')
+
+    const { html: markup, node } = emitted(tree)
+
+    expect(node.tagName).toBe(KATEX_HTML_TAG)
+    expect(markup).toContain('katex')
+  })
+
+  it('escapes the source in the last-resort fallback so it cannot inject markup', () => {
+    // Force both KaTeX passes to fail so the hand-built fallback branch runs.
+    vi.spyOn(katex, 'renderToString').mockImplementation(() => {
+      throw new Error('boom')
+    })
+
+    const tree = mathTree('<img src=x onerror=alert(1)>')
+
+    unified()
+      .use(plugin.rehypePlugin as never)
+      .runSync(tree, new VFile(''))
+
+    const { html: markup } = emitted(tree)
+
+    expect(markup).toContain('katex-error')
+    expect(markup).not.toContain('<img')
+    expect(markup).toContain('&lt;img')
   })
 })

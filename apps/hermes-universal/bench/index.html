@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>KaTeX layout bench (WebKitGTK)</title>
+    <!--
+      Standalone half of the markdown/KaTeX perf harness.
+
+      The in-app page (/dev/markdown-bench) measures the real component tree but
+      cannot separate ENGINE cost from REACT cost. This page has no framework at
+      all, so what it reports is purely what the webview does with the DOM.
+
+      Run it in the SAME engine Tauri embeds, not in Chrome — the whole point is
+      WebKitGTK behaviour (see UI_PORT.md):
+
+        /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/MiniBrowser \
+          apps/hermes-universal/bench/index.html
+
+      Three variants of identical markup:
+        A  innerHTML   — one engine-side parse per equation (what we ship now)
+        B  createElement — node-by-node, what React does with an expanded tree
+        C  createElement + `contain: layout paint style` on each equation host
+
+      A vs B sizes the win from collapsing each equation to one node.
+      B vs C sizes the win from layout containment — the claim that must be
+      MEASURED on WebKitGTK 2.52 rather than assumed. If C doesn't beat B on
+      relayout, the containment rule in styles.css should be dropped.
+    -->
+    <link rel="stylesheet" href="../node_modules/katex/dist/katex.min.css" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        display: grid;
+        grid-template-columns: 22rem 1fr;
+        height: 100vh;
+      }
+      #panel {
+        padding: 1rem;
+        overflow-y: auto;
+        border-right: 1px solid #8884;
+        font-size: 13px;
+      }
+      #stageWrap {
+        overflow-y: auto;
+        padding: 1rem;
+      }
+      /* The width the transcript column actually gets. The sweep animates this,
+         standing in for a sidebar toggle / window resize. */
+      #stage {
+        width: var(--stage-width, 780px);
+        margin: 0 auto;
+        line-height: 1.6;
+      }
+      button {
+        font: inherit;
+        padding: 0.35rem 0.6rem;
+        margin: 0 0.25rem 0.25rem 0;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 0.75rem;
+      }
+      th,
+      td {
+        border: 1px solid #8884;
+        padding: 0.25rem 0.4rem;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+      .note {
+        opacity: 0.7;
+        line-height: 1.5;
+      }
+
+      /* Variant C only. Mirrors the rule in src/styles.css — keep in sync. */
+      #stage[data-contain='true'] .katex-host {
+        display: inline-block;
+        vertical-align: baseline;
+        contain: layout paint style;
+      }
+      #stage[data-contain='true'] .katex-host[data-display='true'] {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="panel">
+      <h1 style="font-size: 15px; margin: 0 0 0.5rem">KaTeX layout bench</h1>
+      <p class="note">
+        Engine-only. No framework. Open in MiniBrowser (WebKitGTK), not Chrome — Chromium numbers do not predict what
+        the Tauri webview does.
+      </p>
+      <label>equations: <input id="count" type="number" value="120" min="10" max="2000" step="10" /></label>
+      <div style="margin-top: 0.5rem">
+        <button data-variant="innerHTML">A · innerHTML</button>
+        <button data-variant="createElement">B · createElement</button>
+        <button data-variant="contained">C · B + contain</button>
+      </div>
+      <div>
+        <button id="all">run all three</button>
+        <button id="clear">clear</button>
+      </div>
+      <table id="out">
+        <thead>
+          <tr>
+            <th>variant</th>
+            <th>build ms</th>
+            <th>nodes</th>
+            <th>relayout ms</th>
+            <th>worst frame</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p class="note" id="status"></p>
+    </div>
+    <div id="stageWrap"><div id="stage"></div></div>
+
+    <script src="../node_modules/katex/dist/katex.min.js"></script>
+    <script>
+      const stage = document.getElementById('stage')
+      const tbody = document.querySelector('#out tbody')
+      const status = document.getElementById('status')
+
+      // Shaped like the fixture in src/dev/fixtures/latex-heavy.md: mostly short
+      // inline symbols, punctuated by a heavier display equation.
+      const INLINE = ['C_{dl}', 'R_{ct}', 'Z_W', 'R_s', 'C_s', 'n', '\\nu', '\\omega', 'Y_0 (j\\omega)^n']
+      const DISPLAY = [
+        'ECSA = \\frac{C_{dl}}{C_s}',
+        'Z(\\omega) = R_s + \\left(\\frac{1}{R_{ct} + Z_W} + j\\omega C_{dl}\\right)^{-1}',
+        'C_{dl} = Y_0^{1/n} \\left( \\frac{1}{R_s} + \\frac{1}{R_{ct}} \\right)^{(n-1)/n}',
+        'i_p = 0.4463\\, n F A C \\sqrt{\\frac{n F \\nu D}{R T}}'
+      ]
+
+      // Render once, reuse — this bench measures DOM cost, not KaTeX cost.
+      const htmlCache = new Map()
+      function katexHtml(tex, display) {
+        const key = (display ? 'd' : 'i') + tex
+        if (!htmlCache.has(key)) {
+          htmlCache.set(key, katex.renderToString(tex, { displayMode: display, throwOnError: false }))
+        }
+        return htmlCache.get(key)
+      }
+
+      /** Build the page source: paragraphs of prose with math hosts spliced in. */
+      function buildHtml(count) {
+        let out = ''
+        for (let i = 0; i < count; i++) {
+          const display = i % 8 === 0
+          const tex = display ? DISPLAY[i % DISPLAY.length] : INLINE[i % INLINE.length]
+          const host = `<span class="katex-host" data-display="${display}">${katexHtml(tex, display)}</span>`
+          out += display
+            ? `<p>The interfacial model gives ${host} for the cell.</p>`
+            : `<p>Measuring ${host} in the non-Faradaic window isolates the surface-controlled term, so the capacitance ${host} scales with area rather than with the diffusion coefficient.</p>`
+        }
+        return out
+      }
+
+      /**
+       * Deep-copy a parsed tree with createElement/setAttribute, i.e. the way a
+       * framework materialises an expanded hast tree. Same final DOM as
+       * innerHTML; entirely different cost profile.
+       */
+      function materialize(source, target) {
+        for (const child of source.childNodes) {
+          if (child.nodeType === Node.TEXT_NODE) {
+            target.appendChild(document.createTextNode(child.nodeValue))
+            continue
+          }
+          if (child.nodeType !== Node.ELEMENT_NODE) continue
+          const el = document.createElementNS(child.namespaceURI, child.tagName)
+          for (const attr of child.attributes) el.setAttribute(attr.name, attr.value)
+          materialize(child, el)
+          target.appendChild(el)
+        }
+      }
+
+      /** Force style+layout to flush and return how long that took. */
+      function flushLayout() {
+        const t0 = performance.now()
+        // Reading a geometry property is what forces the pending recalc+layout.
+        void stage.getBoundingClientRect().height
+        void document.body.offsetHeight
+        return performance.now() - t0
+      }
+
+      /**
+       * Sweep the column width across frames, the way a sidebar toggle or a
+       * window resize does, and report the worst single frame plus the total
+       * forced-layout time.
+       */
+      async function sweep() {
+        let relayout = 0
+        let worstFrame = 0
+        let last = performance.now()
+        for (let i = 0; i < 40; i++) {
+          stage.style.setProperty('--stage-width', 620 + (i % 20) * 12 + 'px')
+          relayout += flushLayout()
+          await new Promise(requestAnimationFrame)
+          const now = performance.now()
+          worstFrame = Math.max(worstFrame, now - last)
+          last = now
+        }
+        stage.style.removeProperty('--stage-width')
+        return { relayout, worstFrame }
+      }
+
+      async function run(variant) {
+        const count = Number(document.getElementById('count').value) || 120
+        status.textContent = `running ${variant}…`
+        stage.innerHTML = ''
+        stage.dataset.contain = variant === 'contained' ? 'true' : 'false'
+        await new Promise(requestAnimationFrame)
+
+        const html = buildHtml(count)
+        let build
+
+        if (variant === 'innerHTML') {
+          const t0 = performance.now()
+          stage.innerHTML = html
+          build = performance.now() - t0 + flushLayout()
+        } else {
+          // Parse off-document so the parse itself isn't part of the timing —
+          // only the node-by-node construction is.
+          const template = document.createElement('template')
+          template.innerHTML = html
+          const t0 = performance.now()
+          const frag = document.createDocumentFragment()
+          materialize(template.content, frag)
+          stage.appendChild(frag)
+          build = performance.now() - t0 + flushLayout()
+        }
+
+        const nodes = stage.querySelectorAll('*').length
+        const { relayout, worstFrame } = await sweep()
+
+        const row = document.createElement('tr')
+        row.innerHTML =
+          `<td>${variant}</td><td>${build.toFixed(1)}</td><td>${nodes}</td>` +
+          `<td>${relayout.toFixed(1)}</td><td>${worstFrame.toFixed(1)}</td>`
+        tbody.appendChild(row)
+        status.textContent = ''
+      }
+
+      for (const btn of document.querySelectorAll('[data-variant]')) {
+        btn.addEventListener('click', () => run(btn.dataset.variant))
+      }
+      document.getElementById('all').addEventListener('click', async () => {
+        for (const v of ['innerHTML', 'createElement', 'contained']) await run(v)
+      })
+      document.getElementById('clear').addEventListener('click', () => {
+        tbody.innerHTML = ''
+        stage.innerHTML = ''
+      })
+    </script>
+  </body>
+</html>

@@ -1227,6 +1227,42 @@ html {
   unicode-bidi: isolate;
 }
 
+/* KaTeX host — one element per equation, wrapping the markup katex-memo injects
+   as a string (see lib/katex-memo.ts for why an equation is one node).
+
+   Inline math stays `display: inline` — a plain pass-through wrapper that
+   changes nothing about layout, exactly as the bare .katex span behaved before.
+
+   It is TEMPTING to put `contain: layout` here too: KaTeX emits ~65
+   inline-styled spans per equation, and containment would stop a width change
+   from dirtying all of them. But containment does not apply to non-atomic
+   inlines, so it would require `display: inline-block`, and that breaks inline
+   math two ways:
+
+     1. Layout containment suppresses the box's baseline (CSS Containment L2),
+        so an atomic inline aligns by its bottom margin edge instead. Every
+        inline equation would float up by its strut descent — worst for
+        subscripts and fractions, which is most of them.
+     2. Inline KaTeX has no `white-space: nowrap` (only `.katex-display > .katex`
+        does), so it currently wraps at binary/relational atoms. An inline-block
+        is one unbreakable box, and a long expression in a narrow pane would
+        overflow into the container's `overflow-hidden` instead of reflowing.
+
+   Display math has neither problem — it's already its own block, with no
+   baseline to preserve and no inline wrapping to lose — so it gets the
+   containment. NOT `contain: size`: the host must still size to its equation.
+
+   Whether inline math is worth revisiting is an open question for
+   bench/index.html variant C on WebKitGTK; do not add it on reasoning alone. */
+.aui-md .katex-host {
+  display: inline;
+}
+
+.aui-md .katex-host[data-display='true'] {
+  display: block;
+  contain: layout paint style;
+}
+
 /* Fenced code stays LTR even inside an RTL list item/blockquote. */
 [data-slot='aui_assistant-message-content'] .aui-md [data-slot='code-card'],
 [data-slot='aui_user-fence'] {

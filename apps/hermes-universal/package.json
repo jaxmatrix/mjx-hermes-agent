@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "dev:prodweb": "vite build --mode benchmark && tauri dev --config src-tauri/tauri.prodweb.conf.json",
     "android:init": "tauri android init",
     "android:dev": "tauri android dev",
     "android:build:debug": "tauri android build --debug",
