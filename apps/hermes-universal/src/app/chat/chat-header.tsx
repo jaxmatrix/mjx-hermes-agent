@@ -5,7 +5,15 @@ import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $liveSessionTitle, $sessionId } from '@/store/chat'
-import { $pinnedSessionIds, $sidebarOpen, pinSession, unpinSession } from '@/store/layout'
+import {
+  $leftEdgeOpen,
+  $panesFlipped,
+  $pinnedSessionIds,
+  $terminalOpen,
+  pinSession,
+  unpinSession
+} from '@/store/layout'
+import { $reviewOpen } from '@/store/review'
 import { $activeStoredSessionId, $sessions, archiveSessionLocal, deleteSessionLocal, sessionPinId } from '@/store/session'
 
 // The chat title header — ported from desktop's in-pane ChatHeader
@@ -23,16 +31,29 @@ const HEADER_CLASS =
 
 // Width of the window's left toggle cluster (sidebar-left / swap / search) plus
 // the titlebar's own px-2 — the title must clear it when the chat pane reaches
-// the window's left edge (docked sidebar collapsed).
-const LEFT_CLUSTER_INSET = 'pl-[5.5rem]'
+// the window's left edge (nothing docked on that side).
+//   0.5rem (titlebar px-2) + 3 × 1.75rem (size-7 buttons) + 2 × 0.125rem (gap-0.5)
+//   = 6rem, + 0.75rem breathing room so the title pill never touches the search
+//   icon (matches the pl-3 gutter used elsewhere). Re-do this sum if a button
+//   joins the cluster in `app/shell/titlebar.tsx`.
+const LEFT_CLUSTER_INSET = 'pl-[6.75rem]'
 
 export function ChatHeader() {
   const activeId = useStore($activeStoredSessionId)
   const runtimeSessionId = useStore($sessionId)
   const sessions = useStore($sessions)
   const pinnedIds = useStore($pinnedSessionIds)
-  const sidebarOpen = useStore($sidebarOpen)
   const liveTitle = useStore($liveSessionTitle)
+  // POSITIONAL, like the titlebar toggles: what matters is whether ANY pane sits
+  // on the window's LEFT edge, not whether the chat sidebar is open. Flipped,
+  // every right-rail column docks left of chat — the review pane opens
+  // independently of the file rails, and the terminal becomes a left column while
+  // those rails are closed (see `app/shell/sidebar.tsx` terminalColumnActive).
+  const leftEdgeOpen = useStore($leftEdgeOpen)
+  const panesFlipped = useStore($panesFlipped)
+  const reviewOpen = useStore($reviewOpen)
+  const terminalOpen = useStore($terminalOpen)
+  const leftColumnOpen = leftEdgeOpen || (panesFlipped && (reviewOpen || terminalOpen))
 
   // Empty new-session view (no stored AND no runtime session): show nothing, so
   // the intro fills the top band (desktop's ChatHeader returns null here).
@@ -56,12 +77,12 @@ export function ChatHeader() {
     : liveTitle.trim() || 'New session'
 
   // Pull into the reserved titlebar band on desktop; clear the left toggle
-  // cluster only when the docked sidebar is collapsed (else it sits over the
-  // sidebar, not the chat).
+  // cluster only when nothing is docked on the left edge (else the cluster sits
+  // over that pane, not the chat).
   const headerClass = cn(
     HEADER_CLASS,
     IS_DESKTOP && 'mt-[calc(-1*var(--titlebar-height))]',
-    IS_DESKTOP && !sidebarOpen ? LEFT_CLUSTER_INSET : 'pl-3',
+    IS_DESKTOP && !leftColumnOpen ? LEFT_CLUSTER_INSET : 'pl-3',
     'pr-3'
   )
 
