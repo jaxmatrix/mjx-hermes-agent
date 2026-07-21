@@ -17,6 +17,14 @@ const EmptyPlaceholder = (
   </div>
 )
 
+// Module scope, NOT inline props: ThreadMessageList is memo'd, and a fresh
+// object/element on every Thread render defeats that bail-out — so every
+// $busy / $statusLine tick (i.e. constantly, mid-turn) re-rendered the entire
+// visible transcript. The list subscribes to the messages itself via
+// useAuiState, so stable props cost it nothing.
+const MESSAGE_COMPONENTS = { AssistantMessage, SystemMessage, UserMessage }
+const LOADING_INDICATOR = <ResponseLoadingIndicator />
+
 // The chat thread. ThreadMessageList (ported from desktop) owns stick-to-bottom
 // scrolling: it follows while parked at the bottom, escapes on scroll-up, pins
 // the latest human message to the top of its turn while the reply streams, and
@@ -31,9 +39,9 @@ export function Thread() {
     <ThreadPrimitive.Root className="relative flex min-h-0 flex-1 flex-col bg-transparent contain-[layout_paint]">
       <ThreadMessageList
         clampToComposer
-        components={{ AssistantMessage, SystemMessage, UserMessage }}
+        components={MESSAGE_COMPONENTS}
         emptyPlaceholder={EmptyPlaceholder}
-        loadingIndicator={<ResponseLoadingIndicator />}
+        loadingIndicator={LOADING_INDICATOR}
       />
     </ThreadPrimitive.Root>
   )
