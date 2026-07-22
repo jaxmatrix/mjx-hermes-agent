@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { ensureMicPermission } from '@/lib/mic-permission'
+
 type BrowserAudioContext = typeof AudioContext
 
 export interface MicRecorderOptions {
@@ -178,7 +180,13 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
     // Desktop gated mic access behind an Electron permission prompt
     // (window.hermesDesktop.requestMicrophoneAccess). On Tauri/WebKitGTK the
     // webview requests OS mic permission directly via getUserMedia below, so the
-    // gate is dropped. (Android needs RECORD_AUDIO in the manifest.)
+    // gate is dropped. On mobile the OS permission is pre-flighted natively via
+    // tauri-plugin-mic (RECORD_AUDIO is declared in that plugin's manifest); on
+    // desktop/browser this short-circuits to true and getUserMedia does the ask.
+    if (!(await ensureMicPermission())) {
+      throw new Error(copy.microphonePermissionDenied)
+    }
+
     let stream: MediaStream
 
     try {

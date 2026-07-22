@@ -12,6 +12,8 @@
     "keyring:allow-set-password",
     "keyring:allow-delete-password",
     "keyring:allow-has-password",
+    "mic:allow-check-permission",
+    "mic:allow-request-permission",
     "opener:allow-open-url",
     "haptics:default",
     "dialog:allow-open",

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The durable microphone permission declaration.
+
+  The app's own manifest lives under src-tauri/gen/android (gitignored, regenerated
+  by `tauri android init`), so a permission added there is uncommitted and lost.
+  Declaring it here instead — in a vendored plugin that Tauri wires in as a Gradle
+  library module — lets Android's manifest merger fold these <uses-permission>
+  entries into the final app manifest on every build.
+
+  RECORD_AUDIO      : the runtime permission the WebView's getUserMedia needs.
+  MODIFY_AUDIO_SETTINGS : install-time permission; without it Android's audio
+                          subsystem refuses to hand the mic to the WebView even
+                          after RECORD_AUDIO is granted.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+</manifest>

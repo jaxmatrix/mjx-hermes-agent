@@ -33,6 +33,12 @@ tauri-plugin-os = "2"
 # Cargo.toml. FIXME(D1): switch to a crates.io release once one exists.
 tauri-plugin-keyring = { path = "plugins/tauri-plugin-keyring" }
 
+# Microphone OS-permission (R10, voice). In-tree plugin: durably declares Android
+# RECORD_AUDIO/MODIFY_AUDIO_SETTINGS (merged from a committed manifest, since gen/
+# is gitignored) + a check/request seam for Android/iOS. Capture itself stays in
+# the webview (getUserMedia); desktop is a no-op. See plugins/tauri-plugin-mic.
+tauri-plugin-mic = { path = "plugins/tauri-plugin-mic" }
+
 # Open external links in the system browser (Gc6/R11).
 tauri-plugin-opener = "2"
 

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  iOS bundle Info.plist extras. Tauri merges this file (picked up by convention
+  from src-tauri/) into the generated iOS Info.plist. NSMicrophoneUsageDescription
+  is required for mic access — accessing the mic without it crashes the app.
+-->
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Hermes uses the microphone for voice conversations.</string>
+</dict>
+</plist>
