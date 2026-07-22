@@ -184,14 +184,20 @@ async function loadRoot(cwd: string, { force = false }: { force?: boolean } = {}
     clearProjectDirCache(cwd)
   }
 
+  // Keep the PREVIOUS tree visible (dimmed via rootLoading) until the new cwd's
+  // readDir resolves, then swap below — never blank to white on a session switch.
+  // The stale rows carry the old cwd's paths for the ~one frame the read takes;
+  // the header/cwdName update immediately, and the final setProjectTree replaces
+  // the data wholesale. (Same-cwd is already short-circuited above, so this only
+  // runs on a real cwd change or a forced refresh.)
   $projectTree.set({
     collapseNonce: current.collapseNonce,
     cwd,
-    data: [],
+    data: current.data,
     loaded: false,
-    openState: current.cwd === cwd ? current.openState : {},
+    openState: current.openState,
     requestId,
-    resolvedCwd: '',
+    resolvedCwd: current.resolvedCwd,
     rootError: null,
     rootLoading: true
   })
