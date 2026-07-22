@@ -84,7 +84,7 @@ export function SidebarNavRail({ variant, onNavigate }: { variant: 'pane' | 'she
     <div
       className={cn(
         'shrink-0 px-2.5 pb-2',
-        variant === 'pane' ? 'pt-[calc(var(--titlebar-height)+0.375rem)]' : 'pt-[env(safe-area-inset-top)]'
+        variant === 'pane' ? 'pt-1.5' : 'pt-[env(safe-area-inset-top)]'
       )}
     >
       <div className="flex flex-col gap-px">

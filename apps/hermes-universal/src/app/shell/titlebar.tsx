@@ -14,6 +14,7 @@ import {
   toggleRightEdge
 } from '@/store/layout'
 
+import { LayoutMenu } from './layout-menu'
 import { TitlebarButton } from './titlebar-button'
 import { WindowControls } from './window-controls'
 
@@ -36,10 +37,12 @@ export function Titlebar({ connected }: { connected: boolean }) {
 
   return (
     <div
-      // pointer-events-none so the transparent band lets clicks reach whatever is
-      // beneath it (the in-pane chat title, aligned into this band). Interactive
-      // bits below re-enable pointer events; a right-side strip stays draggable.
-      className="pointer-events-none absolute inset-x-0 top-0 z-40 flex h-(--titlebar-height) w-full shrink-0 items-center gap-0.5 bg-transparent px-2 select-none"
+      // Opaque top chrome with a bottom border — a REAL layout row (in-flow,
+      // reserves its height) at the very top of the shell, not an overlay, so it
+      // can never cover the content below (the tree zone tab strips / session
+      // titles sit right beneath it). The empty middle is a window drag region;
+      // the button clusters are interactive.
+      className="relative z-40 flex h-(--titlebar-height) w-full shrink-0 items-center gap-0.5 border-b border-(--ui-stroke-tertiary) bg-(--ui-bg-chrome) px-2 select-none"
     >
       {connected && (
         <div className="pointer-events-auto flex items-center gap-0.5">
@@ -64,11 +67,14 @@ export function Titlebar({ connected }: { connected: boolean }) {
           through to that title (pointer-events-none, inherited); the right
           portion stays a draggable window region for moving the frameless
           window. Title is left-aligned so it never falls under the drag strip. */}
-      <div className="h-full flex-[4]" />
+      <div className="pointer-events-auto h-full flex-[4]" data-tauri-drag-region />
       <div className="pointer-events-auto h-full flex-1" data-tauri-drag-region />
 
       {connected && (
         <div className="pointer-events-auto flex items-center gap-0.5">
+          {/* Layout / tile-preview button — pick a workspace preset (Default /
+              Focus / Terminal deck / Quad) or reset the layout. */}
+          <LayoutMenu />
           <TitlebarButton
             active={hapticsMuted}
             label={hapticsMuted ? t.titlebar.unmuteHaptics : t.titlebar.muteHaptics}

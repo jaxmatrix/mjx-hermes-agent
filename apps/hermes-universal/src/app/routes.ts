@@ -1,3 +1,5 @@
+import { atom } from 'nanostores'
+
 export const SESSION_ROUTE_PREFIX = '/'
 export const NEW_CHAT_ROUTE = '/'
 export const SETTINGS_ROUTE = '/settings'
@@ -96,4 +98,19 @@ export function appViewForPath(pathname: string): AppView {
   }
 
   return APP_VIEW_BY_PATH.get(pathname) ?? 'chat'
+}
+
+/** True while the workspace pane shows a FULL PAGE (skills/messaging/artifacts)
+ *  instead of the chat. The workspace pane contribution mirrors it as
+ *  `headerVeto` so the zone tab bar stands down on pages. Overlays
+ *  (settings/command-center/…) don't count — the chat stays beneath them. */
+export const $workspaceIsPage = atom(false)
+
+export function syncWorkspaceIsPage(pathname: string): void {
+  const view = appViewForPath(pathname)
+  const isPage = view !== 'chat' && !isOverlayView(view)
+
+  if (isPage !== $workspaceIsPage.get()) {
+    $workspaceIsPage.set(isPage)
+  }
 }

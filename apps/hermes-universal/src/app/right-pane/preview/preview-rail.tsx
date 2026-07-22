@@ -1,7 +1,6 @@
 import { Codicon } from '@/components/ui/codicon'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { useI18n } from '@/i18n'
-import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import {
@@ -27,11 +26,7 @@ export function PreviewRail() {
 
   return (
     <div
-      className={cn(
-        'flex h-full min-h-0 flex-col bg-(--ui-editor-surface-background)',
-        // Clear the transparent titlebar overlay so the tab strip isn't under it.
-        IS_DESKTOP && 'pt-(--titlebar-height)'
-      )}
+      className="flex h-full min-h-0 flex-col bg-(--ui-editor-surface-background)"
     >
       {tabs.length > 0 && (
         <div className="flex h-8 shrink-0 items-stretch overflow-x-auto border-t border-b border-(--ui-stroke-tertiary) bg-(--ui-sidebar-surface-background)">

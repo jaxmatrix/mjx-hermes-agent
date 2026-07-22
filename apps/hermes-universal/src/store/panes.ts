@@ -209,3 +209,24 @@ export function setPaneHeightOverride(id: string, height: number | undefined) {
 export const clearPaneWidthOverride = (id: string) => setPaneWidthOverride(id, undefined)
 export const clearPaneHeightOverride = (id: string) => setPaneHeightOverride(id, undefined)
 export const getPaneStateSnapshot = (id: string) => $paneStates.get()[id]
+
+/** Drop every pane's width/height override at once — a layout reset returns all
+ *  zones to their weight/default sizing without touching open/closed state. */
+export function clearAllPaneSizeOverrides() {
+  const current = $paneStates.get()
+  let changed = false
+  const next: Record<string, PaneStateSnapshot> = {}
+
+  for (const [id, state] of Object.entries(current)) {
+    if (state.widthOverride !== undefined || state.heightOverride !== undefined) {
+      changed = true
+      next[id] = { open: state.open }
+    } else {
+      next[id] = state
+    }
+  }
+
+  if (changed) {
+    $paneStates.set(next)
+  }
+}

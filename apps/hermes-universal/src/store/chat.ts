@@ -6,7 +6,7 @@ import { playCompletionSound } from '@/lib/completion-sound'
 import { resolveGatewayEventSessionId } from '@/lib/gateway-events'
 import { triggerHaptic } from '@/lib/haptics'
 import { speakNow, stopSpeaking } from '@/lib/tts'
-import { atom } from '@/store/atom'
+import { atom, computed } from '@/store/atom'
 import { cwdForNewSession } from '@/store/default-project-dir'
 import { requestGateway } from '@/store/gateway'
 import { dispatchNativeNotification } from '@/store/native-notifications'
@@ -81,6 +81,34 @@ const PROMPT_SUBMIT_TIMEOUT_MS = 1_800_000
 
 export const $messages = atom<ChatMessage[]>([])
 export const $busy = atom(false)
+
+// Primary-session view projections (SessionView shape — PRIMARY_SESSION_VIEW in
+// app/chat/session-view.tsx reads these; tiles derive equivalents from their
+// own slice). Cheap computeds off $messages/$busy.
+export const $messagesEmpty = computed($messages, messages => messages.length === 0)
+
+/** The last non-system message is the user's — i.e. we're waiting on the agent
+ *  to start responding (used for the "thinking" placeholder). */
+export const $lastVisibleMessageIsUser = computed($messages, messages => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const role = messages[i].role
+
+    if (role === 'system') {
+      continue
+    }
+
+    return role === 'user'
+  }
+
+  return false
+})
+
+/** A turn is submitted but the assistant hasn't produced visible output yet. */
+export const $awaitingResponse = computed(
+  [$busy, $lastVisibleMessageIsUser],
+  (busy, lastIsUser) => busy && lastIsUser
+)
+
 export const $statusLine = atom('')
 export const $approval = atom<ApprovalRequest | null>(null)
 export const $clarify = atom<ClarifyRequest | null>(null)
@@ -142,9 +170,9 @@ async function refreshCurrentUsage(): Promise<void> {
 }
 
 let messageCounter = 0
-const nextId = (): string => `m${++messageCounter}-${Date.now()}`
+export const nextId = (): string => `m${++messageCounter}-${Date.now()}`
 
-function coerceText(value: unknown): string {
+export function coerceText(value: unknown): string {
   if (typeof value === 'string') {
     return value
   }
@@ -164,7 +192,7 @@ function newAssistant(): ChatMessage {
   return { id: nextId(), role: 'assistant', parts: [], pending: true }
 }
 
-function withActiveAssistant(messages: ChatMessage[]): ChatMessage[] {
+export function withActiveAssistant(messages: ChatMessage[]): ChatMessage[] {
   const last = messages[messages.length - 1]
 
   if (last && last.role === 'assistant' && last.pending) {
@@ -183,7 +211,7 @@ async function notifyWorkspaceChangeFromTool(payload: Record<string, unknown>): 
   }
 }
 
-function patchActive(messages: ChatMessage[], patch: (m: ChatMessage) => ChatMessage): ChatMessage[] {
+export function patchActive(messages: ChatMessage[], patch: (m: ChatMessage) => ChatMessage): ChatMessage[] {
   const next = withActiveAssistant(messages)
   const index = next.length - 1
   const copy = next.slice()
@@ -194,7 +222,7 @@ function patchActive(messages: ChatMessage[], patch: (m: ChatMessage) => ChatMes
 
 // Append a streaming delta into the tail part when it's the same channel, else
 // open a new part.
-function appendStreamPart(parts: ChatPart[], type: 'reasoning' | 'text', delta: string): ChatPart[] {
+export function appendStreamPart(parts: ChatPart[], type: 'reasoning' | 'text', delta: string): ChatPart[] {
   if (!delta) {
     return parts
   }
@@ -236,7 +264,7 @@ function appendStreamPart(parts: ChatPart[], type: 'reasoning' | 'text', delta: 
 //     swap in the authoritative full text.
 //  3. Prose or a tool call already followed → open a NEW block, preserving the
 //     chronology of the turn instead of clobbering the previous step.
-function applySettledReasoning(parts: ChatPart[], text: string): ChatPart[] {
+export function applySettledReasoning(parts: ChatPart[], text: string): ChatPart[] {
   const settled = text.trim()
 
   if (!settled) {

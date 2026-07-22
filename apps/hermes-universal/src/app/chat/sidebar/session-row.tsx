@@ -10,6 +10,8 @@ import { $attentionSessionIds } from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 
 import { SidebarRowBody, SidebarRowGrab, SidebarRowLabel, SidebarRowLead, SidebarRowShell } from './chrome'
+import { startSessionDrag } from '../session-drag'
+
 import { SessionActionsMenu, SessionContextMenu } from './session-actions-menu'
 
 // Ported/adapted from desktop `app/chat/sidebar/session-row.tsx`. Universal is a
@@ -148,6 +150,17 @@ export function SidebarSessionRow({
             }
 
             onResume()
+          }}
+          // Drag this conversation into the workspace to tile it (stack on a tab
+          // strip, split on an edge, or link into a composer). A sub-threshold
+          // release stays a plain click (onClick above), so click-to-open and
+          // shift-to-pin are untouched. The reorder grab keeps its own dnd-kit gesture.
+          onPointerDown={event => {
+            if ((event.target as HTMLElement).closest('[data-reorder-handle], [data-row-actions]')) {
+              return
+            }
+
+            startSessionDrag({ id: session.id, profile: session.profile || 'default', title }, event)
           }}
         >
           {reorderable ? (

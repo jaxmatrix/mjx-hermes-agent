@@ -21,6 +21,13 @@ import { cycleProfile, switchProfileToSlot, switchToDefaultProfile } from '@/sto
 import { toggleReview } from '@/store/review'
 import { newSession, toggleSelectedPin } from '@/store/session'
 import {
+  $focusedStoredSessionId,
+  $sessionTiles,
+  openSessionTile,
+  reopenLastClosedTile,
+  requestCloseSessionTile
+} from '@/store/session-states'
+import {
   $switcherOpen,
   closeSwitcher,
   commitOnCtrlUp,
@@ -166,6 +173,25 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
     'view.prevTerminal': () => $terminalOpen.get() && cycleTerminal(-1),
     'view.closeTerminal': () => $terminalOpen.get() && closeActiveTerminal(),
     'view.flipPanes': togglePanesFlipped,
+
+    // Multi-session tiles: ⌘T opens the focused/selected conversation beside the
+    // main thread; ⌘W closes the focused tile (confirming a running one); ⌘⇧T
+    // reopens the last-closed tile.
+    'session.newTab': () => {
+      const id = $focusedStoredSessionId.get()
+
+      if (id) {
+        openSessionTile(id, 'right')
+      }
+    },
+    'view.closeTab': () => {
+      const id = $focusedStoredSessionId.get()
+
+      if (id && $sessionTiles.get().some(t => t.storedSessionId === id)) {
+        requestCloseSessionTile(id)
+      }
+    },
+    'view.reopenTab': reopenLastClosedTile,
 
     'appearance.toggleMode': () => setMode(resolvedMode === 'dark' ? 'light' : 'dark'),
 
