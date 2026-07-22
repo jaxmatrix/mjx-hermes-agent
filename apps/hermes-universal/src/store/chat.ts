@@ -11,6 +11,7 @@ import { cwdForNewSession } from '@/store/default-project-dir'
 import { requestGateway } from '@/store/gateway'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notifyError } from '@/store/notifications'
+import { flashPetActivity, setPetActivity } from '@/store/pet'
 import { $subagentsBySession, upsertSubagent } from '@/store/subagents'
 import { recordToolDiff } from '@/store/tool-diffs'
 import { $autoSpeakReplies } from '@/store/voice-prefs'
@@ -323,6 +324,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       $busy.set(true)
       $turnStartedAt.set(Date.now())
       $statusLine.set('')
+      setPetActivity({ busy: true }) // pet: working pose
       stopSpeaking() // interrupt any TTS from the previous turn
       update(withActiveAssistant)
 
@@ -336,6 +338,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       break
 
     case 'reasoning.delta':
+      setPetActivity({ reasoning: true }) // pet: thinking pose
       update(messages =>
         patchActive(messages, m => ({
           ...m,
@@ -346,12 +349,14 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       break
 
     case 'reasoning.available':
+      setPetActivity({ reasoning: true }) // pet: thinking pose
       update(messages =>
         patchActive(messages, m => ({ ...m, parts: applySettledReasoning(m.parts, coerceThinkingText(payload.text)) }))
       )
 
       break
     case 'moa.reference': {
+      setPetActivity({ reasoning: true }) // pet: thinking pose
       const label = coerceText(payload.label)
       const idx = coerceText(payload.index)
       const total = coerceText(payload.total)
@@ -373,10 +378,12 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     case 'tool.progress':
 
     case 'tool.generating':
+      setPetActivity({ reasoning: false, toolRunning: true }) // pet: working pose
       applyToolEvent(payload, 'running')
 
       break
     case 'tool.complete': {
+      setPetActivity({ toolRunning: false })
       applyToolEvent(payload, 'complete')
       // Live side-channel diff: the gateway renders the edit diff itself and
       // ships it on tool.complete (server.py `_on_tool_complete`). The renderer
@@ -407,6 +414,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       $busy.set(false)
       $turnStartedAt.set(null)
       $statusLine.set('')
+      setPetActivity({ busy: false, reasoning: false, toolRunning: false }) // pet: back to idle/roam
       void refreshCurrentUsage()
       update(messages => messages.map(m => (m.pending ? { ...m, pending: false } : m)))
 
@@ -447,6 +455,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         description: coerceText(payload.description) || 'dangerous command',
         allowPermanent: payload.allow_permanent !== false
       })
+      setPetActivity({ awaitingInput: true }) // pet: waiting pose (blocked on user)
       void triggerHaptic('warning')
       dispatchNativeNotification({
         kind: 'approval',
@@ -462,6 +471,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         requestId: coerceText(payload.request_id),
         prompt: coerceText(payload.prompt) || coerceText(payload.message)
       })
+      setPetActivity({ awaitingInput: true }) // pet: waiting pose (blocked on user)
 
       break
 
@@ -470,6 +480,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         requestId: coerceText(payload.request_id),
         prompt: coerceText(payload.prompt) || coerceText(payload.command) || 'Enter your sudo password'
       })
+      setPetActivity({ awaitingInput: true }) // pet: waiting pose (blocked on user)
 
       break
 
@@ -479,6 +490,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
         envVar: coerceText(payload.env_var),
         prompt: coerceText(payload.prompt) || coerceText(payload.message)
       })
+      setPetActivity({ awaitingInput: true }) // pet: waiting pose (blocked on user)
 
       break
 
@@ -486,6 +498,9 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       $busy.set(false)
       $turnStartedAt.set(null)
       $statusLine.set(coerceText(payload.message) || 'Something went wrong')
+      // pet: crying pose, auto-decaying back to normal after 5s.
+      setPetActivity({ busy: false, reasoning: false, toolRunning: false })
+      flashPetActivity({ error: true }, 5000)
       update(messages =>
         messages.map(m => (m.pending ? { ...m, pending: false, error: coerceText(payload.message) } : m))
       )
@@ -604,6 +619,7 @@ export async function sendPrompt(text: string): Promise<void> {
   $busy.set(true)
   $turnStartedAt.set(Date.now())
   $statusLine.set('')
+  setPetActivity({ busy: true }) // pet: start working the moment the user sends
 
   try {
     const wasNew = !$sessionId.get()
@@ -622,6 +638,7 @@ export async function sendPrompt(text: string): Promise<void> {
     $busy.set(false)
     $turnStartedAt.set(null)
     $statusLine.set(err instanceof Error ? err.message : String(err))
+    setPetActivity({ busy: false, reasoning: false, toolRunning: false })
     notifyError(err, 'Message failed to send')
   }
 }
@@ -629,6 +646,7 @@ export async function sendPrompt(text: string): Promise<void> {
 export async function respondApproval(choice: ApprovalChoice): Promise<void> {
   const sessionId = $sessionId.get()
   $approval.set(null)
+  setPetActivity({ awaitingInput: false })
 
   try {
     await requestGateway('approval.respond', { choice, session_id: sessionId ?? undefined })
@@ -640,6 +658,7 @@ export async function respondApproval(choice: ApprovalChoice): Promise<void> {
 export async function respondClarify(answer: string): Promise<void> {
   const req = $clarify.get()
   $clarify.set(null)
+  setPetActivity({ awaitingInput: false })
 
   if (!req) {
     return
@@ -655,6 +674,7 @@ export async function respondClarify(answer: string): Promise<void> {
 export async function respondSudo(password: string): Promise<void> {
   const req = $sudo.get()
   $sudo.set(null)
+  setPetActivity({ awaitingInput: false })
 
   if (!req) {
     return
@@ -670,6 +690,7 @@ export async function respondSudo(password: string): Promise<void> {
 export async function respondSecret(value: string): Promise<void> {
   const req = $secret.get()
   $secret.set(null)
+  setPetActivity({ awaitingInput: false })
 
   if (!req) {
     return
@@ -699,5 +720,6 @@ export function resetChat(): void {
   $sudo.set(null)
   $secret.set(null)
   $subagentsBySession.set({})
+  setPetActivity({}) // pet: clear any stale activity on chat teardown
   stopSpeaking()
 }

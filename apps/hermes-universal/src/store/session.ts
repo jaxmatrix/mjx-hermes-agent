@@ -22,6 +22,7 @@ import {
 import { requestGateway } from '@/store/gateway'
 import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
 import { notifyError } from '@/store/notifications'
+import { flashPetActivity } from '@/store/pet'
 import type { SessionInfo, SessionResumeResponse, SessionSearchResult } from '@/types/hermes'
 
 // Session history + switching (Hc2). Lean adaptation of desktop store/session.ts —
@@ -295,6 +296,7 @@ export async function openSession(storedId: string): Promise<void> {
 export function newSession(): void {
   resetChat()
   $activeStoredSessionId.set(null)
+  flashPetActivity({ greeting: true }) // pet: wave hello on a fresh chat
 }
 
 /**

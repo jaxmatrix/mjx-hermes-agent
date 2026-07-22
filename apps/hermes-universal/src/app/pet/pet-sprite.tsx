@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 
 import { useStore } from '@/store/atom'
-import { $petInfo, type PetInfo } from '@/store/pet'
+import { $petInfo, $petState, type PetInfo, type PetState } from '@/store/pet'
 
 const DEFAULT_FRAME_W = 192
 const DEFAULT_FRAME_H = 208
@@ -20,6 +20,36 @@ const DEFAULT_ROWS = [
   'running',
   'review'
 ]
+
+// A PetState resolves to the first of these row names present in the sheet, so
+// both the legacy (`wave`/`jump`/`run`) and Codex (`waving`/`jumping`/`running`)
+// row names work. (Ported from desktop pet-sprite.tsx.)
+const STATE_ALIASES: Record<PetState, string[]> = {
+  idle: ['idle'],
+  wave: ['wave', 'waving'],
+  jump: ['jump', 'jumping'],
+  run: ['run', 'running'],
+  failed: ['failed'],
+  review: ['review'],
+  waiting: ['waiting']
+}
+
+// Reverse map: which PetState a concrete row name belongs to (for `rowOverride`
+// frame-count fallback).
+const ROW_TO_STATE: Record<string, PetState> = {
+  idle: 'idle',
+  wave: 'wave',
+  waving: 'wave',
+  jump: 'jump',
+  jumping: 'jump',
+  run: 'run',
+  running: 'run',
+  'running-right': 'run',
+  'running-left': 'run',
+  failed: 'failed',
+  review: 'review',
+  waiting: 'waiting'
+}
 
 /**
  * Pick the running row + mirror for a horizontal travel direction.
@@ -67,16 +97,19 @@ export function roamWalkRow(dir: -1 | 0 | 1, stateRows?: string[]): { row?: stri
 }
 
 // Canvas renderer for a petdex spritesheet (adapted from desktop pet-sprite.tsx).
-// Draws the row for `state` (idle / run) — or a forced `rowOverride` (a concrete
-// row name, e.g. `running-right`, used by the roam wander) — stepping frames
-// across loopMs.
+// Draws the row matching the live `$petState` (idle / run / review / waiting /
+// wave / failed / jump) — or a forced `stateOverride` (preview surfaces) or
+// `rowOverride` (a concrete row name, e.g. `running-right`, used by the roam
+// wander) — stepping frames across loopMs. State is read via a subscription, not
+// a prop, so the frequent activity-driven changes during a turn update the
+// canvas inside its RAF loop WITHOUT a React re-render.
 export function PetSprite({
-  state = 'idle',
+  stateOverride,
   zoom = 1,
   info: infoProp,
   rowOverride
 }: {
-  state?: 'idle' | 'run'
+  stateOverride?: PetState
   zoom?: number
   info?: PetInfo
   rowOverride?: string
@@ -84,8 +117,8 @@ export function PetSprite({
   const stored = useStore($petInfo)
   const info = infoProp ?? stored
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const stateRef = useRef(state)
-  stateRef.current = state
+  const overrideRef = useRef(stateOverride)
+  overrideRef.current = stateOverride
   const rowOverrideRef = useRef(rowOverride)
   rowOverrideRef.current = rowOverride
 
@@ -108,25 +141,57 @@ export function PetSprite({
     const frameH = info.frameH ?? DEFAULT_FRAME_H
     const loopMs = info.loopMs ?? DEFAULT_LOOP_MS
     const scale = (info.scale ?? DEFAULT_SCALE) * zoom
+    const frames = info.framesPerState ?? DEFAULT_FRAMES
+    const framesByState = info.framesByState
+    const framesByRow = info.framesByRow
     const rows = info.stateRows ?? DEFAULT_ROWS
     const drawW = Math.max(1, Math.round(frameW * scale))
     const drawH = Math.max(1, Math.round(frameH * scale))
     canvas.width = drawW
     canvas.height = drawH
 
-    const rowFor = (s: 'idle' | 'run') => {
-      const keys = s === 'run' ? ['running-right', 'running', 'run'] : ['idle']
+    const rowIndexForState = (s: PetState): number => {
+      for (const key of STATE_ALIASES[s] ?? [s]) {
+        const idx = rows.indexOf(key)
 
-      for (const k of keys) {
-        const i = rows.indexOf(k)
-
-        if (i >= 0) {
-          return { index: i, key: k }
+        if (idx >= 0) {
+          return idx
         }
       }
 
-      return { index: 0, key: 'idle' }
+      return 0
     }
+
+    // Resolve a state to its row + real frame count; a state with no real frames
+    // (ragged sheet, empty row) falls back to idle rather than flashing blank.
+    const resolve = (s: PetState): { row: number; count: number } => {
+      const real = framesByState?.[s] ?? frames
+
+      if (real > 0) {
+        return { row: rowIndexForState(s), count: real }
+      }
+
+      return { row: rowIndexForState('idle'), count: Math.max(1, framesByState?.idle ?? frames) }
+    }
+
+    const resolveRow = (rowName: string): { row: number; count: number } => {
+      const row = rows.indexOf(rowName)
+      const state = ROW_TO_STATE[rowName]
+
+      const count = Math.max(
+        1,
+        framesByRow?.[rowName] ?? framesByState?.[rowName] ?? (state ? framesByState?.[state] : 0) ?? frames
+      )
+
+      return { row: row >= 0 ? row : rowIndexForState(state ?? 'idle'), count }
+    }
+
+    // Track state via subscription, not a prop — no re-render on activity ticks.
+    let liveState: PetState = $petState.get()
+
+    const unsubState = $petState.listen(next => {
+      liveState = next
+    })
 
     const img = new Image()
     img.src = `data:${info.mime ?? 'image/webp'};base64,${info.spritesheetBase64}`
@@ -135,16 +200,20 @@ export function PetSprite({
     let frame = 0
     let last = performance.now()
     let activeRow = -1
+    let activeCount = -1
 
     const draw = (now: number) => {
-      // A concrete roam row (running-left/right) wins over the idle/run mapping.
-      const override = rowOverrideRef.current
-      const ovIdx = override ? rows.indexOf(override) : -1
-      const { index, key } = ovIdx >= 0 ? { index: ovIdx, key: override! } : rowFor(stateRef.current)
-      const count = Math.max(1, info.framesByState?.[key] ?? info.framesPerState ?? DEFAULT_FRAMES)
+      // Priority: a forced roam row (running-left/right) > a preview override >
+      // the live activity/roam state.
+      const forcedRow = rowOverrideRef.current
 
-      if (index !== activeRow) {
+      const { row: index, count } = forcedRow
+        ? resolveRow(forcedRow)
+        : resolve(overrideRef.current ?? liveState)
+
+      if (index !== activeRow || count !== activeCount) {
         activeRow = index
+        activeCount = count
         frame = 0
         last = now
       }
@@ -153,6 +222,8 @@ export function PetSprite({
         frame = (frame + 1) % count
         last = now
       }
+
+      frame %= count
 
       ctx.clearRect(0, 0, drawW, drawH)
 
@@ -166,7 +237,10 @@ export function PetSprite({
 
     raf = requestAnimationFrame(draw)
 
-    return () => cancelAnimationFrame(raf)
+    return () => {
+      cancelAnimationFrame(raf)
+      unsubState()
+    }
   }, [
     enabled,
     info.spritesheetBase64,
@@ -179,6 +253,7 @@ export function PetSprite({
     info.framesPerState,
     info.stateRows,
     info.framesByState,
+    info.framesByRow,
     zoom
   ])
 
