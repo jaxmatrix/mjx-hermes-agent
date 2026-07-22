@@ -1,22 +1,19 @@
-import { lazy, type ReactNode, Suspense, useEffect } from 'react'
-import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { type ReactNode, useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import { AgentsView } from '@/app/agents'
-import { ArtifactsView } from '@/app/artifacts'
-import { ChatScreen } from '@/app/chat/chat-screen'
 import { CommandCenterView } from '@/app/command-center'
 import { ConnectScreen } from '@/app/connect-screen'
 import { CronView } from '@/app/cron'
 import { GatewayConnectingScreen } from '@/app/gateway/gateway-connecting-screen'
-import { MessagingView } from '@/app/messaging'
 import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
 import { FloatingPet } from '@/app/pet/floating-pet'
 import { ProfilesView } from '@/app/profiles'
 import { ProviderConnectOverlay } from '@/app/settings/provider-connect-overlay'
 import { SettingsView } from '@/app/settings/settings-view'
-import { SkillsView } from '@/app/skills'
 import { StarmapView } from '@/app/starmap'
 import { NotificationStack } from '@/components/notifications'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { IS_DESKTOP } from '@/lib/platform'
 import { useStore } from '@/store/atom'
 import { $connectionPhase, $hasConnected } from '@/store/connection'
@@ -26,6 +23,8 @@ import { syncPetInfo } from '@/store/pet-gallery'
 import { deleteSessionLocal } from '@/store/session'
 import { bumpZoom, initZoom, setZoomPercent } from '@/store/zoom'
 
+import { ContribController } from './contrib/controller'
+import { WorkspaceRoutes } from './contrib/panes'
 import { useKeybinds } from './hooks/use-keybinds'
 import { COMMAND_CENTER_ROUTE, sessionRoute } from './routes'
 import { SessionSwitcher } from './session-switcher'
@@ -34,23 +33,6 @@ import { useOverlayRouting } from './shell/hooks/use-overlay-routing'
 import { AppShell, SidebarProvider } from './shell/sidebar'
 import { Statusbar } from './shell/statusbar'
 import { Titlebar } from './shell/titlebar'
-
-// Markdown/KaTeX perf bench (/dev/markdown-bench). Lazy + build-time guarded, so
-// neither the route, the bench, nor the LaTeX fixture reaches a real release
-// bundle — `dist/` is grepped for it as part of verification.
-//
-// Two ways in, because the bench has to be reachable from BOTH sides of the
-// comparison it exists to make:
-//   - `npm run dev`         → import.meta.env.DEV
-//   - `npm run dev:prodweb` → mode `benchmark` sets VITE_ENABLE_BENCH (.env.benchmark)
-// The second is a minified production frontend running under the Tauri dev
-// shell; without the env flag the bench would vanish from exactly the build
-// whose numbers matter most.
-const BENCH_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_BENCH === 'true'
-
-const MarkdownBench = BENCH_ENABLED
-  ? lazy(() => import('@/dev/markdown-bench').then(module => ({ default: module.MarkdownBench })))
-  : null
 
 // Connected-guard + routing. Until a gateway connection is ready we show the
 // full-screen ConnectScreen (no nav). Once ready, the first-run onboarding
@@ -99,6 +81,12 @@ export function MobileController() {
   }, [phase])
 
   const connected = phase === 'ready' && !onboarding
+
+  // Desktop always uses the docked (wide) shell regardless of window width;
+  // mobile/web fall to the phone drawer below 768px. The wide path renders the
+  // MJX-50 layout tree; the narrow path keeps the flat AppShell drawer.
+  const mediaWide = useMediaQuery('(min-width: 768px)')
+  const wide = IS_DESKTOP || mediaWide
 
   // Overlay views (settings / command-center / agents / cron / …) are top-level
   // portals rather than routed panes — desktop parity: the underlying route (chat)
@@ -173,44 +161,19 @@ export function MobileController() {
         <CommandMenu />
         {/* ⌃Tab session switcher HUD — keyboard-driven from useKeybinds. */}
         <SessionSwitcher />
-        <AppShell>
-          <Routes>
-            <Route element={<ChatScreen />} path="/" />
-            {/* /settings* falls through to the chat backdrop; the settings portal
-                itself renders as a top-level overlay below (fixed z-50). */}
-            {/* /command-center falls through to the chat backdrop; the Command
-                Center overlay renders as a top-level portal below (fixed z-50). */}
-            {/* Capabilities: Skills · Toolsets · MCP · Hub (ported from desktop). */}
-            <Route element={<SkillsView />} path="/skills" />
-            <Route element={<MessagingView />} path="/messaging" />
-            <Route element={<ArtifactsView />} path="/artifacts" />
-            {/* /cron falls through to the chat backdrop; the Cron overlay
-                renders as a top-level portal below (fixed z-50). */}
-            {/* /profiles falls through to the chat backdrop; the Profiles overlay
-                renders as a top-level portal below (fixed z-50). */}
-            {/* /agents falls through to the chat backdrop; the Agents ("Spawn
-                tree") overlay renders as a top-level portal below (fixed z-50). */}
-            {/* /starmap falls through to the chat backdrop; the Star map overlay
-                renders as a top-level portal below (fixed z-50). */}
-            {/* No /files or /review routes — desktop parity: Files is the
-                right-pane file tree and Review is the right-pane git diff, both
-                mounted in AppShell rather than routed. */}
-            {/* Dev-only perf bench; absent from production builds. Must sit
-                BEFORE the catch-all, which would otherwise swallow it. */}
-            {MarkdownBench && (
-              <Route
-                element={
-                  <Suspense fallback={null}>
-                    <MarkdownBench />
-                  </Suspense>
-                }
-                path="/dev/markdown-bench"
-              />
-            )}
-            {/* Session ids (and anything else) resolve to chat, per routes.ts */}
-            <Route element={<ChatScreen />} path="*" />
-          </Routes>
-        </AppShell>
+        {/* MJX-50: the workspace is now a recursive LAYOUT TREE, not the flat
+            AppShell. Every surface (sidebar / chat routes / files / preview /
+            review / terminal) is an `area:'panes'` contribution registered by
+            the controller; the tree resolves content from the registry and hosts
+            multi-session tiles. Wide (docked) desktop path only — the phone
+            drawer branch still lives in AppShell (FIXME(MJX-72/mobile-tiles)). */}
+        {wide ? (
+          <ContribController />
+        ) : (
+          <AppShell>
+            <WorkspaceRoutes />
+          </AppShell>
+        )}
       </>
     )
   }
@@ -222,15 +185,14 @@ export function MobileController() {
   return (
     <SidebarProvider>
       <div className="relative flex h-full min-h-0 flex-col">
+        {/* Frameless chrome — a REAL top row (in-flow, reserves its height) so
+            it can never cover the content beneath it (the tree zone tab strips /
+            session titles start right below it). Desktop Tauri only. */}
+        {IS_DESKTOP && <Titlebar connected={connected} />}
         <div className="min-h-0 flex-1">{content}</div>
         {/* Bottom statusbar (ported from desktop): a real shrink-0 row below the
-            content, so it reserves space and stays visible under the overlay
-            titlebar. Connected-only — it reads live gateway/session state. */}
+            content. Connected-only — it reads live gateway/session state. */}
         {connected && <Statusbar />}
-        {/* Frameless chrome floats as a transparent overlay above the content so
-            the sidebar/main panes extend to y=0 and their division shows through
-            the titlebar band (Requirement #1). Desktop Tauri only. */}
-        {IS_DESKTOP && <Titlebar connected={connected} />}
         {/* Settings portal — a full-window overlay (fixed z-50) over the titlebar
             (z-40) and chat backdrop. Stays mounted while disconnected too (a
             settings-initiated "Save & reconnect", or a sign-out) so reconfiguring or
