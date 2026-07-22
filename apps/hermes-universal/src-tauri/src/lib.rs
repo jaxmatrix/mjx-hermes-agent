@@ -72,6 +72,46 @@ pub fn run() {
         .manage(TransportState::new())
         .manage(LocalBackendState::default())
         .manage(PtyState::default())
+        .setup(|app| {
+            // WebKitGTK (Linux desktop) auto-denies `getUserMedia` unless the
+            // embedder answers the WebView's `permission-request` signal — wry
+            // does not, so voice/dictation fails instantly with a permission
+            // error and no prompt. Allow microphone (and camera) requests here so
+            // the mic works; Linux has no per-app OS mic gate, so there is nothing
+            // further to ask. Non-media requests are left to WebKit's default
+            // (deny). No-op on macOS/Windows/mobile, where the webview or the mic
+            // plugin already handles permission.
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.with_webview(|platform_webview| {
+                        use webkit2gtk::glib::prelude::*;
+                        use webkit2gtk::{
+                            PermissionRequestExt, UserMediaPermissionRequest, WebViewExt,
+                        };
+
+                        platform_webview
+                            .inner()
+                            .connect_permission_request(|_webview, request| {
+                                if request
+                                    .downcast_ref::<UserMediaPermissionRequest>()
+                                    .is_some()
+                                {
+                                    request.allow();
+                                    true
+                                } else {
+                                    false
+                                }
+                            });
+                    });
+                }
+            }
+
+            let _ = app;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             http_request,
             ws_open,

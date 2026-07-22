@@ -90,3 +90,9 @@ portable-pty = "0.9"
 # (appearance.rs). Version pinned to Tauri's gtk to avoid a duplicate in the tree.
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+# WebKitGTK (Linux only) — the desktop webview auto-DENIES getUserMedia unless the
+# embedder answers WebKitWebView's `permission-request` signal. wry doesn't, so we
+# allow microphone requests ourselves (see lib.rs). Version matches wry's webkit2gtk
+# (0.55 → 2.0.2) to avoid a duplicate in the tree; `v2_8` exposes the
+# UserMediaPermissionRequest type used to scope the allow to mic/camera only.
+webkit2gtk = { version = "2.0", features = ["v2_8"] }

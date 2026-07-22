@@ -1712,6 +1712,7 @@ dependencies = [
  "tauri-plugin-os",
  "tokio",
  "tokio-tungstenite",
+ "webkit2gtk",
  "zip",
 ]
 
