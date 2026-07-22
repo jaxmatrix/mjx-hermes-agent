@@ -259,7 +259,13 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
       resolver?.(null)
     }
 
-    recorder.start()
+    // Pass a timeslice so `dataavailable` fires periodically during recording
+    // instead of only once at stop. Chromium (apps/desktop) delivers the whole
+    // buffer in that single stop-time flush, but WebKitGTK's GStreamer-backed
+    // MediaRecorder often does NOT flush the final buffer, leaving `chunks`
+    // empty → stop() resolves null → transcription is skipped with no error.
+    // Chunking every 250ms guarantees data regardless of the stop-time flush.
+    recorder.start(250)
     setRecording(true)
     startMeter(stream, options)
   }
@@ -276,6 +282,11 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
       }
 
       stopResolverRef.current = resolve
+      // Force any buffered audio out before finalize — belt-and-suspenders for
+      // WebKitGTK, whose stop-time flush is unreliable (see recorder.start).
+      if (recorder.state === 'recording') {
+        recorder.requestData()
+      }
       recorder.stop()
     })
 
