@@ -109,7 +109,7 @@ export function PetGenerateSheet({ onOpenChange, open }: { onOpenChange: (open: 
           ) : status === 'preview' || status === 'adopting' ? (
             <>
               <div className="grid min-h-32 place-items-center py-2">
-                {preview && <PetSprite info={preview} zoom={2.6} />}
+                {preview && <PetSprite info={preview} stateOverride="idle" zoom={2.6} />}
               </div>
               <p className="text-center text-sm font-medium text-foreground">{g.hatched}</p>
               <Input onChange={e => setName(e.target.value)} placeholder={g.namePlaceholder} value={name} />

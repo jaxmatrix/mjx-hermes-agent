@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useStore } from '@/store/atom'
 import { $busy } from '@/store/chat'
-import { $petInfo, $petRoam, $petRoamDir } from '@/store/pet'
+import { $petInfo, $petRoam, $petRoamDir, flashPetActivity } from '@/store/pet'
 import { syncPetInfo } from '@/store/pet-gallery'
 import { useTheme } from '@/themes/context'
 
@@ -95,8 +95,10 @@ export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) 
   // the connect effect, so it goes empty across an HMR store reload — and a pet
   // enabled via `/pet` while the app runs wouldn't appear until reconnect. A
   // one-shot sync here repopulates it (the pet only mounts while connected).
+  // Also greet the user with a wave when the app opens.
   useEffect(() => {
     void syncPetInfo()
+    flashPetActivity({ greeting: true })
   }, [])
 
   // Keep the whole pet on-screen at its current size (shared by drag + reclamp).
@@ -199,10 +201,10 @@ export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) 
   })
 
   // While roaming, drive the directional run row + mirror from travel direction;
-  // at rest, fall back to the inward-facing static mascot.
+  // at rest, fall back to the inward-facing static mascot. The pose itself comes
+  // from `$petState` (activity + roam motion), read inside PetSprite.
   const roaming = roamDir !== 0
   const walk = roamWalkRow(roamDir, info.stateRows)
-  const spriteState: 'idle' | 'run' = roaming || busy ? 'run' : 'idle'
 
   if (!info.enabled || !info.spritesheetBase64) {
     return null
@@ -248,7 +250,7 @@ export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) 
           zIndex: 1
         }}
       >
-        <PetSprite info={info} rowOverride={walk.row} state={spriteState} />
+        <PetSprite info={info} rowOverride={walk.row} />
       </div>
     </div>
   )
