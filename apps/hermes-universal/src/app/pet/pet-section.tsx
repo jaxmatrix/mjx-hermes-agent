@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 
 import { EmptyState, ListRow, LoadingState, Pill, SectionHeading, SettingsContent } from '@/app/settings/primitives'
+import { Button } from '@/components/ui/button'
 import { SegmentedControl } from '@/components/ui/segmented-control'
 import { useI18n } from '@/i18n'
 import { Loader2, Paw } from '@/lib/icons'
 import { selectableCardClass } from '@/lib/selectable-card'
-import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
+import { $gatewayState } from '@/store/gateway'
 import { $petInfo, $petRoam, setPetRoam } from '@/store/pet'
 import {
   $petBusy,
@@ -18,6 +19,7 @@ import {
   PET_SCALE_DEFAULT,
   PET_SCALE_MAX,
   PET_SCALE_MIN,
+  rankedGalleryPets,
   setPetEnabled,
   setPetScale
 } from '@/store/pet-gallery'
@@ -28,6 +30,12 @@ import { PetThumb } from './pet-thumb'
 // Shared search-input chrome (matches the theme grid's search on Appearance).
 const SEARCH_CHROME =
   'w-full rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) px-3 py-1.5 text-[length:var(--conversation-caption-font-size)] outline-none placeholder:text-(--ui-text-tertiary) focus:border-(--ui-stroke-secondary)'
+
+// The petdex catalog is thousands of entries and each card loads a thumbnail over
+// the gateway, so rank them and render a page at a time (desktop caps at 60 and
+// leaves the rest to search; here the cap also grows on demand).
+const RENDER_CAP = 60
+const RENDER_PAGE = 60
 
 // Pet settings, laid out like the desktop `PetSettings` (nested at the bottom of
 // Appearance): enable + choose-a-pet grid, size slider, roam toggle. `PetPanel`
@@ -41,16 +49,29 @@ export function PetPanel() {
   const petInfo = useStore($petInfo)
   const roam = useStore($petRoam)
   const [generateOpen, setGenerateOpen] = useState(false)
+  const gatewayState = useStore($gatewayState)
   const [query, setQuery] = useState('')
+  const [cap, setCap] = useState(RENDER_CAP)
 
-  useEffect(() => void loadPetGallery(), [])
+  // The gallery RPC rejects outright before the socket is up, which would wedge
+  // the status atom on 'loading' until the user navigated away and back.
+  useEffect(() => {
+    if (gatewayState === 'open') {
+      void loadPetGallery()
+    }
+  }, [gatewayState])
 
   const enabled = gallery?.enabled ?? false
   const scale = petInfo.scale ?? PET_SCALE_DEFAULT
   const active = gallery?.active ?? ''
-  const pets = gallery?.pets ?? []
-  const q = normalize(query)
-  const shown = q ? pets.filter(pt => normalize(pt.displayName).includes(q) || normalize(pt.slug).includes(q)) : pets
+  const ranked = rankedGalleryPets(gallery, query)
+  const shown = ranked.slice(0, cap)
+  const q = query.trim()
+
+  const search = (value: string) => {
+    setQuery(value)
+    setCap(RENDER_CAP)
+  }
 
   const onOff = [
     { id: 'off', label: p.off },
@@ -75,7 +96,7 @@ export function PetPanel() {
             <>
               <input
                 className={cn('mt-3', SEARCH_CHROME)}
-                onChange={event => setQuery(event.target.value)}
+                onChange={event => search(event.target.value)}
                 placeholder={p.searchPlaceholder}
                 spellCheck={false}
                 value={query}
@@ -83,7 +104,7 @@ export function PetPanel() {
               <div className="mt-3 h-72 overflow-y-auto pr-1">
                 {shown.length === 0 ? (
                   <p className="text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
-                    {q ? p.noMatch(query.trim()) : p.unreachable}
+                    {status === 'loading' ? t.commandCenter.pets.loading : q ? p.noMatch(q) : p.unreachable}
                   </p>
                 ) : (
                   <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -113,6 +134,16 @@ export function PetPanel() {
                         </button>
                       )
                     })}
+                  </div>
+                )}
+                {ranked.length > shown.length && (
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <span className="text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
+                      {p.countCapped(shown.length, ranked.length)}
+                    </span>
+                    <Button onClick={() => setCap(c => c + RENDER_PAGE)} size="inline" variant="text">
+                      {t.sidebar.loadMore}
+                    </Button>
                   </div>
                 )}
               </div>
