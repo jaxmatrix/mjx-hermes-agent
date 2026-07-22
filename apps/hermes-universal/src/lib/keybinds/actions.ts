@@ -85,7 +85,7 @@ export const KEYBIND_ACTIONS: readonly KeybindActionMeta[] = [
   // tab/zone tree here, so a session "tab" has nowhere to open. Kept as a row so
   // the file stays diffable against desktop and a user can still bind it once
   // the tree lands.
-  { id: 'session.newTab', category: 'session', defaults: [] },
+  { id: 'session.newTab', category: 'session', defaults: ['mod+t'] },
   // Shipped UNBOUND on universal (desktop default ⌘⇧N): `store/windows.ts`'s
   // openSessionInNewWindow is a no-op stub — multi-window isn't implemented.
   { id: 'session.newWindow', category: 'session', defaults: [] },
@@ -136,8 +136,8 @@ export const KEYBIND_ACTIONS: readonly KeybindActionMeta[] = [
   // Shipped UNBOUND on universal: no tab tree and no closed-tile history, so
   // there is nothing to close or restore. ⌘W is also the browser/webview close
   // chord, which makes shipping it a dead key actively harmful.
-  { id: 'view.closeTab', category: 'view', defaults: [] },
-  { id: 'view.reopenTab', category: 'view', defaults: [] },
+  { id: 'view.closeTab', category: 'view', defaults: ['mod+w'] },
+  { id: 'view.reopenTab', category: 'view', defaults: ['mod+shift+t'] },
   { id: 'appearance.toggleMode', category: 'view', defaults: ['shift+x'] },
   { id: 'keybinds.openPanel', category: 'view', defaults: ['mod+/'] }
 ]

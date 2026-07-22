@@ -20,10 +20,15 @@ describe('keybind bindings', () => {
     expect(bindingsFor('nav.commandPalette')).toEqual(['mod+k', 'mod+p'])
   })
 
+  it('binds the multi-session tile/tab actions to their defaults', () => {
+    expect(bindingsFor('session.newTab')).toEqual(['mod+t'])
+    expect(bindingsFor('view.closeTab')).toEqual(['mod+w'])
+    expect(bindingsFor('view.reopenTab')).toEqual(['mod+shift+t'])
+  })
+
   it('leaves actions with no universal backing unbound', () => {
-    for (const id of ['session.newTab', 'session.newWindow', 'view.closeTab', 'view.reopenTab']) {
-      expect(bindingsFor(id)).toEqual([])
-    }
+    // session.newWindow needs a secondary window (single-window on universal).
+    expect(bindingsFor('session.newWindow')).toEqual([])
   })
 
   it('overrides then resets a single binding', () => {
