@@ -8,6 +8,7 @@ import {
   setSessionArchived
 } from '@/hermes'
 import { appendLiveSessionProjection, toChatMessages } from '@/lib/session-history'
+import { stableArray } from '@/lib/stable-array'
 import { atom, computed } from '@/store/atom'
 import {
   $busy,
@@ -23,6 +24,7 @@ import { requestGateway } from '@/store/gateway'
 import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
 import { notifyError } from '@/store/notifications'
 import { flashPetActivity } from '@/store/pet'
+import { $sessionStates } from '@/store/session-state-types'
 import type { SessionInfo, SessionResumeResponse, SessionSearchResult } from '@/types/hermes'
 
 // Session history + switching (Hc2). Lean adaptation of desktop store/session.ts —
@@ -43,15 +45,88 @@ export const $activeSessionId = $activeStoredSessionId
 export const $sessionSearch = atom<SessionSearchResult[]>([])
 export const $searchLoading = atom(false)
 
-// Sidebar row state. Universal drives a single active session, so "working" =
-// the active row while a turn streams, and "needs input" = the active row while
-// a clarify prompt is pending. (Desktop tracks these across many sessions via
-// gateway events; the sidebar row API is the same Set/array shape.)
-export const $workingSessionIds = computed([$busy, $activeStoredSessionId], (busy, activeId) =>
-  busy && activeId ? new Set([activeId]) : new Set<string>()
-)
-export const $attentionSessionIds = computed([$clarify, $activeStoredSessionId], (clarify, activeId) =>
-  clarify && activeId ? [activeId] : []
+// Stored ids that finished a turn in the BACKGROUND (a tile, not the focused
+// session) — the sidebar's "finished while you were away" marker. Written by
+// `store/session-states.ts#handleTransition`; a view clears its id when seen.
+export const $unreadFinishedSessionIds = atom<string[]>([])
+
+export function clearUnreadFinishedSession(storedSessionId: string): void {
+  const cur = $unreadFinishedSessionIds.get()
+
+  if (cur.includes(storedSessionId)) {
+    $unreadFinishedSessionIds.set(cur.filter(id => id !== storedSessionId))
+  }
+}
+
+/** Follow a compression-driven stored-id rotation for the LIVE primary runtime
+ *  (auto-compression mints a new session id mid-turn). Guarded by provenance so
+ *  a stale background rotation can't steal the foreground selection. Called by
+ *  `session-states.ts#handleTransition`. */
+export function setActiveSessionStoredIdRotation(rotation: {
+  nextStoredSessionId: string
+  previousStoredSessionId: string
+  runtimeSessionId: string
+}): void {
+  if (rotation.runtimeSessionId !== $sessionId.get()) {
+    return
+  }
+
+  if ($activeStoredSessionId.get() !== rotation.previousStoredSessionId) {
+    return
+  }
+
+  $activeStoredSessionId.set(rotation.nextStoredSessionId)
+}
+
+// Sidebar row state — the UNION of the primary (single active chat) and every
+// open TILE. "working" = a session streaming a turn; "needs input" = a session
+// with a clarify prompt pending. The tile slices come from `$sessionStates`
+// (tiles only); the primary comes from the global `$busy`/`$clarify`. Guarded
+// with `stableArray` so the per-token republish of `$sessionStates` doesn't
+// re-render the sidebar unless membership actually changed.
+let workingArr: readonly string[] = []
+let workingSet = new Set<string>()
+export const $workingSessionIds = computed([$busy, $activeStoredSessionId, $sessionStates], (busy, activeId, states) => {
+  const next: string[] = []
+
+  if (busy && activeId) {
+    next.push(activeId)
+  }
+
+  for (const s of Object.values(states)) {
+    if (s.busy && s.storedSessionId && !next.includes(s.storedSessionId)) {
+      next.push(s.storedSessionId)
+    }
+  }
+
+  const stable = stableArray(workingArr, next)
+
+  if (stable !== workingArr) {
+    workingArr = stable
+    workingSet = new Set(stable)
+  }
+
+  return workingSet
+})
+
+let attentionArr: readonly string[] = []
+export const $attentionSessionIds = computed(
+  [$clarify, $activeStoredSessionId, $sessionStates],
+  (clarify, activeId, states) => {
+    const next: string[] = []
+
+    if (clarify && activeId) {
+      next.push(activeId)
+    }
+
+    for (const s of Object.values(states)) {
+      if (s.needsInput && s.storedSessionId && !next.includes(s.storedSessionId)) {
+        next.push(s.storedSessionId)
+      }
+    }
+
+    return (attentionArr = stableArray(attentionArr, next))
+  }
 )
 
 /** Title of the currently-viewed chat (title → first-message preview → ''),
@@ -217,7 +292,9 @@ export async function openSession(storedId: string): Promise<void> {
   // Each stored session carries the project directory it runs in. Restore it up
   // front from the list row so the statusbar / file tree switch with the chat
   // immediately; the resume response's runtime info supersedes it below with the
-  // authoritative value.
+  // authoritative value. (A cwd-less row settles to '' — a detached chat — which
+  // is the correct final state, not a flicker; the files-tree white flash is
+  // handled where it belongs, in use-project-tree.)
   setCurrentCwd($sessions.get().find(session => session.id === storedId)?.cwd)
   // A session resumed MID-TURN stays busy: the committed transcript ends before
   // the running turn, and `inflight` carries its tail. Settle to idle otherwise.
