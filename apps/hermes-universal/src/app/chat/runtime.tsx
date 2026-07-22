@@ -1,8 +1,9 @@
 import { AssistantRuntimeProvider, type ThreadMessageLike, useExternalStoreRuntime } from '@assistant-ui/react'
 import type { ReactNode } from 'react'
 
+import { useSessionView } from '@/app/chat/session-view'
 import { useStore } from '@/store/atom'
-import { $busy, $messages, type ChatMessage } from '@/store/chat'
+import { type ChatMessage } from '@/store/chat'
 
 // Bridges the chat store to assistant-ui via the stock external-store runtime.
 // Our ChatMessage.parts ARE assistant-ui content parts, so conversion is a
@@ -24,8 +25,12 @@ function convertMessage(message: ChatMessage): ThreadMessageLike {
 }
 
 export function ChatRuntimeProvider({ children }: { children: ReactNode }) {
-  const messages = useStore($messages)
-  const isRunning = useStore($busy)
+  // Read from the SessionView so a tile renders ITS session's transcript. The
+  // default context is PRIMARY_SESSION_VIEW (whose $messages/$busy ARE the global
+  // atoms), so the primary chat is unchanged.
+  const view = useSessionView()
+  const messages = useStore(view.$messages)
+  const isRunning = useStore(view.$busy)
 
   const runtime = useExternalStoreRuntime<ChatMessage>({
     messages,
