@@ -18,6 +18,7 @@ import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { notify, notifyError } from '@/store/notifications'
 import { renameSessionLocal } from '@/store/session'
+import { openSessionTile } from '@/store/session-states'
 
 // Row action set (ported/adapted from desktop `session-actions-menu.tsx`).
 // Shared by the kebab DropdownMenu and the right-click ContextMenu.
@@ -31,6 +32,15 @@ interface SessionActions {
   onPin?: () => void
   onArchive?: () => void
   onDelete?: () => void
+  /** Branch this conversation into a new chat. */
+  onBranch?: () => void
+  // TAB verbs — only present for a tile/tab (a sidebar row is not a tab). Their
+  // presence adds the tab close group (Close / Close others / Close to the
+  // right / Close all), mirroring desktop's `SessionTabMenu`.
+  onClose?: () => void
+  onCloseOthers?: () => void
+  onCloseToRight?: () => void
+  onCloseAll?: () => void
 }
 
 type MenuItemComponent = typeof DropdownMenuItem | typeof ContextMenuItem
@@ -44,7 +54,19 @@ interface ItemSpec {
   variant?: 'destructive'
 }
 
-function useSessionActions({ sessionId, title, pinned = false, onPin, onArchive, onDelete }: SessionActions) {
+function useSessionActions({
+  sessionId,
+  title,
+  pinned = false,
+  onPin,
+  onArchive,
+  onDelete,
+  onBranch,
+  onClose,
+  onCloseOthers,
+  onCloseToRight,
+  onCloseAll
+}: SessionActions) {
   const { t } = useI18n()
   const r = t.sidebar.row
   const [renameOpen, setRenameOpen] = useState(false)
@@ -69,6 +91,17 @@ function useSessionActions({ sessionId, title, pinned = false, onPin, onArchive,
     },
     {
       disabled: !sessionId,
+      icon: 'split-horizontal',
+      label: r.openInTile,
+      onSelect: () => {
+        void triggerHaptic('selection')
+        // Open this conversation side-by-side with the main thread as a layout
+        // tile. No-ops when it's the session already loaded in the workspace.
+        openSessionTile(sessionId, 'right')
+      }
+    },
+    {
+      disabled: !sessionId,
       icon: 'edit',
       label: r.rename,
       onSelect: () => {
@@ -76,6 +109,21 @@ function useSessionActions({ sessionId, title, pinned = false, onPin, onArchive,
         setRenameOpen(true)
       }
     },
+    // Branch — only offered where a branch handler is wired (a tile tab). A
+    // plain sidebar row doesn't pass one, so its menu is unchanged.
+    ...(onBranch
+      ? [
+          {
+            disabled: false,
+            icon: 'git-branch',
+            label: r.branchFrom,
+            onSelect: () => {
+              void triggerHaptic('selection')
+              onBranch()
+            }
+          }
+        ]
+      : []),
     {
       disabled: !onArchive,
       icon: 'archive',
@@ -95,7 +143,63 @@ function useSessionActions({ sessionId, title, pinned = false, onPin, onArchive,
         onDelete?.()
       },
       variant: 'destructive'
-    }
+    },
+    // TAB close verbs — only when this menu wraps a tab (a tile/workspace), so
+    // the sidebar-row menu never grows a Close it can't honor. Each verb appears
+    // only where its handler is wired: the uncloseable workspace tab omits
+    // `onClose`, so it keeps Close others / to the right / all without Close.
+    ...(onClose
+      ? [
+          {
+            disabled: false,
+            icon: 'close',
+            label: t.common.close,
+            onSelect: () => {
+              void triggerHaptic('selection')
+              onClose()
+            }
+          }
+        ]
+      : []),
+    ...(onCloseOthers
+      ? [
+          {
+            disabled: false,
+            icon: 'close-all',
+            label: t.zones.closeOthers,
+            onSelect: () => {
+              void triggerHaptic('selection')
+              onCloseOthers()
+            }
+          }
+        ]
+      : []),
+    ...(onCloseToRight
+      ? [
+          {
+            disabled: false,
+            icon: 'arrow-right',
+            label: t.zones.closeToRight,
+            onSelect: () => {
+              void triggerHaptic('selection')
+              onCloseToRight()
+            }
+          }
+        ]
+      : []),
+    ...(onCloseAll
+      ? [
+          {
+            disabled: false,
+            icon: 'clear-all',
+            label: t.zones.closeAll,
+            onSelect: () => {
+              void triggerHaptic('selection')
+              onCloseAll()
+            }
+          }
+        ]
+      : [])
   ]
 
   const renderItems = (Item: MenuItemComponent) => (
