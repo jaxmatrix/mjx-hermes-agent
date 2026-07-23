@@ -25,17 +25,31 @@
 //! A timeout backstops the poll so a missed / abandoned login can't hang connect().
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, State, Url};
+// Desktop/iOS open a dedicated sign-in window; Android reuses the main webview
+// (see `oauth_login`), so these are only referenced off-Android.
+#[cfg(not(target_os = "android"))]
+use tauri::{WebviewUrl, WebviewWindowBuilder};
+#[cfg(not(target_os = "android"))]
 use tokio::sync::oneshot;
 
 use crate::transport::TransportState;
 
-/// The single label for the interactive sign-in window. Reused (closed + rebuilt)
-/// across attempts so a stale window never lingers.
+/// The single label for the interactive sign-in window (desktop/iOS). Reused (closed +
+/// rebuilt) across attempts so a stale window never lingers. Not used on Android, which
+/// drives the login through the main webview instead of a second window.
+#[cfg(not(target_os = "android"))]
 const OAUTH_WINDOW_LABEL: &str = "hermes-oauth";
 
-/// How long to wait for the interactive login before giving up.
+/// How long to wait for the interactive login before giving up (desktop/iOS: the app UI
+/// stays put behind the sign-in window, so a generous window is fine).
+#[cfg(not(target_os = "android"))]
 const OAUTH_TIMEOUT_SECS: u64 = 300;
+
+/// Android runs the login in the main webview, which replaces the entire app UI for the
+/// duration (no in-app cancel until this elapses), so keep the wait tighter than desktop.
+#[cfg(target_os = "android")]
+const OAUTH_TIMEOUT_SECS_ANDROID: u64 = 120;
 
 fn normalize_base(raw: &str) -> String {
     raw.trim().trim_end_matches('/').to_string()
@@ -48,9 +62,99 @@ fn is_session_cookie(name: &str) -> bool {
     name.ends_with("hermes_session_at") || name.ends_with("hermes_session_rt")
 }
 
+/// Poll `label`'s webview cookie jar until a live gateway session lands: import the
+/// session cookies into the shared reqwest jar and confirm with `/api/auth/me`.
+///
+/// Returns `Ok(())` on a confirmed-live session, or `Err` on timeout. When the polled
+/// window disappears mid-flow this is an error only if `treat_missing_window_as_error`
+/// (desktop: the user closed the sign-in window; Android: the `main` window always
+/// exists, so a transient miss just retries).
+///
+/// `cookies_for_url` reads the platform cookie store (HttpOnly cookies included, unlike
+/// `document.cookie`) and is safe from this async (off-main) context — the same call the
+/// desktop flow has always used.
+async fn poll_session_cookies(
+    app: &AppHandle,
+    state: &TransportState,
+    base: &str,
+    base_url: &Url,
+    label: &'static str,
+    timeout_secs: u64,
+    treat_missing_window_as_error: bool,
+) -> Result<(), String> {
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+            let Some(win) = app.get_webview_window(label) else {
+                if treat_missing_window_as_error {
+                    return Err("Sign-in window was closed before completing".to_string());
+                }
+                continue;
+            };
+
+            // Transient errors just retry on the next tick.
+            let Ok(cookies) = win.cookies_for_url(base_url.clone()) else {
+                continue;
+            };
+            if !cookies
+                .iter()
+                .any(|c| is_session_cookie(c.name()) && !c.value().is_empty())
+            {
+                continue;
+            }
+            log::info!("[oauth] session cookie present; probing /api/auth/me");
+
+            // Merge the gateway's cookies (AT/RT/CSRF) into the shared reqwest jar so
+            // the ws-ticket mint is authenticated. base_url is http(s), so HttpOnly
+            // cookies insert cleanly.
+            {
+                let mut store = state
+                    .cookies()
+                    .lock()
+                    .map_err(|_| "cookie jar poisoned".to_string())?;
+                for cookie in &cookies {
+                    let _ = store.insert_raw(cookie, base_url);
+                }
+            }
+
+            // Confirm the imported session is actually live server-side before we
+            // declare success — the webview jar can hold a STALE cookie from a prior
+            // login (sign-out only clears the reqwest jar), which we must ignore and
+            // keep waiting past. `/api/auth/me` is the same probe oauth_status uses.
+            let me = state
+                .client()
+                .get(format!("{base}/api/auth/me"))
+                .header(reqwest::header::ORIGIN, base)
+                .send()
+                .await;
+            match &me {
+                Ok(resp) => log::info!("[oauth] /api/auth/me -> {}", resp.status()),
+                Err(e) => log::info!("[oauth] /api/auth/me request error: {e}"),
+            }
+            if matches!(me, Ok(ref resp) if resp.status().is_success()) {
+                return Ok(());
+            }
+        }
+    })
+    .await;
+
+    match outcome {
+        Ok(inner) => inner,
+        Err(_) => Err("Sign-in timed out before completing".to_string()),
+    }
+}
+
 /// Run the interactive gateway OAuth flow. The webview completes the whole login;
 /// we then copy its session cookies into the shared reqwest jar so the caller (JS)
 /// can connect the gateway normally and the ws-ticket mint is authenticated.
+///
+/// Desktop/iOS open a dedicated sign-in `WebviewWindow` that floats over the app.
+/// Android CANNOT: wry attaches its webview via `setContentView` (an Activity has one
+/// content view) and has no `Drop` to remove it, so a second window would replace the
+/// app and never close. Instead, on Android we navigate the MAIN webview to the login,
+/// poll the same cookies, then navigate it back — the SPA reload resumes the connect via
+/// a one-shot marker the frontend persisted before we navigated away.
 #[tauri::command]
 pub async fn oauth_login(
     app: AppHandle,
@@ -70,95 +174,90 @@ pub async fn oauth_login(
     let login_url =
         Url::parse(&login_url).map_err(|e| format!("invalid login URL {login_url:?}: {e}"))?;
 
-    // Build the window on the main thread (gtk/WKWebView requirement). A oneshot
-    // carries the build result back so a failure surfaces instead of a dead poll.
-    // FIXME(D3): Tauri mobile multi-webview support is limited — verify the sign-in
-    // window opens on Android/iOS, else fall back to an in-page auth webview route.
-    let (build_tx, build_rx) = oneshot::channel::<Result<(), String>>();
-    let app_build = app.clone();
-    app.run_on_main_thread(move || {
-        // Drop any stale window from a previous attempt first.
-        if let Some(existing) = app_build.get_webview_window(OAUTH_WINDOW_LABEL) {
-            let _ = existing.close();
+    #[cfg(not(target_os = "android"))]
+    {
+        // Build the window on the main thread (gtk/WKWebView requirement). A oneshot
+        // carries the build result back so a failure surfaces instead of a dead poll.
+        let (build_tx, build_rx) = oneshot::channel::<Result<(), String>>();
+        let app_build = app.clone();
+        app.run_on_main_thread(move || {
+            // Drop any stale window from a previous attempt first.
+            if let Some(existing) = app_build.get_webview_window(OAUTH_WINDOW_LABEL) {
+                let _ = existing.close();
+            }
+            let build = WebviewWindowBuilder::new(
+                &app_build,
+                OAUTH_WINDOW_LABEL,
+                WebviewUrl::External(login_url),
+            )
+            .title("Sign in to Hermes")
+            .inner_size(520.0, 720.0)
+            .build();
+            let _ = build_tx.send(
+                build
+                    .map(|_| ())
+                    .map_err(|e| format!("could not open sign-in window: {e}")),
+            );
+        })
+        .map_err(|e| format!("failed to schedule sign-in window: {e}"))?;
+
+        build_rx
+            .await
+            .map_err(|_| "failed to open sign-in window".to_string())??;
+
+        log::info!("[oauth] sign-in window opened; polling cookies for base={base}");
+
+        let outcome = poll_session_cookies(
+            &app,
+            state.inner(),
+            &base,
+            &base_url,
+            OAUTH_WINDOW_LABEL,
+            OAUTH_TIMEOUT_SECS,
+            true,
+        )
+        .await;
+
+        // Close the interactive window either way.
+        if let Some(win) = app.get_webview_window(OAUTH_WINDOW_LABEL) {
+            let _ = win.close();
         }
-        let build =
-            WebviewWindowBuilder::new(&app_build, OAUTH_WINDOW_LABEL, WebviewUrl::External(login_url))
-                .title("Sign in to Hermes")
-                .inner_size(520.0, 720.0)
-                .build();
-        let _ = build_tx.send(
-            build
-                .map(|_| ())
-                .map_err(|e| format!("could not open sign-in window: {e}")),
-        );
-    })
-    .map_err(|e| format!("failed to schedule sign-in window: {e}"))?;
 
-    build_rx
-        .await
-        .map_err(|_| "failed to open sign-in window".to_string())??;
-
-    // Poll the webview's cookie jar until a VALID session lands (login done), the
-    // user closes the window, or we time out.
-    let outcome = tokio::time::timeout(std::time::Duration::from_secs(OAUTH_TIMEOUT_SECS), async {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-            let Some(win) = app.get_webview_window(OAUTH_WINDOW_LABEL) else {
-                return Err("Sign-in window was closed before completing".to_string());
-            };
-
-            // cookies_for_url reads the platform cookie store (HttpOnly included on
-            // WebKitGTK); safe to call from this async (off-main) context on desktop.
-            // Transient errors just retry on the next tick.
-            let Ok(cookies) = win.cookies_for_url(base_url.clone()) else {
-                continue;
-            };
-            if !cookies
-                .iter()
-                .any(|c| is_session_cookie(c.name()) && !c.value().is_empty())
-            {
-                continue;
-            }
-
-            // Merge the gateway's cookies (AT/RT/CSRF) into the shared reqwest jar so
-            // the ws-ticket mint is authenticated. base_url is http(s), so HttpOnly
-            // cookies insert cleanly.
-            {
-                let mut store = state
-                    .cookies()
-                    .lock()
-                    .map_err(|_| "cookie jar poisoned".to_string())?;
-                for cookie in &cookies {
-                    let _ = store.insert_raw(cookie, &base_url);
-                }
-            }
-
-            // Confirm the imported session is actually live server-side before we
-            // declare success — the webview jar can hold a STALE cookie from a prior
-            // login (sign-out only clears the reqwest jar), which we must ignore and
-            // keep waiting past. `/api/auth/me` is the same probe oauth_status uses.
-            let me = state
-                .client()
-                .get(format!("{base}/api/auth/me"))
-                .header(reqwest::header::ORIGIN, &base)
-                .send()
-                .await;
-            if matches!(me, Ok(ref resp) if resp.status().is_success()) {
-                return Ok(());
-            }
-        }
-    })
-    .await;
-
-    // Close the interactive window either way.
-    if let Some(win) = app.get_webview_window(OAUTH_WINDOW_LABEL) {
-        let _ = win.close();
+        outcome
     }
 
-    match outcome {
-        Ok(inner) => inner,
-        Err(_) => Err("Sign-in timed out before completing".to_string()),
+    #[cfg(target_os = "android")]
+    {
+        let main = app
+            .get_webview_window("main")
+            .ok_or_else(|| "main window not found".to_string())?;
+        // Capture the app's current URL so we can return to it (dev serves from the Vite
+        // dev server, prod from http://tauri.localhost/ — never hardcode). navigate/url
+        // are safe (and required) off the main thread; wrapping url() on the main thread
+        // would deadlock the MainPipe round-trip it makes internally.
+        let return_url = main
+            .url()
+            .map_err(|e| format!("could not read current app URL: {e}"))?;
+        log::info!("[oauth] navigating main webview to sign-in; will return to {return_url}");
+        main.navigate(login_url)
+            .map_err(|e| format!("could not open sign-in page: {e}"))?;
+
+        let outcome = poll_session_cookies(
+            &app,
+            state.inner(),
+            &base,
+            &base_url,
+            "main",
+            OAUTH_TIMEOUT_SECS_ANDROID,
+            false,
+        )
+        .await;
+
+        // Restore the app regardless of outcome: the SPA reload auto-resumes the connect
+        // (on success) or lands on the connect screen (on cancel/timeout).
+        let _ = main.navigate(return_url);
+
+        outcome
     }
 }
 

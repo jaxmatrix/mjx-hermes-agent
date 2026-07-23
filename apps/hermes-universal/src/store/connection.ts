@@ -9,12 +9,13 @@ import {
   portalLogout
 } from '@/lib/auth'
 import { loadString, saveString } from '@/lib/persist'
+import { IS_ANDROID } from '@/lib/platform'
 import { clearSecrets, loadSecrets, saveSecrets, type Secrets } from '@/lib/secure-store'
 import { persistSessionCookies } from '@/lib/session-persist'
 import { atom } from '@/store/atom'
 import { $gatewayState, closeGateway, connectGateway } from '@/store/gateway'
 import { chooseGatedAuth, type Connection } from '@/store/gateway-config'
-import { saveGatewayTarget } from '@/store/gateway-restore'
+import { saveGatewayTarget, savePendingOAuth } from '@/store/gateway-restore'
 import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import { httpRequest } from '@/transport/http'
 
@@ -106,6 +107,24 @@ export async function probeStatus(rawUrl: string): Promise<StatusInfo> {
   return JSON.parse(res.body) as StatusInfo
 }
 
+/**
+ * Drive the interactive gateway OAuth sign-in.
+ *
+ * On desktop/iOS this opens a dedicated sign-in window and the promise resolves when the
+ * session lands. On ANDROID the Rust command navigates the MAIN webview to the login and
+ * back (a second window can't be dismissed there — see src-tauri/src/oauth.rs); that
+ * navigation destroys this JS context, so `oauthLogin` never resolves here. We persist a
+ * one-shot resume marker FIRST so the post-reload boot (`autoRestoreConnection`) finishes
+ * the connect. Callers must treat this as "may never return" on Android.
+ */
+async function beginOAuthLogin(base: string, provider?: string, username?: string): Promise<void> {
+  if (IS_ANDROID) {
+    savePendingOAuth({ base, provider, username })
+  }
+
+  await oauthLogin(base, provider)
+}
+
 export async function connect(input: ConnectInput): Promise<void> {
   const base = normalizeBaseUrl(input.url)
   armReconnect()
@@ -143,7 +162,9 @@ export async function connect(input: ConnectInput): Promise<void> {
         const live = await oauthStatus(base).catch(() => ({ signedIn: false }))
 
         if (!live.signedIn) {
-          await oauthLogin(base, oauthProvider)
+          // On Android this navigates the app away and never returns here — the reload
+          // resumes via the pending marker (see beginOAuthLogin / autoRestoreConnection).
+          await beginOAuthLogin(base, oauthProvider, input.username)
         }
 
         conn = { baseUrl: base, mode: 'remote', authMode: 'oauth' }
@@ -163,7 +184,7 @@ export async function connect(input: ConnectInput): Promise<void> {
       // An OAuth session that expired between the status check and the ws-ticket
       // mint surfaces as GatewayReauthRequiredError — re-run sign-in once.
       if (conn.authMode === 'oauth' && isGatewayReauthRequired(err)) {
-        await oauthLogin(base, oauthProvider)
+        await beginOAuthLogin(base, oauthProvider, input.username)
         await connectGateway(conn)
       } else {
         throw err
@@ -337,7 +358,8 @@ async function reauthForReconnect(conn: Connection): Promise<void> {
   if (conn.mode === 'cloud') {
     await portalAgentSignIn(conn.baseUrl)
   } else {
-    await oauthLogin(conn.baseUrl)
+    // Android: navigates the app away and reloads; the pending marker resumes the dial.
+    await beginOAuthLogin(conn.baseUrl)
   }
 }
 
