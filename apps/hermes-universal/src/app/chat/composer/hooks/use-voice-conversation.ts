@@ -1,3 +1,7 @@
+// DIVERGED from `apps/desktop/src/app/chat/composer/hooks/use-voice-conversation.ts`, which
+// still has the re-arm dead-end fixed here (see `concludeTurn` in the driving effect below).
+// Do NOT re-sync this file from desktop.
+
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
@@ -332,6 +336,29 @@ export function useVoiceConversation({
       return
     }
 
+    // Finish a turn and re-arm the mic.
+    //
+    // `setStatus('idle')` alone is NOT enough to re-arm. The re-arm lives at the
+    // bottom of this effect, and reaching it needs a re-render. When `speak()`
+    // has already left us idle, `setStatus('idle')` is a no-op — React bails out
+    // on the identical value, this effect never re-runs, and the loop dies after
+    // one spoken turn (nothing else re-renders the host once streaming stops).
+    // So when we are ALREADY idle, start listening directly here.
+    //
+    // When status is still 'thinking' the `setStatus` IS a real transition, so
+    // the guard below is false and the existing render-driven re-arm handles it
+    // exactly as before.
+    const concludeTurn = () => {
+      awaitingSpokenResponseRef.current = false
+      resetSpeechBuffer()
+      pendingStartRef.current = true
+      setStatus('idle')
+
+      if (status === 'idle' && !busy && !muted && enabled) {
+        void startListening()
+      }
+    }
+
     if (awaitingSpokenResponseRef.current && status !== 'speaking') {
       const response = pendingResponse()
 
@@ -355,21 +382,15 @@ export function useVoiceConversation({
         }
 
         if (!response.pending && !busy) {
-          awaitingSpokenResponseRef.current = false
           consumePendingResponse()
-          resetSpeechBuffer()
-          pendingStartRef.current = true
-          setStatus('idle')
+          concludeTurn()
 
           return
         }
       }
 
       if (!busy && status === 'thinking') {
-        awaitingSpokenResponseRef.current = false
-        resetSpeechBuffer()
-        pendingStartRef.current = true
-        setStatus('idle')
+        concludeTurn()
 
         return
       }
