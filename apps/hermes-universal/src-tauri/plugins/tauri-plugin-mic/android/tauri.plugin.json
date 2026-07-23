@@ -1,0 +1,5 @@
+{
+  "android": {
+    "kotlin": "com.nousresearch.hermes.plugin.mic.MicPlugin"
+  }
+}

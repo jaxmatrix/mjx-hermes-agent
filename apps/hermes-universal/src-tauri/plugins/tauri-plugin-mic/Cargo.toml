@@ -1,0 +1,29 @@
+# Local (in-tree) Tauri v2 plugin: microphone OS-permission only.
+#
+# Audio CAPTURE stays in the webview (`getUserMedia` + `MediaRecorder`, see
+# src/app/chat/composer/hooks/use-mic-recorder.ts). This plugin's job is the
+# native permission layer that the webview cannot own from a committed location:
+#   1. Android: declare RECORD_AUDIO + MODIFY_AUDIO_SETTINGS in a COMMITTED
+#      manifest (android/src/main/AndroidManifest.xml) that Gradle merges into the
+#      app manifest — because src-tauri/gen/ is gitignored/ephemeral.
+#   2. A proactive check_permission / request_permission seam so JS can pre-flight
+#      the OS mic grant before opening the mic (Android via the Tauri @TauriPlugin
+#      permission machinery, iOS via AVAudioSession). Desktop is a no-op (granted).
+[package]
+name = "tauri-plugin-mic"
+version = "0.1.0"
+description = "Microphone OS-permission declaration + check/request seam for Tauri v2 (Android/iOS/desktop). Capture stays in the webview."
+authors = ["Hermes Universal"]
+edition = "2021"
+rust-version = "1.77.2"
+# REQUIRED: must match build.rs's plugin name; Tauri keys plugin discovery + the
+# generated Android/iOS subproject wiring on this value.
+links = "tauri-plugin-mic"
+
+[dependencies]
+tauri = { version = "2" }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "2.4.0", features = ["build"] }

@@ -1,293 +1,107 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 
-type BrowserAudioContext = typeof AudioContext
+import { IS_DESKTOP } from '@/lib/platform'
 
-export interface MicRecorderOptions {
-  onLevel?: (level: number) => void
-  onError?: (error: Error) => void
-  onSilence?: () => void
-  silenceLevel?: number
-  silenceMs?: number
-  idleSilenceMs?: number
-}
+import type { MicRecorder, MicRecorderErrorCopy, MicRecorderHandle } from './mic-recorder-types'
+import { useNativeMicRecorder } from './use-native-mic-recorder'
+import { useWebMicRecorder } from './use-web-mic-recorder'
 
-export interface MicRecording {
-  audio: Blob
-  durationMs: number
-  heardSpeech: boolean
-}
+export type {
+  MicRecorder,
+  MicRecorderErrorCopy,
+  MicRecorderHandle,
+  MicRecorderOptions,
+  MicRecording
+} from './mic-recorder-types'
 
-export interface MicRecorderErrorCopy {
-  microphoneAccessDenied: string
-  microphoneConstraintsUnsupported: string
-  microphoneInUse: string
-  microphonePermissionDenied: string
-  microphoneStartFailed: string
-  microphoneUnsupported: string
-  noMicrophone: string
-}
+type ActiveRecorder = 'native' | 'web'
 
-interface MicRecorderHandle {
-  start: (options?: MicRecorderOptions) => Promise<void>
-  stop: () => Promise<MicRecording | null>
-  cancel: () => void
-}
+/**
+ * Microphone recorder used by dictation and the voice-conversation loop.
+ *
+ * Picks between two implementations:
+ * - **Desktop → native (Rust/cpal).** WebKitGTK's `MediaRecorder` only supports
+ *   `audio/mp4` and produces an EMPTY blob even with the system AAC encoder
+ *   present, so dictation silently never transcribed on Linux. The native path
+ *   captures PCM in Rust and encodes with bundled pure-Rust codecs — no system
+ *   codec dependency, so it behaves the same on every desktop OS.
+ * - **Mobile / plain-browser / tests → webview `MediaRecorder`,** which works
+ *   there today. (Phase B will move mobile onto the native path too.)
+ *
+ * Both hooks are always instantiated so hook order is stable; only the selected
+ * one is ever started. If the native path fails to start on desktop (no input
+ * device, unsupported format), we fall back to `MediaRecorder` — worthwhile on
+ * macOS/Windows, where it actually works.
+ */
+export function useMicRecorder(copy: MicRecorderErrorCopy): MicRecorder {
+  const native = useNativeMicRecorder(copy)
+  const web = useWebMicRecorder(copy)
 
-function micError(error: unknown, copy: MicRecorderErrorCopy): Error {
-  const name = error instanceof DOMException ? error.name : ''
+  const [active, setActive] = useState<ActiveRecorder | null>(null)
+  // Mirrors `active` for synchronous reads inside stop/cancel, which can run
+  // before a state update has been applied.
+  const activeRef = useRef<ActiveRecorder | null>(null)
 
-  if (name === 'NotAllowedError' || name === 'SecurityError') {
-    return new Error(copy.microphonePermissionDenied)
-  }
-
-  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-    return new Error(copy.noMicrophone)
-  }
-
-  if (name === 'NotReadableError' || name === 'TrackStartError') {
-    return new Error(copy.microphoneInUse)
-  }
-
-  if (name === 'OverconstrainedError') {
-    return new Error(copy.microphoneConstraintsUnsupported)
-  }
-
-  if (error instanceof Error) {
-    return error
-  }
-
-  return new Error(copy.microphoneStartFailed)
-}
-
-export function useMicRecorder(copy: MicRecorderErrorCopy): {
-  handle: MicRecorderHandle
-  level: number
-  recording: boolean
-} {
-  const [level, setLevel] = useState(0)
-  const [recording, setRecording] = useState(false)
-
-  const recorderRef = useRef<MediaRecorder | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const chunksRef = useRef<Blob[]>([])
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const animationRef = useRef<number | null>(null)
-  const startedAtRef = useRef(0)
-  const heardSpeechRef = useRef(false)
-  const silenceTriggeredRef = useRef(false)
-  const silenceStartedAtRef = useRef<number | null>(null)
-  const stopResolverRef = useRef<((recording: MicRecording | null) => void) | null>(null)
-
-  const cleanup = () => {
-    if (animationRef.current) {
-      window.cancelAnimationFrame(animationRef.current)
-      animationRef.current = null
-    }
-
-    void audioContextRef.current?.close()
-    audioContextRef.current = null
-    streamRef.current?.getTracks().forEach(track => track.stop())
-    streamRef.current = null
-    recorderRef.current = null
-    setLevel(0)
-    setRecording(false)
-    silenceTriggeredRef.current = false
-  }
-
-  useEffect(() => () => cleanup(), [])
-
-  const startMeter = (stream: MediaStream, options: MicRecorderOptions) => {
-    const audioWindow = window as Window & { webkitAudioContext?: BrowserAudioContext }
-    const AudioContextCtor = window.AudioContext || audioWindow.webkitAudioContext
-
-    if (!AudioContextCtor) {
-      return
-    }
-
-    try {
-      const audioContext = new AudioContextCtor()
-      const analyser = audioContext.createAnalyser()
-      const source = audioContext.createMediaStreamSource(stream)
-
-      analyser.fftSize = 256
-      const data = new Uint8Array(analyser.fftSize)
-
-      source.connect(analyser)
-      audioContextRef.current = audioContext
-
-      const tick = () => {
-        analyser.getByteTimeDomainData(data)
-
-        let sum = 0
-
-        for (const value of data) {
-          const centered = value - 128
-          sum += centered * centered
-        }
-
-        const rms = Math.sqrt(sum / data.length)
-        const normalized = Math.min(1, rms / 42)
-        const now = Date.now()
-
-        setLevel(normalized)
-        options.onLevel?.(normalized)
-
-        const speechThreshold = options.silenceLevel ?? 0
-        const silenceMs = options.silenceMs ?? 0
-        const idleSilenceMs = options.idleSilenceMs ?? 0
-
-        if (speechThreshold > 0 && options.onSilence && !silenceTriggeredRef.current) {
-          if (normalized >= speechThreshold) {
-            heardSpeechRef.current = true
-            silenceStartedAtRef.current = null
-          } else if (heardSpeechRef.current && silenceMs > 0) {
-            silenceStartedAtRef.current ??= now
-
-            if (now - silenceStartedAtRef.current >= silenceMs) {
-              silenceTriggeredRef.current = true
-              options.onSilence()
-
-              return
-            }
-          } else if (!heardSpeechRef.current && idleSilenceMs > 0 && now - startedAtRef.current >= idleSilenceMs) {
-            silenceTriggeredRef.current = true
-            options.onSilence()
-
-            return
-          }
-        }
-
-        animationRef.current = window.requestAnimationFrame(tick)
-      }
-
-      tick()
-    } catch {
-      setLevel(0)
-    }
+  const select = (next: ActiveRecorder | null) => {
+    activeRef.current = next
+    setActive(next)
   }
 
   const start: MicRecorderHandle['start'] = async (options = {}) => {
-    if (recorderRef.current) {
+    if (activeRef.current) {
       return
     }
 
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      throw new Error(copy.microphoneUnsupported)
-    }
-
-    // Desktop gated mic access behind an Electron permission prompt
-    // (window.hermesDesktop.requestMicrophoneAccess). On Tauri/WebKitGTK the
-    // webview requests OS mic permission directly via getUserMedia below, so the
-    // gate is dropped. (Android needs RECORD_AUDIO in the manifest.)
-    let stream: MediaStream
-
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true }
-      })
-    } catch (error) {
-      throw micError(error, copy)
-    }
-
-    const mimeType =
-      ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/wav'].find(
-        type => MediaRecorder.isTypeSupported(type)
-      ) ?? ''
-
-    let recorder: MediaRecorder
-
-    try {
-      recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
-    } catch (error) {
-      stream.getTracks().forEach(track => track.stop())
-      throw micError(error, copy)
-    }
-
-    chunksRef.current = []
-    streamRef.current = stream
-    recorderRef.current = recorder
-    heardSpeechRef.current = false
-    silenceTriggeredRef.current = false
-    silenceStartedAtRef.current = null
-    startedAtRef.current = Date.now()
-
-    recorder.ondataavailable = event => {
-      if (event.data.size > 0) {
-        chunksRef.current.push(event.data)
-      }
-    }
-
-    recorder.onstop = () => {
-      const chunks = chunksRef.current
-      const recordingType = recorder.mimeType || mimeType || 'audio/webm'
-      const durationMs = Date.now() - startedAtRef.current
-      const heardSpeech = heardSpeechRef.current
-
-      chunksRef.current = []
-      cleanup()
-
-      const resolver = stopResolverRef.current
-      stopResolverRef.current = null
-
-      if (!chunks.length) {
-        resolver?.(null)
+    if (IS_DESKTOP) {
+      try {
+        await native.handle.start(options)
+        select('native')
 
         return
+      } catch (error) {
+        // Fall through to the webview recorder. On Linux this will very likely
+        // also fail (that is the whole reason the native path exists), but the
+        // error it raises is the one the caller should see.
+        console.warn('native mic recorder unavailable, falling back to MediaRecorder', error)
       }
-
-      resolver?.({
-        audio: new Blob(chunks, { type: recordingType }),
-        durationMs,
-        heardSpeech
-      })
     }
 
-    recorder.onerror = event => {
-      const error = micError((event as Event & { error?: unknown }).error, copy)
-      const resolver = stopResolverRef.current
-      stopResolverRef.current = null
-      cleanup()
-      options.onError?.(error)
-      resolver?.(null)
-    }
-
-    recorder.start()
-    setRecording(true)
-    startMeter(stream, options)
+    await web.handle.start(options)
+    select('web')
   }
 
-  const stop: MicRecorderHandle['stop'] = () =>
-    new Promise<MicRecording | null>(resolve => {
-      const recorder = recorderRef.current
+  const stop: MicRecorderHandle['stop'] = async () => {
+    const current = activeRef.current
+    select(null)
 
-      if (!recorder || recorder.state === 'inactive') {
-        cleanup()
-        resolve(null)
-
-        return
-      }
-
-      stopResolverRef.current = resolve
-      recorder.stop()
-    })
-
-  const cancel: MicRecorderHandle['cancel'] = () => {
-    const recorder = recorderRef.current
-    const resolver = stopResolverRef.current
-    stopResolverRef.current = null
-
-    if (recorder && recorder.state !== 'inactive') {
-      recorder.ondataavailable = null
-      recorder.onerror = null
-      recorder.onstop = null
-      recorder.stop()
+    if (current === 'native') {
+      return native.handle.stop()
     }
 
-    cleanup()
-    resolver?.(null)
+    if (current === 'web') {
+      return web.handle.stop()
+    }
+
+    return null
+  }
+
+  const cancel: MicRecorderHandle['cancel'] = () => {
+    const current = activeRef.current
+    select(null)
+
+    if (current === 'native') {
+      native.handle.cancel()
+    } else if (current === 'web') {
+      web.handle.cancel()
+    }
   }
 
   const handle: MicRecorderHandle = { start, stop, cancel }
+  const source = active === 'native' ? native : active === 'web' ? web : null
 
-  return { handle, level, recording }
+  return {
+    handle,
+    level: source?.level ?? 0,
+    recording: source?.recording ?? false
+  }
 }

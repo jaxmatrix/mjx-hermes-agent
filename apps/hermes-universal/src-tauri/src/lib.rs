@@ -5,8 +5,12 @@
 //! All network traffic runs in Rust (`transport`), not the webview — see
 //! `transport.rs`. The frontend drives it over IPC and reuses the JS
 //! `JsonRpcGatewayClient` via an IPC-backed WebSocket.
+//!
+//! (Android note: the generated `RustWebView.getCookies` is patched null-safe by
+//! `build.rs` to avoid a wry 0.55 crash on cookie polling — see that file.)
 
 mod appearance;
+mod audio;
 mod cloud;
 mod local_backend;
 mod marketplace;
@@ -15,6 +19,7 @@ mod pty;
 mod transport;
 
 use appearance::set_window_translucency;
+use audio::{audio_cancel_recording, audio_start_recording, audio_stop_recording, AudioState};
 use marketplace::{marketplace_fetch, marketplace_search};
 use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
@@ -52,6 +57,15 @@ fn reveal_in_file_manager(app: tauri::AppHandle, path: String) -> Result<(), Str
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Route Rust `log::` output to logcat on Android (tao doesn't reliably install
+    // a logger, so diagnostics were invisible). Idempotent via `init_once`.
+    #[cfg(target_os = "android")]
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("hermes"),
+    );
+
     // Install a rustls CryptoProvider process-wide before any TLS handshake.
     // reqwest builds its own config, but tokio-tungstenite's wss:// path calls
     // ClientConfig::builder(), which resolves the process-default provider and
@@ -63,6 +77,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_keyring::init())
+        .plugin(tauri_plugin_mic::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_haptics::init())
         .plugin(tauri_plugin_dialog::init())
@@ -71,6 +86,47 @@ pub fn run() {
         .manage(TransportState::new())
         .manage(LocalBackendState::default())
         .manage(PtyState::default())
+        .manage(AudioState::default())
+        .setup(|app| {
+            // WebKitGTK (Linux desktop) auto-denies `getUserMedia` unless the
+            // embedder answers the WebView's `permission-request` signal — wry
+            // does not, so voice/dictation fails instantly with a permission
+            // error and no prompt. Allow microphone (and camera) requests here so
+            // the mic works; Linux has no per-app OS mic gate, so there is nothing
+            // further to ask. Non-media requests are left to WebKit's default
+            // (deny). No-op on macOS/Windows/mobile, where the webview or the mic
+            // plugin already handles permission.
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.with_webview(|platform_webview| {
+                        use webkit2gtk::glib::prelude::*;
+                        use webkit2gtk::{
+                            PermissionRequestExt, UserMediaPermissionRequest, WebViewExt,
+                        };
+
+                        platform_webview
+                            .inner()
+                            .connect_permission_request(|_webview, request| {
+                                if request
+                                    .downcast_ref::<UserMediaPermissionRequest>()
+                                    .is_some()
+                                {
+                                    request.allow();
+                                    true
+                                } else {
+                                    false
+                                }
+                            });
+                    });
+                }
+            }
+
+            let _ = app;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             http_request,
             ws_open,
@@ -80,6 +136,9 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_kill,
+            audio_start_recording,
+            audio_stop_recording,
+            audio_cancel_recording,
             open_external,
             reveal_in_file_manager,
             set_window_translucency,

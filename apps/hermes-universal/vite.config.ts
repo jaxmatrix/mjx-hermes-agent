@@ -27,7 +27,13 @@ export default defineConfig({
     host: host || '0.0.0.0',
     port: 5176,
     strictPort: true,
-    hmr: host ? { protocol: 'ws', host, port: 5177 } : undefined
+    hmr: host ? { protocol: 'ws', host, port: 5177 } : undefined,
+    // Never watch the Rust build tree. `src-tauri/target` holds hundreds of
+    // thousands of build artifacts (every cross-compile arch — Android i686,
+    // aarch64, …), and Vite recursively watching it exhausts Linux's inotify
+    // watcher limit (ENOSPC). Tauri already restarts the app on Rust changes,
+    // so the frontend dev server has no reason to look in there.
+    watch: { ignored: ['**/src-tauri/target/**'] }
   },
   // Serves the PRODUCTION bundle from dist/. `npm run dev:prodweb` points the
   // Tauri dev shell here instead of at the dev server, so the Rust side stays in
