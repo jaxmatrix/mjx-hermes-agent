@@ -21,6 +21,11 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Structured logging — on Android these route to logcat via the `android_logger`
+# init that tao/wry performs on startup, so `log::` calls are visible with
+# `adb logcat`. Used for connect/OAuth diagnostics on mobile.
+log = "0.4"
+
 # Platform detection (A5): lets the frontend tell Android from a desktop Tauri
 # build so it can gate mobile-only behaviour (e.g. hide Local gateway mode).
 tauri-plugin-os = "2"
@@ -60,7 +65,12 @@ getrandom = "0.2"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 # rustls so we don't need OpenSSL/NDK-cross OpenSSL on the Android build.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies"] }
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+# Enable BOTH root sources: native-roots so desktop honors the OS trust store (corporate
+# / self-signed CAs), AND webpki-roots as the fallback. Android exposes no file-based
+# native cert store, so native-roots alone fails at the wss:// handshake with "no native
+# root CA certificates found"; with webpki-roots also enabled tokio-tungstenite suppresses
+# that error and uses the bundled Mozilla roots (the same set reqwest's `rustls-tls` uses).
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots", "rustls-tls-webpki-roots"] }
 # Pin the rustls crypto provider explicitly (see lib.rs): tokio-tungstenite's
 # wss:// path calls ClientConfig::builder(), which needs a process-default provider.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
@@ -83,8 +93,34 @@ cookie_store = "0.21"
 # Local shell PTY for the right-pane terminal (pty.rs, desktop-only). Cross-platform
 # PTY: Unix openpty / Windows ConPTY. Gated OFF the mobile targets — a phone has no
 # local shell, the right pane isn't shown there, and this keeps it out of the NDK build.
+#
+# Native audio capture + encode (audio.rs, voice/MJX-88). Desktop-only for now
+# (Phase A): the WebKitGTK MediaRecorder is broken on Linux, so we capture PCM via
+# cpal (ALSA/CoreAudio/WASAPI) and encode with pure-Rust codecs — no system
+# GStreamer/libav, no C toolchain. Mobile keeps the working webview MediaRecorder
+# until Phase B flips it to cpal's `oboe` (Android) / CoreAudio (iOS) backend, which
+# needs NDK/`oboe` build wiring — hence gated OFF the mobile NDK build here.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 portable-pty = "0.9"
+# Cross-platform microphone capture (raw PCM). ALSA on Linux (links libasound2),
+# CoreAudio on macOS, WASAPI on Windows. `jack` feature left OFF (no libjack dep).
+cpal = "0.15"
+# Pure-Rust anti-aliased sample-rate conversion → 16 kHz mono for whisper.
+rubato = "0.16"
+# Pure-Rust WAV encoder (default output; gateway maps audio/wav → .wav).
+hound = "3.5"
+# Pure-Rust FLAC encoder (optional compressed output; gateway maps audio/flac → .flac).
+flacenc = "0.4"
+# Encode the clip for IPC. Tauri serializes a Rust `Vec<u8>` as a JSON number array
+# (~4x bloat for a ~1 MB clip); base64 keeps the hop small and is what the transcribe
+# endpoint ultimately wants anyway (it takes a `data:` URL). Already in the lock tree.
+base64 = "0.22"
+
+# Route Rust `log::` output to logcat on Android. tao does not reliably install a
+# logger, so our connect/OAuth diagnostics were invisible; init it ourselves in
+# `run()`. Android-only — desktop uses stdout.
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"
 
 # GTK (Linux only) — window translucency sets the GTK toplevel's opacity
 # (appearance.rs). Version pinned to Tauri's gtk to avoid a duplicate in the tree.
