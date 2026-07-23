@@ -5,8 +5,12 @@
 //! All network traffic runs in Rust (`transport`), not the webview — see
 //! `transport.rs`. The frontend drives it over IPC and reuses the JS
 //! `JsonRpcGatewayClient` via an IPC-backed WebSocket.
+//!
+//! (Android note: the generated `RustWebView.getCookies` is patched null-safe by
+//! `build.rs` to avoid a wry 0.55 crash on cookie polling — see that file.)
 
 mod appearance;
+mod audio;
 mod cloud;
 mod local_backend;
 mod marketplace;
@@ -15,6 +19,7 @@ mod pty;
 mod transport;
 
 use appearance::set_window_translucency;
+use audio::{audio_cancel_recording, audio_start_recording, audio_stop_recording, AudioState};
 use marketplace::{marketplace_fetch, marketplace_search};
 use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
@@ -52,6 +57,15 @@ fn reveal_in_file_manager(app: tauri::AppHandle, path: String) -> Result<(), Str
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Route Rust `log::` output to logcat on Android (tao doesn't reliably install
+    // a logger, so diagnostics were invisible). Idempotent via `init_once`.
+    #[cfg(target_os = "android")]
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("hermes"),
+    );
+
     // Install a rustls CryptoProvider process-wide before any TLS handshake.
     // reqwest builds its own config, but tokio-tungstenite's wss:// path calls
     // ClientConfig::builder(), which resolves the process-default provider and
@@ -72,6 +86,7 @@ pub fn run() {
         .manage(TransportState::new())
         .manage(LocalBackendState::default())
         .manage(PtyState::default())
+        .manage(AudioState::default())
         .setup(|app| {
             // WebKitGTK (Linux desktop) auto-denies `getUserMedia` unless the
             // embedder answers the WebView's `permission-request` signal — wry
@@ -121,6 +136,9 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_kill,
+            audio_start_recording,
+            audio_stop_recording,
+            audio_cancel_recording,
             open_external,
             reveal_in_file_manager,
             set_window_translucency,
