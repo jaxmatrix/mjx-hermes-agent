@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "dev:prodweb": "vite build --mode benchmark && tauri dev --config src-tauri/tauri.prodweb.conf.json",
+    "dev:ios": "tauri ios dev \"iPhone 17\"",
     "dev:ext:vite": "vite",
     "dev:ext:desktop": "tauri dev --config src-tauri/tauri.external-vite.conf.json",
     "dev:ext:android": "adb reverse tcp:5176 tcp:5176 && adb reverse tcp:5177 tcp:5177 && tauri android dev --config src-tauri/tauri.external-vite.conf.json",
