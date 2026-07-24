@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
 
+import { useKeyboardInset } from '@/hooks/use-keyboard-inset'
+
 // The root mobile layout. A phone takes this branch (IS_MOBILE) instead of the
 // docked tile tree or the sub-768 AppShell drawer, so the touch layout is never
 // entangled with the desktop drag/resize surfaces.
 //
-// Right now it renders a SAFE-AREA VERIFICATION marker rather than real UI: the
-// reserved insets are painted as solid strips and their measured px values are
-// shown live, so a device screenshot makes it obvious whether the webview is
-// resolving the safe area correctly (and stably, not flashing at 0 on load).
-// The padding reads the published `--safe-area-inset-*` vars (lib/safe-area.ts).
+// Right now it renders a SAFE-AREA + KEYBOARD verification marker rather than
+// real UI: the reserved insets are painted as solid strips with live px values,
+// and a bottom-docked input lets you watch how the keyboard interacts with the
+// area (it lifts by --keyboard-inset; the readout shows whether this webview
+// even reports the keyboard via visualViewport). A device screenshot then makes
+// the behaviour obvious. Insets come from lib/safe-area.ts + use-keyboard-inset.
 
 interface Insets {
   top: string
@@ -19,9 +22,10 @@ interface Insets {
 
 const ZERO: Insets = { top: '0px', right: '0px', bottom: '0px', left: '0px' }
 
-// Read the published CSS vars back off :root so the marker shows the SAME value
-// the layout is padded with. Re-reads for a while to catch the webview resolving
-// env() late (the on-load race lib/safe-area.ts also guards), then on rotation.
+// Read the published safe-area CSS vars back off :root so the marker shows the
+// SAME value the layout is padded with. Re-reads for a while to catch the
+// webview resolving env() late (the on-load race lib/safe-area.ts guards), then
+// on rotation.
 function useSafeAreaInsets(): Insets {
   const [insets, setInsets] = useState<Insets>(ZERO)
 
@@ -56,6 +60,7 @@ function useSafeAreaInsets(): Insets {
 
 export function MobileShell() {
   const insets = useSafeAreaInsets()
+  const keyboard = useKeyboardInset()
 
   return (
     // The OUTER strips are painted magenta and sized by the insets, so the top /
@@ -84,13 +89,34 @@ export function MobileShell() {
         </div>
 
         <main className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-1 font-mono text-xs text-(--ui-text-secondary)">
-          <p className="text-sm font-semibold text-(--ui-text-primary)">Safe-area check</p>
-          <p>top: {insets.top}</p>
-          <p>right: {insets.right}</p>
-          <p>bottom: {insets.bottom}</p>
-          <p>left: {insets.left}</p>
-          <p className="mt-2 text-(--ui-text-tertiary)">magenta strips = reserved safe area</p>
+          <p className="text-sm font-semibold text-(--ui-text-primary)">Safe-area + keyboard check</p>
+          <p>safe top / bottom: {insets.top} / {insets.bottom}</p>
+          <p>safe left / right: {insets.left} / {insets.right}</p>
+          <p className="mt-2 text-(--ui-text-primary)">
+            keyboard inset: <span style={{ color: keyboard.open ? '#0a84ff' : undefined }}>{keyboard.inset}px</span>
+          </p>
+          <p>
+            innerH {keyboard.innerHeight} · vvH {keyboard.viewportHeight} · offY {keyboard.offsetTop}
+          </p>
+          <p className="mt-2 text-(--ui-text-tertiary)">magenta strips = safe area · tap the input below</p>
         </main>
+
+        {/* Bottom-docked input. It lifts by --keyboard-inset so it should stay
+            ABOVE the keyboard; if the inset stays 0 (webview doesn't report the
+            keyboard) it gets covered — which is exactly what we're verifying. */}
+        <div
+          className="shrink-0 border-t border-(--ui-stroke-secondary) bg-(--dt-card) p-3"
+          style={{ marginBottom: 'var(--keyboard-inset, 0px)' }}
+        >
+          <input
+            aria-label="Keyboard test input"
+            className="w-full rounded-md border border-(--ui-stroke-secondary) bg-background px-3 py-2 text-(--ui-text-primary) outline-none"
+            // 16px avoids iOS auto-zoom on focus (inputs < 16px zoom in).
+            style={{ fontSize: '16px' }}
+            placeholder="Tap here to open the keyboard"
+            type="text"
+          />
+        </div>
       </div>
     </div>
   )
