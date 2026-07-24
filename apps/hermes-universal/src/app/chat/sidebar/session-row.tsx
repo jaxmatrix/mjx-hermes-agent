@@ -9,9 +9,9 @@ import { useStore } from '@/store/atom'
 import { $attentionSessionIds } from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 
-import { SidebarRowBody, SidebarRowGrab, SidebarRowLabel, SidebarRowLead, SidebarRowShell } from './chrome'
 import { startSessionDrag } from '../session-drag'
 
+import { SidebarRowBody, SidebarRowGrab, SidebarRowLabel, SidebarRowLead, SidebarRowShell } from './chrome'
 import { SessionActionsMenu, SessionContextMenu } from './session-actions-menu'
 
 // Ported/adapted from desktop `app/chat/sidebar/session-row.tsx`. Universal is a

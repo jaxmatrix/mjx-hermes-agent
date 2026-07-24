@@ -28,23 +28,11 @@ import {
   revealTreePane
 } from '@/components/pane-shell/tree/store'
 import { readJson, writeJson } from '@/lib/storage'
-import {
-  $busy,
-  $clarify,
-  $currentCwd,
-  $currentUsage,
-  $messages,
-  $sessionId,
-  $turnStartedAt
-} from '@/store/chat'
+import { $busy, $clarify, $currentCwd, $currentUsage, $messages, $sessionId, $turnStartedAt } from '@/store/chat'
 import { $currentFastMode, $currentModel, $currentProvider, $currentReasoningEffort } from '@/store/model'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
-import {
-  $activeStoredSessionId,
-  $unreadFinishedSessionIds,
-  setActiveSessionStoredIdRotation
-} from '@/store/session'
-import { type ClientSessionState, $sessionStates } from '@/store/session-state-types'
+import { $activeStoredSessionId, $unreadFinishedSessionIds, setActiveSessionStoredIdRotation } from '@/store/session'
+import { $sessionStates, type ClientSessionState } from '@/store/session-state-types'
 import { isSecondaryWindow } from '@/store/windows'
 
 export { $sessionStates }

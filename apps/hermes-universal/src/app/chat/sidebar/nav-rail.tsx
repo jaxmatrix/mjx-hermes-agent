@@ -81,12 +81,7 @@ export function SidebarNavRail({ variant, onNavigate }: { variant: 'pane' | 'she
   }
 
   return (
-    <div
-      className={cn(
-        'shrink-0 px-2.5 pb-2',
-        variant === 'pane' ? 'pt-1.5' : 'pt-[env(safe-area-inset-top)]'
-      )}
-    >
+    <div className={cn('shrink-0 px-2.5 pb-2', variant === 'pane' ? 'pt-1.5' : 'pt-[env(safe-area-inset-top)]')}>
       <div className="flex flex-col gap-px">
         {NAV.map(item => {
           const active = Boolean(item.view) && currentView === item.view

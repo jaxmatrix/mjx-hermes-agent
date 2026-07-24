@@ -103,10 +103,7 @@ export const $lastVisibleMessageIsUser = computed($messages, messages => {
 })
 
 /** A turn is submitted but the assistant hasn't produced visible output yet. */
-export const $awaitingResponse = computed(
-  [$busy, $lastVisibleMessageIsUser],
-  (busy, lastIsUser) => busy && lastIsUser
-)
+export const $awaitingResponse = computed([$busy, $lastVisibleMessageIsUser], (busy, lastIsUser) => busy && lastIsUser)
 
 export const $statusLine = atom('')
 export const $approval = atom<ApprovalRequest | null>(null)

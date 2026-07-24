@@ -12,17 +12,17 @@
  */
 
 import type { GatewayEvent } from '@/gateway'
+import { translateNow } from '@/i18n'
 import { coerceThinkingText } from '@/lib/chat-runtime'
 import { type GatewayToolPayload, upsertToolPart } from '@/lib/chat-tool-parts'
-import { translateNow } from '@/i18n'
 import {
+  $sessionId,
   appendStreamPart,
   applySettledReasoning,
+  type ChatMessage,
   coerceText,
   patchActive,
-  withActiveAssistant,
-  $sessionId,
-  type ChatMessage
+  withActiveAssistant
 } from '@/store/chat'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import {
@@ -35,10 +35,10 @@ import {
 import { type ClientSessionState } from '@/store/session-state-types'
 import { $sessionStates, updateSession } from '@/store/session-states'
 
-const patchLastAssistant = (
-  state: ClientSessionState,
-  patch: (m: ChatMessage) => ChatMessage
-): ClientSessionState => ({ ...state, messages: patchActive(state.messages, patch) })
+const patchLastAssistant = (state: ClientSessionState, patch: (m: ChatMessage) => ChatMessage): ClientSessionState => ({
+  ...state,
+  messages: patchActive(state.messages, patch)
+})
 
 /** Reduce ONE gateway event into a tile session's state slice. Pure (returns a
  *  new state) — the transcript logic mirrors `store/chat.ts`'s primary reducer,
@@ -75,7 +75,6 @@ export function reduceSessionState(
         ...m,
         parts: applySettledReasoning(m.parts, coerceThinkingText(payload.text))
       }))
-
     case 'moa.reference': {
       const label = coerceText(payload.label)
       const idx = coerceText(payload.index)
@@ -89,7 +88,9 @@ export function reduceSessionState(
     }
 
     case 'tool.start':
+
     case 'tool.progress':
+
     case 'tool.generating':
       return patchLastAssistant(state, m => ({
         ...m,
@@ -112,8 +113,11 @@ export function reduceSessionState(
       }
 
     case 'approval.request':
+
     case 'clarify.request':
+
     case 'sudo.request':
+
     case 'secret.request':
       return { ...state, needsInput: true }
 
@@ -153,6 +157,7 @@ export function routeTileEvent(event: GatewayEvent): void {
         description: coerceText(payload.description) || 'dangerous command',
         allowPermanent: payload.allow_permanent !== false
       })
+
       break
 
     case 'clarify.request':
@@ -160,6 +165,7 @@ export function routeTileEvent(event: GatewayEvent): void {
         requestId: coerceText(payload.request_id),
         prompt: coerceText(payload.prompt) || coerceText(payload.message)
       })
+
       break
 
     case 'sudo.request':
@@ -167,6 +173,7 @@ export function routeTileEvent(event: GatewayEvent): void {
         requestId: coerceText(payload.request_id),
         prompt: coerceText(payload.prompt) || coerceText(payload.command) || 'Enter your sudo password'
       })
+
       break
 
     case 'secret.request':
@@ -175,6 +182,7 @@ export function routeTileEvent(event: GatewayEvent): void {
         envVar: coerceText(payload.env_var),
         prompt: coerceText(payload.prompt) || coerceText(payload.message)
       })
+
       break
 
     case 'message.complete':
@@ -185,6 +193,7 @@ export function routeTileEvent(event: GatewayEvent): void {
         body: translateNow('notifications.native.turnDoneBody'),
         sessionId: sid
       })
+
       break
 
     case 'error':
@@ -195,6 +204,7 @@ export function routeTileEvent(event: GatewayEvent): void {
         body: coerceText(payload.message),
         sessionId: sid
       })
+
       break
 
     default:

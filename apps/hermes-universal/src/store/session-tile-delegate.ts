@@ -17,12 +17,7 @@ import { type ChatMessage, nextId } from '@/store/chat'
 import { requestGateway } from '@/store/gateway'
 import { $sessions, archiveSessionLocal, deleteSessionLocal } from '@/store/session'
 import { emptySessionState } from '@/store/session-state-types'
-import {
-  closeSessionTile,
-  publishSessionState,
-  setSessionTileDelegate,
-  updateSession
-} from '@/store/session-states'
+import { closeSessionTile, publishSessionState, setSessionTileDelegate, updateSession } from '@/store/session-states'
 import type { SessionResumeResponse } from '@/types/hermes'
 
 function userMessage(text: string): ChatMessage {

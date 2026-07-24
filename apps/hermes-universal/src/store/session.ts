@@ -86,28 +86,31 @@ export function setActiveSessionStoredIdRotation(rotation: {
 // re-render the sidebar unless membership actually changed.
 let workingArr: readonly string[] = []
 let workingSet = new Set<string>()
-export const $workingSessionIds = computed([$busy, $activeStoredSessionId, $sessionStates], (busy, activeId, states) => {
-  const next: string[] = []
+export const $workingSessionIds = computed(
+  [$busy, $activeStoredSessionId, $sessionStates],
+  (busy, activeId, states) => {
+    const next: string[] = []
 
-  if (busy && activeId) {
-    next.push(activeId)
-  }
-
-  for (const s of Object.values(states)) {
-    if (s.busy && s.storedSessionId && !next.includes(s.storedSessionId)) {
-      next.push(s.storedSessionId)
+    if (busy && activeId) {
+      next.push(activeId)
     }
+
+    for (const s of Object.values(states)) {
+      if (s.busy && s.storedSessionId && !next.includes(s.storedSessionId)) {
+        next.push(s.storedSessionId)
+      }
+    }
+
+    const stable = stableArray(workingArr, next)
+
+    if (stable !== workingArr) {
+      workingArr = stable
+      workingSet = new Set(stable)
+    }
+
+    return workingSet
   }
-
-  const stable = stableArray(workingArr, next)
-
-  if (stable !== workingArr) {
-    workingArr = stable
-    workingSet = new Set(stable)
-  }
-
-  return workingSet
-})
+)
 
 let attentionArr: readonly string[] = []
 export const $attentionSessionIds = computed(
