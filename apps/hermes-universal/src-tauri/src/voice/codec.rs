@@ -98,17 +98,6 @@ pub fn encode(samples: &[f32], format: ClipFormat) -> Result<(Vec<u8>, String), 
     }
 }
 
-/// String-keyed variant kept for `audio.rs`'s existing `format: Option<String>`
-/// command surface (desktop-only). Retired when `audio.rs` is deleted (phase 6).
-#[cfg(desktop)]
-pub fn encode_named(samples: &[f32], format: &str) -> Result<(Vec<u8>, String), String> {
-    match format {
-        "flac" => encode_flac(samples),
-        "wav" => encode_wav(samples),
-        other => Err(format!("unsupported_format: {other}")),
-    }
-}
-
 pub fn encode_wav(samples: &[f32]) -> Result<(Vec<u8>, String), String> {
     let spec = hound::WavSpec {
         channels: 1,

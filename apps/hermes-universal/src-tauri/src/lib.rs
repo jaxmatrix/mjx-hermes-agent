@@ -10,7 +10,6 @@
 //! `build.rs` to avoid a wry 0.55 crash on cookie polling — see that file.)
 
 mod appearance;
-mod audio;
 mod cloud;
 mod local_backend;
 mod marketplace;
@@ -20,7 +19,6 @@ mod transport;
 mod voice;
 
 use appearance::set_window_translucency;
-use audio::{audio_cancel_recording, audio_start_recording, audio_stop_recording, AudioState};
 use marketplace::{marketplace_fetch, marketplace_search};
 use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
@@ -91,7 +89,6 @@ pub fn run() {
         .manage(TransportState::new())
         .manage(LocalBackendState::default())
         .manage(PtyState::default())
-        .manage(AudioState::default())
         .manage(VoiceState::default())
         .setup(|app| {
             // WebKitGTK (Linux desktop) auto-denies `getUserMedia` unless the
@@ -142,9 +139,6 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_kill,
-            audio_start_recording,
-            audio_stop_recording,
-            audio_cancel_recording,
             voice_open,
             voice_arm,
             voice_suspend,

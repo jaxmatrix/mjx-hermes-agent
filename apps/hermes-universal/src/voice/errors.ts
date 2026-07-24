@@ -1,5 +1,3 @@
-import type { MicRecorderErrorCopy } from '@/app/chat/composer/hooks/mic-recorder-types'
-
 import type { VoiceOwner } from './types'
 
 // Thrown by `VoiceEngine.open` when another, higher-priority owner already holds
@@ -12,9 +10,16 @@ export class VoiceBusyError extends Error {
   }
 }
 
-// Copy needed to describe a voice error to the user. Superset of the recorder
-// copy (reused verbatim) plus the persistent-session additions.
-export interface VoiceErrorCopy extends MicRecorderErrorCopy {
+// Copy needed to describe a voice error to the user. Satisfied structurally by the
+// i18n `notifications.voice` block.
+export interface VoiceErrorCopy {
+  microphoneAccessDenied: string
+  microphoneConstraintsUnsupported: string
+  microphoneInUse: string
+  microphonePermissionDenied: string
+  microphoneStartFailed: string
+  microphoneUnsupported: string
+  noMicrophone: string
   /** Device dropped mid-session (unplugged / default switched). */
   microphoneDisconnected: string
   /** Transcription request failed. */
