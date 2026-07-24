@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useStore } from '@nanostores/react'
+import { useCallback, useEffect } from 'react'
 
+import { useSessionView } from '@/app/chat/session-view'
 import { useI18n } from '@/i18n'
-import { chatMessageText } from '@/lib/chat-messages'
 import { triggerHaptic } from '@/lib/haptics'
-import { $messages } from '@/store/chat'
 import { resetBrowseState } from '@/store/composer-input-history'
 import { notifyError } from '@/store/notifications'
+import { $voiceConversation } from '@/store/voice-conversation'
 import { $autoSpeakReplies, setAutoSpeakReplies } from '@/store/voice-prefs'
+import type { ConversationBinding } from '@/voice/conversation-controller'
 
 import type { ComposerTarget } from '../focus'
 import { onComposerVoiceToggleRequest } from '../focus'
@@ -33,12 +35,11 @@ interface UseComposerVoiceArgs {
 
 /**
  * The composer's voice engine: push-to-talk dictation (transcript → draft), the
- * full voice-conversation loop, and auto-speak of replies. Self-contained — it
- * consumes the draft/submit primitives passed in but nothing depends back on it,
- * so it lifts cleanly out of ChatBar.
+ * full voice-conversation loop, and auto-speak of replies. The conversation loop
+ * itself lives in the module-level `voiceConversation` controller (MJX-96); this
+ * hook binds it to THIS composer's session view and exposes the render surface.
  */
 export function useComposerVoice({
-  busy,
   clearDraft,
   disabled,
   focusInput,
@@ -50,8 +51,9 @@ export function useComposerVoice({
   target
 }: UseComposerVoiceArgs) {
   const { t } = useI18n()
-  const [voiceConversationActive, setVoiceConversationActive] = useState(false)
-  const lastSpokenIdRef = useRef<string | null>(null)
+  const view = useSessionView()
+  const conversationState = useStore($voiceConversation)
+  const voiceConversationActive = conversationState.active && conversationState.target === target
 
   const { dictate, voiceActivityState, voiceStatus } = useVoiceRecorder({
     focusInput,
@@ -60,74 +62,40 @@ export function useComposerVoice({
     onTranscribeAudio
   })
 
-  const pendingResponse = () => {
-    const messages = $messages.get()
-    // reverse-find (not Array.findLast — universal's tsconfig targets es2021);
-    // universal ChatMessage has no `hidden`, guarded via a widening cast.
-    const last = [...messages].reverse().find(m => m.role === 'assistant' && !(m as { hidden?: boolean }).hidden)
-
-    if (!last || last.id === lastSpokenIdRef.current) {
-      return null
-    }
-
-    const text = chatMessageText(last).trim()
-
-    if (!text) {
-      return null
-    }
-
+  // Built lazily at start(): submit reads `busy` FRESH from the view (not a
+  // render-time snapshot), so a turn submitted after `busy` changes is gated
+  // correctly without the controller holding a stale closure.
+  const getBinding = useCallback((): ConversationBinding => {
     return {
-      id: last.id,
-      pending: Boolean(last.pending),
-      text
+      view,
+      target,
+      transcriptionAvailable: Boolean(onTranscribeAudio),
+      copy: t.notifications.voice,
+      submit: async (text: string) => {
+        if (view.$busy.get()) {
+          return
+        }
+        triggerHaptic('submit')
+        resetBrowseState(sessionId)
+        clearDraft()
+        await onSubmit(text)
+      }
     }
-  }
+  }, [clearDraft, onSubmit, onTranscribeAudio, sessionId, t.notifications.voice, target, view])
 
-  const consumePendingResponse = () => {
-    const messages = $messages.get()
-    // reverse-find (not Array.findLast — universal's tsconfig targets es2021);
-    // universal ChatMessage has no `hidden`, guarded via a widening cast.
-    const last = [...messages].reverse().find(m => m.role === 'assistant' && !(m as { hidden?: boolean }).hidden)
+  const conversation = useVoiceConversation({ target, getBinding })
 
-    if (last) {
-      lastSpokenIdRef.current = last.id
-    }
-  }
-
-  const submitVoiceTurn = async (text: string) => {
-    if (busy) {
-      return
-    }
-
-    triggerHaptic('submit')
-    resetBrowseState(sessionId)
-    clearDraft()
-    await onSubmit(text)
-  }
-
-  const conversation = useVoiceConversation({
-    busy,
-    consumePendingResponse,
-    enabled: voiceConversationActive,
-    onFatalError: () => setVoiceConversationActive(false),
-    onSubmit: submitVoiceTurn,
-    onTranscribeAudio,
-    pendingResponse
-  })
-
-  // The `composer.voice` hotkey (Ctrl+B) toggles the conversation. Starting
-  // with STT unconfigured lets the conversation surface its own "configure
-  // speech-to-text" notice rather than silently no-opping.
+  // The `composer.voice` hotkey (Ctrl+B) toggles the conversation. Starting with
+  // STT unconfigured lets the conversation surface its own "configure speech-to-
+  // text" notice rather than silently no-opping.
   const toggleVoiceConversation = useCallback(() => {
     if (disabled) {
       return
     }
-
     if (voiceConversationActive) {
-      setVoiceConversationActive(false)
-      void conversation.end()
+      conversation.end()
     } else {
-      setVoiceConversationActive(true)
+      conversation.start()
     }
   }, [conversation, disabled, voiceConversationActive])
 
@@ -136,14 +104,8 @@ export function useComposerVoice({
     [target, toggleVoiceConversation]
   )
 
-  // Explicit start/end for the on-screen conversation controls (the hotkey uses
-  // the gated toggle above).
-  const startConversation = useCallback(() => setVoiceConversationActive(true), [])
-
-  const endConversation = useCallback(() => {
-    setVoiceConversationActive(false)
-    void conversation.end()
-  }, [conversation])
+  const startConversation = useCallback(() => conversation.start(), [conversation])
+  const endConversation = useCallback(() => conversation.end(), [conversation])
 
   const handleToggleAutoSpeak = useCallback(() => {
     void setAutoSpeakReplies(!$autoSpeakReplies.get()).catch(error =>
@@ -154,8 +116,7 @@ export function useComposerVoice({
   useAutoSpeakReplies({
     conversationActive: voiceConversationActive,
     failureLabel: t.assistant.thread.readAloudFailed,
-    markSpoken: consumePendingResponse,
-    pendingReply: pendingResponse,
+    view,
     sessionId
   })
 

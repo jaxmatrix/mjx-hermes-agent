@@ -169,6 +169,7 @@ export const zh: Translations = {
       couldNotStartSession: '无法启动语音会话',
       microphoneAccessDenied: '麦克风访问被拒绝。',
       microphoneConstraintsUnsupported: '此设备不支持当前麦克风约束。',
+      microphoneDisconnected: '麦克风已断开连接。',
       microphoneFailed: '麦克风出错',
       microphoneInUse: '麦克风正被其他应用占用。',
       microphonePermissionDenied: '麦克风权限被拒绝。',

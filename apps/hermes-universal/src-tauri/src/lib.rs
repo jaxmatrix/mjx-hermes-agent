@@ -10,16 +10,15 @@
 //! `build.rs` to avoid a wry 0.55 crash on cookie polling — see that file.)
 
 mod appearance;
-mod audio;
 mod cloud;
 mod local_backend;
 mod marketplace;
 mod oauth;
 mod pty;
 mod transport;
+mod voice;
 
 use appearance::set_window_translucency;
-use audio::{audio_cancel_recording, audio_start_recording, audio_stop_recording, AudioState};
 use marketplace::{marketplace_fetch, marketplace_search};
 use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
@@ -29,6 +28,10 @@ use oauth::{oauth_login, oauth_logout, oauth_status};
 use pty::{pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
 use transport::{
     cookies_export, cookies_import, http_request, ws_close, ws_open, ws_send, TransportState,
+};
+use voice::{
+    voice_arm, voice_close, voice_force_turn, voice_open, voice_suspend, voice_update_auth,
+    VoiceState,
 };
 
 /// Open a URL in the system browser. Routed through the opener plugin's Rust API
@@ -86,7 +89,7 @@ pub fn run() {
         .manage(TransportState::new())
         .manage(LocalBackendState::default())
         .manage(PtyState::default())
-        .manage(AudioState::default())
+        .manage(VoiceState::default())
         .setup(|app| {
             // WebKitGTK (Linux desktop) auto-denies `getUserMedia` unless the
             // embedder answers the WebView's `permission-request` signal — wry
@@ -136,9 +139,12 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_kill,
-            audio_start_recording,
-            audio_stop_recording,
-            audio_cancel_recording,
+            voice_open,
+            voice_arm,
+            voice_suspend,
+            voice_force_turn,
+            voice_update_auth,
+            voice_close,
             open_external,
             reveal_in_file_manager,
             set_window_translucency,

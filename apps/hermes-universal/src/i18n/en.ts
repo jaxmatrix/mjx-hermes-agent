@@ -173,6 +173,7 @@ export const en: Translations = {
       couldNotStartSession: 'Could not start voice session',
       microphoneAccessDenied: 'Microphone access denied.',
       microphoneConstraintsUnsupported: 'Microphone constraints are not supported by this device.',
+      microphoneDisconnected: 'Microphone disconnected.',
       microphoneFailed: 'Microphone failed',
       microphoneInUse: 'Microphone is already in use by another app.',
       microphonePermissionDenied: 'Microphone permission was denied.',

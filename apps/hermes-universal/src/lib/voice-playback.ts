@@ -1,4 +1,4 @@
-import { speakNow, stopSpeaking } from '@/lib/tts'
+import { speakNow, speakUntilDone, stopSpeaking, type SpeechEnd } from '@/lib/tts'
 import { $voicePlayback, resetVoicePlayback, type VoicePlaybackSource } from '@/store/voice-playback'
 
 // Read-aloud driver. Mirrors desktop's `@/lib/voice-playback` contract closely
@@ -30,6 +30,30 @@ export async function playSpeechText(
     resetVoicePlayback()
     throw error
   }
+}
+
+/**
+ * Like `playSpeechText`, but resolves only once the clip has actually FINISHED
+ * (or was interrupted). The voice-conversation loop awaits this so it re-arms the
+ * mic when the assistant stops speaking, not the instant playback starts — the gap
+ * `speakNow` alone leaves. Never rejects; returns how playback ended.
+ */
+export async function playSpeechTextUntilDone(
+  text: string,
+  { messageId, source }: { messageId?: string; source: Exclude<VoicePlaybackSource, null> }
+): Promise<SpeechEnd> {
+  $voicePlayback.set({ source, messageId: messageId ?? null, status: 'preparing' })
+
+  const result = await speakUntilDone(text)
+
+  // If nothing ever started, the $ttsSpeaking subscription never promoted us off
+  // 'preparing' — drop back to idle. (On a real playback the subscription has
+  // already reset to idle by the time `done` settles.)
+  if ($voicePlayback.get().status === 'preparing') {
+    resetVoicePlayback()
+  }
+
+  return result
 }
 
 export function stopVoicePlayback(): void {

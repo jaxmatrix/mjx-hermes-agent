@@ -175,6 +175,7 @@ export const zhHant = defineLocale({
       couldNotStartSession: '無法啟動語音工作階段',
       microphoneAccessDenied: '麥克風存取被拒絕。',
       microphoneConstraintsUnsupported: '此裝置不支援目前的麥克風限制條件。',
+      microphoneDisconnected: '麥克風已中斷連線。',
       microphoneFailed: '麥克風發生錯誤',
       microphoneInUse: '麥克風正被其他應用程式使用中。',
       microphonePermissionDenied: '麥克風權限被拒絕。',
