@@ -658,6 +658,16 @@
     --dt-midground-foreground: #fcfcfc;
     --titlebar-height: 2.125rem;
     --composer-fill: color-mix(in srgb, var(--dt-card) 90%, var(--dt-background));
+
+    /* Safe-area insets. The `env()` fallback keeps these correct on web/desktop
+       and is the value before lib/safe-area.ts publishes; on mobile that module
+       overrides these inline on :root with the resolved px so chrome never
+       flashes at the 0 that env() reports for the first frame(s). Mobile chrome
+       should read `var(--safe-area-inset-*)`, not raw `env(...)`. */
+    --safe-area-inset-top: env(safe-area-inset-top, 0px);
+    --safe-area-inset-right: env(safe-area-inset-right, 0px);
+    --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-area-inset-left: env(safe-area-inset-left, 0px);
   }
 
   :root.dark {
