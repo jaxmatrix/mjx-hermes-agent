@@ -218,6 +218,7 @@ export interface Translations {
       couldNotStartSession: string
       microphoneAccessDenied: string
       microphoneConstraintsUnsupported: string
+      microphoneDisconnected: string
       microphoneFailed: string
       microphoneInUse: string
       microphonePermissionDenied: string

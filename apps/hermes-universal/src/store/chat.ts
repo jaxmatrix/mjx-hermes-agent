@@ -5,7 +5,7 @@ import { type GatewayToolPayload, toolIdFromPayload, upsertToolPart } from '@/li
 import { playCompletionSound } from '@/lib/completion-sound'
 import { resolveGatewayEventSessionId } from '@/lib/gateway-events'
 import { triggerHaptic } from '@/lib/haptics'
-import { speakNow, stopSpeaking } from '@/lib/tts'
+import { stopSpeaking } from '@/lib/tts'
 import { atom, computed } from '@/store/atom'
 import { cwdForNewSession } from '@/store/default-project-dir'
 import { requestGateway } from '@/store/gateway'
@@ -14,7 +14,6 @@ import { notifyError } from '@/store/notifications'
 import { flashPetActivity, setPetActivity } from '@/store/pet'
 import { $subagentsBySession, upsertSubagent } from '@/store/subagents'
 import { recordToolDiff } from '@/store/tool-diffs'
-import { $autoSpeakReplies } from '@/store/voice-prefs'
 import type { ContextBreakdown, SessionCreateResponse, UsageStats } from '@/types/hermes'
 
 // Chat model over the assistant-ui parts vocabulary. The gateway-event reducer
@@ -446,20 +445,9 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       void refreshCurrentUsage()
       update(messages => messages.map(m => (m.pending ? { ...m, pending: false } : m)))
 
-      // Read the reply aloud when auto-TTS is on (K9).
-      if ($autoSpeakReplies.get()) {
-        const last = [...$messages.get()].reverse().find(m => m.role === 'assistant')
-
-        const text =
-          last?.parts
-            .filter(p => p.type === 'text')
-            .map(p => (p as TextPart).text)
-            .join(' ') ?? ''
-
-        if (text.trim()) {
-          void speakNow(text)
-        }
-      }
+      // Auto-TTS is driven by `useAutoSpeakReplies` (guarded against a running
+      // voice conversation + the shared dedupe cursor). Reading it here too would
+      // speak every reply twice during a conversation (MJX-96).
 
       dispatchNativeNotification({
         kind: 'turnDone',

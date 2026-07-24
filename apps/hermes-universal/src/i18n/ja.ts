@@ -180,6 +180,7 @@ export const ja = defineLocale({
       couldNotStartSession: '音声セッションを開始できませんでした',
       microphoneAccessDenied: 'マイクへのアクセスが拒否されました。',
       microphoneConstraintsUnsupported: 'このデバイスはマイクの制約をサポートしていません。',
+      microphoneDisconnected: 'マイクが切断されました。',
       microphoneFailed: 'マイクが失敗しました',
       microphoneInUse: 'マイクは他のアプリで使用中です。',
       microphonePermissionDenied: 'マイクのアクセス許可が拒否されました。',
