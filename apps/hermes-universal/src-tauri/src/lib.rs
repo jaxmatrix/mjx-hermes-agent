@@ -31,6 +31,10 @@ use pty::{pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
 use transport::{
     cookies_export, cookies_import, http_request, ws_close, ws_open, ws_send, TransportState,
 };
+use voice::{
+    voice_arm, voice_close, voice_force_turn, voice_open, voice_suspend, voice_update_auth,
+    VoiceState,
+};
 
 /// Open a URL in the system browser. Routed through the opener plugin's Rust API
 /// rather than its JS `openUrl` command: a Rust-internal call isn't gated by the
@@ -88,6 +92,7 @@ pub fn run() {
         .manage(LocalBackendState::default())
         .manage(PtyState::default())
         .manage(AudioState::default())
+        .manage(VoiceState::default())
         .setup(|app| {
             // WebKitGTK (Linux desktop) auto-denies `getUserMedia` unless the
             // embedder answers the WebView's `permission-request` signal — wry
@@ -140,6 +145,12 @@ pub fn run() {
             audio_start_recording,
             audio_stop_recording,
             audio_cancel_recording,
+            voice_open,
+            voice_arm,
+            voice_suspend,
+            voice_force_turn,
+            voice_update_auth,
+            voice_close,
             open_external,
             reveal_in_file_manager,
             set_window_translucency,

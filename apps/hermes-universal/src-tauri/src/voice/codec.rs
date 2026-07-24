@@ -99,7 +99,8 @@ pub fn encode(samples: &[f32], format: ClipFormat) -> Result<(Vec<u8>, String), 
 }
 
 /// String-keyed variant kept for `audio.rs`'s existing `format: Option<String>`
-/// command surface. Retired when `audio.rs` is deleted (MJX-96 phase 6).
+/// command surface (desktop-only). Retired when `audio.rs` is deleted (phase 6).
+#[cfg(desktop)]
 pub fn encode_named(samples: &[f32], format: &str) -> Result<(Vec<u8>, String), String> {
     match format {
         "flac" => encode_flac(samples),
@@ -161,7 +162,7 @@ pub fn to_data_url(bytes: &[u8], mime: &str) -> Result<String, String> {
     Ok(format!("data:{mime};base64,{b64}"))
 }
 
-#[cfg(all(test, desktop))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
