@@ -17,6 +17,7 @@ mod marketplace;
 mod oauth;
 mod pty;
 mod transport;
+mod voice;
 
 use appearance::set_window_translucency;
 use audio::{audio_cancel_recording, audio_start_recording, audio_stop_recording, AudioState};

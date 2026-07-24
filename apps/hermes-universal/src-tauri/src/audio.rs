@@ -42,7 +42,6 @@ pub struct AudioClip {
 #[cfg(desktop)]
 mod imp {
     use super::AudioClip;
-    use std::io::Cursor;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::sync_channel;
     use std::sync::{Arc, Mutex};
@@ -50,6 +49,10 @@ mod imp {
 
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use tauri::{AppHandle, Emitter};
+
+    // Pure codec helpers rehosted in `voice/codec.rs` (MJX-96); imported here so
+    // there is a single definition while `audio.rs` still exists.
+    use crate::voice::codec::{encode_named, resample_to_16k, ToMonoF32};
 
     /// Emit a normalized RMS level no more often than this (≈16 Hz) so the meter
     /// events don't flood IPC — cpal fires its callback every audio buffer (~100 Hz
@@ -96,42 +99,6 @@ mod imp {
     /// `start`/`take_and_stop` below ever touch it. lib.rs just `.manage()`s it.
     #[derive(Default)]
     pub struct AudioState(Mutex<Option<RecordingSession>>);
-
-    /// Cheap, dependency-free sample→f32 conversion so we don't rely on cpal's
-    /// sample-conversion trait surface. Covers the formats devices actually capture.
-    trait ToMonoF32: Copy {
-        fn to_f32(self) -> f32;
-    }
-    impl ToMonoF32 for f32 {
-        fn to_f32(self) -> f32 {
-            self
-        }
-    }
-    impl ToMonoF32 for i16 {
-        fn to_f32(self) -> f32 {
-            self as f32 / 32768.0
-        }
-    }
-    impl ToMonoF32 for u16 {
-        fn to_f32(self) -> f32 {
-            (self as f32 - 32768.0) / 32768.0
-        }
-    }
-    impl ToMonoF32 for i32 {
-        fn to_f32(self) -> f32 {
-            self as f32 / 2_147_483_648.0
-        }
-    }
-    impl ToMonoF32 for i8 {
-        fn to_f32(self) -> f32 {
-            self as f32 / 128.0
-        }
-    }
-    impl ToMonoF32 for u8 {
-        fn to_f32(self) -> f32 {
-            (self as f32 - 128.0) / 128.0
-        }
-    }
 
     /// Build a typed cpal input stream: convert each sample to f32, downmix the
     /// interleaved channels to mono (keeps the shared buffer at 1/N size), append to
@@ -382,7 +349,7 @@ mod imp {
         let src_rate = cap.src_rate;
         let mono16k = resample_to_16k(&cap.pcm_mono, src_rate)?;
         let format = format.unwrap_or_else(|| "wav".into());
-        let (bytes, mime_type) = encode(&mono16k, &format)?;
+        let (bytes, mime_type) = encode_named(&mono16k, &format)?;
         let base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
         Ok(AudioClip {
             base64,
@@ -396,95 +363,6 @@ mod imp {
         // Stop + discard; ignore "not_recording"/"id_mismatch" so cancel is idempotent.
         let _ = take_and_stop(state, &id);
         Ok(())
-    }
-
-    /// Anti-aliased resample of mono f32 to 16 kHz via rubato (pure Rust). Passthrough
-    /// when already 16 kHz. 16 kHz mono matches whisper's expected input and keeps the
-    /// base64 payload small over a remote gateway.
-    fn resample_to_16k(input: &[f32], src_rate: u32) -> Result<Vec<f32>, String> {
-        use rubato::{FftFixedIn, Resampler};
-
-        const TARGET: usize = 16_000;
-        if input.is_empty() || src_rate as usize == TARGET {
-            return Ok(input.to_vec());
-        }
-
-        let mut resampler = FftFixedIn::<f32>::new(src_rate as usize, TARGET, 1024, 2, 1)
-            .map_err(|e| format!("resampler_init: {e}"))?;
-        let mut out: Vec<f32> = Vec::with_capacity(input.len() * TARGET / src_rate as usize + 1024);
-        let mut rest = input;
-
-        loop {
-            let needed = resampler.input_frames_next();
-            if rest.len() >= needed {
-                let (chunk, tail) = rest.split_at(needed);
-                let res = resampler
-                    .process(&[chunk], None)
-                    .map_err(|e| format!("resample: {e}"))?;
-                out.extend_from_slice(&res[0]);
-                rest = tail;
-            } else {
-                // Final short chunk: `process_partial` zero-pads internally.
-                let res = resampler
-                    .process_partial(Some(&[rest]), None)
-                    .map_err(|e| format!("resample_partial: {e}"))?;
-                out.extend_from_slice(&res[0]);
-                break;
-            }
-        }
-        Ok(out)
-    }
-
-    fn f32_to_i16(x: f32) -> i16 {
-        (x.clamp(-1.0, 1.0) * 32767.0).round() as i16
-    }
-
-    /// Encode mono 16 kHz f32 to an in-memory container the gateway accepts.
-    fn encode(samples: &[f32], format: &str) -> Result<(Vec<u8>, String), String> {
-        match format {
-            "flac" => encode_flac(samples),
-            "wav" => encode_wav(samples),
-            other => Err(format!("unsupported_format: {other}")),
-        }
-    }
-
-    fn encode_wav(samples: &[f32]) -> Result<(Vec<u8>, String), String> {
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: 16_000,
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
-        };
-        let mut cursor = Cursor::new(Vec::<u8>::new());
-        {
-            let mut writer =
-                hound::WavWriter::new(&mut cursor, spec).map_err(|e| format!("wav_init: {e}"))?;
-            for &s in samples {
-                writer
-                    .write_sample(f32_to_i16(s))
-                    .map_err(|e| format!("wav_write: {e}"))?;
-            }
-            writer.finalize().map_err(|e| format!("wav_finalize: {e}"))?;
-        }
-        Ok((cursor.into_inner(), "audio/wav".into()))
-    }
-
-    fn encode_flac(samples: &[f32]) -> Result<(Vec<u8>, String), String> {
-        use flacenc::component::BitRepr;
-        use flacenc::error::Verify;
-
-        let config = flacenc::config::Encoder::default()
-            .into_verified()
-            .map_err(|(_, e)| format!("flac_config: {e:?}"))?;
-        let pcm_i32: Vec<i32> = samples.iter().map(|&s| f32_to_i16(s) as i32).collect();
-        let source = flacenc::source::MemSource::from_samples(&pcm_i32, 1, 16, 16_000);
-        let stream = flacenc::encode_with_fixed_block_size(&config, source, config.block_size)
-            .map_err(|e| format!("flac_encode: {e:?}"))?;
-        let mut sink = flacenc::bitsink::ByteSink::new();
-        stream
-            .write(&mut sink)
-            .map_err(|e| format!("flac_write: {e:?}"))?;
-        Ok((sink.as_slice().to_vec(), "audio/flac".into()))
     }
 }
 
