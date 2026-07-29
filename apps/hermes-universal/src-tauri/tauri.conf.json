@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Hermes",
+  "productName": "Allr",
   "version": "0.0.1",
   "identifier": "com.nousresearch.hermes.universal",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Hermes",
+        "title": "Allr",
         "width": 420,
         "height": 900,
         "resizable": true,

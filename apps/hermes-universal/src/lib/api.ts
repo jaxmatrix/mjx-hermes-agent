@@ -1,3 +1,4 @@
+import { BRAND } from '@/brand'
 import { $connection } from '@/store/connection'
 import { httpRequest } from '@/transport/http'
 
@@ -36,7 +37,7 @@ export async function api<T = unknown>({ path, method = 'GET', body, timeoutMs, 
   const conn = $connection.get()
 
   if (!conn) {
-    throw new Error('Not connected to a Hermes backend')
+    throw new Error(`Not connected to a ${BRAND} backend`)
   }
 
   const headers: Record<string, string> = {}

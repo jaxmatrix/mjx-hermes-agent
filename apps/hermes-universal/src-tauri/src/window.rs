@@ -40,7 +40,7 @@ async fn open_or_focus(app: tauri::AppHandle, label: String, url: String) -> Res
             return;
         }
         let build = WebviewWindowBuilder::new(&app_main, &label, WebviewUrl::App(url.into()))
-            .title("Hermes")
+            .title("Allr")
             .decorations(false)
             .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
             .min_inner_size(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)

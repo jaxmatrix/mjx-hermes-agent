@@ -190,7 +190,7 @@ pub async fn oauth_login(
                 OAUTH_WINDOW_LABEL,
                 WebviewUrl::External(login_url),
             )
-            .title("Sign in to Hermes")
+            .title("Sign in to Allr")
             .inner_size(520.0, 720.0)
             .build();
             let _ = build_tx.send(

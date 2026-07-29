@@ -1,3 +1,5 @@
+import { BRAND, BRAND_CLOUD } from '@/brand'
+import { Wordmark } from '@/components/brand/wordmark'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
 import { Loader2 } from '@/lib/icons'
@@ -17,7 +19,7 @@ function targetLabel(): string {
   const target = loadGatewayTarget()
 
   if (!target) {
-    return 'Hermes'
+    return BRAND
   }
 
   if (target.mode === 'local') {
@@ -29,7 +31,7 @@ function targetLabel(): string {
       return target.cloudAgentName
     }
 
-    return hostOf(target.cloudBaseUrl) ?? 'Hermes Cloud'
+    return hostOf(target.cloudBaseUrl) ?? BRAND_CLOUD
   }
 
   return hostOf(target.url) ?? 'the remote gateway'
@@ -55,7 +57,7 @@ export function GatewayConnectingScreen() {
   return (
     <main className="connect">
       <div className="connect-card items-center text-center">
-        <div className="brand">Hermes</div>
+        <Wordmark />
         <h1 className="connect-title">{g.connectingTitle}</h1>
 
         <div className="mt-2 flex items-center gap-2 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-secondary)">

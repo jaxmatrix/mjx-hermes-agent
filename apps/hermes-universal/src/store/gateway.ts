@@ -1,3 +1,4 @@
+import { BRAND } from '@/brand'
 import { type ConnectionState, type GatewayEvent, JsonRpcGatewayClient, type WebSocketLike } from '@/gateway'
 import type { HermesGateway } from '@/hermes'
 import { atom } from '@/store/atom'
@@ -82,7 +83,7 @@ export function requestGateway<T = unknown>(
   timeoutMs?: number
 ): Promise<T> {
   if (!client) {
-    return Promise.reject(new Error('Hermes gateway is not connected'))
+    return Promise.reject(new Error(`${BRAND} gateway is not connected`))
   }
 
   return client.request<T>(method, params, timeoutMs)

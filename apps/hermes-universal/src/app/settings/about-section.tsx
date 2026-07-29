@@ -1,6 +1,7 @@
 import { getVersion } from '@tauri-apps/api/app'
 import { useEffect, useState } from 'react'
 
+import { Wordmark } from '@/components/brand/wordmark'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
 import { openExternalLink } from '@/lib/external-link'
@@ -9,6 +10,9 @@ import { $status } from '@/store/connection'
 
 import { ListRow, SettingsContent } from './primitives'
 
+// Deliberately still the upstream repo: these are the releases this build
+// actually comes from, and a rebranded dead link would be worse than an honest
+// one. Revisit if the white-label ever ships its own release channel.
 const RELEASE_NOTES_URL = 'https://github.com/NousResearch/hermes-agent/releases'
 
 // About (Jc12): app version + backend version + release notes. Self-update and
@@ -31,7 +35,7 @@ export function AboutSection() {
   return (
     <SettingsContent>
       <div className="flex flex-col items-center gap-1 pt-8 pb-4 text-center">
-        <div className="text-lg font-bold tracking-[0.18em] text-primary uppercase">Hermes</div>
+        <Wordmark size="md" />
         <div className="text-sm text-muted-foreground">{appVersion ? a.version(appVersion) : a.versionUnavailable}</div>
       </div>
 

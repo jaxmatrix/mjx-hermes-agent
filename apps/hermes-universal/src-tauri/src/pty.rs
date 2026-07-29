@@ -113,7 +113,7 @@ mod imp {
             std::env::var("LC_CTYPE").unwrap_or_else(|_| "UTF-8".to_string()),
         );
         cmd.env("TERM", "xterm-256color");
-        cmd.env("TERM_PROGRAM", "Hermes");
+        cmd.env("TERM_PROGRAM", "Allr");
         cmd.env("HERMES_UNIVERSAL_TERMINAL", "1");
     }
 

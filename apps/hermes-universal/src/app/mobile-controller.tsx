@@ -235,7 +235,7 @@ export function MobileController() {
         )}
         {/* Profiles overlay — desktop's profile CRUD + soul editor master/detail. */}
         {connected && profilesOpen && <ProfilesView onClose={closeOverlayToPreviousRoute} />}
-        {/* Star map overlay — the radial "what Hermes has learned" map. */}
+        {/* Star map overlay — the radial "what the agent has learned" map. */}
         {connected && starmapOpen && <StarmapView onClose={closeOverlayToPreviousRoute} />}
         {/* Provider-connect overlay — a focused per-provider sign-in card that
             floats OVER the settings page (z-70) without unmounting it. Opened from

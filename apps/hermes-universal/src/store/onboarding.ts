@@ -1,4 +1,5 @@
 import { API_KEY_OPTIONS, type ApiKeyOption, LOCAL_ENV_KEY } from '@/app/onboarding/api-key-options'
+import { BRAND } from '@/brand'
 import {
   cancelOAuthSession,
   getGlobalModelOptions,
@@ -288,7 +289,7 @@ export async function recheckExternalSignin(): Promise<void> {
 
     patch({
       busy: false,
-      error: `Hermes still can't reach ${provider.name}. Run \`${provider.cli_command}\` in a terminal first.`,
+      error: `${BRAND} still can't reach ${provider.name}. Run \`${provider.cli_command}\` in a terminal first.`,
       oauth: { ...oauth, status: 'external_pending' }
     })
   } catch (err) {

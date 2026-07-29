@@ -1,3 +1,4 @@
+import { BRAND_CLOUD } from '@/brand'
 import { oauthStatus } from '@/lib/auth'
 import { loadString, removeKey, saveString } from '@/lib/persist'
 import { atom } from '@/store/atom'
@@ -191,7 +192,7 @@ export async function autoRestoreConnection(): Promise<void> {
       await connectLocal(target.profile ?? null)
     } else if (target.mode === 'cloud') {
       if (!target.cloudBaseUrl) {
-        throw new Error('No saved Hermes Cloud agent to reconnect to')
+        throw new Error(`No saved ${BRAND_CLOUD} agent to reconnect to`)
       }
 
       await connectCloud(target.cloudBaseUrl, target.profile ?? null)
