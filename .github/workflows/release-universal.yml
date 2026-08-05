@@ -1,0 +1,133 @@
+# .github/workflows/release-universal.yml
+#
+# Cuts a signed Hermes Universal release (MJXHRM-144).
+#
+# The app's updater trusts a minisign public key compiled into the binary
+# (`plugins.updater.pubkey` in src-tauri/tauri.conf.json) and verifies every
+# downloaded bundle against it before installing. This workflow holds the
+# matching PRIVATE key, which makes it — not GitHub Releases, not the CDN in
+# front of it — the actual root of trust for everything users install.
+#
+# That is why:
+#   * the build job runs in the `release` environment, so the signing key can be
+#     scoped there with required reviewers rather than living in repo secrets;
+#   * `permissions` is read-only at the top level and `contents: write` is
+#     granted only to the job that publishes;
+#   * every third-party action is pinned by commit SHA, and the toolchain is
+#     installed with rustup instead of pulling another action in.
+#
+# Losing the private key means never being able to update installed copies
+# again — it cannot be rotated for users who already have the old pubkey baked
+# in. Back it up somewhere that is not this repo.
+#
+# Releases are published as DRAFTS: nothing reaches users until a human reviews
+# the artifacts and hits publish.
+
+name: Release (Hermes Universal)
+
+on:
+  push:
+    # Namespaced so it can't collide with the backend's own version tags.
+    tags:
+      - 'universal-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. universal-v0.1.0-beta.1)'
+        required: true
+        type: string
+
+permissions: read-all
+
+env:
+  # Keep in step with src-tauri/tauri.conf.json's `version`.
+  APP_VERSION: '0.1.0-beta.1'
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    # Holds TAURI_SIGNING_PRIVATE_KEY. Protect it with required reviewers.
+    environment: release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x86_64
+            platform: ubuntu-22.04
+            args: ''
+          - label: macos-aarch64
+            platform: macos-latest
+            args: '--target aarch64-apple-darwin'
+          - label: macos-x86_64
+            platform: macos-latest
+            args: '--target x86_64-apple-darwin'
+          - label: windows-x86_64
+            platform: windows-latest
+            args: ''
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # apps/hermes-universal carries its own pnpm-lock.yaml (the rest of the
+      # repo is npm workspaces), so it installs with pnpm and nothing else.
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.18.0 --activate
+
+      # Tauri's Linux webview + the ALSA backend cpal builds against. Not needed
+      # on macOS/Windows, which ship their own webview.
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libasound2-dev \
+            patchelf
+
+      # rustup is preinstalled on every runner, so the toolchain needs no action
+      # of its own — one less third-party step in the chain that signs releases.
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - name: Add macOS targets
+        if: matrix.platform == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1 # v2.8.1
+        with:
+          workspaces: apps/hermes-universal/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: apps/hermes-universal
+        run: pnpm install --frozen-lockfile
+
+      # Builds the bundles, signs the updater artifacts, uploads them to the
+      # release and writes the `latest.json` the app's endpoint points at.
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/hermes-universal
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: 'Hermes Universal v${{ env.APP_VERSION }}'
+          releaseBody: 'Signed builds for desktop. Installed copies update themselves from here.'
+          releaseDraft: true
+          prerelease: true
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
