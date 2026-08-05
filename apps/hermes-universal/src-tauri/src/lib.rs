@@ -42,7 +42,7 @@ use ssh::{
 use transport::{
     cookies_export, cookies_import, http_request, ws_close, ws_open, ws_send, TransportState,
 };
-use updates::{update_check, update_open_download, UpdateState};
+use updates::{update_check, update_install, update_open_download, UpdateState};
 use voice::{
     voice_arm, voice_close, voice_force_turn, voice_open, voice_suspend, voice_update_auth,
     VoiceState,
@@ -92,7 +92,7 @@ pub fn run() {
     // is idempotent — ignore the Err when something already installed one.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_keyring::init())
         .plugin(tauri_plugin_mic::init())
@@ -100,7 +100,18 @@ pub fn run() {
         .plugin(tauri_plugin_haptics::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_notification::init());
+
+    // Signed self-update (MJXHRM-144). Desktop-only — the plugin has no mobile
+    // implementation, and a phone updates through its store anyway. Driven
+    // entirely from `updates.rs`, so the webview never calls it and
+    // `capabilities/default.json` needs no updater permission. Bound by a
+    // cfg'd shadow rather than a helper because the plugin's `TauriPlugin`
+    // carries its own config type, so the two branches aren't one type.
+    #[cfg(all(desktop, feature = "update-checks"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .manage(TransportState::new())
         .manage(LocalBackendState::default())
         .manage(PtyState::default())
@@ -191,6 +202,7 @@ pub fn run() {
             open_instance_window,
             open_screen_window,
             update_check,
+            update_install,
             update_open_download,
             ssh_connect,
             ssh_test,
