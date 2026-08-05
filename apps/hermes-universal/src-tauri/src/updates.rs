@@ -52,6 +52,15 @@ const CACHE_TTL_MS: u64 = 6 * 60 * 60 * 1000;
 #[allow(dead_code)]
 pub const REPO_URL: &str = "https://github.com/jaxmatrix/mjx-hermes-agent";
 
+/// The prefix `.github/workflows/release-universal.yml` cuts our tags with. The
+/// repo also carries the backend's own CalVer `v*` tags, which is exactly why
+/// ours are namespaced — so a release page URL built with a bare `v` prefix
+/// lands on a different application's release, or on a 404.
+///
+/// `allow(dead_code)`: unused in a `--no-default-features` build.
+#[allow(dead_code)]
+pub const TAG_PREFIX: &str = "universal-v";
+
 /// Whether the app has real Play Store / App Store listings yet.
 ///
 /// It does not. Until it does, the mobile checks are mocked: scraping an
@@ -255,7 +264,7 @@ mod imp {
     // `is_newer` / `STORE_LISTING_PUBLISHED` belong to the store backends, so a
     // desktop build imports them unused.
     #[allow(unused_imports)]
-    use super::{is_newer, status_for, UpdateStatus, REPO_URL, STORE_LISTING_PUBLISHED};
+    use super::{is_newer, status_for, UpdateStatus, REPO_URL, STORE_LISTING_PUBLISHED, TAG_PREFIX};
 
     /// `allow(dead_code)` on the HTTP scaffolding below: only the store
     /// backends use it, so a desktop build compiles it unused.
@@ -316,7 +325,7 @@ mod imp {
 
         match updater.check().await {
             Ok(Some(update)) => {
-                let notes = format!("{REPO_URL}/releases/tag/v{}", update.version);
+                let notes = format!("{REPO_URL}/releases/tag/{TAG_PREFIX}{}", update.version);
 
                 status.update_available = true;
                 status.latest_version = Some(update.version.clone());
@@ -328,7 +337,11 @@ mod imp {
             }
             Ok(None) => {
                 status.latest_version = Some(current.to_string());
-                status.notes_url = Some(format!("{REPO_URL}/releases/latest"));
+                // The release list, not `/releases/latest` — GitHub resolves
+                // that to the newest non-prerelease release, which for a
+                // beta-only history is either nothing or the backend's own
+                // CalVer release. Same trap as the updater endpoint.
+                status.notes_url = Some(format!("{REPO_URL}/releases"));
             }
             // A malformed manifest is deliberately reported as `unreachable`
             // rather than `unparsed`: unlike a scraped store listing, that

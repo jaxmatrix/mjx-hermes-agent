@@ -24,7 +24,10 @@ import {
 
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
 
-const RELEASE_NOTES_URL = 'https://github.com/NousResearch/hermes-agent/releases'
+// This fork's releases, not upstream's — upstream ships a different application
+// on CalVer tags, and in a `--no-default-features` build this is the only link
+// on the page. Mirrors `REPO_URL` in src-tauri/src/updates.rs.
+const RELEASE_NOTES_URL = 'https://github.com/jaxmatrix/mjx-hermes-agent/releases'
 
 // About (Jc12 / MJX-16 / MJXHRM-144): app version + backend version + release
 // notes, plus the update surface. Where an update comes from is the native
