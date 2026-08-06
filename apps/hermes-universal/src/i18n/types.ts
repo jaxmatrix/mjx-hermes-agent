@@ -474,6 +474,9 @@ export interface Translations {
       noneParen: string
       notSet: string
       commaSeparated: string
+      searchPlaceholder: string
+      noResults: string
+      systemDefault: string
       loading: string
       emptyTitle: string
       emptyDesc: string
@@ -1113,6 +1116,7 @@ export interface Translations {
       installed: string
       installs: (count: string) => string
     }
+    commands: string
     settingsFields: string
     mcpServers: string
     archivedChats: string
