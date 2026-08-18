@@ -279,6 +279,7 @@ export { triggerHaptic as haptic } from '@/lib/haptics'
 /** The app's icon set (RefreshCw, LayoutDashboard, Activity, …). */
 export * as icons from '@/lib/icons'
 export { type KeybindContribution, KEYBINDS_AREA } from '@/lib/keybinds/actions'
+export { formatModifierToken } from '@/lib/keybinds/combo'
 /** Model-id presentation, shared with the composer and the status bar:
  *  `displayModelName` for the friendly name, `modelDisplayParts` to split off a
  *  variant tag, `reasoningEffortLabel` to render a thinking depth ('high' →
