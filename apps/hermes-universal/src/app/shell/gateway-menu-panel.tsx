@@ -8,6 +8,7 @@ import { LogView } from '@/components/ui/log-view'
 import { Tip } from '@/components/ui/tooltip'
 import { getLogs } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { splitPlatformStatusKey } from '@/lib/gateway-platforms'
 import { ChevronRight, LayoutDashboard, RefreshCw } from '@/lib/icons'
 import { LOG_NOISE_RE, trimLogLine } from '@/lib/log-format'
 import type { RuntimeReadinessResult } from '@/lib/runtime-readiness'
@@ -142,7 +143,13 @@ export function GatewayMenuPanel({
         : copy.checkingInference
     : copy.disconnected
 
-  const platforms = Object.entries(statusSnapshot?.gateway_platforms || {}).sort(([l], [r]) => l.localeCompare(r))
+  const platforms = Object.entries(statusSnapshot?.gateway_platforms || {})
+    .sort(([l], [r]) => l.localeCompare(r))
+    // `<profile>:<platform>` keys come from secondary-profile adapters; printing
+    // the raw key gave rows like "Work:telegram". Show the platform, with the
+    // profile it belongs to as a muted tag.
+    .map(([key, status]) => ({ ...splitPlatformStatusKey(key), key, status }))
+
   const recentLogs = useGatewayLogTail()
 
   // Keep the tail pinned to the latest line as it streams.
@@ -225,12 +232,15 @@ export function GatewayMenuPanel({
         <Section>
           <SectionLabel>{copy.messagingPlatforms}</SectionLabel>
           <ul className="mt-1.5 space-y-1">
-            {platforms.map(([name, platform]) => (
-              <li className="flex items-center justify-between gap-2 text-xs" key={name}>
-                <span className="truncate capitalize">{name}</span>
+            {platforms.map(({ key, platform, profile, status }) => (
+              <li className="flex items-center justify-between gap-2 text-xs" key={key}>
+                <span className="truncate">
+                  <span className="capitalize">{platform}</span>
+                  {profile ? <span className="ms-1 text-muted-foreground">{profile}</span> : null}
+                </span>
                 <span className="flex items-center gap-1.5 text-[0.66rem] text-muted-foreground">
-                  <StatusDot tone={PLATFORM_TONE[platform.state] || 'muted'} />
-                  {prettyState(platform.state)}
+                  <StatusDot tone={PLATFORM_TONE[status.state] || 'muted'} />
+                  {prettyState(status.state)}
                 </span>
               </li>
             ))}
