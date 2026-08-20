@@ -15,6 +15,15 @@ import { lastReply, markReplySpoken, unspokenTurn } from './voice-reply-cursor'
 
 const user = (id: string, text: string): ChatMessage => ({ id, role: 'user', parts: [{ type: 'text', text }] })
 
+/** A tool-only assistant bubble — `lib/session-history.ts` synthesizes one
+ *  (`h-tools-<n>`) when a turn's tool calls cannot fold into an existing row,
+ *  so a hydrate can grow an assistant bubble AHEAD of the one we spoke. */
+const toolBubble = (id: string): ChatMessage => ({
+  id,
+  role: 'assistant',
+  parts: [{ type: 'tool-call', toolCallId: `${id}-call`, toolName: 'read' }]
+})
+
 const reply = (id: string, text: string, pending = false): ChatMessage => ({
   id,
   role: 'assistant',
@@ -125,6 +134,66 @@ describe('the conversation loop across the row-id rewrite', () => {
     // `collectUnspokenTurnSpeech` starts from index 0 when it cannot find the
     // cursor, so an unmigrated anchor makes the loop read the session back.
     expect(unspokenTurn(view)).toBeNull()
+  })
+
+  it('migrates onto the SLOT it was marked on, not the first reply in the session', () => {
+    const { $messages, view } = fakeView([
+      user('h0-user', 'first'),
+      reply('h1-assistant', 'First answer.'),
+      user('m6-1', 'second'),
+      reply('m7-1', 'Second answer.')
+    ])
+
+    // Marked on the SECOND reply — ordinal 1, and that is the number that has
+    // to survive. Anchoring at 0 would re-offer 'Second answer.' below.
+    markReplySpoken(view)
+
+    // A resume re-keys the whole transcript AND a third turn lands.
+    $messages.set([
+      user('h0-user', 'first'),
+      reply('h1-assistant', 'First answer.'),
+      user('h2-user', 'second'),
+      reply('h3-assistant', 'Second answer.'),
+      user('h4-user', 'third'),
+      reply('h5-assistant', 'Third answer.')
+    ])
+
+    expect(unspokenTurn(view)?.text).toBe('Third answer.')
+  })
+
+  it('follows the spoken reply when a hydrate inserts a bubble AHEAD of it', () => {
+    const { $messages, view } = fakeView([
+      reply('h1-assistant', 'First answer.'),
+      user('m6-1', 'second'),
+      reply('m7-1', 'Second answer.')
+    ])
+
+    markReplySpoken(view)
+
+    // Hydrate folds the turn's tool calls into their own bubble, pushing the
+    // spoken reply from ordinal 1 to ordinal 2. Its id is untouched here, so
+    // nothing is re-read — but the cursor has to NOTICE it moved.
+    $messages.set([
+      reply('h1-assistant', 'First answer.'),
+      user('m6-1', 'second'),
+      toolBubble('h-tools-2'),
+      reply('m7-1', 'Second answer.')
+    ])
+    expect(unspokenTurn(view)).toBeNull()
+
+    // Only now does a resume re-key everything, and a third turn lands. With a
+    // stale ordinal the anchor migrates onto the TOOL bubble and 'Second
+    // answer.' is narrated a second time.
+    $messages.set([
+      reply('h1-assistant', 'First answer.'),
+      user('h2-user', 'second'),
+      toolBubble('h-tools-3'),
+      reply('h4-assistant', 'Second answer.'),
+      user('h5-user', 'third'),
+      reply('h6-assistant', 'Third answer.')
+    ])
+
+    expect(unspokenTurn(view)?.text).toBe('Third answer.')
   })
 
   it('narrates only the turn after the cursor once the anchor has migrated', () => {
