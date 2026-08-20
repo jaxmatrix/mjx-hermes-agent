@@ -91,7 +91,7 @@
     "katex": "^0.17.0",
     "mermaid": "11.16.1",
     "motion": "12.42.0",
-    "nanostores": "1.4.0",
+    "nanostores": "1.4.2",
     "radix-ui": "1.6.7",
     "react": "19.2.7",
     "react-arborist": "3.13.2",
