@@ -150,8 +150,28 @@ pub fn fallback_candidates(home: Option<&Path>, hermes_home: Option<&Path>) -> V
     out
 }
 
-/// Trim `--version` output to one line. The CLI prints a single line today, but a
-/// warning banner ahead of it would otherwise end up rendered as the version.
+/// Tells the backend to skip its update check for this invocation.
+///
+/// `hermes --version` is our "is this binary alive?" smoke test — every probe
+/// we own uses it, here and over SSH (`ssh/posix_lifecycle.rs`). Downstream
+/// folded the removed `hermes version` subcommand into `--version`, and that
+/// report ends with a SYNCHRONOUS update check: `git ls-remote` / `git fetch`
+/// against GitHub, bounded only by its own 10s subprocess timeouts. Offline
+/// that costs ~10.2s per candidate (measured), which is over `PROBE_TIMEOUT`
+/// — so the probe did not merely go slow, it TIMED OUT and reported a working
+/// install as unusable, sending the user to the install screen.
+///
+/// `hermes_cli/banner.py::check_for_updates` honours this at the one
+/// chokepoint every surface routes through, so the version LINES we parse are
+/// unchanged and only the trailing update-status line disappears. Set on the
+/// probe's environment ONLY — never on the environment the gateway is spawned
+/// with, whose update status is a user-facing feature.
+pub const SKIP_UPDATE_CHECK_ENV: &str = "HERMES_SKIP_UPDATE_CHECK";
+
+/// Trim `--version` output to one line. `--version` prints a multi-line report
+/// (install dir, method, Python, SDK, update status); the first line is the
+/// banner label, and a warning ahead of it would otherwise be rendered as the
+/// version.
 pub fn first_line(output: &str) -> Option<String> {
     output
         .lines()
@@ -172,23 +192,35 @@ mod imp {
 
     use super::{
         fallback_candidates, first_line, read_marker, usable_root, venv_hermes, InstallKind,
-        LocalInstall,
+        LocalInstall, SKIP_UPDATE_CHECK_ENV,
     };
 
     /// Probing must not hang the Local step. A wedged binary (a Windows Store
     /// python stub, an NFS mount that went away) would otherwise park the UI on a
     /// spinner with no recovery.
+    ///
+    /// This is a WEDGED-binary bound, not a routine one: with
+    /// `SKIP_UPDATE_CHECK_ENV` set a healthy `--version` is ~0.2s (measured on
+    /// Linux; the ladder walks at most a handful of candidates, so serial
+    /// probing stays well inside the one-second range). It stays at 10s rather
+    /// than dropping to the ~2s a healthy probe needs because cold Windows
+    /// Python startup alone is ~10.5s — see `apps/desktop/electron/main.ts`,
+    /// which shares one probe budget for exactly that reason. Tightening this
+    /// would trade a network stall for a cold-start stall.
     const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-    /// Run `<cmd> --version`, returning its first line when it exits 0.
+    /// The exact command every version probe runs.
     ///
-    /// This is the validation step the ladder is built around: it is what makes
-    /// "there is a file called hermes here" into "there is a working Hermes here".
-    async fn probe_version(cmd: &Path) -> Option<String> {
+    /// Split out from `probe_version` so its args AND environment are testable
+    /// without spawning anything: dropping `SKIP_UPDATE_CHECK_ENV` here is the
+    /// regression that made an offline probe exceed `PROBE_TIMEOUT`, and it is
+    /// invisible in any test that only looks at the parsed output.
+    pub(super) fn version_command(cmd: &Path) -> Command {
         let mut command = Command::new(cmd);
 
         command
             .arg("--version")
+            .env(SKIP_UPDATE_CHECK_ENV, "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -199,6 +231,16 @@ mod imp {
             // CREATE_NO_WINDOW — no console flash from a GUI process.
             command.creation_flags(0x0800_0000);
         }
+
+        command
+    }
+
+    /// Run `<cmd> --version`, returning its first line when it exits 0.
+    ///
+    /// This is the validation step the ladder is built around: it is what makes
+    /// "there is a file called hermes here" into "there is a working Hermes here".
+    async fn probe_version(cmd: &Path) -> Option<String> {
+        let mut command = version_command(cmd);
 
         let output = tokio::time::timeout(PROBE_TIMEOUT, command.output())
             .await
@@ -470,5 +512,91 @@ mod tests {
         );
         assert_eq!(first_line("   \n  "), None);
         assert_eq!(first_line(""), None);
+    }
+
+    /// `--version` is a multi-line REPORT now, not a one-line answer, and its
+    /// banner label carries more than a bare semver. Real captures, taken by
+    /// running the backend on this branch (git checkout) and from a stamped
+    /// non-git install; the ladder must keep the label and drop the rest.
+    #[test]
+    fn version_output_keeps_the_banner_label_of_the_multi_line_report() {
+        let from_git = "Hermes Agent v0.20.4 (2026.8.18) \u{b7} upstream 9c3e6461 \u{b7} local 54922dd2 (+2734 carried commits)\n\
+             Install directory: /home/u/hermes-agent\n\
+             Install method: git\n\
+             Python: 3.11.13\n\
+             OpenAI SDK: 2.24.0\n\
+             Up to date\n";
+
+        // Only the label survives — NOT the install directory, which is the
+        // line a naive `lines().last()`/join would have promoted.
+        assert_eq!(
+            first_line(from_git).as_deref(),
+            Some(
+                "Hermes Agent v0.20.4 (2026.8.18) \u{b7} upstream 9c3e6461 \u{b7} local 54922dd2 (+2734 carried commits)"
+            )
+        );
+
+        // pip / uv-tool shape: no git checkout, so no upstream/local suffix
+        // and no update line at all.
+        let from_pip = "Hermes Agent v0.20.4 (2026.8.18)\n\
+             Install directory: /home/u/.local/share/uv/tools/hermes-agent\n\
+             Install method: pip\n\
+             Python: 3.11.13\n\
+             OpenAI SDK: 2.24.0\n";
+
+        assert_eq!(
+            first_line(from_pip).as_deref(),
+            Some("Hermes Agent v0.20.4 (2026.8.18)")
+        );
+    }
+
+    /// The probe's args AND environment are the contract with the backend.
+    ///
+    /// Without `SKIP_UPDATE_CHECK_ENV`, `hermes --version` ends in a
+    /// synchronous `git ls-remote`/`git fetch`; measured offline that is
+    /// ~10.2s per candidate, over `PROBE_TIMEOUT`, so a working install is
+    /// reported as unusable. Nothing about the parsed OUTPUT changes when the
+    /// variable is dropped, which is why this asserts on the command itself.
+    #[cfg(desktop)]
+    #[test]
+    fn the_version_probe_suppresses_the_backends_update_check() {
+        use std::ffi::OsStr;
+
+        let command = imp::version_command(Path::new("/nowhere/hermes"));
+        let std_command = command.as_std();
+
+        let args: Vec<_> = std_command.get_args().collect();
+        assert_eq!(
+            args,
+            [OsStr::new("--version")],
+            "the probe must stay the cheap smoke test, with no extra args"
+        );
+
+        let suppression = std_command
+            .get_envs()
+            .find(|(key, _)| *key == OsStr::new(SKIP_UPDATE_CHECK_ENV));
+
+        assert_eq!(
+            suppression.map(|(_, value)| value),
+            Some(Some(OsStr::new("1"))),
+            "probe env must set {SKIP_UPDATE_CHECK_ENV}=1, or an offline probe \
+             blows past PROBE_TIMEOUT and the install is reported missing"
+        );
+    }
+
+    /// Probe-only, deliberately: the gateway spawn must NOT inherit it (its
+    /// update status is a user-facing feature, and MJXHRM-488 covers that
+    /// spawn's env separately).
+    #[cfg(desktop)]
+    #[test]
+    fn the_probe_sets_no_other_environment() {
+        let command = imp::version_command(Path::new("/nowhere/hermes"));
+        let overrides: Vec<_> = command.as_std().get_envs().collect();
+
+        assert_eq!(
+            overrides.len(),
+            1,
+            "the probe overrides exactly one variable; found {overrides:?}"
+        );
     }
 }
