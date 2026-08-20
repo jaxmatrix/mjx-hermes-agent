@@ -666,6 +666,28 @@ describe('ClarifyTool batch view', () => {
     ])
   })
 
+  // The card has no per-question skip — Skip cancels the whole batch — so a
+  // textbox the user typed in and then cleared must not satisfy the confirm
+  // gate, or the agent gets a blank nobody meant to give it.
+  it('does not count a question that was touched and left blank', () => {
+    seedBatch()
+    renderBatch('clarify-batch-blank')
+
+    fireEvent.click(screen.getByRole('button', { name: /Coffee/ }))
+
+    // The SECOND question's box — the first already holds a picked choice.
+    const otherBox = within(document.querySelector('[data-clarify-question="q1"]') as HTMLElement).getByPlaceholderText(
+      'Other (type your answer)'
+    )
+
+    fireEvent.change(otherBox, { target: { value: 'later' } })
+    expect(confirmButton().hasAttribute('disabled')).toBe(false)
+
+    fireEvent.change(otherBox, { target: { value: '   ' } })
+    expect(screen.getByText('1 of 2 answered')).toBeTruthy()
+    expect(confirmButton().hasAttribute('disabled')).toBe(true)
+  })
+
   // The reconnect half: the gateway replays what it already locked, and the
   // card has to come back holding the user's own work — still editable.
   it('stages the answers a reconnect replayed', () => {
