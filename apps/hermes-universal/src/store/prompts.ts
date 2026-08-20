@@ -12,6 +12,11 @@ export interface ApprovalRequest {
   command: string
   description: string
   allowPermanent: boolean
+  // Which queued approval this is. `approval.respond` without it resolves the
+  // OLDEST entry (`resolve_gateway_approval`), so a session holding two
+  // different commands answered the wrong one. Optional: a legacy gateway
+  // omits it, and FIFO is still the right fallback there.
+  requestId?: string
   // Gateway-restricted choice set (e.g. a tirith warning drops `always`), and the
   // smart-deny flag that implies `['once', 'deny']`. Both optional — the backend
   // omits them on a plain approval. Mirrors desktop's ApprovalRequest.

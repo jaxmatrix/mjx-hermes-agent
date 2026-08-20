@@ -570,12 +570,27 @@ export interface SessionResumeResponse {
     event: string
     payload: Record<string, unknown>
   }
+  /** The gateway approval still queued for this session. Approvals do NOT go
+   *  through `_block`, so `pending_prompt` can never carry one: they queue in
+   *  `tools/approval`'s `_gateway_queues` and this is their only replay. */
+  pending_approval?: null | PendingApprovalPayload
   queued?: null | {
     user?: string
   }
   resumed: string
   running?: boolean
   session_id: string
+}
+
+/** One unresolved gateway approval, as `_approval_request_payload` shapes it
+ *  for both the `approval.request` event and the `approval.pending` replay. */
+export interface PendingApprovalPayload {
+  allow_permanent?: boolean
+  choices?: unknown
+  command?: unknown
+  description?: unknown
+  request_id?: unknown
+  smart_denied?: boolean
 }
 
 export interface SessionRuntimeInfo {

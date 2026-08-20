@@ -27,6 +27,7 @@ import {
   stopVoicePlayback,
   takeVoicePlaybackInterrupted
 } from '@/lib/voice-playback'
+import { replayPendingApproval } from '@/store/approvals'
 import { atom, computed } from '@/store/atom'
 import { requestGateway } from '@/store/gateway'
 import { clearNotifications, notifyError } from '@/store/notifications'
@@ -45,6 +46,7 @@ import {
   clearSessionSecret,
   clearSessionSudo,
   type SecretRequest,
+  sessionApprovalRequest,
   sessionClarifyRequest,
   sessionSecretRequest,
   sessionSudoRequest,
@@ -1423,6 +1425,11 @@ export async function respondApproval(
   // answers an empty `session_id` with the same "session not found" it gives a
   // dead one, which is exactly what the old swallow was hiding.
   const live = slice?.runtimeSessionId ?? key
+  // WHICH approval this is. Without it `resolve_gateway_approval` resolves the
+  // OLDEST queued entry, while the bar shows the NEWEST (each
+  // `approval.request` overwrites the session's slot) — so a session holding
+  // two different commands approved the one the user was not looking at.
+  const requestId = sessionApprovalRequest(key).get()?.requestId
   // Lazily, like every other recovery call site here — `store/session-recovery`
   // imports back into the session store (see the note on `sessionRecovery`).
   const { withSessionNotFoundResume } = await sessionRecovery()
@@ -1432,7 +1439,11 @@ export async function respondApproval(
     result,
     sessionId: recoveredId
   } = await withSessionNotFoundResume(live, slice?.storedSessionId, id =>
-    requestGateway<{ resolved?: number }>('approval.respond', { choice, session_id: id })
+    requestGateway<{ resolved?: number }>('approval.respond', {
+      choice,
+      session_id: id,
+      ...(requestId ? { request_id: requestId } : {})
+    })
   )
 
   // A recovery MOVES the slice. The default `onRecovered` rekeys it onto the
@@ -1449,6 +1460,17 @@ export async function respondApproval(
   // dead bar goes too, and the outcome tells the caller to SAY so.
   clearSessionApproval(liveKey)
   clearAwaitingInputPose(liveKey)
+
+  // The queue can hold more than one, and nothing re-emits the ones this answer
+  // did not resolve — `approval.request` fired once, when each was enqueued.
+  // Pulling the next keeps a session that stacked two approvals answerable
+  // instead of leaving the rest to time out invisibly. Best-effort: the answer
+  // already landed, and a failed pull must not report it as a failed send.
+  try {
+    await replayPendingApproval(recovered ? recoveredId : live, liveKey)
+  } catch {
+    // The next `approval.request` (or a resume) will surface it.
+  }
 
   // A gateway that omits `resolved` is not claiming anything either way; only an
   // explicit zero means "nobody was waiting". Treating a missing field as

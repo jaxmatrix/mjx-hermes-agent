@@ -28,7 +28,7 @@ import '@/store/turn-hydration'
 import { burstVibeHearts } from '@/components/chat/vibe-hearts'
 import type { GatewayEvent } from '@/gateway'
 import { translateNow } from '@/i18n'
-import { coerceStringList, coerceText } from '@/lib/chat-messages'
+import { coerceText } from '@/lib/chat-messages'
 import { coerceThinkingText } from '@/lib/chat-runtime'
 import { type GatewayToolPayload, toolIdFromPayload } from '@/lib/chat-tool-parts'
 import { playCompletionSound } from '@/lib/completion-sound'
@@ -39,6 +39,7 @@ import { invalidateSlashCompletions } from '@/lib/slash-completion-cache'
 import { type DeltaChannel, flushDeltas, queueDelta, setStreamBatchSink } from '@/lib/stream-batch'
 import { stopSpeaking } from '@/lib/tts'
 import { type AgentNoticePayload, clearAgentNotice, nativeNoticeInput, showAgentNotice } from '@/store/agent-notices'
+import { ackApprovalReceived, readApprovalPayload } from '@/store/approvals'
 import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block'
 import { noteMissedSteer } from '@/store/chat'
 import { normalizeQuestions, readChoices, readLockedAnswers } from '@/store/clarify'
@@ -361,15 +362,18 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
   // --- Per-session blocking prompts ----------------------------------------
   switch (event.type) {
-    case 'approval.request':
-      setSessionApproval(key, {
-        command: coerceText(payload.command),
-        description: coerceText(payload.description) || 'dangerous command',
-        // false only when a tirith warning forbids it; backend omits it otherwise.
-        allowPermanent: payload.allow_permanent !== false,
-        choices: coerceStringList(payload.choices) ?? undefined,
-        smartDenied: payload.smart_denied === true
-      })
+    case 'approval.request': {
+      // One reader for the event and for the `approval.pending` /
+      // `pending_approval` replays — they are the same payload
+      // (`_approval_request_payload`), and a client that parsed them
+      // differently would answer a replayed approval with a different
+      // request_id than the live one.
+      const approval = readApprovalPayload(payload)
+
+      setSessionApproval(key, approval)
+      // Session-scoped: `approval.received` resolves through `_sess()`, so it
+      // needs the runtime id the gateway knows, which is this event's session.
+      void ackApprovalReceived(key, approval.requestId)
       dispatchNativeNotification({
         kind: 'approval',
         title: translateNow('notifications.native.approvalTitle'),
@@ -379,6 +383,8 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       void triggerHaptic('warning')
 
       break
+    }
+
     case 'clarify.request': {
       // The gateway sends `question` + `choices` — NOT `prompt`; the other keys
       // are tolerated only as a fallback.
