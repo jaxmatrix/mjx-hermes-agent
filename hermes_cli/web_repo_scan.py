@@ -107,7 +107,9 @@ def _is_repo(directory: str) -> bool:
     if not os.path.isdir(git_dir):
         return False
     try:
-        with open(os.path.join(git_dir, "HEAD"), "rb"):
+        # windows-footgun: ok — already binary; the checker reads the nested
+        # os.path.join()'s "HEAD" as the mode argument.
+        with open(os.path.join(git_dir, "HEAD"), "rb"):  # windows-footgun: ok
             return True
     except OSError:
         return False
