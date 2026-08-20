@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
-import { clearSessionClarify, sessionClarifyRequest, setSessionClarify } from '@/store/prompts'
+import { clearSessionClarify, sessionApprovalRequest, sessionClarifyRequest, setSessionClarify } from '@/store/prompts'
 import {
   $activeSessionKey,
   $sessionStates,
@@ -793,6 +793,25 @@ describe('adoptResumedTurn', () => {
   it('records nothing for an idle session', () => {
     expect(adoptResumedTurn('s1', { ...base, running: false } as SessionResumeResponse)).toEqual({ action: 'noop' })
     expect(getInflightTurn('s1')).toBeNull()
+  })
+
+  /**
+   * MJXHRM-458. A parked APPROVAL is the one blocking prompt `pending_prompt`
+   * can never carry — approvals queue in `tools/approval`, they never enter
+   * `_block`'s registry — so `pending_approval` is its only replay, and this is
+   * the one place every cold-open path (main pane, tile, satellite) goes
+   * through. Without it a session resumed while blocked showed a "needs input"
+   * dot over a bar that was never rebuilt, and the command stayed blocked until
+   * its own timeout.
+   */
+  it('puts back the approval a resumed session is still blocked on', () => {
+    adoptResumedTurn('s1', {
+      ...base,
+      running: true,
+      pending_approval: { command: 'rm -rf /', request_id: 'a1' }
+    } as SessionResumeResponse)
+
+    expect(sessionApprovalRequest('s1').get()).toMatchObject({ command: 'rm -rf /', requestId: 'a1' })
   })
 
   // Two resumes in a row each return the descriptor for the SAME scheduled

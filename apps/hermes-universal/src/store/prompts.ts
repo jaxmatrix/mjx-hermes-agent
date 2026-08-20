@@ -1,5 +1,6 @@
 import { atom, computed, type ReadableAtom } from 'nanostores'
 
+import type { ClarifyQuestion } from '@/store/clarify'
 import { $activeSessionKey, addSessionKeyHooks } from '@/store/session-state-types'
 
 // The blocking-prompt request shapes. They live HERE, not in store/chat.ts,
@@ -11,6 +12,11 @@ export interface ApprovalRequest {
   command: string
   description: string
   allowPermanent: boolean
+  // Which queued approval this is. `approval.respond` without it resolves the
+  // OLDEST entry (`resolve_gateway_approval`), so a session holding two
+  // different commands answered the wrong one. Optional: a legacy gateway
+  // omits it, and FIFO is still the right fallback there.
+  requestId?: string
   // Gateway-restricted choice set (e.g. a tirith warning drops `always`), and the
   // smart-deny flag that implies `['once', 'deny']`. Both optional — the backend
   // omits them on a plain approval. Mirrors desktop's ApprovalRequest.
@@ -24,6 +30,18 @@ export interface ClarifyRequest {
   // question. The inline ClarifyTool reads BOTH fields from here — `tool.start`
   // ships no args, so the event payload is the only source for the panel.
   choices: string[] | null
+  // `multi_select` on the wire: the tool parses a JSON array back, so the card
+  // may offer more than one pick. Optional because the gateway emits the key
+  // only when it is true (`_clarify_block`) — absent IS single-select.
+  multiSelect?: boolean
+  // Batch clarify (2–5 independent questions, `tools/clarify_tool.py`): the
+  // payload carries `questions[]` and NO top-level `question`, so these are
+  // present INSTEAD of `question`/`choices` rather than alongside them.
+  questions?: ClarifyQuestion[]
+  // Answers the gateway has already locked, qid → answer. Only a reconnect
+  // replay sets this (`_pending_clarify_request_payload`); a live batch starts
+  // with nothing locked.
+  lockedAnswers?: Record<string, string>
 }
 // Sudo is a password-entry flow (not an allow/deny choice).
 export interface SudoRequest {

@@ -1953,6 +1953,27 @@ def _approval_request_payload(data: dict | None) -> dict:
     return payload
 
 
+def _pending_prompt_snapshot(rid: str, payload: dict) -> dict:
+    """The replay copy of one parked prompt's payload.
+
+    Everything a client needs to answer the prompt is already in the payload it
+    was emitted with — except for one thing a BATCH clarify accumulates AFTER
+    the emit: the per-question answers locked so far. Without them a
+    reconnecting client presents questions the user has already answered as
+    unanswered, and re-locking them is the only way forward.
+
+    Both replay fields on the live-session payload go through here, so
+    `pending_prompt` (generic, every blocking bridge) and `pending_clarify`
+    (clarify-specific, what downstream's desktop reads) can never disagree
+    about what a reconnecting client is told. Callers hold `_prompt_lock`.
+    """
+    snapshot = dict(payload)
+    batch = _batch_clarify.get(rid)
+    if batch is not None and batch["answers"]:
+        snapshot["answers"] = dict(batch["answers"])
+    return snapshot
+
+
 def _pending_clarify_request_payload(sid: str) -> dict | None:
     """Read the clarify prompt still blocking a session, if there is one.
 
@@ -1969,14 +1990,7 @@ def _pending_clarify_request_payload(sid: str) -> dict | None:
                 continue
             event, prompt_payload = _pending_prompt_payloads.get(rid, ("", {}))
             if event == "clarify.request":
-                snapshot = dict(prompt_payload)
-                # Batch clarify: replay the answers locked so far, so a
-                # reconnecting client restores its per-question ✓ state
-                # instead of presenting every question as unanswered.
-                batch = _batch_clarify.get(rid)
-                if batch is not None and batch["answers"]:
-                    snapshot["answers"] = dict(batch["answers"])
-                return snapshot
+                return _pending_prompt_snapshot(rid, prompt_payload)
     return None
 
 
@@ -8831,7 +8845,10 @@ def _session_pending_prompt(sid: str) -> dict | None:
             if owner_sid != sid:
                 continue
             event, payload = _pending_prompt_payloads.get(rid, ("input.request", {}))
-            return {"event": str(event), "payload": dict(payload)}
+            return {
+                "event": str(event),
+                "payload": _pending_prompt_snapshot(rid, payload),
+            }
     return None
 
 
@@ -9193,6 +9210,18 @@ def _live_session_payload(
     # this payload can put the question back on a reconnecting client's screen
     # (see _session_pending_prompt); "status": "waiting" above says a prompt is
     # open, this says WHICH.
+    #
+    # THREE fields, two of them overlapping, and all three stay (MJXHRM-458):
+    #   pending_prompt   — the fork's generic {event, payload}. The ONLY replay
+    #                      that covers sudo / secret / terminal.read / mcp.setup
+    #                      too, and what apps/hermes-universal consumes.
+    #   pending_clarify  — clarify-only, read by apps/desktop
+    #                      (use-session-actions) and by the hermes-bots plugin.
+    #   pending_approval — approvals never go through _block at all (they queue
+    #                      in tools/approval), so nothing else can carry them.
+    # Dropping either of the first two breaks a shipped client, so what was
+    # removed instead is the DUPLICATED logic: both now build their payload
+    # with _pending_prompt_snapshot, and cannot drift apart.
     pending_prompt = _session_pending_prompt(sid)
     if pending_prompt:
         payload["pending_prompt"] = pending_prompt

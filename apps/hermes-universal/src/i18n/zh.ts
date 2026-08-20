@@ -3043,6 +3043,10 @@ export const zh: Translations = {
       placeholder: '输入你的答案…',
       skip: '跳过',
       continueLabel: '继续',
+      confirmAndContinueLabel: '确认并继续',
+      answeredBadge: '已回答',
+      questionProgress: (answered, total) => `已回答 ${answered}/${total}`,
+      unknownQuestion: '智能体已不再询问该问题 — 请回答仍显示的问题',
       skipped: '已跳过',
       lateAnswer: (question, choice) => `关于“${question}” — 我的回答：${choice}`,
       lateAnswerTip: '将该回答草拟为后续消息',
@@ -3300,8 +3304,7 @@ export const zh: Translations = {
     keepRunning: '保持后台运行',
     tooltip: 'Hermes (MJX)',
     closeDialogTitle: '让 Hermes 留在后台吗？',
-    closeDialogDesc:
-      '关闭此窗口后，可以让 Hermes 继续在后台运行，也可以完全退出。你随时可以在设置或托盘菜单中更改。',
+    closeDialogDesc: '关闭此窗口后，可以让 Hermes 继续在后台运行，也可以完全退出。你随时可以在设置或托盘菜单中更改。',
     keepInBackground: '留在后台',
     closeApp: '退出 Hermes',
     status: {

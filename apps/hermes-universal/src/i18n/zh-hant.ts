@@ -2542,6 +2542,10 @@ export const zhHant = defineLocale({
       placeholder: '輸入您的答案…',
       skip: '略過',
       continueLabel: '繼續',
+      confirmAndContinueLabel: '確認並繼續',
+      answeredBadge: '已回答',
+      questionProgress: (answered, total) => `已回答 ${answered}/${total}`,
+      unknownQuestion: '代理已不再詢問該問題 — 請回答仍顯示的問題',
       skipped: '已略過',
       lateAnswer: (question, choice) => `關於「${question}」 — 我的回答：${choice}`,
       lateAnswerTip: '將此回答草擬為後續訊息',
@@ -2805,8 +2809,7 @@ export const zhHant = defineLocale({
     keepRunning: '保持背景執行',
     tooltip: 'Hermes (MJX)',
     closeDialogTitle: '讓 Hermes 留在背景嗎？',
-    closeDialogDesc:
-      '關閉此視窗後，可以讓 Hermes 繼續在背景執行，也可以完全結束。你隨時可以在設定或系統匣選單中變更。',
+    closeDialogDesc: '關閉此視窗後，可以讓 Hermes 繼續在背景執行，也可以完全結束。你隨時可以在設定或系統匣選單中變更。',
     keepInBackground: '留在背景',
     closeApp: '結束 Hermes',
     status: {

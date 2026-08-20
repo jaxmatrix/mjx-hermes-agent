@@ -366,11 +366,38 @@ export function reduceSessionState(
       // The two halves of this ONE event have to agree on whether it is
       // renderable: the router writing the prompt store while this case declines
       // to make a row IS the "needs input, nowhere to answer it" state the row
-      // exists to prevent.
+      // exists to prevent. That includes the BATCH shape, which has no
+      // top-level `question` at all — only `questions[]`.
       const question = coerceText(payload.question) || coerceText(payload.prompt) || coerceText(payload.message)
 
-      if (!requestId || !question) {
+      // Raw pass, deliberately — same stance as `choices` below: the panel
+      // normalizes at the render boundary (`store/clarify.ts`). Importing the
+      // normalizer here would also close an import cycle (clarify.ts calls
+      // `reduceSessionState`), and all this row needs is the question TEXT that
+      // `lib/chat-tool-parts` correlates the two clarify rows on.
+      const questions = Array.isArray(payload.questions)
+        ? payload.questions.flatMap(entry => {
+            const row = entry as Record<string, unknown> | null
+            const qid = typeof row?.qid === 'string' ? row.qid.trim() : ''
+            const text = typeof row?.question === 'string' ? row.question.trim() : ''
+
+            return qid && text ? [{ qid, question: text }] : []
+          })
+        : []
+
+      if (!requestId || (!question && questions.length === 0)) {
         return { ...state, needsInput: true }
+      }
+
+      // A batch row carries its questions as args so `lib/chat-tool-parts`
+      // can correlate it with the `tool.start` row that has no `question`
+      // either (`batchClarifyMatchValue`), and so the card can render from the
+      // row alone if the prompt store entry is gone.
+      if (questions.length > 0) {
+        return {
+          ...applyToolEvent(state, { args: { questions }, name: 'clarify', tool_id: requestId }, 'running'),
+          needsInput: true
+        }
       }
 
       // Raw strings only; the panel normalizes at the render boundary

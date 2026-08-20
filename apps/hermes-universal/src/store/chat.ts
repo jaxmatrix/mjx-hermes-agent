@@ -27,6 +27,7 @@ import {
   stopVoicePlayback,
   takeVoicePlaybackInterrupted
 } from '@/lib/voice-playback'
+import { replayPendingApproval } from '@/store/approvals'
 import { atom, computed } from '@/store/atom'
 import { requestGateway } from '@/store/gateway'
 import { clearNotifications, notifyError } from '@/store/notifications'
@@ -45,6 +46,7 @@ import {
   clearSessionSecret,
   clearSessionSudo,
   type SecretRequest,
+  sessionApprovalRequest,
   sessionClarifyRequest,
   sessionSecretRequest,
   sessionSudoRequest,
@@ -1423,6 +1425,11 @@ export async function respondApproval(
   // answers an empty `session_id` with the same "session not found" it gives a
   // dead one, which is exactly what the old swallow was hiding.
   const live = slice?.runtimeSessionId ?? key
+  // WHICH approval this is. Without it `resolve_gateway_approval` resolves the
+  // OLDEST queued entry, while the bar shows the NEWEST (each
+  // `approval.request` overwrites the session's slot) — so a session holding
+  // two different commands approved the one the user was not looking at.
+  const requestId = sessionApprovalRequest(key).get()?.requestId
   // Lazily, like every other recovery call site here — `store/session-recovery`
   // imports back into the session store (see the note on `sessionRecovery`).
   const { withSessionNotFoundResume } = await sessionRecovery()
@@ -1432,7 +1439,11 @@ export async function respondApproval(
     result,
     sessionId: recoveredId
   } = await withSessionNotFoundResume(live, slice?.storedSessionId, id =>
-    requestGateway<{ resolved?: number }>('approval.respond', { choice, session_id: id })
+    requestGateway<{ resolved?: number }>('approval.respond', {
+      choice,
+      session_id: id,
+      ...(requestId ? { request_id: requestId } : {})
+    })
   )
 
   // A recovery MOVES the slice. The default `onRecovered` rekeys it onto the
@@ -1449,6 +1460,17 @@ export async function respondApproval(
   // dead bar goes too, and the outcome tells the caller to SAY so.
   clearSessionApproval(liveKey)
   clearAwaitingInputPose(liveKey)
+
+  // The queue can hold more than one, and nothing re-emits the ones this answer
+  // did not resolve — `approval.request` fired once, when each was enqueued.
+  // Pulling the next keeps a session that stacked two approvals answerable
+  // instead of leaving the rest to time out invisibly. Best-effort: the answer
+  // already landed, and a failed pull must not report it as a failed send.
+  try {
+    await replayPendingApproval(recovered ? recoveredId : live, liveKey)
+  } catch {
+    // The next `approval.request` (or a resume) will surface it.
+  }
 
   // A gateway that omits `resolved` is not claiming anything either way; only an
   // explicit zero means "nobody was waiting". Treating a missing field as
@@ -1491,6 +1513,72 @@ export async function respondClarify(answer: string, key = $activeSessionKey.get
   }
 
   return result?.status === 'expired' ? 'expired' : 'delivered'
+}
+
+/** The gateway's answer to a per-question batch lock (`_respond` in
+ *  `tui_gateway/server.py`): the qids still unanswered after this one. */
+export interface ClarifyBatchLockResult {
+  outcome: PromptRespondOutcome
+  remaining: string[]
+}
+
+/** `_respond` answers this when a `question_id` is not one of the batch's own
+ *  qids — the batch is alive, the lock simply addressed nothing. */
+export const CLARIFY_UNKNOWN_QUESTION_CODE = 4002
+
+/**
+ * Lock the answers of a BATCH clarify, one `question_id` at a time.
+ *
+ * Sequential on purpose, never `Promise.all`: the gateway completes the batch
+ * on the lock that empties `remaining` (`ev.set()` in `_respond`), so the last
+ * lock releases the agent — and a reordered burst would complete the batch
+ * with an earlier answer still in flight, handing the tool a blank for a
+ * question the user did answer.
+ *
+ * The request is cleared only once the gateway says nothing remains. A partial
+ * failure therefore leaves the card up with the locks it did land, which is
+ * exactly what the user needs to retry: locks are update-in-place server-side,
+ * so re-sending one is harmless.
+ */
+export async function respondClarifyBatch(
+  locks: { questionId: string; answer: string }[],
+  key = $activeSessionKey.get()
+): Promise<ClarifyBatchLockResult> {
+  const req = sessionClarifyRequest(key).get()
+
+  if (!req) {
+    return { outcome: 'gone', remaining: [] }
+  }
+
+  let remaining: string[] = req.questions?.map(entry => entry.qid) ?? []
+  let expired = false
+
+  for (const lock of locks) {
+    const result = await requestGateway<{ remaining?: unknown; status?: string }>('clarify.respond', {
+      request_id: req.requestId,
+      question_id: lock.questionId,
+      answer: lock.answer
+    })
+
+    if (result?.status === 'expired') {
+      // The whole request is gone server-side, not just this question — the
+      // remaining locks would all answer the same way, so stop asking.
+      expired = true
+
+      break
+    }
+
+    remaining = Array.isArray(result?.remaining)
+      ? result.remaining.filter((qid): qid is string => typeof qid === 'string')
+      : remaining
+  }
+
+  if ((expired || remaining.length === 0) && sessionClarifyRequest(key).get()?.requestId === req.requestId) {
+    clearSessionClarify(key)
+    clearAwaitingInputPose(key)
+  }
+
+  return { outcome: expired ? 'expired' : 'delivered', remaining }
 }
 
 /**
