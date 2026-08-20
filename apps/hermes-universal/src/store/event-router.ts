@@ -39,6 +39,7 @@ import { invalidateSlashCompletions } from '@/lib/slash-completion-cache'
 import { type DeltaChannel, flushDeltas, queueDelta, setStreamBatchSink } from '@/lib/stream-batch'
 import { stopSpeaking } from '@/lib/tts'
 import { type AgentNoticePayload, clearAgentNotice, nativeNoticeInput, showAgentNotice } from '@/store/agent-notices'
+import { reconcileApprovalModeForProfile } from '@/store/approval-mode'
 import { ackApprovalReceived, readApprovalPayload } from '@/store/approvals'
 import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block'
 import { noteMissedSteer } from '@/store/chat'
@@ -56,6 +57,7 @@ import {
 } from '@/store/live-sync'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { flashPetActivity, setPetActivity } from '@/store/pet'
+import { $activeGatewayProfile } from '@/store/profile'
 import {
   clearAllPrompts,
   clearSessionClarify,
@@ -70,7 +72,7 @@ import {
   setSessionSudo
 } from '@/store/prompts'
 import { applyReactionEvent } from '@/store/reactions'
-import { reduceSessionState } from '@/store/session-reducer'
+import { EMPTY_USAGE, reduceSessionState } from '@/store/session-reducer'
 import {
   $activeSessionKey,
   $sessionStates,
@@ -85,7 +87,7 @@ import { routeTurnEvent, startTurnReconciler } from '@/store/turn-lifecycle'
 // out of the gateway event hot path — same reason desktop does it.
 import { ingestBackendSkin } from '@/themes/backend-sync'
 import type { HermesSkin } from '@/themes/skin-contract'
-import type { ContextBreakdown, MessageReaction, UsageStats } from '@/types/hermes'
+import type { ContextBreakdown, MessageReaction } from '@/types/hermes'
 
 // Self-register at import. Nothing else consumes the gateway's event stream, so
 // if this module is loaded but not listening the app silently receives nothing —
@@ -156,8 +158,6 @@ setStreamBatchSink((key, channel, text) => {
   updateSession(key, state => reduceSessionState(state, { type } as GatewayEvent, { text }))
 })
 
-const EMPTY_USAGE: UsageStats = { calls: 0, input: 0, output: 0, total: 0 }
-
 /**
  * Pull the live context breakdown for the statusbar label after a settled turn.
  * The ContextUsagePanel fetches its own breakdown on open; this only feeds the
@@ -175,8 +175,13 @@ async function refreshSessionUsage(key: string): Promise<void> {
 
     updateSession(key, state => ({
       ...state,
+      // MERGED over whatever the turn's live `session.usage` ticks left behind.
+      // This used to spread only `EMPTY_USAGE`, so the settle zeroed `calls`,
+      // `input` and `output` — the breakdown RPC does not report them — and the
+      // context panel's fallback row read 0 calls on every finished turn.
       usage: {
         ...EMPTY_USAGE,
+        ...state.usage,
         context_max: b.context_max,
         context_percent: b.context_percent,
         context_used: b.context_used,
@@ -633,6 +638,46 @@ export function routeGatewayEvent(event: GatewayEvent): void {
     case 'message.start':
       setPetActivity({ busy: true }) // pet: working pose
       stopSpeaking() // interrupt any TTS from the previous turn
+
+      break
+
+    /**
+     * The live approval indicator.
+     *
+     * `approvals.mode` is gateway-global config, and `$approvalModes` is a cache
+     * the statusbar item fills ONCE when it mounts (`syncApprovalModeForProfile`
+     * in `app/shell/approval-mode-menu.tsx`). Every other writer is a local
+     * action — this app's own `/approvals` run or its Settings save — so a mode
+     * changed anywhere else (the TUI, the web dashboard, `PUT /api/config`, a
+     * second Hermes window) left the zap glyph showing the mode from mount time
+     * for the rest of the session, i.e. it claimed approvals were on while the
+     * backend auto-approved every dangerous command.
+     *
+     * The backend now pushes for exactly this: `broadcast_session_info()`
+     * (`tui_gateway/server.py`) re-emits `session.info` to every live session
+     * whenever `approvals.mode` moves, mid-turn included. `_session_info` stamps
+     * `approval_mode` (the persisted mode) and `yolo` (the EFFECTIVE bypass —
+     * that mode OR the frozen env OR the per-session flag) on every frame.
+     *
+     * Scoped like desktop's `handleSessionInfoEvent`: only the ACTIVE session's
+     * frame may reconcile the foreground cache, since the cache is keyed by
+     * gateway profile and background sessions can belong to another one.
+     */
+    case 'session.info':
+      if (typeof payload.approval_mode === 'string') {
+        reconcileApprovalModeForProfile($activeGatewayProfile.get(), payload.approval_mode)
+      }
+
+      if (typeof payload.yolo === 'boolean') {
+        // `$yoloActive` is what `/yolo` toggles against, so an un-synced copy
+        // makes the first press after connecting a no-op (it flips a stale
+        // `false` to `true` while the backend was already bypassing). Lazy
+        // import: `store/session` imports this module's graph — same reason
+        // `applySessionTitle` above defers it.
+        const yolo = payload.yolo
+
+        void import('@/store/session').then(m => m.setYoloActive(yolo)).catch(() => {})
+      }
 
       break
 

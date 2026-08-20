@@ -32,6 +32,7 @@ import { type GatewayToolPayload, upsertToolPart } from '@/lib/chat-tool-parts'
 import { dedupeGeneratedImageEchoesInParts } from '@/lib/generated-images'
 import { isLiveTailRow } from '@/lib/live-tail'
 import { type ClientSessionState } from '@/store/session-state-types'
+import type { UsageStats } from '@/types/hermes'
 
 const patchLastAssistant = (state: ClientSessionState, patch: (m: ChatMessage) => ChatMessage): ClientSessionState => ({
   ...state,
@@ -143,7 +144,45 @@ function applySessionInfo(state: ClientSessionState, payload: Record<string, unk
     patch.fast = payload.fast
   }
 
+  // `yolo` is the gateway's EFFECTIVE approval-bypass state, not the per-session
+  // `/yolo` flag: `_session_info` ORs the frozen process env, the session flag
+  // and `approvals.mode === 'off'` (`tui_gateway/server.py`). The slice has
+  // carried this field since the port with nothing ever writing it, so a session
+  // running with approvals off read as `yolo: false` everywhere. Adopted with
+  // the same stance as `fast` — `false` is a real state, so any boolean lands.
+  if (typeof payload.yolo === 'boolean' && payload.yolo !== state.yolo) {
+    patch.yolo = payload.yolo
+  }
+
   return Object.keys(patch).length > 0 ? { ...state, ...patch } : state
+}
+
+/** The zero row a session's usage starts from, so a partial tick never leaves
+ *  `calls`/`input`/`output`/`total` undefined on a `UsageStats`. */
+export const EMPTY_USAGE: UsageStats = { calls: 0, input: 0, output: 0, total: 0 }
+
+/**
+ * Adopt a live `session.usage` tick.
+ *
+ * `_start_usage_ticker` (`tui_gateway/server.py`) pushes one of these about once
+ * a second while a turn runs, precisely because the client's context-window
+ * figure otherwise sits frozen for the whole (often multi-minute, multi-tool)
+ * turn and only jumps at `message.complete`. Universal had no case for it at
+ * all: the frame reached this reducer, matched nothing, and was dropped.
+ *
+ * MERGED, never replaced. A tick carries whatever `_get_usage` could compute —
+ * `context_used`/`context_max`/`context_percent` are deliberately absent when
+ * the compressor has no real current-window occupancy to report (#50421), so an
+ * assignment would blank a gauge an earlier tick had legitimately painted.
+ */
+function applySessionUsage(state: ClientSessionState, payload: Record<string, unknown>): ClientSessionState {
+  const usage = payload.usage
+
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) {
+    return state
+  }
+
+  return { ...state, usage: { ...EMPTY_USAGE, ...state.usage, ...(usage as Partial<UsageStats>) } }
 }
 
 /** Reduce ONE gateway event into ONE session's state slice. Pure. */
@@ -336,6 +375,9 @@ export function reduceSessionState(
 
     case 'session.info':
       return applySessionInfo(state, payload)
+
+    case 'session.usage':
+      return applySessionUsage(state, payload)
     /**
      * A clarify parks the agent in the backend's `_block` until
      * `clarify.respond` lands, and the inline ClarifyTool normally mounts from
