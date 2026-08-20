@@ -2390,7 +2390,11 @@ export const ar = defineLocale({
       other: 'غير ذلك',
       placeholder: 'اكتب إجابتك...',
       skip: 'تخطي',
-      continueLabel: 'متابعة'
+      continueLabel: 'متابعة',
+      confirmAndContinueLabel: 'تأكيد ومتابعة',
+      answeredBadge: 'تمت الإجابة',
+      questionProgress: (answered, total) => `${answered} من ${total} تمت الإجابة عليها`,
+      unknownQuestion: 'لم يعد الوكيل يطرح هذا السؤال — أجب عن الأسئلة المعروضة'
     },
     tool: {
       copyCode: 'نسخ الكود',

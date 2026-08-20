@@ -624,12 +624,12 @@ export interface Translations {
       sshErrAuth: string
       sshErrHostKey: string
       sshErrNotInstalled: string
-    /** Offer to install Hermes on the remote host after a failed connect. */
-    sshInstallTitle: (host: string) => string
-    sshInstallBody: string
-    sshInstallCancel: string
-    sshInstallDoneTitle: string
-    sshInstallDoneBody: string
+      /** Offer to install Hermes on the remote host after a failed connect. */
+      sshInstallTitle: (host: string) => string
+      sshInstallBody: string
+      sshInstallCancel: string
+      sshInstallDoneTitle: string
+      sshInstallDoneBody: string
       sshErrPlatform: string
       sshErrTimeout: string
       sshErrUpdateRequired: string
@@ -2519,6 +2519,10 @@ export interface Translations {
       placeholder: string
       skip: string
       continueLabel: string
+      confirmAndContinueLabel: string
+      answeredBadge: string
+      questionProgress: (answered: number, total: number) => string
+      unknownQuestion: string
       skipped: string
       lateAnswer: (question: string, choice: string) => string
       lateAnswerTip: string

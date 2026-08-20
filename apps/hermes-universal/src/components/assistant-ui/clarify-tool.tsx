@@ -21,13 +21,22 @@ import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { Textarea } from '@/components/ui/textarea'
 import { Tip } from '@/components/ui/tooltip'
+import { gatewayRpcErrorCode } from '@/gateway/rpc-error'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { CircleLetterA, Loader2, MessageQuestion } from '@/lib/icons'
 import { keyOwningClarifyCard } from '@/lib/keybinds/composer-focus-keys'
 import { cn } from '@/lib/utils'
-import { respondClarify } from '@/store/chat'
-import { matchClarifyRequest, normalizeChoices, readChoices } from '@/store/clarify'
+import { CLARIFY_UNKNOWN_QUESTION_CODE, respondClarify, respondClarifyBatch } from '@/store/chat'
+import {
+  bareChoice,
+  type ClarifyQuestion,
+  matchClarifyRequest,
+  normalizeChoices,
+  normalizeQuestions,
+  readChoices,
+  RECOMMENDED_LABEL
+} from '@/store/clarify'
 import { notify, notifyError } from '@/store/notifications'
 import { sessionClarifyRequest } from '@/store/prompts'
 
@@ -46,12 +55,21 @@ import { parseMaybeObject } from './tool/fallback-model/format'
 interface ClarifyArgs {
   question?: string
   choices?: string[] | null
+  multiSelect?: boolean
+  /** Batch clarify: present INSTEAD of question/choices. */
+  questions?: ClarifyQuestion[]
 }
 
 interface ClarifyResult {
   question?: string
   answer?: string
   error?: string
+}
+
+/** One settled row of a batch result (`_batch_result` in tools/clarify_tool.py). */
+interface ClarifyBatchResponse {
+  question: string
+  answer: string
 }
 
 function stringField(row: Record<string, unknown>, ...keys: string[]): string | undefined {
@@ -67,11 +85,39 @@ function stringField(row: Record<string, unknown>, ...keys: string[]): string | 
 function readClarifyArgs(args: unknown): ClarifyArgs {
   const row = parseMaybeObject(args)
   const question = stringField(row, 'question')
+  const questions = normalizeQuestions(row.questions)
 
   // The same hygiene the gateway path gets (store/clarify.ts): choices come
   // from a model's tool call, so a blank / multi-line / over-long entry is a
   // rendering bug waiting to happen rather than an option worth offering.
-  return { question, choices: readChoices('tool_args', question ?? '', row.choices) }
+  return {
+    question,
+    choices: readChoices('tool_args', question ?? '', row.choices),
+    multiSelect: row.multi_select === true,
+    ...(questions.length > 0 ? { questions } : {})
+  }
+}
+
+/**
+ * Parse a BATCH clarify's tool JSON: `{responses: [{question, user_response}]}`
+ * (`_batch_result`). Nothing here shares a key with the single-question result,
+ * so the settled card has to know which one it is holding before it reads it —
+ * `readClarifyResult` on a batch result returns an empty answer and renders a
+ * card with the questions silently missing.
+ */
+export function readClarifyBatchResult(result: unknown): ClarifyBatchResponse[] {
+  const rows = parseMaybeObject(result).responses
+
+  if (!Array.isArray(rows)) {
+    return []
+  }
+
+  return rows.flatMap(row => {
+    const entry = parseMaybeObject(row)
+    const question = stringField(entry, 'question')
+
+    return question ? [{ question, answer: stringField(entry, 'user_response', 'answer') ?? '' }] : []
+  })
 }
 
 /** Parse clarify tool JSON (`question` + `user_response`). */
@@ -139,6 +185,29 @@ function KeyBadge({ char, preview, selected }: { char: string; preview?: boolean
 }
 
 /**
+ * A choice, with the agent's recommendation set apart from the option itself.
+ *
+ * The backend has no `recommended` field: `mark_recommended` appends
+ * "(Recommended)" to the FIRST choice string, and `strip_recommended` takes it
+ * back off the answer, so the label is presentation that arrives inside the
+ * data. Rendering it as part of the option text made it read like part of the
+ * answer; the answer still goes back verbatim (the tool strips it).
+ */
+function ChoiceLabel({ choice }: { choice: string }) {
+  const bare = bareChoice(choice)
+
+  if (bare === choice) {
+    return <>{choice}</>
+  }
+
+  return (
+    <>
+      {bare} <span className="text-(--ui-text-tertiary)">{RECOMMENDED_LABEL}</span>
+    </>
+  )
+}
+
+/**
  * One choice row.
  *
  * `Tip` is this repo's themed stand-in for a native `title=` (banned on a
@@ -187,7 +256,9 @@ function ChoiceButton({
         type="button"
       >
         <KeyBadge char={char} preview={active} selected={selected} />
-        <span className="flex-1 wrap-anywhere">{choice}</span>
+        <span className="flex-1 wrap-anywhere">
+          <ChoiceLabel choice={choice} />
+        </span>
       </button>
     </Tip>
   )
@@ -225,7 +296,62 @@ function ClarifyToolLive(props: ToolCallMessagePartProps) {
   return <ClarifyToolPending {...props} />
 }
 
-function ClarifyToolSettled({ args, result }: ToolCallMessagePartProps) {
+/**
+ * The settled BATCH card: every question the agent asked, with what it got.
+ *
+ * A blank answer is not "no answer given" — `_batch_result` writes an empty
+ * `user_response` for a question the user skipped AND for one a timeout never
+ * reached, and both mean the agent proceeded without it. Saying "Skipped" for
+ * a blank is the only honest reading the client has, and it is the same word
+ * the single-question card uses for the same absence.
+ */
+function ClarifyToolBatchSettled({ result }: ToolCallMessagePartProps) {
+  const { t } = useI18n()
+  const copy = t.assistant.clarify
+  const responses = useMemo(() => readClarifyBatchResult(result), [result])
+
+  return (
+    <ClarifyShell className="my-1.5 grid gap-2.5" data-clarify-settled="">
+      {responses.map((row, index) => {
+        const blank = !row.answer.trim()
+
+        return (
+          <div className="grid gap-1.5" key={`${index}-${row.question}`}>
+            <ClarifyLine icon={MessageQuestion}>
+              <span className="whitespace-pre-wrap font-medium leading-(--conversation-line-height)">
+                {row.question}
+              </span>
+            </ClarifyLine>
+            <ClarifyLine icon={CircleLetterA}>
+              <p
+                className={cn(
+                  'whitespace-pre-wrap leading-(--conversation-line-height)',
+                  blank ? 'italic text-(--ui-text-tertiary)' : 'text-(--ui-text-secondary)'
+                )}
+                data-clarify-answer=""
+              >
+                {blank ? copy.skipped : row.answer}
+              </p>
+            </ClarifyLine>
+          </div>
+        )
+      })}
+    </ClarifyShell>
+  )
+}
+
+function ClarifyToolSettled(props: ToolCallMessagePartProps) {
+  // A batch result shares no key with a single one (`responses[]` vs
+  // `question`/`user_response`), so reading it with the single parser yields a
+  // card with no question and no answer at all.
+  if (readClarifyBatchResult(props.result).length > 0) {
+    return <ClarifyToolBatchSettled {...props} />
+  }
+
+  return <ClarifyToolSingleSettled {...props} />
+}
+
+function ClarifyToolSingleSettled({ args, result }: ToolCallMessagePartProps) {
   const { t } = useI18n()
   const copy = t.assistant.clarify
   const fromArgs = useMemo(() => readClarifyArgs(args), [args])
@@ -292,7 +418,20 @@ function ClarifyToolSettled({ args, result }: ToolCallMessagePartProps) {
   )
 }
 
-function ClarifyToolPending({ args }: ToolCallMessagePartProps) {
+function ClarifyToolPending(props: ToolCallMessagePartProps) {
+  const sessionKey = useStore(useSessionView().$runtimeId) ?? ''
+  const request = useStore(sessionClarifyRequest(sessionKey))
+  const fromArgs = useMemo(() => readClarifyArgs(props.args), [props.args])
+  const questions = request?.questions ?? fromArgs.questions
+
+  if (questions && questions.length > 0) {
+    return <ClarifyToolBatchPending {...props} />
+  }
+
+  return <ClarifyToolSinglePending {...props} />
+}
+
+function ClarifyToolSinglePending({ args }: ToolCallMessagePartProps) {
   const { t } = useI18n()
   const copy = t.assistant.clarify
   // The clarify panel renders INSIDE a transcript, so it belongs to the session
@@ -322,10 +461,16 @@ function ClarifyToolPending({ args }: ToolCallMessagePartProps) {
   )
 
   const hasChoices = choices.length > 0
+  // `multi_select` is a pass-through hint the gateway only sends when true
+  // (`_clarify_block`): the tool parses a JSON array back
+  // (`_parse_multi_select_response`), so more than one pick is a real answer.
+  // Ignoring it — as this card did — let a question that offered several
+  // options accept exactly one, silently.
+  const multiSelect = (matchingRequest?.multiSelect ?? fromArgs.multiSelect) === true && hasChoices
 
   const [draft, setDraft] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [selectedChoice, setSelectedChoice] = useState<string | null>(null)
+  const [selectedChoices, setSelectedChoices] = useState<string[]>([])
   // The keyboard cursor. Indices 0..choices.length-1 are the options; the
   // trailing index (=== choices.length) is the "Other" free-text row. Distinct
   // from `selectedChoice`: moving is not picking.
@@ -377,14 +522,32 @@ function ClarifyToolPending({ args }: ToolCallMessagePartProps) {
   )
 
   const trimmedDraft = draft.trim()
-  const pendingAnswer = selectedChoice ?? (trimmedDraft || null)
 
-  const selectChoice = useCallback((choice: string, index: number) => {
-    // Picking a choice and typing are mutually exclusive answers.
-    setDraft('')
-    setSelectedChoice(choice)
-    setActiveIndex(index)
-  }, [])
+  // Multi-select answers go back as a JSON array — that is exactly what
+  // `_parse_multi_select_response` reads. A single pick stays a bare string so
+  // the historical single-select wire shape is untouched.
+  const pendingAnswer =
+    selectedChoices.length > 0
+      ? multiSelect
+        ? JSON.stringify(selectedChoices)
+        : selectedChoices[0]
+      : trimmedDraft || null
+
+  const selectChoice = useCallback(
+    (choice: string, index: number) => {
+      // Picking a choice and typing are mutually exclusive answers.
+      setDraft('')
+      setSelectedChoices(current =>
+        multiSelect
+          ? current.includes(choice)
+            ? current.filter(entry => entry !== choice)
+            : [...current, choice]
+          : [choice]
+      )
+      setActiveIndex(index)
+    },
+    [multiSelect]
+  )
 
   // Keep the cursor in range when the choice set changes (never past "Other").
   useEffect(() => {
@@ -398,23 +561,17 @@ function ClarifyToolPending({ args }: ToolCallMessagePartProps) {
       // Arrow navigation is a move, not a pick — clear any staged answer so the
       // cursor and the selection cannot disagree about what Enter would send.
       setDraft('')
-      setSelectedChoice(null)
+      setSelectedChoices([])
       setActiveIndex(index => (index + delta + itemCount) % itemCount)
     },
     [choices.length]
   )
 
   const submitAnswer = useCallback(() => {
-    if (selectedChoice !== null) {
-      void respond(selectedChoice)
-
-      return
+    if (pendingAnswer) {
+      void respond(pendingAnswer)
     }
-
-    if (trimmedDraft) {
-      void respond(trimmedDraft)
-    }
-  }, [respond, selectedChoice, trimmedDraft])
+  }, [pendingAnswer, respond])
 
   const activateActive = useCallback(() => {
     // A staged answer (picked choice or typed text) wins — confirm it.
@@ -425,17 +582,23 @@ function ClarifyToolPending({ args }: ToolCallMessagePartProps) {
     }
 
     // Otherwise act on the highlighted row: a choice answers immediately, and
-    // the trailing "Other" row focuses the free-text field.
+    // the trailing "Other" row focuses the free-text field. A multi-select
+    // question has no "immediately" — Enter on a row picks it and waits for
+    // the next one, because the answer is the SET.
     const choice = choices[activeIndex]
 
     if (choice) {
-      void respond(choice)
+      if (multiSelect) {
+        selectChoice(choice, activeIndex)
+      } else {
+        void respond(choice)
+      }
 
       return
     }
 
     textareaRef.current?.focus()
-  }, [activeIndex, choices, pendingAnswer, respond, submitAnswer])
+  }, [activeIndex, choices, multiSelect, pendingAnswer, respond, selectChoice, submitAnswer])
 
   const handleTextareaKey = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -568,7 +731,7 @@ function ClarifyToolPending({ args }: ToolCallMessagePartProps) {
     setDraft(value)
 
     if (value.trim()) {
-      setSelectedChoice(null)
+      setSelectedChoices([])
     }
   }
 
@@ -607,7 +770,7 @@ function ClarifyToolPending({ args }: ToolCallMessagePartProps) {
                 key={`${index}-${choice}`}
                 keyShortcuts={`${letterFor(index)} ${index + 1}`}
                 onClick={() => selectChoice(choice, index)}
-                selected={selectedChoice === choice}
+                selected={selectedChoices.includes(choice)}
               />
             ))}
             <label
@@ -631,7 +794,7 @@ function ClarifyToolPending({ args }: ToolCallMessagePartProps) {
                 onBlur={() => setOtherFocused(false)}
                 onChange={event => onDraftChange(event.target.value)}
                 onFocus={() => {
-                  setSelectedChoice(null)
+                  setSelectedChoices([])
                   setActiveIndex(choices.length)
                   setOtherFocused(true)
                 }}
@@ -677,5 +840,344 @@ function ClarifyToolPending({ args }: ToolCallMessagePartProps) {
         </Button>
       </div>
     </form>
+  )
+}
+
+/** One question's staged answer: picked choices, or free text. */
+interface StagedAnswer {
+  choices: string[]
+  draft: string
+}
+
+/** The wire answer for one staged question — `''` when the user left it blank
+ *  (a deliberate per-question skip, which still counts as answered). */
+function wireAnswer(question: ClarifyQuestion, staged: StagedAnswer | undefined): string {
+  if (!staged) {
+    return ''
+  }
+
+  if (staged.choices.length > 0) {
+    // Multi-select answers go back as a JSON array — `_parse_multi_select_response`
+    // in tools/clarify_tool.py reads exactly that. The label rides along; the
+    // tool strips it (`strip_recommended`) before the model sees the answer.
+    return question.multiSelect ? JSON.stringify(staged.choices) : staged.choices[0]
+  }
+
+  return staged.draft.trim()
+}
+
+/**
+ * Has this question got a real answer?
+ *
+ * Touched-but-blank does NOT count: the card has no per-question skip (Skip
+ * cancels the whole batch, which is the gateway's only partial-free exit), so
+ * letting a cleared textbox satisfy the confirm gate would send the agent a
+ * blank the user never meant to give it.
+ */
+const isAnswered = (question: ClarifyQuestion, staged: StagedAnswer | undefined): boolean =>
+  wireAnswer(question, staged).length > 0
+
+/**
+ * The live BATCH clarify card.
+ *
+ * Every question renders at once and every answer stages LOCALLY: nothing
+ * reaches the gateway until the single "Confirm and continue" press, which
+ * sends the per-question locks back-to-back. That ordering is load-bearing —
+ * the gateway completes the batch on the lock that empties `remaining`, so the
+ * last one released the agent (see `respondClarifyBatch`).
+ *
+ * Skip is the batch's cancel: `clarify.respond` with NO `question_id` resolves
+ * the whole request with an empty answer, and the tool reports every question
+ * as unanswered.
+ */
+function ClarifyToolBatchPending({ args }: ToolCallMessagePartProps) {
+  const { t } = useI18n()
+  const copy = t.assistant.clarify
+  const sessionKey = useStore(useSessionView().$runtimeId) ?? ''
+  const request = useStore(sessionClarifyRequest(sessionKey))
+  const fromArgs = useMemo(() => readClarifyArgs(args), [args])
+  // The store leads for the same reason the single card gives it precedence:
+  // `tool.start` ships no args, so the gateway event is the only source until
+  // the tool completes.
+  const questions = useMemo(() => request?.questions ?? fromArgs.questions ?? [], [fromArgs.questions, request])
+
+  const [staged, setStaged] = useState<Record<string, StagedAnswer>>({})
+  const [submitting, setSubmitting] = useState(false)
+
+  const lockedAnswers = request?.lockedAnswers
+
+  // A reconnect replays the answers the gateway already locked
+  // (`_pending_clarify_request_payload`). Staging them back is what makes the
+  // resumed card show the user's own work instead of an empty form they would
+  // have to fill in again — and they stay editable, because a lock is
+  // update-in-place server-side until the batch completes.
+  useEffect(() => {
+    if (!lockedAnswers) {
+      return
+    }
+
+    setStaged(current => {
+      const next = { ...current }
+      let changed = false
+
+      for (const question of questions) {
+        const locked = lockedAnswers[question.qid]
+
+        if (locked === undefined || question.qid in next) {
+          continue
+        }
+
+        next[question.qid] = restoreStaged(question, locked)
+        changed = true
+      }
+
+      return changed ? next : current
+    })
+  }, [lockedAnswers, questions])
+
+  const answeredCount = questions.filter(question => isAnswered(question, staged[question.qid])).length
+  const allStaged = questions.length > 0 && answeredCount === questions.length
+  const ready = Boolean(request?.requestId)
+
+  const setAnswer = useCallback((qid: string, value: StagedAnswer) => {
+    setStaged(current => ({ ...current, [qid]: value }))
+  }, [])
+
+  const toggleChoice = useCallback(
+    (question: ClarifyQuestion, choice: string) => {
+      const current = staged[question.qid]?.choices ?? []
+
+      if (!question.multiSelect) {
+        setAnswer(question.qid, { choices: [choice], draft: '' })
+        void triggerHaptic('selection')
+
+        return
+      }
+
+      setAnswer(question.qid, {
+        choices: current.includes(choice) ? current.filter(entry => entry !== choice) : [...current, choice],
+        draft: ''
+      })
+      void triggerHaptic('selection')
+    },
+    [setAnswer, staged]
+  )
+
+  const confirmAll = useCallback(async () => {
+    if (!ready) {
+      notifyError(new Error(copy.notReady), copy.sendFailed)
+
+      return
+    }
+
+    setSubmitting(true)
+
+    try {
+      const { outcome } = await respondClarifyBatch(
+        questions.map(question => ({ questionId: question.qid, answer: wireAnswer(question, staged[question.qid]) })),
+        sessionKey
+      )
+
+      void triggerHaptic('submit')
+
+      // `clarify.respond` is `allow_expired`: the batch the deadline already
+      // popped answers OK and delivers nothing. Say so rather than letting the
+      // card look like it landed.
+      if (outcome === 'expired') {
+        notify({ kind: 'warning', message: copy.expiredAnswer })
+      }
+      // tool.complete lands next → ClarifyToolBatchSettled.
+    } catch (error) {
+      // 4002 is the one failure that is not "the send broke": the gateway is
+      // alive and the batch is alive, this question just is not part of it.
+      // Reporting that as a transport failure would send the user retrying a
+      // lock that can never be accepted.
+      notifyError(
+        error,
+        gatewayRpcErrorCode(error) === CLARIFY_UNKNOWN_QUESTION_CODE ? copy.unknownQuestion : copy.sendFailed
+      )
+      setSubmitting(false)
+    }
+  }, [copy, questions, ready, sessionKey, staged])
+
+  const cancelAll = useCallback(async () => {
+    setSubmitting(true)
+
+    try {
+      // No `question_id` — that is exactly what makes the gateway cancel the
+      // WHOLE batch instead of locking one blank answer.
+      await respondClarify('', sessionKey)
+      void triggerHaptic('submit')
+    } catch (error) {
+      notifyError(error, copy.sendFailed)
+      setSubmitting(false)
+    }
+  }, [copy, sessionKey])
+
+  if (!ready && !submitting) {
+    return (
+      <ClarifyShell aria-label={copy.loadingQuestion} className="my-1.5 grid min-h-12 place-items-center" role="status">
+        <Loader2 aria-hidden className="size-4 animate-spin text-(--ui-text-tertiary)" />
+      </ClarifyShell>
+    )
+  }
+
+  return (
+    <form
+      className="my-1.5 grid gap-4"
+      data-clarify-batch={questions.length}
+      onSubmit={event => {
+        event.preventDefault()
+        void confirmAll()
+      }}
+    >
+      <ClarifyShell className="grid gap-3">
+        {questions.map(question => (
+          <BatchQuestionBlock
+            answered={isAnswered(question, staged[question.qid])}
+            answeredLabel={copy.answeredBadge}
+            disabled={submitting}
+            key={question.qid}
+            onDraft={draft => setAnswer(question.qid, { choices: [], draft })}
+            onToggle={choice => toggleChoice(question, choice)}
+            otherLabel={copy.other}
+            placeholder={copy.placeholder}
+            question={question}
+            staged={staged[question.qid]}
+          />
+        ))}
+      </ClarifyShell>
+
+      <div className="flex items-center justify-end gap-2">
+        <span className="me-auto text-[0.6875rem] leading-4 text-(--ui-text-tertiary)">
+          {copy.questionProgress(answeredCount, questions.length)}
+        </span>
+        <Button
+          disabled={submitting}
+          onClick={() => {
+            void cancelAll()
+          }}
+          size="xs"
+          type="button"
+          variant="text"
+        >
+          {copy.skip}
+        </Button>
+        <Button disabled={submitting || !allStaged} size="xs" type="submit">
+          {submitting ? <Loader2 className="size-3 animate-spin" /> : copy.confirmAndContinueLabel}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+/**
+ * Put a replayed lock back into the card's staged state.
+ *
+ * A multi-select answer went out as a JSON array, so it has to come back
+ * through `JSON.parse` or it restores as literal `["a","b"]` text in the
+ * free-text box. Anything that does not match a choice this question offers is
+ * free text — that is what the user typed.
+ */
+function restoreStaged(question: ClarifyQuestion, locked: string): StagedAnswer {
+  const offered = question.choices ?? []
+  const matching = (value: string) => offered.find(choice => choice === value || bareChoice(choice) === value)
+
+  if (question.multiSelect) {
+    try {
+      const parsed: unknown = JSON.parse(locked)
+
+      if (Array.isArray(parsed)) {
+        const choices = parsed.flatMap(entry => {
+          const found = typeof entry === 'string' ? matching(entry) : undefined
+
+          return found ? [found] : []
+        })
+
+        if (choices.length > 0) {
+          return { choices, draft: '' }
+        }
+      }
+    } catch {
+      // Not JSON — fall through and treat it as the free text it looks like.
+    }
+  }
+
+  const choice = matching(locked)
+
+  return choice ? { choices: [choice], draft: '' } : { choices: [], draft: locked }
+}
+
+/** One question of the live batch card: its text, its options, its free-text row. */
+function BatchQuestionBlock({
+  answered,
+  answeredLabel,
+  disabled,
+  onDraft,
+  onToggle,
+  otherLabel,
+  placeholder,
+  question,
+  staged
+}: {
+  answered: boolean
+  answeredLabel: string
+  disabled: boolean
+  onDraft: (draft: string) => void
+  onToggle: (choice: string) => void
+  otherLabel: string
+  placeholder: string
+  question: ClarifyQuestion
+  staged: StagedAnswer | undefined
+}) {
+  const choices = question.choices ?? []
+  const picked = staged?.choices ?? []
+
+  return (
+    <div className="grid gap-1.5" data-clarify-question={question.qid}>
+      <div className="flex items-start gap-2">
+        <span className="flex-1 whitespace-pre-wrap font-medium leading-(--conversation-line-height)">
+          {question.question}
+        </span>
+        {answered ? (
+          <span className="mt-px shrink-0 text-[0.6875rem] leading-4 text-(--ui-text-tertiary)">{answeredLabel}</span>
+        ) : null}
+        <MessageQuestion aria-hidden className={CLARIFY_ICON_CLASS} />
+      </div>
+
+      {choices.length > 0 ? (
+        <div className="grid gap-px" role="group">
+          {choices.map((choice, index) => (
+            <ChoiceButton
+              char={letterFor(index)}
+              choice={choice}
+              disabled={disabled}
+              key={`${index}-${choice}`}
+              onClick={() => onToggle(choice)}
+              selected={picked.includes(choice)}
+            />
+          ))}
+          <Textarea
+            className={CLARIFY_TEXTAREA_CLASS}
+            disabled={disabled}
+            onChange={event => onDraft(event.target.value)}
+            placeholder={otherLabel}
+            rows={1}
+            size="sm"
+            value={staged?.draft ?? ''}
+          />
+        </div>
+      ) : (
+        <Textarea
+          className={CLARIFY_TEXTAREA_CLASS}
+          disabled={disabled}
+          onChange={event => onDraft(event.target.value)}
+          placeholder={placeholder}
+          rows={1}
+          size="sm"
+          value={staged?.draft ?? ''}
+        />
+      )}
+    </div>
   )
 }

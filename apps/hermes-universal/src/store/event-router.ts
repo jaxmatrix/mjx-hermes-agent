@@ -41,7 +41,7 @@ import { stopSpeaking } from '@/lib/tts'
 import { type AgentNoticePayload, clearAgentNotice, nativeNoticeInput, showAgentNotice } from '@/store/agent-notices'
 import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block'
 import { noteMissedSteer } from '@/store/chat'
-import { readChoices } from '@/store/clarify'
+import { normalizeQuestions, readChoices, readLockedAnswers } from '@/store/clarify'
 import { routeCompactionEvent } from '@/store/compaction'
 import { addGatewayEventListener, requestGateway } from '@/store/gateway'
 import {
@@ -383,17 +383,43 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       // The gateway sends `question` + `choices` — NOT `prompt`; the other keys
       // are tolerated only as a fallback.
       const requestId = coerceText(payload.request_id)
+      // A BATCH clarify (2–5 independent questions, `tools/clarify_tool.py`)
+      // carries `questions[]` and NO top-level `question` at all. Testing only
+      // for `question` dropped the whole event on the floor: nothing wrote the
+      // prompt store, nothing ever called `clarify.respond`, and the agent sat
+      // in the backend's `_block` for the full clarify deadline with the UI
+      // showing a contentless "needs input" dot. The tool advertises the batch
+      // form in its schema on EVERY session, so any model could hang any turn.
+      const questions = normalizeQuestions(payload.questions)
       const question = coerceText(payload.question) || coerceText(payload.prompt) || coerceText(payload.message)
 
-      if (requestId && question) {
+      if (requestId && (question || questions.length > 0)) {
         // Normalized here, not in the panel: this is the PRIMARY source for the
         // choice list (`tool.start` ships no args), so a blank / multi-line /
         // 4KB entry from a sloppy tool call would reach the renderer unguarded.
-        setSessionClarify(key, { requestId, question, choices: readChoices('gateway', question, payload.choices) })
+        setSessionClarify(
+          key,
+          questions.length > 0
+            ? {
+                requestId,
+                question: '',
+                choices: null,
+                questions,
+                // Present only on a resume replay of a partly-answered batch
+                // (`_pending_clarify_request_payload`), never on a live event.
+                lockedAnswers: readLockedAnswers(payload.answers)
+              }
+            : {
+                requestId,
+                question,
+                choices: readChoices('gateway', question, payload.choices),
+                ...(payload.multi_select === true ? { multiSelect: true } : {})
+              }
+        )
         dispatchNativeNotification({
           kind: 'input',
           title: translateNow('notifications.native.inputTitle'),
-          body: question,
+          body: questions.length > 0 ? questions.map(entry => entry.question).join(' · ') : question,
           sessionId: key
         })
         void triggerHaptic('warning')

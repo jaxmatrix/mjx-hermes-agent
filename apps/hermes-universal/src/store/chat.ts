@@ -1493,6 +1493,72 @@ export async function respondClarify(answer: string, key = $activeSessionKey.get
   return result?.status === 'expired' ? 'expired' : 'delivered'
 }
 
+/** The gateway's answer to a per-question batch lock (`_respond` in
+ *  `tui_gateway/server.py`): the qids still unanswered after this one. */
+export interface ClarifyBatchLockResult {
+  outcome: PromptRespondOutcome
+  remaining: string[]
+}
+
+/** `_respond` answers this when a `question_id` is not one of the batch's own
+ *  qids — the batch is alive, the lock simply addressed nothing. */
+export const CLARIFY_UNKNOWN_QUESTION_CODE = 4002
+
+/**
+ * Lock the answers of a BATCH clarify, one `question_id` at a time.
+ *
+ * Sequential on purpose, never `Promise.all`: the gateway completes the batch
+ * on the lock that empties `remaining` (`ev.set()` in `_respond`), so the last
+ * lock releases the agent — and a reordered burst would complete the batch
+ * with an earlier answer still in flight, handing the tool a blank for a
+ * question the user did answer.
+ *
+ * The request is cleared only once the gateway says nothing remains. A partial
+ * failure therefore leaves the card up with the locks it did land, which is
+ * exactly what the user needs to retry: locks are update-in-place server-side,
+ * so re-sending one is harmless.
+ */
+export async function respondClarifyBatch(
+  locks: { questionId: string; answer: string }[],
+  key = $activeSessionKey.get()
+): Promise<ClarifyBatchLockResult> {
+  const req = sessionClarifyRequest(key).get()
+
+  if (!req) {
+    return { outcome: 'gone', remaining: [] }
+  }
+
+  let remaining: string[] = req.questions?.map(entry => entry.qid) ?? []
+  let expired = false
+
+  for (const lock of locks) {
+    const result = await requestGateway<{ remaining?: unknown; status?: string }>('clarify.respond', {
+      request_id: req.requestId,
+      question_id: lock.questionId,
+      answer: lock.answer
+    })
+
+    if (result?.status === 'expired') {
+      // The whole request is gone server-side, not just this question — the
+      // remaining locks would all answer the same way, so stop asking.
+      expired = true
+
+      break
+    }
+
+    remaining = Array.isArray(result?.remaining)
+      ? result.remaining.filter((qid): qid is string => typeof qid === 'string')
+      : remaining
+  }
+
+  if ((expired || remaining.length === 0) && sessionClarifyRequest(key).get()?.requestId === req.requestId) {
+    clearSessionClarify(key)
+    clearAwaitingInputPose(key)
+  }
+
+  return { outcome: expired ? 'expired' : 'delivered', remaining }
+}
+
 /**
  * Answer the pending sudo password prompt.
  *
