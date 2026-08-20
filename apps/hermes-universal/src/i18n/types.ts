@@ -224,6 +224,16 @@ export interface Translations {
     message: (reason: string) => string
   }
 
+  resourcePressure: {
+    diskCritical: string
+    diskElevated: string
+    diskFree: (mb: number) => string
+    dismiss: string
+    memoryCritical: string
+    memoryElevated: string
+    oomRestart: string
+  }
+
   titlebar: {
     hideSidebar: string
     showSidebar: string

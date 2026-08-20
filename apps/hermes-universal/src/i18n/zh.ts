@@ -172,6 +172,16 @@ export const zh: Translations = {
     message: reason => `软件渲染已启用 — 检测到远程显示（${reason}）。为防止画面闪烁，已禁用 GPU 加速。`
   },
 
+  resourcePressure: {
+    diskCritical: '你的智能体磁盘快满了。新的消息、记忆和设置可能保存失败。',
+    diskElevated: '你的智能体磁盘正在填满。建议清理旧会话或扩容存储。',
+    diskFree: mb => `（剩余 ${mb} MB）`,
+    dismiss: '关闭警告',
+    memoryCritical: '你的智能体内存即将耗尽，可能会重启。建议关闭空闲会话或增加内存。',
+    memoryElevated: '你的智能体内存不足。',
+    oomRestart: '你的智能体意外重启，最可能的原因是内存耗尽。长会话和大量并发任务会增加内存占用。'
+  },
+
   titlebar: {
     hideSidebar: '隐藏侧边栏',
     showSidebar: '显示侧边栏',
