@@ -1,7 +1,13 @@
 // NOTE: this file is VENDORED from apps/shared/src/json-rpc-gateway.ts (see
-// ./index.ts). The GatewayRpcError below is a deliberate divergence: the shared
-// copy still flattens a JSON-RPC error to its message, and desktop is not this
-// worktree's to change.
+// ./index.ts). `GatewayRpcError` was a divergence when the shared copy still
+// flattened a JSON-RPC error to its message; the 08-18 sync gave shared its own
+// `JsonRpcGatewayError{code,data}`, so the two now agree on the CONTRACT and
+// differ only in the class name — keep both fields when touching either.
+//
+// The other shared-side field this copy deliberately omits is `connectionId` on
+// GatewayEvent: it tags frames by entry in desktop's multi-connection registry,
+// and universal holds one gateway socket at a time (store/gateway-switch.ts
+// tears the old one down), so there is nothing here for it to disambiguate.
 import { GatewayRpcError } from './rpc-error'
 
 export type GatewayEventName =
