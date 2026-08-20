@@ -152,11 +152,16 @@ describe('event-router → unsolicited session pushes', () => {
     })
 
     it('leaves the cache alone for a background session', () => {
+      // s2 needs a SLICE, or the router fails closed on an unknown session and
+      // the test passes without the active-session gate ever running.
+      ensureSessionSlice('s2')
       $approvalModes.set({ work: 'smart' })
 
       routeGatewayEvent(event('session.info', { approval_mode: 'off' }, 's2'))
 
       expect(approvalModeForProfile('work')).toBe('smart')
+      // …and the frame still reached the session that sent it.
+      expect(slice('s2').yolo).toBe(false)
     })
 
     it('adopts the effective yolo flag onto the session slice', () => {
