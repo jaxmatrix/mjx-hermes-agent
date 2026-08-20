@@ -249,12 +249,27 @@ describe('<ResourcePressureBanner />', () => {
 
     expect(banner()).toBeNull()
 
-    // Disk recovers; memory does not.
+    // The disk is fixed. Memory is exactly as bad as it was. The ONLY live
+    // trigger left is the memory one, and its dismissal must have survived —
+    // so a domain-crossing recovery reset shows up here as a reappearing
+    // banner and nowhere else.
     poll(statusOf({ pressure: 'elevated' }, { pressure: 'ok' }))
-    poll(statusOf({ pressure: 'elevated' }, { pressure: 'elevated' }))
 
-    // Only the disk dismissal was cleared.
-    expect(trigger()).toBe('disk_elevated')
+    expect(activePressureTriggers($statusSnapshot.get())).toEqual(['elevated'])
+    expect(banner()).toBeNull()
+  })
+
+  it('recovers each domain independently in the other direction too', () => {
+    $statusSnapshot.set(statusOf({ pressure: 'elevated' }, { pressure: 'elevated' }))
+    mount()
+    act(() => screen.getByRole('button').click())
+    act(() => screen.getByRole('button').click())
+
+    // Memory is fixed, the disk is not. The disk dismissal must survive.
+    poll(statusOf({ pressure: 'ok' }, { pressure: 'elevated' }))
+
+    expect(activePressureTriggers($statusSnapshot.get())).toEqual(['disk_elevated'])
+    expect(banner()).toBeNull()
   })
 
   it('marks a critical banner apart from an elevated one', () => {
@@ -269,12 +284,41 @@ describe('<ResourcePressureBanner />', () => {
     expect(container.querySelector('.text-primary')).not.toBeNull()
   })
 
-  it('survives a corrupt dismissal entry rather than crashing the shell', () => {
-    // Pre-boot-scoping builds stored a bare trigger string.
+  it('survives an unparseable dismissal entry rather than crashing the shell', () => {
+    // Pre-boot-scoping builds stored a bare trigger string, which is not JSON.
     sessionStorage.setItem('resourceBannerDismissed', 'critical')
     $statusSnapshot.set(statusOf({ pressure: 'critical' }))
     mount()
 
     expect(trigger()).toBe('critical')
+  })
+
+  it('rejects a stored value that parses but is not an array of strings', () => {
+    // `JSON.parse('"critical:…"')` yields a STRING, and a string has its own
+    // `.includes` — so an unfiltered value would substring-match the dismissal
+    // key and hide a live banner. Same fixture, opposite outcome to the case
+    // above: this one parses cleanly, so the catch never runs and only the
+    // shape check can save it.
+    sessionStorage.setItem('resourceBannerDismissed', JSON.stringify('critical:2026-08-21T04:00:00+00:00'))
+    $statusSnapshot.set(statusOf({ pressure: 'critical' }))
+    mount()
+
+    expect(trigger()).toBe('critical')
+  })
+
+  it('drops non-string members of a stored array instead of trusting them', () => {
+    sessionStorage.setItem('resourceBannerDismissed', JSON.stringify([7, null, { critical: true }]))
+    $statusSnapshot.set(statusOf({ pressure: 'critical' }))
+    mount()
+
+    expect(trigger()).toBe('critical')
+
+    // And the surviving entries still work: dismiss, and the write is a clean
+    // array of strings.
+    act(() => screen.getByRole('button').click())
+
+    expect(JSON.parse(sessionStorage.getItem('resourceBannerDismissed') ?? '[]')).toEqual([
+      'critical:2026-08-21T04:00:00+00:00'
+    ])
   })
 })
