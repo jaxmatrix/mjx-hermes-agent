@@ -4,8 +4,10 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { GatewayRpcError } from '@/gateway/rpc-error'
 import { I18nProvider } from '@/i18n'
 import type * as ChatStore from '@/store/chat'
+import type * as Notifications from '@/store/notifications'
 
 // The live panel asks assistant-ui whether its message is still streaming. There
 // is no runtime in a unit test, so drive it from here and leave the rest of the
@@ -36,9 +38,16 @@ vi.mock('@/store/chat', async importActual => {
   }
 })
 
+vi.mock('@/store/notifications', async importActual => {
+  const actual = await importActual<typeof Notifications>()
+
+  return { ...actual, notify: vi.fn(), notifyError: vi.fn() }
+})
+
 import { onComposerInsertRequest } from '@/app/chat/composer/focus'
 import { WIDGET_SHELL_CLASS } from '@/components/chat/widget-shell'
 import { respondClarify, respondClarifyBatch } from '@/store/chat'
+import { notifyError } from '@/store/notifications'
 import { setSessionClarify } from '@/store/prompts'
 import { seedActiveSession } from '@/test-sessions'
 
@@ -53,6 +62,7 @@ afterEach(() => {
   vi.mocked(respondClarify).mockResolvedValue('delivered')
   vi.mocked(respondClarifyBatch).mockClear()
   vi.mocked(respondClarifyBatch).mockResolvedValue({ outcome: 'delivered', remaining: [] })
+  vi.mocked(notifyError).mockClear()
 })
 
 function renderClarify(ui: ReactNode) {
@@ -722,6 +732,46 @@ describe('ClarifyTool batch view', () => {
     expect(vi.mocked(respondClarifyBatch).mock.calls[0]?.[0]).toEqual([
       { questionId: 'q0', answer: JSON.stringify(['a.ts', 'b.ts']) }
     ])
+  })
+
+  /**
+   * `4002` is the one failure that is not "the send broke": the gateway is
+   * alive and so is the batch, this `question_id` just is not part of it (a
+   * card left over from an earlier batch, say). Reporting it as a transport
+   * failure sends the user retrying a lock that can never be accepted.
+   */
+  it('names an unknown question_id instead of blaming the transport', async () => {
+    seedBatch()
+    renderBatch('clarify-batch-4002')
+    vi.mocked(respondClarifyBatch).mockRejectedValueOnce(new GatewayRpcError('unknown question_id', 4002))
+
+    fireEvent.click(screen.getByRole('button', { name: /Coffee/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Morning/ }))
+    fireEvent.click(confirmButton())
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(vi.mocked(notifyError).mock.calls[0]?.[1]).toBe(
+      'The agent is no longer asking that question — answer the ones still shown'
+    )
+  })
+
+  it('falls back to the generic message for any other failure', async () => {
+    seedBatch()
+    renderBatch('clarify-batch-offline')
+    vi.mocked(respondClarifyBatch).mockRejectedValueOnce(new Error('offline'))
+
+    fireEvent.click(screen.getByRole('button', { name: /Coffee/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Morning/ }))
+    fireEvent.click(confirmButton())
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(vi.mocked(notifyError).mock.calls[0]?.[1]).toBe('Could not send clarify response')
   })
 
   // `_batch_result` writes an empty user_response for a question the user
