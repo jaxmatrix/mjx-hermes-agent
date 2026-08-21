@@ -504,6 +504,9 @@ async def delete_empty_sessions_endpoint(profile: Optional[str] = None):
       agent isn't yanked mid-handshake.
     * Archived sessions are skipped — the user explicitly chose to
       keep those rows.
+    * Pinned sessions are skipped — the pin IS the "keep this" flag,
+      and there is no opt-in here because this endpoint takes no
+      filters to narrow the blast radius.
     * Children of deleted parents are orphaned, not cascade-deleted.
 
     Like the single-session ``DELETE /api/sessions/{id}`` endpoint
@@ -808,5 +811,11 @@ async def export_session_endpoint(session_id: str, profile: Optional[str] = None
 
 @manage_router.post("/api/sessions/prune")
 async def prune_sessions_endpoint(body: SessionPrune):
-    """Delete ended sessions matching filters without blocking the event loop."""
+    """Delete ended sessions matching filters without blocking the event loop.
+
+    Pinned rows are spared unless ``include_pinned`` is set — pin is a
+    durable "keep" flag. Either way the response carries
+    ``skipped_pinned``, the number of matching rows the pin saved, so a
+    client can say so instead of reporting a mysteriously low count.
+    """
     return await asyncio.to_thread(_prune_sessions, body)
