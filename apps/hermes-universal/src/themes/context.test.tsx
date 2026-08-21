@@ -222,15 +222,26 @@ describe('every builtin family paints a complete theme, in both appearances', ()
   )
 
   it.each(cases)('$name/$mode paints under its own name, every var a literal', ({ mode, name }) => {
+    // The reference set: whatever the default skin resolves. A hard-coded list
+    // would only re-state applyTheme; comparing families to each other catches
+    // the real failure, which is one family resolving FEWER vars than the rest.
+    // `setProperty(k, '')` removes the property outright, so an unresolved slot
+    // shows up here as a missing key — never as an empty string — and leaves
+    // whatever the previous theme painted in force.
+    const expected = Object.keys(paint('nous', 'light')).sort()
+
+    cleanup()
+    root().removeAttribute('style')
+
     const vars = paint(name, mode)
+
+    expect(Object.keys(vars).sort()).toEqual(expected)
 
     // A family registered under a key that doesn't match its own `name` paints
     // the DEFAULT skin instead — silently, and looking almost right.
     expect(root().dataset.hermesTheme).toBe(name)
 
     for (const [key, value] of Object.entries(vars)) {
-      // An unresolved slot paints '' and leaves the PREVIOUS theme's value in
-      // force, which is the half-applied-theme failure.
       expect(value, key).not.toBe('')
 
       // Fonts and the numeric mix knobs are not colours; everything else is a
