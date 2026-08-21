@@ -1808,12 +1808,16 @@ def _(rid, params: dict) -> dict:
 
     Actions:
       - ``list``   → {"plugins": [{name, key, version, description, source,
-                       status, portable}], "user_count": N, "bundled_count": M}
+                       status, portable, env: [{name, description, url,
+                       password, required, is_set}]}],
+                       "user_count": N, "bundled_count": M}
       - ``toggle`` → flip ``key`` (or ``name``) based on ``enable`` (bool).
                        Returns the refreshed row plus {"ok", "unchanged"}.
     """
     action = params.get("action", "list")
     try:
+        from pathlib import Path
+
         from hermes_cli.plugins_cmd import (
             _bundled_default_on,
             _discover_all_plugins,
@@ -1821,6 +1825,8 @@ def _(rid, params: dict) -> dict:
             _get_enabled_set,
             _is_portable_plugin_dir,
             _plugin_status,
+            _read_manifest,
+            plugin_env_rows,
         )
 
         def _rows():
@@ -1855,6 +1861,11 @@ def _(rid, params: dict) -> dict:
                         # Agent Plugins v1 package (plugin.json — the portable
                         # skills/MCP format) vs a native Hermes plugin.
                         "portable": _is_portable_plugin_dir(_dir),
+                        # The manifest's requires_env/optional_env with an
+                        # is_set flag, so a client can offer the key field
+                        # next to the switch instead of sending the user to
+                        # hunt for the var name on the Keys page.
+                        "env": plugin_env_rows(_read_manifest(Path(_dir))) if _dir else [],
                     }
                 )
             return out

@@ -309,22 +309,40 @@ def _copy_example_files(plugin_dir: Path, console) -> None:
                 )
 
 
+def plugin_env_rows(manifest: dict) -> list[dict]:
+    """Normalize a manifest's ``requires_env``/``optional_env`` for UIs.
+
+    Each row: ``{name, description, url, password, required, is_set}`` —
+    ``is_set`` reads the active profile's ``.env``. Accepts both the bare
+    string and the rich dict entry form.
+    """
+    from hermes_cli.config import get_env_value, manifest_env_is_secret
+
+    rows: list[dict] = []
+    for required, entries in ((True, manifest.get("requires_env")), (False, manifest.get("optional_env"))):
+        for entry in entries or []:
+            if isinstance(entry, str):
+                name, meta = entry, {}
+            elif isinstance(entry, dict) and entry.get("name"):
+                name, meta = str(entry["name"]), entry
+            else:
+                continue
+            rows.append(
+                {
+                    "name": name,
+                    "description": str(meta.get("description") or ""),
+                    "url": meta.get("url") or None,
+                    "password": manifest_env_is_secret(name, meta),
+                    "required": required,
+                    "is_set": bool(get_env_value(name)),
+                }
+            )
+    return rows
+
+
 def _missing_requires_env_names(manifest: dict) -> list[str]:
     """Return declared ``requires_env`` names that are unset in ``~/.hermes/.env``."""
-    requires_env = manifest.get("requires_env") or []
-    if not requires_env:
-        return []
-
-    from hermes_cli.config import get_env_value
-
-    env_specs: list[dict] = []
-    for entry in requires_env:
-        if isinstance(entry, str):
-            env_specs.append({"name": entry})
-        elif isinstance(entry, dict) and entry.get("name"):
-            env_specs.append(entry)
-
-    return [s["name"] for s in env_specs if s.get("name") and not get_env_value(s["name"])]
+    return [row["name"] for row in plugin_env_rows(manifest) if row["required"] and not row["is_set"]]
 
 
 def _prompt_plugin_env_vars(manifest: dict, console) -> None:
