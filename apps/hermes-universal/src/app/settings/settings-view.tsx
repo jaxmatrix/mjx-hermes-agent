@@ -6,20 +6,11 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { OverlayMain, OverlayNav, type OverlayNavGroup, OverlaySplitLayout } from '@/app/overlays/overlay-split-layout'
 import { type OverlayVariant, OverlayView } from '@/app/overlays/overlay-view'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger
-} from '@/components/ui/dialog'
 import { Tip } from '@/components/ui/tooltip'
 import { getHermesConfigDefaults, getHermesConfigRecord, saveHermesConfig } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { Download, Refresh, Upload } from '@/lib/icons'
+import { confirm } from '@/store/confirm'
 import { notify, notifyError } from '@/store/notifications'
 
 import { SECTIONS } from './constants'
@@ -72,6 +63,16 @@ export function SettingsFooter() {
   }
 
   const reset = async () => {
+    const ok = await confirm({
+      confirmLabel: t.settings.resetToDefaults,
+      destructive: true,
+      title: t.settings.resetConfirm
+    })
+
+    if (!ok) {
+      return
+    }
+
     setBusy(true)
 
     try {
@@ -113,36 +114,22 @@ export function SettingsFooter() {
           <Upload className="size-4" />
         </Button>
       </Tip>
-      <Dialog>
-        <DialogTrigger asChild>
-          <Button
-            aria-label={t.settings.resetToDefaults}
-            className="text-muted-foreground hover:text-destructive"
-            // No tip: this is a DialogTrigger, and Tip's own trigger can't
-            // compose onto the same child. aria-label names it instead.
-            size="icon-sm"
-            variant="ghost"
-          >
-            <Refresh className="size-4" />
-          </Button>
-        </DialogTrigger>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t.settings.resetToDefaults}</DialogTitle>
-            <DialogDescription>{t.settings.resetConfirm}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="ghost">{t.common.cancel}</Button>
-            </DialogClose>
-            <DialogClose asChild>
-              <Button disabled={busy} onClick={() => void reset()} variant="destructive">
-                {t.settings.resetToDefaults}
-              </Button>
-            </DialogClose>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* The confirm moved to the imperative `confirm()` front door, so this is
+          a plain button again — which means it can carry a Tip. As a
+          DialogTrigger it could not: Tip's own trigger cannot compose onto the
+          same child, so it had to make do with a bare aria-label. */}
+      <Tip label={t.settings.resetToDefaults}>
+        <Button
+          aria-label={t.settings.resetToDefaults}
+          className="text-muted-foreground hover:text-destructive"
+          disabled={busy}
+          onClick={() => void reset()}
+          size="icon-sm"
+          variant="ghost"
+        >
+          <Refresh className="size-4" />
+        </Button>
+      </Tip>
     </>
   )
 }
