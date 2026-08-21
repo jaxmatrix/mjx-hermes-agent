@@ -5,7 +5,14 @@ import type * as GatewayModule from '@/store/gateway'
 const { getHermesConfig, localRepoScanSupported, requestGateway, scanRepos, setApiRequestProfile } = vi.hoisted(() => ({
   getHermesConfig: vi.fn(async () => ({}) as unknown),
   localRepoScanSupported: vi.fn(() => true),
-  requestGateway: vi.fn(async (_method: string, _params?: unknown) => ({ active_id: null, projects: [] })),
+  // The return type is declared, not inferred: inferring it from this one
+  // literal pins the mock to `{active_id: null; projects: never[]}`, and every
+  // later mockImplementation returning a different RPC's shape then fails to
+  // typecheck (MJXHRM-474 / #269, fixed forward here).
+  requestGateway: vi.fn(async (_method: string, _params?: unknown): Promise<Record<string, unknown>> => ({
+    active_id: null,
+    projects: []
+  })),
   scanRepos: vi.fn(async () => [{ label: 'app', root: '/home/dev/app' }]),
   setApiRequestProfile: vi.fn()
 }))
