@@ -54,6 +54,7 @@ import {
   $profileScope,
   ALL_PROFILES,
   normalizeProfileKey,
+  profileLabel,
   refreshProfiles,
   selectProfile,
   setProfileColor,
@@ -299,7 +300,7 @@ export function ProfileRail() {
       color={resolveProfileColor(entry.name, colors)}
       freeDrag={opts?.overflow}
       key={entry.name}
-      label={entry.name}
+      label={profileLabel(entry)}
       onDelete={() => setPendingDelete(entry)}
       onEditSoul={() => setPendingSoul(entry.name)}
       onRecolor={color => setProfileColor(entry.name, color)}
@@ -329,7 +330,7 @@ export function ProfileRail() {
           <ProfilePill
             active={isAll || onDefault}
             glyph={isAll ? 'layers' : 'home'}
-            label={onDefault ? p.showAllProfiles : p.switchToProfile(defaultProfile.name)}
+            label={onDefault ? p.showAllProfiles : p.switchToProfile(profileLabel(defaultProfile))}
             onSelect={() => (onDefault ? setShowAllProfiles(true) : selectProfile(defaultProfile.name))}
           />
         ) : (
@@ -341,7 +342,7 @@ export function ProfileRail() {
         <ProfilePill
           active
           glyph="home"
-          label={defaultProfile.name}
+          label={profileLabel(defaultProfile)}
           onSelect={() => selectProfile(defaultProfile.name)}
         />
       )}
@@ -413,6 +414,7 @@ export function ProfileRail() {
 
       <RenameProfileDialog
         currentName={pendingRename?.name ?? ''}
+        isDefault={pendingRename?.is_default ?? false}
         onClose={() => setPendingRename(null)}
         onRenamed={reloadProfiles}
         open={pendingRename !== null}

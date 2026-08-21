@@ -304,6 +304,10 @@ export interface Translations {
   }
 
   settings: {
+    profileScope: {
+      appliesTo: string
+      editsProfile: (profile: string) => string
+    }
     closeSettings: string
     exportConfig: string
     importConfig: string
@@ -1397,6 +1401,33 @@ export interface Translations {
   }
 
   profiles: {
+    editor: {
+      title: string
+      loading: string
+      loadFailed: string
+      descriptionLabel: string
+      descriptionPlaceholder: string
+      toolsetsLabel: string
+      toolsetsUnpinned: string
+      mcpLabel: string
+      noneInstalled: string
+      save: string
+      saved: string
+      savedPartial: string
+      saveFailed: string
+      avatarUpload: string
+      avatarReplace: string
+      avatarRemove: string
+      avatarHint: string
+      avatarSaved: string
+      avatarFailed: string
+      avatarRejected: string
+      avatarTooLarge: string
+      working: string
+      shareSignIn: string
+      shareSignInHint: string
+      noCredentials: string
+    }
     close: string
     nameHint: string
     title: string
@@ -1466,6 +1497,9 @@ export interface Translations {
     createAction: string
     renameTitle: string
     renameDescPrefix: string
+    displayNameTitle: string
+    displayNameDesc: string
+    displayNameLabel: string
     renameDescSuffix: string
     newNameLabel: string
     renaming: string

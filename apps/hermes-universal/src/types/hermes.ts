@@ -848,6 +848,10 @@ export interface ProfileCreatePayload {
 }
 
 export interface ProfileInfo {
+  /** Presentation-only label override (profile.yaml `display_name`). Set by
+   *  renaming the DEFAULT profile, whose canonical id stays "default". Never
+   *  used for comparison or routing — read it through `profileLabel()`. */
+  display_name?: string
   has_env: boolean
   is_default: boolean
   model: null | string

@@ -229,6 +229,10 @@ export const zhHant = defineLocale({
   },
 
   settings: {
+    profileScope: {
+      appliesTo: '套用於',
+      editsProfile: profile => `本頁的變更將套用於「${profile}」設定檔。`
+    },
     closeSettings: '關閉設定',
     exportConfig: '匯出設定',
     importConfig: '匯入設定',
@@ -1424,6 +1428,34 @@ export const zhHant = defineLocale({
   },
 
   profiles: {
+    editor: {
+      title: '設定',
+      loading: '正在載入設定...',
+      loadFailed: '載入設定檔設定失敗',
+      descriptionLabel: '描述',
+      descriptionPlaceholder: '這個代理用來做什麼？',
+      toolsetsLabel: '工具集',
+      toolsetsUnpinned: '未釘選工具集清單，因此全部啟用。關閉其中一個會釘選其餘的。',
+      mcpLabel: 'MCP 伺服器',
+      noneInstalled: '未安裝任何項目。',
+      save: '儲存設定',
+      saved: '設定檔設定已儲存',
+      savedPartial: '部分變更未套用',
+      saveFailed: '儲存設定檔設定失敗',
+      avatarUpload: '上傳頭像',
+      avatarReplace: '更換頭像',
+      avatarRemove: '移除',
+      avatarHint: 'PNG、JPEG 或 WebP，最大 2 MB。儲存在閘道上，因此所有裝置都能看到。',
+      avatarSaved: '頭像已儲存',
+      avatarFailed: '更新頭像失敗',
+      avatarRejected: '不支援的圖片格式',
+      avatarTooLarge: '圖片過大',
+      working: '工作中',
+      shareSignIn: '與此閘道共用登入',
+      shareSignInHint:
+        '從主設定檔讀取 OAuth 權杖，而不是複製它們。複製會分叉權杖狀態，任一側的首次重新整理都會使另一側登出。',
+      noCredentials: '建立時未包含憑證 — 請在首次傳送訊息前設定供應商金鑰。'
+    },
     close: '關閉設定檔',
     nameHint: '小寫字母、數字、連字號和底線。必須以字母或數字開頭。',
     title: '設定檔',
@@ -1492,6 +1524,9 @@ export const zhHant = defineLocale({
     creating: '建立中…',
     createAction: '建立設定檔',
     renameTitle: '重新命名設定檔',
+    displayNameTitle: '為這個代理命名',
+    displayNameDesc: '設定在應用程式中顯示的名稱。內部設定檔 ID 仍為「default」。',
+    displayNameLabel: '顯示名稱',
     renameDescPrefix: '重新命名會更新設定檔目錄以及 ',
     renameDescSuffix: ' 中的所有包裝指令碼。',
     newNameLabel: '新名稱',

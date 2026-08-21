@@ -237,6 +237,10 @@ export const ja = defineLocale({
   },
 
   settings: {
+    profileScope: {
+      appliesTo: '適用先',
+      editsProfile: profile => `このページでの変更は「${profile}」プロファイルに適用されます。`
+    },
     closeSettings: '設定を閉じる',
     exportConfig: '設定を書き出す',
     importConfig: '設定を読み込む',
@@ -1480,6 +1484,35 @@ export const ja = defineLocale({
   },
 
   profiles: {
+    editor: {
+      title: '構成',
+      loading: '構成を読み込み中...',
+      loadFailed: 'プロファイル構成の読み込みに失敗しました',
+      descriptionLabel: '説明',
+      descriptionPlaceholder: 'このエージェントの用途は？',
+      toolsetsLabel: 'ツールセット',
+      toolsetsUnpinned:
+        'ツールセットの一覧が固定されていないため、すべて有効です。1 つオフにすると残りが固定されます。',
+      mcpLabel: 'MCP サーバー',
+      noneInstalled: 'インストールされていません。',
+      save: '構成を保存',
+      saved: 'プロファイル構成を保存しました',
+      savedPartial: '一部の変更は適用されませんでした',
+      saveFailed: 'プロファイル構成の保存に失敗しました',
+      avatarUpload: 'アバターをアップロード',
+      avatarReplace: 'アバターを変更',
+      avatarRemove: '削除',
+      avatarHint: 'PNG、JPEG、WebP、最大 2 MB。ゲートウェイに保存されるため、すべての端末で表示されます。',
+      avatarSaved: 'アバターを保存しました',
+      avatarFailed: 'アバターの更新に失敗しました',
+      avatarRejected: '未対応の画像形式です',
+      avatarTooLarge: '画像が大きすぎます',
+      working: '作業中',
+      shareSignIn: 'このゲートウェイとサインインを共有',
+      shareSignInHint:
+        'OAuth トークンをコピーせずメインプロファイルから読み取ります。コピーするとトークンの状態が分岐し、どちらか一方を最初に更新した時点でもう一方がサインアウトされます。',
+      noCredentials: '認証情報なしで作成されました — 最初のメッセージの前にプロバイダーキーを設定してください。'
+    },
     close: 'プロファイルを閉じる',
     nameHint: '小文字、数字、ハイフン、アンダースコア。文字または数字で始める必要があります。',
     title: 'プロファイル',
@@ -1549,6 +1582,9 @@ export const ja = defineLocale({
     creating: '作成中...',
     createAction: 'プロファイルを作成',
     renameTitle: 'プロファイルの名前を変更',
+    displayNameTitle: 'このエージェントに名前を付ける',
+    displayNameDesc: 'アプリ全体で表示される名前を設定します。内部のプロファイル ID は「default」のままです。',
+    displayNameLabel: '表示名',
     renameDescPrefix: '名前を変更するとプロファイルディレクトリと ',
     renameDescSuffix: ' 内のラッパースクリプトが更新されます。',
     newNameLabel: '新しい名前',

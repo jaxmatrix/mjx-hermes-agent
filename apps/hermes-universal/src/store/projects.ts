@@ -21,6 +21,7 @@ import { $connection } from '@/store/connection'
 import { requestGateway } from '@/store/gateway'
 import { setSidebarAgentsGrouped, type SidebarGrouping } from '@/store/layout'
 import { notify, notifyError } from '@/store/notifications'
+import { $activeProfile } from '@/store/profiles'
 import { $projectScope, $projectTree, ALL_PROJECTS } from '@/store/project-scope'
 import { knownSessionProfile, newSession, pruneSessionTombstones, refreshSessions, setSessions } from '@/store/session'
 import type { ProjectInfo, ProjectsPayload } from '@/types/hermes'
@@ -54,6 +55,27 @@ export const $projectTreeLoading = atom(false)
 // False when the backend predates the projects.* surface; null until first probe.
 export const $projectsRpcAvailable = atom<boolean | null>(null)
 
+/**
+ * Every `projects.*` method on the gateway is `@_profile_scoped` and binds
+ * `params['profile']` to pick which profile's HERMES_HOME/projects.db it opens
+ * (`tui_gateway/server.py` `_projects_method`). Universal sent NO profile on
+ * any of them, which is harmless only while the gateway happens to be running
+ * the profile the app is focused on — against an app-global remote gateway it
+ * read and WROTE the gateway's launch profile's projects.db, whatever the rail
+ * showed. So stamp the focused profile on every one, the way `scoped()` does
+ * for the `mcp.*`/`profiles.*` helpers in `lib/gateway-rpc.ts`.
+ *
+ * `$activeProfile` is deliberately the same atom a new chat routes on, so a
+ * project and the session started inside it can never land in different
+ * profiles. `null` (the default profile) OMITS the key, keeping the request
+ * byte-identical for single-profile users.
+ */
+function projectScoped<T extends object>(params?: T): T & { profile?: string } {
+  const profile = ($activeProfile.get() ?? '').trim()
+
+  return { ...((params ?? {}) as T), ...(profile ? { profile } : {}) }
+}
+
 function markRpcSuccess(): void {
   $projectsRpcAvailable.set(true)
 }
@@ -75,7 +97,7 @@ function applyPayload(payload: ProjectsPayload): void {
 
 export async function refreshProjects(): Promise<void> {
   try {
-    applyPayload(await requestGateway<ProjectsPayload>('projects.list'))
+    applyPayload(await requestGateway<ProjectsPayload>('projects.list', projectScoped()))
     markRpcSuccess()
   } catch (err) {
     markRpcFailure(err)
@@ -92,7 +114,7 @@ export async function refreshProjectTree(): Promise<void> {
   $projectTreeLoading.set(true)
 
   try {
-    const res = await requestGateway<ProjectTreePayload>('projects.tree', { preview_limit: 3 })
+    const res = await requestGateway<ProjectTreePayload>('projects.tree', projectScoped({ preview_limit: 3 }))
     // Identity-shared (MJXHRM-383). The tree is re-pulled on every window focus
     // and on entering the grouped view, and its `previewSessions` are rendered
     // by the same memoized `SidebarSessionRow` the flat list uses — a verbatim
@@ -115,9 +137,10 @@ export async function refreshProjectTree(): Promise<void> {
 
 export async function fetchProjectSessions(projectId: string): Promise<SidebarProjectTree | null> {
   try {
-    const res = await requestGateway<{ project: SidebarProjectTree | null }>('projects.project_sessions', {
-      project_id: projectId
-    })
+    const res = await requestGateway<{ project: SidebarProjectTree | null }>(
+      'projects.project_sessions',
+      projectScoped({ project_id: projectId })
+    )
 
     return res.project ?? null
   } catch {
@@ -383,15 +406,18 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectI
   let res: { project: ProjectInfo | null }
 
   try {
-    res = await requestGateway<{ project: ProjectInfo | null }>('projects.create', {
-      name: input.name,
-      folders: input.folders ?? [],
-      primary_path: input.primaryPath,
-      description: input.description,
-      icon: input.icon,
-      color: input.color,
-      use: input.use ?? false
-    })
+    res = await requestGateway<{ project: ProjectInfo | null }>(
+      'projects.create',
+      projectScoped({
+        name: input.name,
+        folders: input.folders ?? [],
+        primary_path: input.primaryPath,
+        description: input.description,
+        icon: input.icon,
+        color: input.color,
+        use: input.use ?? false
+      })
+    )
   } catch (err) {
     if (isMissingRpcMethod(err)) {
       $projectsRpcAvailable.set(false)
@@ -519,12 +545,15 @@ export async function updateProject(
 
   // Backend treats null/undefined as "leave unchanged"; "" clears.
   await persistOrRollback(snap, () =>
-    requestGateway('projects.update', {
-      id,
-      ...patch,
-      ...(patch.color === null && { color: '' }),
-      ...(patch.icon === null && { icon: '' })
-    })
+    requestGateway(
+      'projects.update',
+      projectScoped({
+        id,
+        ...patch,
+        ...(patch.color === null && { color: '' }),
+        ...(patch.icon === null && { icon: '' })
+      })
+    )
   )
 }
 
@@ -572,7 +601,10 @@ export async function addProjectFolder(
 ): Promise<void> {
   const snap = snapshot()
   await persistOrRollback(snap, () =>
-    requestGateway('projects.add_folder', { id, path, label: opts.label, is_primary: opts.isPrimary ?? false })
+    requestGateway(
+      'projects.add_folder',
+      projectScoped({ id, path, label: opts.label, is_primary: opts.isPrimary ?? false })
+    )
   )
   reconcile()
 }
@@ -594,13 +626,13 @@ export async function deleteProject(id: string): Promise<void> {
   }
 
   await persistOrRollback(snap, async () => {
-    applyPayload(await requestGateway<ProjectsPayload>('projects.delete', { id }))
+    applyPayload(await requestGateway<ProjectsPayload>('projects.delete', projectScoped({ id })))
   })
   void refreshProjectTree()
 }
 
 export async function setActiveProject(id: null | string): Promise<void> {
-  const res = await requestGateway<{ active_id: null | string }>('projects.set_active', { id })
+  const res = await requestGateway<{ active_id: null | string }>('projects.set_active', projectScoped({ id }))
   $activeProjectId.set(res.active_id ?? null)
 }
 
@@ -821,7 +853,7 @@ export async function scanAndRecordRepos(force = false): Promise<void> {
       }
     }
 
-    await requestGateway('projects.record_repos', { discovery_policy: policy, repos })
+    await requestGateway('projects.record_repos', projectScoped({ discovery_policy: policy, repos }))
 
     if (stale()) {
       return

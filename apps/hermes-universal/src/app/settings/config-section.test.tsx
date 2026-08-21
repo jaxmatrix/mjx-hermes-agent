@@ -13,7 +13,9 @@ vi.mock('@/hermes', () => ({
       timezone: { type: 'string' }
     }
   })),
-  saveHermesConfig: vi.fn(async () => ({ ok: true }))
+  saveHermesConfig: vi.fn(async () => ({ ok: true })),
+  // The "Applies to" chips refresh the roster on mount.
+  getProfiles: vi.fn(async () => ({ profiles: [] }))
 }))
 
 import { act } from 'react'
@@ -23,7 +25,8 @@ import { getHermesConfigRecord, getHermesConfigSchema, saveHermesConfig } from '
 import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 import { $approvalModes } from '@/store/approval-mode'
-import { setActiveProfile } from '@/store/profiles'
+import { $profiles, setActiveProfile } from '@/store/profiles'
+import { $settingsScopeOverride } from '@/store/settings-scope'
 
 import { ConfigField, ConfigSection } from './config-section'
 import { getNested } from './helpers'
@@ -227,5 +230,59 @@ describe('ConfigField', () => {
     )
 
     expect(screen.getByRole('combobox').textContent).toContain('Built-in only')
+  })
+})
+
+// The "Applies to" selector points the WHOLE page at another profile. The
+// fixture disagrees with the app's active profile (null = default) so a save
+// that ignored the scope would still write, just to the wrong profile — which
+// is exactly the bug the assertion has to catch.
+describe('ConfigSection "Applies to" scope', () => {
+  beforeEach(() => {
+    save.mockClear()
+    vi.mocked(getHermesConfigRecord).mockClear()
+    vi.mocked(getHermesConfigSchema).mockClear()
+    queryClient.clear()
+    setActiveProfile(null)
+    // Earlier describes leave their own mockResolvedValue on these two; restate
+    // the fixture so this block reads the schema it asserts against.
+    vi.mocked(getHermesConfigRecord).mockResolvedValue({ display: { show_reasoning: false }, timezone: 'UTC' })
+    vi.mocked(getHermesConfigSchema).mockResolvedValue({
+      fields: { 'display.show_reasoning': { type: 'boolean' }, timezone: { type: 'string' } }
+    })
+    $profiles.set([
+      { has_env: true, is_default: true, model: null, name: 'default', path: '/h', provider: null, skill_count: 0 },
+      { has_env: true, is_default: false, model: null, name: 'research', path: '/h/r', provider: null, skill_count: 0 }
+    ])
+    $settingsScopeOverride.set('research')
+  })
+  afterEach(() => {
+    queryClient.clear()
+    setActiveProfile(null)
+    $settingsScopeOverride.set(null)
+    $profiles.set([])
+  })
+
+  it('loads and autosaves the scoped profile, not the active one', async () => {
+    renderSection()
+    const toggle = await screen.findByRole('switch')
+
+    expect(getHermesConfigRecord).toHaveBeenCalledWith('research')
+    expect(getHermesConfigSchema).toHaveBeenCalledWith('research')
+
+    fireEvent.click(toggle)
+
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 1500 })
+    expect(save.mock.calls[0][1]).toBe('research')
+  })
+
+  // Without the scope in the cache key, profile A's record would paint under
+  // profile B's chip — the page would claim to edit one and show the other.
+  it('caches the scoped record under its own query key', async () => {
+    renderSection()
+    await screen.findByRole('switch')
+
+    expect(queryClient.getQueryData(['hermes-config-record', 'research'])).toBeTruthy()
+    expect(queryClient.getQueryData(['hermes-config-record'])).toBeUndefined()
   })
 })

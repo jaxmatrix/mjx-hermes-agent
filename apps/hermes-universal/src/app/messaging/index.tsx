@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $changeEventsAvailable, $platformsChangeTick, livePollIntervalMs } from '@/store/live-sync'
 import { notify, notifyError } from '@/store/notifications'
+import { $settingsScopeOverride } from '@/store/settings-scope'
 import { runGatewayRestart } from '@/store/system-status'
 
 import { useRefreshHotkey } from '../hooks/use-refresh-hotkey'
@@ -31,6 +32,7 @@ import { DetailColumn, ListColumn, MasterDetail } from '../master-detail'
 import { PageSearchShell } from '../page-search-shell'
 import { CREDENTIAL_CONTROL_CLASS } from '../settings/credential-key-ui'
 import { ListRow } from '../settings/primitives'
+import { SettingsProfileScope } from '../settings/profile-scope'
 import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
 
 import { PlatformAvatar } from './platform-icon'
@@ -121,6 +123,11 @@ export function MessagingView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
   // read (no spinner is bound to it); kept as-is from the desktop source.
   const [, setRefreshing] = useState(false)
   const [saving, setSaving] = useState<string | null>(null)
+  // Channel credentials live in each profile's .env, so this page edits the
+  // profile the shared "Applies to" scope names (desktop messaging/index.tsx).
+  // Before this, universal sent no profile at all — so the page showed the
+  // GATEWAY's own channels even while the app was operating as another profile.
+  const scopeProfile = useStore($settingsScopeOverride)
   const platformIds = useMemo(() => platforms?.map(p => p.id) ?? [], [platforms])
   const [selectedId, setSelectedId] = useRouteEnumParam('platform', platformIds, platformIds[0] ?? '')
 
@@ -131,7 +138,7 @@ export function MessagingView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
       }
 
       try {
-        const result = await getMessagingPlatforms()
+        const result = await getMessagingPlatforms(scopeProfile)
         setPlatforms(result.platforms)
       } catch (err) {
         if (!silent) {
@@ -143,7 +150,8 @@ export function MessagingView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
         }
       }
     },
-    [m]
+    // Re-fetch when the scope moves: the platforms belong to that profile.
+    [m, scopeProfile]
   )
 
   useRefreshHotkey(() => void refreshPlatforms())
@@ -151,6 +159,13 @@ export function MessagingView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
   useEffect(() => {
     void refreshPlatforms()
   }, [refreshPlatforms])
+
+  // Drop the previous profile's rows AND typed credentials on a scope change —
+  // a token typed for profile A must never be savable into profile B.
+  useEffect(() => {
+    setPlatforms(null)
+    setEdits({})
+  }, [scopeProfile])
 
   // Connection status updates without a manual "check" click. `platforms.changed`
   // drives it — the watcher broadcasts when the gateway's platform state moves —
@@ -206,7 +221,7 @@ export function MessagingView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
     setSaving(`enabled:${platform.id}`)
 
     try {
-      await updateMessagingPlatform(platform.id, { enabled })
+      await updateMessagingPlatform(platform.id, { enabled }, scopeProfile)
       setPlatforms(
         current =>
           current?.map(row =>
@@ -242,7 +257,7 @@ export function MessagingView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
     setSaving(`env:${platform.id}`)
 
     try {
-      await updateMessagingPlatform(platform.id, { env })
+      await updateMessagingPlatform(platform.id, { env }, scopeProfile)
       setEdits(current => ({ ...current, [platform.id]: {} }))
       await refreshPlatforms()
       notify({
@@ -262,7 +277,7 @@ export function MessagingView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
     setSaving(`clear:${key}`)
 
     try {
-      await updateMessagingPlatform(platform.id, { clear_env: [key] })
+      await updateMessagingPlatform(platform.id, { clear_env: [key] }, scopeProfile)
       setEdits(current => ({
         ...current,
         [platform.id]: {
@@ -288,6 +303,7 @@ export function MessagingView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
       searchPlaceholder={m.search}
       searchValue={query}
     >
+      <SettingsProfileScope className="px-3 pb-3" />
       {!platforms ? (
         <PageLoader label={m.loading} />
       ) : (

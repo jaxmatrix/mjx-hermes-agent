@@ -3,7 +3,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { getMemoryProviderOAuthStatus, startMemoryProviderOAuth } from '@/hermes'
 import { Check, ExternalLink, Loader2 } from '@/lib/icons'
+import { useStore } from '@/store/atom'
 import { notifyError } from '@/store/notifications'
+import { $settingsScopeOverride } from '@/store/settings-scope'
 import type { MemoryProviderOAuthStatus } from '@/types/hermes'
 
 const POLL_MS = 1500
@@ -13,6 +15,9 @@ const POLL_TIMEOUT_MS = 120_000
 // backend-driven: the status route 404s for providers without an oauth_flow
 // module, so non-OAuth providers render nothing. Ported from apps/desktop.
 export function MemoryConnect({ provider }: { provider: string }) {
+  // Memory credentials are per profile, so connect/poll the profile this page
+  // is editing ("Applies to"), not the app-wide active one.
+  const scopeProfile = useStore($settingsScopeOverride)
   const [capable, setCapable] = useState<'no' | 'unknown' | 'yes'>('unknown')
   const [connected, setConnected] = useState(false)
   const [auth, setAuth] = useState<MemoryProviderOAuthStatus['auth']>(null)
@@ -31,7 +36,7 @@ export function MemoryConnect({ provider }: { provider: string }) {
   useEffect(() => {
     let active = true
     setCapable('unknown')
-    getMemoryProviderOAuthStatus(provider)
+    getMemoryProviderOAuthStatus(provider, scopeProfile ?? undefined)
       .then(s => {
         if (!active) {
           return
@@ -51,7 +56,7 @@ export function MemoryConnect({ provider }: { provider: string }) {
       active = false
       stop()
     }
-  }, [provider, stop])
+  }, [provider, scopeProfile, stop])
 
   // An error message isn't sticky — it clears back to the steady state
   // (Connect link, plus the connected badge if a credential is stored).
@@ -72,7 +77,7 @@ export function MemoryConnect({ provider }: { provider: string }) {
     setPhase('pending')
 
     try {
-      await startMemoryProviderOAuth(provider)
+      await startMemoryProviderOAuth(provider, scopeProfile ?? undefined)
     } catch (err) {
       setPhase('error')
       setDetail('Could not start the connection.')
@@ -86,7 +91,7 @@ export function MemoryConnect({ provider }: { provider: string }) {
     timer.current = setInterval(() => {
       void (async () => {
         try {
-          const next = await getMemoryProviderOAuthStatus(provider)
+          const next = await getMemoryProviderOAuthStatus(provider, scopeProfile ?? undefined)
 
           if (next.state !== 'pending') {
             stop()
@@ -119,7 +124,7 @@ export function MemoryConnect({ provider }: { provider: string }) {
         }
       })()
     }, POLL_MS)
-  }, [provider, stop])
+  }, [provider, scopeProfile, stop])
 
   const cancel = useCallback(() => {
     stop()

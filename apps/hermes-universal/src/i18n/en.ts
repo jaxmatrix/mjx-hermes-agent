@@ -342,6 +342,10 @@ export const en: Translations = {
   },
 
   settings: {
+    profileScope: {
+      appliesTo: 'Applies to',
+      editsProfile: profile => `Changes on this page apply to the “${profile}” profile.`
+    },
     closeSettings: 'Close settings',
     exportConfig: 'Export config',
     importConfig: 'Import config',
@@ -1648,6 +1652,34 @@ export const en: Translations = {
   },
 
   profiles: {
+    editor: {
+      title: 'Configuration',
+      loading: 'Loading configuration...',
+      loadFailed: 'Failed to load the profile configuration',
+      descriptionLabel: 'Description',
+      descriptionPlaceholder: 'What is this agent for?',
+      toolsetsLabel: 'Toolsets',
+      toolsetsUnpinned: 'No toolset list is pinned, so every toolset is on. Turning one off pins the rest.',
+      mcpLabel: 'MCP servers',
+      noneInstalled: 'None installed.',
+      save: 'Save configuration',
+      saved: 'Profile configuration saved',
+      savedPartial: 'Some changes were not applied',
+      saveFailed: 'Failed to save the profile configuration',
+      avatarUpload: 'Upload avatar',
+      avatarReplace: 'Replace avatar',
+      avatarRemove: 'Remove',
+      avatarHint: 'PNG, JPEG or WebP, up to 2 MB. Stored on the gateway, so every device sees it.',
+      avatarSaved: 'Avatar saved',
+      avatarFailed: 'Failed to update the avatar',
+      avatarRejected: 'Unsupported image format',
+      avatarTooLarge: 'That image is too large',
+      working: 'Working',
+      shareSignIn: 'Share sign-in with this gateway',
+      shareSignInHint:
+        'Reads OAuth tokens from the main profile instead of copying them. A copy forks token state, and the first refresh on either side signs the other out.',
+      noCredentials: 'Created without credentials — set a provider key before the first message.'
+    },
     close: 'Close profiles',
     nameHint: 'Lowercase letters, digits, hyphens, and underscores. Must start with a letter or digit.',
     title: 'Profiles',
@@ -1716,6 +1748,9 @@ export const en: Translations = {
     creating: 'Creating...',
     createAction: 'Create profile',
     renameTitle: 'Rename profile',
+    displayNameTitle: 'Name this agent',
+    displayNameDesc: 'Sets a display name shown across the app. The internal profile ID stays "default".',
+    displayNameLabel: 'Display name',
     renameDescPrefix: 'Renaming updates the profile directory and any wrapper scripts in ',
     renameDescSuffix: '.',
     newNameLabel: 'New name',

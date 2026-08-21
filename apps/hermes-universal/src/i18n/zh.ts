@@ -329,6 +329,10 @@ export const zh: Translations = {
   },
 
   settings: {
+    profileScope: {
+      appliesTo: '应用于',
+      editsProfile: profile => `本页的更改将应用于“${profile}”配置档案。`
+    },
     closeSettings: '关闭设置',
     exportConfig: '导出配置',
     importConfig: '导入配置',
@@ -1803,6 +1807,34 @@ export const zh: Translations = {
   },
 
   profiles: {
+    editor: {
+      title: '配置',
+      loading: '正在加载配置...',
+      loadFailed: '加载配置档案配置失败',
+      descriptionLabel: '描述',
+      descriptionPlaceholder: '这个智能体用来做什么？',
+      toolsetsLabel: '工具集',
+      toolsetsUnpinned: '未固定工具集列表，因此全部启用。关闭其中一个会固定其余的。',
+      mcpLabel: 'MCP 服务器',
+      noneInstalled: '未安装任何项目。',
+      save: '保存配置',
+      saved: '配置档案配置已保存',
+      savedPartial: '部分更改未应用',
+      saveFailed: '保存配置档案配置失败',
+      avatarUpload: '上传头像',
+      avatarReplace: '更换头像',
+      avatarRemove: '移除',
+      avatarHint: 'PNG、JPEG 或 WebP，最大 2 MB。保存在网关上，因此所有设备都能看到。',
+      avatarSaved: '头像已保存',
+      avatarFailed: '更新头像失败',
+      avatarRejected: '不支持的图片格式',
+      avatarTooLarge: '图片过大',
+      working: '工作中',
+      shareSignIn: '与此网关共享登录',
+      shareSignInHint:
+        '从主配置档案读取 OAuth 令牌，而不是复制它们。复制会分叉令牌状态，任一侧的首次刷新都会使另一侧退出登录。',
+      noCredentials: '创建时未包含凭据 — 请在首次发送消息前设置提供商密钥。'
+    },
     close: '关闭配置档案',
     nameHint: '小写字母、数字、连字符和下划线。必须以字母或数字开头。',
     title: '配置档案',
@@ -1871,6 +1903,9 @@ export const zh: Translations = {
     creating: '创建中…',
     createAction: '创建配置档案',
     renameTitle: '重命名配置档案',
+    displayNameTitle: '为这个智能体命名',
+    displayNameDesc: '设置在应用中显示的名称。内部配置档案 ID 仍为 “default”。',
+    displayNameLabel: '显示名称',
     renameDescPrefix: '重命名会更新配置档案目录以及 ',
     renameDescSuffix: ' 中的所有包装脚本。',
     newNameLabel: '新名称',

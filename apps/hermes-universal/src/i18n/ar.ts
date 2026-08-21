@@ -263,6 +263,10 @@ export const ar = defineLocale({
     noResults: 'لا توجد لغة مطابقة'
   },
   settings: {
+    profileScope: {
+      appliesTo: 'يُطبّق على',
+      editsProfile: profile => `تُطبّق تغييرات هذه الصفحة على الملف الشخصي «${profile}».`
+    },
     closeSettings: 'إغلاق الإعدادات',
     exportConfig: 'تصدير الإعدادات',
     importConfig: 'استيراد الإعدادات',
@@ -1306,6 +1310,34 @@ export const ar = defineLocale({
     }
   },
   profiles: {
+    editor: {
+      title: 'الإعدادات',
+      loading: 'جارٍ تحميل الإعدادات...',
+      loadFailed: 'تعذّر تحميل إعدادات الملف الشخصي',
+      descriptionLabel: 'الوصف',
+      descriptionPlaceholder: 'ما الغرض من هذا الوكيل؟',
+      toolsetsLabel: 'مجموعات الأدوات',
+      toolsetsUnpinned: 'لا توجد قائمة مثبّتة لمجموعات الأدوات، لذا كلها مفعّلة. إيقاف واحدة يثبّت البقية.',
+      mcpLabel: 'خوادم MCP',
+      noneInstalled: 'لا شيء مثبّت.',
+      save: 'حفظ الإعدادات',
+      saved: 'تم حفظ إعدادات الملف الشخصي',
+      savedPartial: 'لم تُطبَّق بعض التغييرات',
+      saveFailed: 'تعذّر حفظ إعدادات الملف الشخصي',
+      avatarUpload: 'رفع صورة',
+      avatarReplace: 'استبدال الصورة',
+      avatarRemove: 'إزالة',
+      avatarHint: 'PNG أو JPEG أو WebP، بحد أقصى 2 ميغابايت. تُحفظ على البوابة، لذا تظهر على كل الأجهزة.',
+      avatarSaved: 'تم حفظ الصورة',
+      avatarFailed: 'تعذّر تحديث الصورة',
+      avatarRejected: 'صيغة صورة غير مدعومة',
+      avatarTooLarge: 'الصورة كبيرة جدًا',
+      working: 'قيد العمل',
+      shareSignIn: 'مشاركة تسجيل الدخول مع هذه البوابة',
+      shareSignInHint:
+        'يقرأ رموز OAuth من الملف الشخصي الرئيسي بدل نسخها. النسخ يفصل حالة الرمز، وأول تحديث في أي جهة يُخرج الأخرى.',
+      noCredentials: 'أُنشئ بدون بيانات اعتماد — عيّن مفتاح مزوّد قبل أول رسالة.'
+    },
     close: 'إغلاق',
     nameHint: 'اسم الملف الشخصي',
     title: 'الملفات الشخصية',
@@ -1367,6 +1399,9 @@ export const ar = defineLocale({
     creating: 'جار الإنشاء...',
     createAction: 'إنشاء ملف شخصي',
     renameTitle: 'إعادة تسمية الملف الشخصي',
+    displayNameTitle: 'سمِّ هذا الوكيل',
+    displayNameDesc: 'يحدد اسم العرض الظاهر في كل أنحاء التطبيق. يبقى معرّف الملف الشخصي الداخلي "default".',
+    displayNameLabel: 'اسم العرض',
     renameDescPrefix: 'تؤدي إعادة التسمية إلى تحديث دليل الملف الشخصي وأي سكربتات تغليف في ',
     renameDescSuffix: '.',
     newNameLabel: 'الاسم الجديد',
