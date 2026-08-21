@@ -339,12 +339,24 @@ export function appendSystemMessage(text: string): void {
   appendSessionSystemMessage($activeSessionKey.get(), text)
 }
 
-export async function sendPrompt(text: string): Promise<void> {
+/**
+ * `displayText` splits what the MODEL is sent from what the TRANSCRIPT shows.
+ * A slash `send`/`skill` directive answers with `message` (model-facing
+ * scaffolding — `/goal resume`'s continuation prompt, a skill's expanded body)
+ * plus a `display` projection of the invocation the user actually typed. Only
+ * the optimistic user bubble and a new chat's preview title use it; the wire
+ * payload and `beginTurn`'s record stay `trimmed`, because the gateway
+ * reconciles an in-flight turn against the text IT holds (turn-lifecycle
+ * `remote.user`), and a display string there would read as a different turn.
+ */
+export async function sendPrompt(text: string, options: { displayText?: string } = {}): Promise<void> {
   const trimmed = text.trim()
 
   if (!trimmed || $busy.get()) {
     return
   }
+
+  const shown = options.displayText?.trim() || trimmed
 
   // Typing barge-in: a new prompt silences the reply being read aloud. When
   // something WAS playing, that is an interruption the model has to hear about,
@@ -381,7 +393,7 @@ export async function sendPrompt(text: string): Promise<void> {
     busy: true,
     turnStartedAt: Date.now(),
     statusLine: '',
-    messages: [...state.messages, { id: nextId(), role: 'user', parts: [{ type: 'text', text: trimmed }] }]
+    messages: [...state.messages, { id: nextId(), role: 'user', parts: [{ type: 'text', text: shown }] }]
   }))
   // Open the in-flight turn NOW, not on `message.start`: the window between the
   // submit leaving and the gateway acknowledging it is precisely the one a
@@ -410,7 +422,7 @@ export async function sendPrompt(text: string): Promise<void> {
       // on the STORED id (what the list refresh + session.title use), with the
       // first message as the provisional title (preview). Dynamic import —
       // store/session imports store/chat, so a static import here would cycle.
-      void import('@/store/session').then(m => m.registerNewSession(storedId, trimmed)).catch(() => {})
+      void import('@/store/session').then(m => m.registerNewSession(storedId, shown)).catch(() => {})
     }
 
     // Stop, pressed while the session was still being created. `sendPrompt` goes

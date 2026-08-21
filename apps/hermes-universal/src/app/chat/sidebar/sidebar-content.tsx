@@ -1005,7 +1005,7 @@ export function SidebarScrollBody({
                 onNavigate?.()
               }}
               onToggle={() => setSidebarCronOpen(!cronOpen)}
-              onTriggerJob={id => void triggerCron(id)}
+              onTriggerJob={(id, profile) => void triggerCron(id, profile)}
               open={cronOpen}
             />
           )}

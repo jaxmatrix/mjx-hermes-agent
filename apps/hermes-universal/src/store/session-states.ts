@@ -572,7 +572,7 @@ export interface SessionTileDelegate {
   deleteSession(storedSessionId: string): Promise<void>
   interruptSession(runtimeId: string): Promise<void>
   resumeTile(storedSessionId: string): Promise<string>
-  submitToSession(runtimeId: string, text: string): Promise<void>
+  submitToSession(runtimeId: string, text: string, displayText?: string): Promise<void>
   updateSession(runtimeId: string, updater: (state: ClientSessionState) => ClientSessionState): ClientSessionState
 }
 

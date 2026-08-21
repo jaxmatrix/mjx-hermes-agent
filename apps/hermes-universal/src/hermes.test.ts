@@ -11,6 +11,7 @@ import {
   deleteWebhook,
   enableWebhooks,
   getAutomationBlueprints,
+  getCronJobRuns,
   getEnvVars,
   getHermesConfig,
   getMcpOAuthFlow,
@@ -21,9 +22,12 @@ import {
   instantiateAutomationBlueprint,
   listAllProfileSessions,
   listSessions,
+  pauseCronJob,
   saveHermesConfig,
   setApiRequestProfile,
-  setWebhookEnabled
+  setWebhookEnabled,
+  triggerCronJob,
+  updateCronJob
 } from './hermes'
 
 const mockApi = vi.mocked(api)
@@ -252,5 +256,47 @@ describe('profile-scoped settings calls', () => {
     setApiRequestProfile('work')
     await getMessagingPlatforms()
     expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/messaging/platforms', profile: 'work' }))
+  })
+})
+
+// MJXHRM-457. Cron jobs live in per-profile stores and every route takes an
+// optional ?profile= choosing which one it opens. Only the list ever sent it, so
+// acting on a row from another profile hit the ACTIVE profile's store instead.
+describe('cron routes carry ?profile=', () => {
+  const pathOf = () => String((mockApi.mock.calls.at(-1)?.[0] as { path: string }).path)
+
+  it('stamps the profile on a trigger', async () => {
+    await triggerCronJob('j1', 'work')
+    expect(pathOf()).toBe('/api/cron/jobs/j1/trigger?profile=work')
+  })
+
+  it('stamps the profile on a pause', async () => {
+    await pauseCronJob('j1', 'work')
+    expect(pathOf()).toBe('/api/cron/jobs/j1/pause?profile=work')
+  })
+
+  it('stamps the profile on an update', async () => {
+    await updateCronJob('j1', { name: 'x' }, 'work')
+    expect(pathOf()).toBe('/api/cron/jobs/j1?profile=work')
+  })
+
+  // The runs route already has a query string, so the separator has to be '&' —
+  // a second '?' makes `profile` part of the `limit` value and the backend
+  // silently falls back to the active profile.
+  it('appends rather than restarts the query string on the runs route', async () => {
+    await getCronJobRuns('j1', 5, 'work')
+    expect(pathOf()).toBe('/api/cron/jobs/j1/runs?limit=5&profile=work')
+  })
+
+  it('escapes a profile name that needs it', async () => {
+    await triggerCronJob('j1', 'my profile/2')
+    expect(pathOf()).toBe('/api/cron/jobs/j1/trigger?profile=my%20profile%2F2')
+  })
+
+  // A fixture that DISAGREES: an older gateway does not annotate its records, so
+  // there is no profile to send and inventing one would retarget the request.
+  it('sends no profile when the job carries none', async () => {
+    await triggerCronJob('j1')
+    expect(pathOf()).toBe('/api/cron/jobs/j1/trigger')
   })
 })

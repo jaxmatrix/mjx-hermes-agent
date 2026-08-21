@@ -44,10 +44,15 @@ function replace(job: CronJob) {
 
 /** Run a job now (the sidebar row's zap button and its menu's "Trigger now").
  *  The returned job carries the new state, so the row repaints without waiting
- *  for the next poll. */
-export async function triggerCron(id: string): Promise<void> {
+ *  for the next poll.
+ *
+ *  `profile` addresses the per-profile cron store the job actually lives in —
+ *  an id alone resolves against the ACTIVE profile, so triggering a row while
+ *  browsing another profile found no such job (every record carries its own,
+ *  see CronJob.profile). */
+export async function triggerCron(id: string, profile?: null | string): Promise<void> {
   try {
-    replace(await triggerCronJob(id))
+    replace(await triggerCronJob(id, profile))
   } catch (err) {
     notifyError(err, translateNow('cron.failedTrigger'))
   }

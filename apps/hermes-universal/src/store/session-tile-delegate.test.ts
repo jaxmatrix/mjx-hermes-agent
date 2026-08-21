@@ -174,6 +174,29 @@ describe('submitToSession', () => {
     expect(state?.messages.at(-1)).toMatchObject({ role: 'user', parts: [{ type: 'text', text: 'hello' }] })
   })
 
+  // MJXHRM-457. A slash `send`/`skill` directive splits the two: the model is
+  // sent `text`, the transcript shows `displayText`. Both had been one value,
+  // so `/goal resume` printed its continuation scaffolding as the user's turn.
+  // The turn record deliberately keeps the WIRE text — turn-lifecycle
+  // reconciles an in-flight turn against what the gateway holds, and a display
+  // string there would read as a different turn.
+  it('shows the display projection while sending the model text', async () => {
+    seed('runtime-1', { storedSessionId: 'stored-1' })
+    requestGateway.mockResolvedValue({})
+
+    await delegate.submitToSession('runtime-1', 'the continuation prompt', '/goal resume')
+
+    expect(requestGateway).toHaveBeenCalledWith('prompt.submit', {
+      session_id: 'runtime-1',
+      text: 'the continuation prompt'
+    })
+    expect($sessionStates.get()['runtime-1']?.messages.at(-1)).toMatchObject({
+      role: 'user',
+      parts: [{ type: 'text', text: '/goal resume' }]
+    })
+    expect(getInflightTurn('runtime-1')).toMatchObject({ prompt: 'the continuation prompt' })
+  })
+
   // MJXHRM-308: the default `onRecovered` resolved the LIVE id through the
   // stored-id index, so it did nothing for any resumed session. The slice stayed
   // under its dead key, the router addressed frames by the new one, and the tile

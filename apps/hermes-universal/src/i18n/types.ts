@@ -1535,6 +1535,20 @@ export interface Translations {
     monthlyOnDayAt: (dayOfMonth: string, time: string) => string
     topOfHour: string
     everyHourAt: (minute: string) => string
+    /** The client-side include_disabled filter. */
+    hidePaused: string
+    showPaused: string
+    /** Run-count cap ({times, completed} on the record). */
+    repeatLabel: string
+    repeatForever: string
+    repeatOf: (completed: number, times: number) => string
+    /** A trigger for this job is in flight. */
+    triggering: string
+    /** Continuity toggle — stored as the reserved 'self' ref in context_from. */
+    continuityLabel: string
+    continuityHint: string
+    /** The scheduler never started a due run (last_fire_error). */
+    missedFire: string
     newCron: string
     emptyDescNew: string
     emptyDescSearch: string

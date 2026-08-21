@@ -234,6 +234,20 @@ export function useSlashCommand() {
             renderSlashOutput(`⚡ loading skill: ${dispatch.name}`)
           }
 
+          // What the TRANSCRIPT shows, when it is not what the model is sent.
+          // `message` here is model-facing scaffolding — `/goal resume` answers
+          // with the continuation prompt, a skill/bundle with its expanded body —
+          // and rendering that as the user's own turn is how `/goal resume` came
+          // to read back as a wall of instructions nobody typed. The gateway
+          // projects the invocation into `display` (methods_tools.py
+          // `_skill_scaffold_projection`); parseCommandDispatch has preserved it
+          // since MJXHRM-444 and, until now, nothing read it.
+          //
+          // A skill dispatch from a gateway too old to send `display` still has
+          // its name, and `/name` is exactly the invocation that produced it.
+          const projected = 'display' in dispatch ? dispatch.display?.trim() : ''
+          const displayText = projected || (dispatch.type === 'skill' ? `/${dispatch.name}` : undefined)
+
           if ($sessionStates.get()[targetKey()]?.busy) {
             renderSlashOutput('session busy — /interrupt the current turn before sending this command')
 
@@ -247,7 +261,7 @@ export function useSlashCommand() {
           // whenever the main pane was mid-turn — dropped the directive in
           // silence, which is the "no turn, no busy state" this ticket is
           // named for (MJXHRM-419).
-          await submitPromptToSurface(view, message)
+          await submitPromptToSurface(view, message, displayText)
         }
 
         try {

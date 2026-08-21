@@ -757,17 +757,38 @@ export interface CronJob {
   deliver?: null | string | string[]
   enabled: boolean
   id: string
+  // Prior-run context. The reserved entry 'self' is the CONTINUITY toggle — the
+  // job feeding its own last output into the next run. The two serializers
+  // disagree on shape: REST (/api/cron/jobs) returns the raw record with 'self'
+  // still inside this list, while the RPC's `_format_job`
+  // (tools/cronjob_tools.py) strips it and sets `continuity` instead. Read both
+  // through `cronJobContinuity`.
+  context_from?: null | string | string[]
+  continuity?: boolean
   // Delivery failures are tracked APART from last_error (cron/jobs.py
   // mark_job_run): a job can run fine and still reach none of its targets.
   last_delivery_error?: null | string
   last_error?: null | string
+  // A fire the SCHEDULER never got to start (gateway unreachable, listener not
+  // bound) — the "runs manually but never auto-fires" shape. Tracked apart from
+  // last_error, which only covers runs that actually began, and it is a DICT:
+  // cron/jobs.py stamps {"at": iso, "detail": str}. Cleared by the next
+  // successful run.
+  last_fire_error?: { at?: null | string; detail?: null | string } | null
   last_run_at?: null | string
   model?: null | string
   name?: null | string
   next_run_at?: null | string
   no_agent?: boolean
+  // Which per-profile cron store this job came from. Stamped on every record by
+  // web_server `_annotate_cron_job`, including in the aggregated 'all' listing —
+  // which is the only thing that makes a row in that view actionable, since the
+  // routes address a store, not a global job table.
+  profile?: null | string
   prompt?: null | string
   provider?: null | string
+  // A run-count cap plus its progress: {"times": null = forever}.
+  repeat?: { completed?: null | number; times?: null | number } | null
   schedule?: CronJobSchedule
   schedule_display?: null | string
   script?: null | string
@@ -787,6 +808,8 @@ export interface CronDeliveryTarget {
 }
 
 export interface CronJobCreatePayload {
+  /** Prior-run context; 'self' is the continuity toggle. */
+  context_from?: string[]
   deliver?: string
   model?: string
   name?: string
@@ -802,6 +825,9 @@ export interface CronJobSchedule {
 }
 
 export interface CronJobUpdates {
+  /** null clears every ref, including 'self' — that is how continuity is
+   *  turned OFF, since an omitted key leaves the stored list untouched. */
+  context_from?: null | string[]
   deliver?: string
   enabled?: boolean
   model?: null | string
