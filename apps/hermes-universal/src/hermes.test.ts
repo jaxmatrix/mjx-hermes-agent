@@ -11,8 +11,10 @@ import {
   deleteWebhook,
   enableWebhooks,
   getAutomationBlueprints,
+  getEnvVars,
   getHermesConfig,
   getMcpOAuthFlow,
+  getMessagingPlatforms,
   getSession,
   getStatus,
   getWebhooks,
@@ -210,5 +212,45 @@ describe('MCP OAuth flow lifecycle', () => {
     mockApi.mockResolvedValueOnce({ ok: true, status: 'expired' })
 
     await expect(cancelMcpOAuthFlow('gone')).resolves.toEqual({ ok: true, status: 'expired' })
+  })
+})
+
+// The settings "Applies to" scope (store/settings-scope) reaches the wire as
+// this optional trailing argument. The three states are distinct on purpose:
+// an override wins, no override falls back to the app-wide profile, and
+// neither means the key is ABSENT — which is what keeps single-profile users'
+// requests byte-identical to before the selector existed.
+describe('profile-scoped settings calls', () => {
+  afterEach(() => setApiRequestProfile(null))
+
+  it('omits profile entirely with no app profile and no override', async () => {
+    await getEnvVars()
+    expect(mockApi.mock.calls[0][0]).not.toHaveProperty('profile')
+  })
+
+  it('falls back to the app-wide profile when no override is given', async () => {
+    setApiRequestProfile('work')
+    await getEnvVars()
+    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ profile: 'work' }))
+  })
+
+  // The whole point: the override targets a profile the app is NOT on.
+  it('sends the override in preference to the app-wide profile', async () => {
+    setApiRequestProfile('work')
+    await getEnvVars('research')
+    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ profile: 'research' }))
+  })
+
+  it('scopes a config save', async () => {
+    await saveHermesConfig({ timezone: 'UTC' }, 'research')
+    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ method: 'PUT', profile: 'research' }))
+  })
+
+  // Messaging carried NO profile at all before this — it always hit the
+  // gateway's own channels, whatever the app was scoped to.
+  it('scopes the messaging platform list', async () => {
+    setApiRequestProfile('work')
+    await getMessagingPlatforms()
+    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/messaging/platforms', profile: 'work' }))
   })
 })
