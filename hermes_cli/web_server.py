@@ -84,6 +84,7 @@ from hermes_cli.config import (
 from plugins.memory.config_schema import (
     ProviderConfigSchema,
     ProviderField,
+    STORAGE_CONFIG_YAML,
     STORAGE_HONCHO_HOST_BLOCK,
     get_provider_config_schema,
 )
@@ -5304,10 +5305,22 @@ def _declared_provider_payload(provider: ProviderConfigSchema) -> Dict[str, Any]
             return (host_block, raw) if field.scope == "host" else (raw,)
     else:
         host = ""
-        data = _read_flat_json(provider)
+        if provider.storage == STORAGE_CONFIG_YAML:
+            # The runtime resolves env before config.yaml, so an env override
+            # must show as the value in effect, not the shadowed stored one.
+            overrides = {
+                field.key: env[env_key]
+                for field in provider.fields
+                if not field.is_secret
+                for env_key in field.env_fallbacks
+                if env.get(env_key)
+            }
+            sources = (overrides, _read_config_yaml_block(provider))
+        else:
+            sources = (_read_flat_json(provider),)
 
         def sources_for(field: ProviderField) -> tuple:
-            return (data,)
+            return sources
 
     for field in provider.fields:
         entry = _provider_field_entry(field)
@@ -5372,6 +5385,44 @@ def _write_provider_flat(provider: ProviderConfigSchema, values: Dict[str, str])
     path = _flat_json_path(provider)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_json_write(path, existing, mode=0o600)
+
+
+def _read_config_yaml_block(provider: ProviderConfigSchema) -> Dict[str, Any]:
+    memory_config = load_config().get("memory")
+    block = memory_config.get(provider.name) if isinstance(memory_config, dict) else None
+    return dict(block) if isinstance(block, dict) else {}
+
+
+def _write_provider_config_yaml(provider: ProviderConfigSchema, values: Dict[str, str]) -> None:
+    """Persist submitted fields to ``config.yaml`` under ``memory.<provider>``.
+
+    Secrets go to the env store. A written non-secret field also clears its
+    ``env_fallbacks`` from ``.env`` and the process: the runtime reads env
+    first, so leaving a stale ``OPENVIKING_ENDPOINT`` behind would make the
+    save a silent no-op.
+    """
+
+    config = load_config()
+    memory_config = config.get("memory")
+    if not isinstance(memory_config, dict):
+        memory_config = {}
+        config["memory"] = memory_config
+    block = memory_config.get(provider.name)
+    if not isinstance(block, dict):
+        block = {}
+        memory_config[provider.name] = block
+
+    for field in provider.fields:
+        if field.is_secret:
+            submitted = (values.get(field.key) or "").strip()
+            if submitted and field.env_key:
+                save_env_value(field.env_key, submitted)
+        elif field.key in values:
+            for env_key in field.env_fallbacks:
+                remove_env_value(env_key)
+
+    _apply_field_values(provider, values, lambda field: block)
+    save_config(config)
 
 
 def _write_provider_honcho(provider: ProviderConfigSchema, values: Dict[str, str]) -> None:
@@ -5447,6 +5498,8 @@ def _stringify_submitted_values(values: Dict[str, Any]) -> Dict[str, str]:
 def _update_memory_provider_config(provider: ProviderConfigSchema, values: Dict[str, str]) -> None:
     if provider.storage == STORAGE_HONCHO_HOST_BLOCK:
         _write_provider_honcho(provider, values)
+    elif provider.storage == STORAGE_CONFIG_YAML:
+        _write_provider_config_yaml(provider, values)
     else:
         _write_provider_flat(provider, values)
 

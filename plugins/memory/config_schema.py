@@ -38,6 +38,11 @@ KIND_JSON = "json"
 # Storage backends understood by web_server (see its read/write dispatch).
 STORAGE_FLAT_JSON = "flat_json"
 STORAGE_HONCHO_HOST_BLOCK = "honcho_host_block"
+# Fields live in config.yaml under ``memory.<provider name>`` — the block the
+# provider's runtime already reads (OpenViking, RetainDB). Writes clear any
+# ``env_fallbacks`` of the written field so the saved value is the one in
+# effect (the runtime resolves env before config.yaml).
+STORAGE_CONFIG_YAML = "config_yaml"
 
 
 @dataclass(frozen=True)

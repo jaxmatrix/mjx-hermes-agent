@@ -731,6 +731,49 @@ class TestWebServerEndpoints:
         assert provider_config["api_url"] == "http://localhost:8888"
         assert "api_key" not in provider_config
 
+    def test_openviking_declared_surface_round_trips_config_yaml_and_clears_env_shadow(self, monkeypatch):
+        from hermes_cli.config import load_config, load_env, save_env_value
+
+        # A wizard-era .env value shadows config.yaml at runtime, so the panel
+        # must show it as the value in effect...
+        monkeypatch.delenv("OPENVIKING_ENDPOINT", raising=False)
+        save_env_value("OPENVIKING_ENDPOINT", "http://env.test:1933")
+        resp = self.client.get("/api/memory/providers/openviking/config?surface=declared")
+        assert resp.status_code == 200
+        fields = {field["key"]: field for field in resp.json()["fields"]}
+        assert fields["endpoint"]["value"] == "http://env.test:1933"
+        assert fields["api_key"]["is_set"] is False
+
+        # ...and a save must land in config.yaml AND drop the shadow, or the
+        # save would be a silent no-op at runtime.
+        resp = self.client.put(
+            "/api/memory/providers/openviking/config?surface=declared",
+            json={
+                "values": {
+                    "endpoint": "http://saved.test:1933",
+                    "recall_limit": "12",
+                    "recall_prefer_abstract": "true",
+                    "api_key": "ov-secret",
+                }
+            },
+        )
+        assert resp.status_code == 200
+        env = load_env()
+        assert env["OPENVIKING_API_KEY"] == "ov-secret"
+        assert "OPENVIKING_ENDPOINT" not in env
+        config = load_config()["memory"]
+        assert config["provider"] == "openviking"
+        assert config["openviking"]["endpoint"] == "http://saved.test:1933"
+        assert config["openviking"]["recall_limit"] == 12
+        assert config["openviking"]["recall_prefer_abstract"] is True
+        assert "api_key" not in config["openviking"]
+
+        resp = self.client.get("/api/memory/providers/openviking/config?surface=declared")
+        fields = {field["key"]: field for field in resp.json()["fields"]}
+        assert fields["endpoint"]["value"] == "http://saved.test:1933"
+        assert fields["recall_limit"]["value"] == "12"
+        assert fields["api_key"]["is_set"] is True
+
 
 
 
