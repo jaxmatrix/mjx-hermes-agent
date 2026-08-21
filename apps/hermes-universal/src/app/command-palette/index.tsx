@@ -17,9 +17,10 @@ import {
   HUD_TEXT
 } from '@/app/floating-hud'
 import { COMMAND_CENTER_ROUTE, PET_SETTINGS_ROUTE, sessionRoute, SETTINGS_ROUTE, SKILLS_ROUTE } from '@/app/routes'
-import { FIELD_LABELS, SECTIONS } from '@/app/settings/constants'
-import { fieldCopyForSchemaKey } from '@/app/settings/field-copy'
-import { prettyName } from '@/app/settings/helpers'
+import { SECTIONS } from '@/app/settings/constants'
+import type { SettingsSearchEntry } from '@/app/settings/settings-search'
+import { settingsSearchTargetRoute } from '@/app/settings/settings-search'
+import { useSettingsSearchCatalog } from '@/app/settings/use-settings-search'
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { HighlightMatches } from '@/components/ui/highlight-matches'
 import { KbdCombo } from '@/components/ui/kbd'
@@ -186,7 +187,11 @@ const PaletteRow = memo(function PaletteRow({
         <span className={cn(HUD_NOTE, HUD_NOTE_VARIANT[item.detailVariant ?? 'muted'])}>{item.detail}</span>
       )}
       {combo && <KbdCombo className="ms-auto opacity-55" combo={combo} size="sm" />}
-      {item.to && <ChevronRight className={cn('size-3.5 shrink-0 text-muted-foreground/70 rtl:-scale-x-100', !combo && 'ms-auto')} />}
+      {item.to && (
+        <ChevronRight
+          className={cn('size-3.5 shrink-0 text-muted-foreground/70 rtl:-scale-x-100', !combo && 'ms-auto')}
+        />
+      )}
       {item.active && <Check className={cn('size-3.5 shrink-0 text-primary', !combo && !item.to && 'ms-auto')} />}
     </CommandItem>
   )
@@ -446,18 +451,56 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
     [t.settings.sections]
   )
 
-  const configFieldLabel = useCallback(
-    (key: string) =>
-      fieldCopyForSchemaKey(t.settings.fieldLabels, key) ??
-      fieldCopyForSchemaKey(FIELD_LABELS, key) ??
-      prettyName(key.split('.').pop() ?? key),
-    [t.settings.fieldLabels]
-  )
-
   const contributedItems = usePaletteContributions()
 
+  // Settings fields, credentials and device-local prefs, all under the current
+  // "Applies to" scope. Always enabled: this body only exists while the palette
+  // is open, so the queries are already lazy.
+  const { clientPrefEntries, configEntries, credentialEntries } = useSettingsSearchCatalog(true)
+
+  // One row shape for every catalog entry. The label carries the page it lives
+  // on ("Voice: TTS provider") because that is what makes two same-named fields
+  // on different pages tellable apart, and `rankGroups` scores the label.
+  const settingsEntryItem = useCallback(
+    (entry: SettingsSearchEntry): PaletteItem => ({
+      icon: entry.icon,
+      id: entry.id,
+      keywords: [
+        'settings',
+        entry.label,
+        entry.context,
+        ...entry.keywords,
+        ...(entry.description ? [entry.description] : [])
+      ],
+      label: `${entry.context}: ${entry.label}`,
+      run: go(settingsSearchTargetRoute(entry.target))
+    }),
+    [go]
+  )
+
+  // The top-level Settings destinations. Shared by the root list and the scoped
+  // `settings` page, which shows them unfiltered as its landing view.
+  const settingsPageItems = useMemo<PaletteItem[]>(
+    () => [
+      ...SECTIONS.map(section => ({
+        icon: section.icon,
+        id: `set-config-${section.id}`,
+        keywords: ['settings', section.label, settingsSectionLabel(section)],
+        label: settingsSectionLabel(section),
+        run: go(`${SETTINGS_ROUTE}/${section.id}`)
+      })),
+      ...NON_CONFIG_SETTINGS.map(entry => ({
+        icon: entry.icon,
+        id: `set-${entry.path}`,
+        keywords: ['settings', ...(entry.keywords ?? [])],
+        label: t.settings.nav[entry.labelKey],
+        run: go(`${SETTINGS_ROUTE}/${entry.path}`)
+      }))
+    ],
+    [go, settingsSectionLabel, t.settings.nav]
+  )
+
   const baseGroups = useMemo<PaletteGroup[]>(() => {
-    const settingsPath = (page_: string) => `${SETTINGS_ROUTE}/${page_}`
     const cc = t.commandCenter
 
     // Core destinations come from the registry (app/shell/nav-contrib.ts), not
@@ -675,25 +718,7 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
           }
         ]
       },
-      {
-        heading: cc.settings,
-        items: [
-          ...SECTIONS.map(section => ({
-            icon: section.icon,
-            id: `set-config-${section.id}`,
-            keywords: ['settings', section.label, settingsSectionLabel(section)],
-            label: settingsSectionLabel(section),
-            run: go(settingsPath(section.id))
-          })),
-          ...NON_CONFIG_SETTINGS.map(entry => ({
-            icon: entry.icon,
-            id: `set-${entry.path}`,
-            keywords: ['settings', ...(entry.keywords ?? [])],
-            label: t.settings.nav[entry.labelKey],
-            run: go(settingsPath(entry.path))
-          }))
-        ]
-      },
+      { heading: cc.settings, items: settingsPageItems },
       // Plugin-contributed rows — one group, omitted while nothing contributes.
       ...(pluginRows.length > 0 ? [{ heading: cc.commands, items: pluginRows }] : [])
     ]
@@ -851,17 +876,20 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
       })
     }
 
-    const fieldItems = SECTIONS.flatMap(section =>
-      section.keys.map(key => ({
-        icon: section.icon,
-        id: `field-${key}`,
-        keywords: ['settings', key, section.label, settingsSectionLabel(section)],
-        label: `${settingsSectionLabel(section)}: ${configFieldLabel(key)}`,
-        run: go(`${SETTINGS_ROUTE}/${section.id}?field=${encodeURIComponent(key)}`)
-      }))
-    )
+    // Deep settings results: the schema fields the scoped profile actually has,
+    // the credential rows the Keys page shows, and the device-local prefs that
+    // have no config key at all (MJXHRM-489).
+    if (configEntries.length > 0) {
+      result.push({ heading: t.commandCenter.settingsFields, items: configEntries.map(settingsEntryItem) })
+    }
 
-    result.push({ heading: t.commandCenter.settingsFields, items: fieldItems })
+    if (clientPrefEntries.length > 0) {
+      result.push({ heading: t.commandCenter.settingsPreferences, items: clientPrefEntries.map(settingsEntryItem) })
+    }
+
+    if (credentialEntries.length > 0) {
+      result.push({ heading: t.settings.nav.apiKeys, items: credentialEntries.map(settingsEntryItem) })
+    }
 
     if (mcpServers.length > 0) {
       result.push({
@@ -899,7 +927,9 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
   }, [
     archivedSessions,
     availableThemes,
-    configFieldLabel,
+    clientPrefEntries,
+    configEntries,
+    credentialEntries,
     go,
     goSession,
     mcpServers,
@@ -909,7 +939,7 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
     sessions,
     setMode,
     setTheme,
-    settingsSectionLabel,
+    settingsEntryItem,
     t,
     themeName
   ])
@@ -946,6 +976,27 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
           }))
         ]
       },
+      // The Settings-scoped palette: the same body, filtered to settings only.
+      // Opened from the Settings overlay's search pill (and by typing on it), so
+      // a search that starts on Settings never buries a field under a session
+      // title. The page rows show unfiltered; the deep catalog needs a query,
+      // exactly like the root list.
+      settings: {
+        title: t.commandCenter.settings,
+        placeholder: t.commandCenter.settingsSearchPlaceholder,
+        groups: [
+          { heading: t.commandCenter.settings, items: settingsPageItems },
+          ...(search.trim() && configEntries.length > 0
+            ? [{ heading: t.commandCenter.settingsFields, items: configEntries.map(settingsEntryItem) }]
+            : []),
+          ...(search.trim() && clientPrefEntries.length > 0
+            ? [{ heading: t.commandCenter.settingsPreferences, items: clientPrefEntries.map(settingsEntryItem) }]
+            : []),
+          ...(search.trim() && credentialEntries.length > 0
+            ? [{ heading: t.settings.nav.apiKeys, items: credentialEntries.map(settingsEntryItem) }]
+            : [])
+        ]
+      },
       'color-mode': {
         title: t.settings.appearance.colorMode,
         placeholder: t.settings.appearance.colorModeDesc,
@@ -965,7 +1016,21 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
         ]
       }
     }),
-    [availableThemes, mode, resolvedMode, setMode, setTheme, t, themeName]
+    [
+      availableThemes,
+      clientPrefEntries,
+      configEntries,
+      credentialEntries,
+      mode,
+      resolvedMode,
+      search,
+      setMode,
+      setTheme,
+      settingsEntryItem,
+      settingsPageItems,
+      t,
+      themeName
+    ]
   )
 
   const activePage = page ? subPages[page] : null

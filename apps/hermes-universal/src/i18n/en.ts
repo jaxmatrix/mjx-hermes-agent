@@ -1419,6 +1419,8 @@ export const en: Translations = {
     },
     commands: 'Commands',
     settingsFields: 'Settings fields',
+    settingsPreferences: 'Preferences',
+    settingsSearchPlaceholder: 'Search settings…',
     mcpServers: 'MCP servers',
     archivedChats: 'Archived chats',
     sections: { maintenance: 'Maintenance', sessions: 'Sessions', system: 'System', usage: 'Usage' },

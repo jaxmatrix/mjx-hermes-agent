@@ -1,11 +1,13 @@
 import { QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { registry } from '@/contrib/registry'
+import { getEnvVars, getHermesConfigSchema } from '@/hermes'
 import { queryClient } from '@/lib/query-client'
 import { $commandPaletteOpen } from '@/store/command-palette'
 import { $findInPage, closeFindBar } from '@/store/find-in-page'
+import { $settingsScopeOverride } from '@/store/settings-scope'
 import type * as WindowsStore from '@/store/windows'
 import { openAppRoute } from '@/store/windows'
 
@@ -17,7 +19,22 @@ import { CommandPalette } from './index'
 // subject here, and both would otherwise hit the gateway.
 vi.mock('@/hermes', () => ({
   setApiRequestProfile: vi.fn(),
-  getHermesConfigRecord: vi.fn(async () => ({})),
+  getHermesConfigRecord: vi.fn(async () => ({ tts: { provider: 'openai' } })),
+  // The settings catalog reads both under the current "Applies to" scope.
+  getHermesConfigSchema: vi.fn(async () => ({ fields: { 'agent.max_turns': { type: 'number' } } })),
+  getEnvVars: vi.fn(async () => ({
+    TAVILY_API_KEY: {
+      advanced: false,
+      category: 'tool',
+      description: 'Tavily search',
+      is_password: true,
+      is_set: false,
+      redacted_value: null,
+      tools: [],
+      url: null
+    }
+  })),
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
   listAllProfileSessions: vi.fn(async () => ({ sessions: [], total: 0, offset: 0 }))
 }))
 
@@ -255,5 +272,57 @@ describe('palette contributions', () => {
 
     spy.mockRestore()
     dispose()
+  })
+})
+
+// ── Settings search (MJXHRM-449 / MJXHRM-489) ───────────────────────────────
+// Deep results: a config field, a credential and a device-local pref all have to
+// be reachable by typing their own name, and each has to land on its own row.
+describe('settings search in the palette', () => {
+  afterEach(() => $settingsScopeOverride.set(null))
+
+  // The match is split across <mark>s, so the row is found by its own
+  // textContent rather than by getByText (see rowLabels above).
+  const rowFor = async (query: string, label: string) => {
+    openPalette()
+    fireEvent.change(input(), { target: { value: query } })
+
+    return waitFor(() => {
+      const row = screen.getAllByRole('option').find(option => option.textContent === label)
+
+      expect(row, `no row labelled "${label}" — saw ${JSON.stringify(rowLabels())}`).toBeDefined()
+
+      return row as HTMLElement
+    })
+  }
+
+  it('finds a schema config field and deep-links to its row', async () => {
+    fireEvent.click(await rowFor('max turns', 'Advanced: Max Agent Steps'))
+
+    expect(openAppRoute).toHaveBeenCalledWith('/settings/advanced?field=agent.max_turns')
+  })
+
+  it('finds a credential and deep-links to its card on the right sub-tab', async () => {
+    fireEvent.click(await rowFor('tavily', 'Tools: TAVILY'))
+
+    expect(openAppRoute).toHaveBeenCalledWith('/settings/keys?key=TAVILY_API_KEY')
+  })
+
+  // The row MJXHRM-489 filed: no config key, so nothing schema-driven can reach it.
+  it('finds a device-local pref row that has no config key at all', async () => {
+    fireEvent.click(await rowFor('intro splash', 'Appearance: Intro Splash'))
+
+    expect(openAppRoute).toHaveBeenCalledWith('/settings/appearance?setting=appearance.intro-splash')
+  })
+
+  it('reads the catalog under the settings scope, not the active profile', async () => {
+    // Seeded AWAY from the default: a catalog that ignores the scope would call
+    // with null and still render the same rows, so assert on the call itself.
+    $settingsScopeOverride.set('research')
+
+    await rowFor('max turns', 'Advanced: Max Agent Steps')
+
+    expect(getHermesConfigSchema).toHaveBeenCalledWith('research')
+    expect(getEnvVars).toHaveBeenCalledWith('research')
   })
 })
