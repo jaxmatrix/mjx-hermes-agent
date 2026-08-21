@@ -100,7 +100,11 @@ describe('Advanced → keep computer awake', () => {
     renderAdvanced()
 
     // The page still renders — wait for its schema field before asserting the
-    // keep-awake row is missing.
+    // row is missing. NOT the empty state: since MJXHRM-443 added
+    // FALLBACK_FIELD_SCHEMA, Advanced renders `timeouts.tools.sequential_call`
+    // even against an empty schema, so "Nothing to configure" never appears —
+    // and `findByPlaceholderText('Not set')` is ambiguous here too, since that
+    // fallback field's placeholder collides with `terminal.docker_image`'s.
     await screen.findByRole('textbox')
     expect(screen.queryByRole('switch', { name: 'Keep computer awake' })).not.toBeInTheDocument()
   })

@@ -1058,6 +1058,9 @@ export const ar = defineLocale({
       installs: count => `${count} عملية تثبيت`
     },
     settingsFields: 'حقول الإعدادات',
+    settingsPreferences: 'التفضيلات',
+    settingsSearchPlaceholder: 'ابحث في الإعدادات…',
+    settingsSearchPill: 'ابحث في الإعدادات',
     mcpServers: 'خوادم MCP',
     archivedChats: 'المحادثات المؤرشفة',
     commands: 'الأوامر',

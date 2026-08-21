@@ -39,6 +39,8 @@ import { PluginsSettings } from './plugins-settings'
 import { EmptyState, ListRow, SettingsContent } from './primitives'
 import { ProvidersSection } from './providers-section'
 import { useSettingsNav } from './settings-nav'
+import { settingRowElementId } from './settings-search'
+import { useDeepLinkHighlight } from './use-deep-link-highlight'
 import { VoiceSection } from './voice-section'
 
 // "Shell runs on" override for `resolveTerminalTransportKind` (transport/terminal-
@@ -72,6 +74,7 @@ function TerminalHostRow() {
         </Select>
       }
       description={copy.terminalHostDesc}
+      id={settingRowElementId('workspace.terminal-host')}
       title={copy.terminalHostTitle}
     />
   )
@@ -99,6 +102,7 @@ function KeepAwakeRow() {
         />
       }
       description={copy.keepAwakeDesc}
+      id={settingRowElementId('advanced.keep-awake')}
       title={copy.keepAwakeTitle}
     />
   )
@@ -134,6 +138,7 @@ function BackgroundModeRow() {
         />
       }
       description={copy.backgroundModeDesc}
+      id={settingRowElementId('advanced.background-mode')}
       title={copy.backgroundModeTitle}
     />
   )
@@ -204,6 +209,7 @@ function AttachmentSizeRow() {
         </div>
       }
       description={copy.attachmentSizeDesc}
+      id={settingRowElementId('chat.attachment-size')}
       title={copy.attachmentSizeTitle}
     />
   )
@@ -212,8 +218,16 @@ function AttachmentSizeRow() {
 // The per-section body. Each Track-J chunk replaces its placeholder case with a
 // real renderer (Jc8 appearance, Jc9 notifications, Jc10 keys, …). Exported so
 // the desktop-style SettingsView overlay renders the active section here too.
+const alwaysReady = () => true
+
 export function SectionBody({ section }: { section: string }) {
   const { t } = useI18n()
+
+  // `?setting=<id>` — the ⌘K deep link for the device-local rows, which have no
+  // config key and so cannot ride config-section's `?field=` path. Mounted once
+  // here rather than per row host: the route already picked the page, and the
+  // hook polls for the DOM id, so it resolves whichever section renders it.
+  useDeepLinkHighlight({ elementId: settingRowElementId, param: 'setting', ready: alwaysReady })
 
   // `section` may carry a sub-tab (`providers/keys`); split so the switch keys off
   // the top-level group and sub-views read the second segment.

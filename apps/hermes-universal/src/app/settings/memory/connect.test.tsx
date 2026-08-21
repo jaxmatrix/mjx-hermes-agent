@@ -16,6 +16,10 @@ const startMemoryProviderOAuth = vi.fn()
 
 vi.mock('@/hermes', () => ({
   getMemoryProviderOAuthStatus: (provider: string) => getMemoryProviderOAuthStatus(provider),
+  // Pulled in transitively since MJXHRM-450 gave this component the shared
+  // "Applies to" scope: store/settings-scope -> store/profile -> store/profiles
+  // re-scopes REST at import time, and a wholesale mock without it throws before
+  // a single test runs.
   setApiRequestProfile: vi.fn(),
   startMemoryProviderOAuth: (provider: string) => startMemoryProviderOAuth(provider)
 }))

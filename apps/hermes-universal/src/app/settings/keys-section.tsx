@@ -8,6 +8,8 @@ import { CredentialKeyCard, credentialPlaceholder, credentialRowLabel } from './
 import { useEnvCredentials } from './env-credentials'
 import { SettingsContent, SettingsSkeleton } from './primitives'
 import { SettingsProfileScope } from './profile-scope'
+import { credentialRowElementId } from './settings-search'
+import { useDeepLinkHighlight } from './use-deep-link-highlight'
 
 // Settings → Tools & Keys. Ported to desktop parity (apps/desktop/src/app/settings/
 // keys-settings.tsx): the Tools (tool API keys) and Settings (server / webhook /
@@ -52,6 +54,17 @@ export function KeysSection({ view }: { view: KeysView }) {
       .sort(([a], [b]) => a.localeCompare(b))
   }, [vars, view])
 
+  // `?key=<VAR>` — a ⌘K credential result. `ready` gates on the var being in
+  // THIS sub-tab's list (a Tools key deep-linked while Settings is open must
+  // wait, not resolve against a card that isn't there), and `onResolve` expands
+  // the card so the highlight lands on an open one.
+  useDeepLinkHighlight({
+    elementId: credentialRowElementId,
+    onResolve: setOpenKey,
+    param: 'key',
+    ready: key => entries.some(([entryKey]) => entryKey === key)
+  })
+
   if (!vars) {
     return (
       <SettingsSkeleton sections={[{ rows: 5 }]}>
@@ -74,6 +87,7 @@ export function KeysSection({ view }: { view: KeysView }) {
 
             return (
               <CredentialKeyCard
+                elementId={credentialRowElementId(key)}
                 expanded={openKey === key}
                 info={info}
                 key={key}

@@ -1293,6 +1293,9 @@ export const ja = defineLocale({
       installs: count => `${count} 回インストール`
     },
     settingsFields: '設定フィールド',
+    settingsPreferences: '環境設定',
+    settingsSearchPlaceholder: '設定を検索…',
+    settingsSearchPill: '設定を検索',
     mcpServers: 'MCP サーバー',
     archivedChats: 'アーカイブ済みチャット',
     sections: { sessions: 'セッション', system: 'システム', usage: '使用状況' },
