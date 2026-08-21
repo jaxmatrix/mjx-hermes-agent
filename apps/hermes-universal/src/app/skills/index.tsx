@@ -28,6 +28,7 @@ import { normalize } from '@/lib/text'
 import { $gateway } from '@/store/gateway'
 import { notify, notifyError } from '@/store/notifications'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
+import { $settingsScopeOverride, $settingsScopeProfile } from '@/store/settings-scope'
 import type { SkillInfo, ToolsetInfo } from '@/types/hermes'
 
 import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
@@ -49,6 +50,7 @@ import { PanelEmpty, PanelPill } from '../overlays/panel'
 import { PageSearchShell } from '../page-search-shell'
 import { ComputerUsePanel } from '../settings/computer-use-panel'
 import { asText, includesQuery, prettyName, toolNames, toolsetDisplayLabel } from '../settings/helpers'
+import { SettingsProfileScope } from '../settings/profile-scope'
 import { TerminalBackendPanel } from '../settings/terminal-backend-panel'
 import { ToolsetConfigPanel } from '../settings/toolset-config-panel'
 import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
@@ -72,8 +74,9 @@ const SKILLS_QUERY_KEY = ['skills-list'] as const
 const TOOLSETS_QUERY_KEY = ['toolsets-list'] as const
 
 // Optimistic write-through: toggles/bulk/archive repaint instantly; the next
-// background refetch reconciles with the backend.
-const setSkills = writeCache<SkillInfo[]>(SKILLS_QUERY_KEY)
+// background refetch reconciles with the backend. The Skills writer is built
+// per scope inside the view (the key carries the profile); Toolsets is not
+// scoped (see the scope comment in SkillsView).
 const setToolsets = writeCache<ToolsetInfo[]>(TOOLSETS_QUERY_KEY)
 
 // Per-tool call counts come from a 365-day message scan — heavy, and purely
@@ -192,13 +195,29 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
 
   const [query, setQuery] = useState('')
 
+  // Capabilities scope: WHICH profile's skills this view reads and writes.
+  // Shared with the settings pages through 450's one store, so a profile
+  // picked there carries here (and back). `scopeOverride` is what rides the
+  // wire — null means "no override", which keeps every request byte-identical
+  // for single-profile users; `scopeKey` is the concrete profile the caches
+  // are keyed by.
+  //
+  // SKILLS ONLY, deliberately: Tools' per-toolset config panels and the MCP
+  // tab's live-reload RPC are not profile-threaded yet (MJXHRM-451/454 own
+  // that surface), and a scope chip above a tab that ignores it would lie. So
+  // the chips render on the Skills tab, where every action honours them.
+  const scopeOverride = useStore($settingsScopeOverride)
+  const scopeKey = useStore($settingsScopeProfile)
+  const skillsQueryKey = useMemo(() => [...SKILLS_QUERY_KEY, scopeKey], [scopeKey])
+  const setSkills = useMemo(() => writeCache<SkillInfo[]>(skillsQueryKey), [skillsQueryKey])
+
   const {
     data: skills,
     isError: skillsFailed,
     error: skillsError
   } = useQuery({
-    queryKey: SKILLS_QUERY_KEY,
-    queryFn: getSkills,
+    queryKey: skillsQueryKey,
+    queryFn: () => getSkills(scopeOverride),
     staleTime: 0
   })
 
@@ -341,7 +360,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
     setSkills(current => current?.map(row => (row.name === skill.name ? { ...row, enabled } : row)) ?? current)
 
     try {
-      await toggleSkill(skill.name, enabled)
+      await toggleSkill(skill.name, enabled, scopeOverride)
       // A disabled skill loses its `/name` command, so the composer's cached
       // `/` list has to be dropped along with the row repaint.
       invalidateSlashCompletions()
@@ -384,7 +403,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
 
     try {
       for (const row of skillTargets) {
-        await toggleSkill(row.name, enabled)
+        await toggleSkill(row.name, enabled, scopeOverride)
         setSkills(cur => cur?.map(r => (r.name === row.name ? { ...r, enabled } : r)) ?? cur)
         done += 1
       }
@@ -483,7 +502,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
     const epoch = skillEditorEpoch.current
 
     try {
-      const node = await getLearningNode(name)
+      const node = await getLearningNode(name, scopeOverride)
 
       if (skillEditorEpoch.current !== epoch) {
         return
@@ -504,7 +523,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
     setSkillSaving(true)
 
     try {
-      await editLearningNode(skillEditor.name, skillDraft)
+      await editLearningNode(skillEditor.name, skillDraft, scopeOverride)
       notify({
         kind: 'success',
         title: t.skills.skillUpdated,
@@ -587,6 +606,9 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
         // collapse or drag it. Give DetailPane a flexible body if that stops
         // being good enough.
         <div className="flex h-full min-h-0 flex-col">
+          {/* Which profile am I editing? Same store (and chips) as the
+              settings pages, so the choice carries across both. */}
+          <SettingsProfileScope className="shrink-0 px-3 pb-3" />
           <div className="min-h-40 flex-1 overflow-hidden">
             {visibleSkills.length === 0 ? (
               capabilityEmpty('skills')
@@ -644,7 +666,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
             id={HUB_PANE_ID}
             title={<span className="text-[0.68rem] font-normal text-muted-foreground/60">{t.skills.tabHub}</span>}
           >
-            <SkillsHub query={query} />
+            <SkillsHub profile={scopeOverride} query={query} />
           </DetailPane>
         </div>
       ) : visibleToolsets.length === 0 ? (
@@ -712,6 +734,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
           onClose={() => setArchiveTarget(null)}
           onFailure={(err, name) => notifyError(err, name)}
           open
+          profile={scopeOverride}
           skillId={archiveTarget}
           skillName={archiveTarget}
         />

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as HermesApi from '@/hermes'
 import { queryClient } from '@/lib/query-client'
+import { $settingsScopeOverride } from '@/store/settings-scope'
 
 // This is a full mount → useQuery → master-detail → on-mount config-fetch
 // integration test. In isolation it settles in <100ms, but inside the ~80-file
@@ -23,20 +24,24 @@ const getToolsetConfig = vi.fn()
 const selectToolsetProvider = vi.fn()
 const getUsageAnalytics = vi.fn()
 const getSkillHubSources = vi.fn()
+const installSkillFromHub = vi.fn()
+const getActionStatus = vi.fn()
 
 // Partial mock: keep the real module (SkillsView pulls in @/store/profile,
 // whose import-time subscription calls setApiRequestProfile) and stub only the
 // calls we assert on.
 vi.mock('@/hermes', async importOriginal => ({
   ...(await importOriginal<typeof HermesApi>()),
-  getSkills: () => getSkills(),
+  getSkills: (profile?: null | string) => getSkills(profile),
   getToolsets: () => getToolsets(),
-  toggleSkill: (name: string, enabled: boolean) => toggleSkill(name, enabled),
+  toggleSkill: (name: string, enabled: boolean, profile?: null | string) => toggleSkill(name, enabled, profile),
   toggleToolset: (name: string, enabled: boolean) => toggleToolset(name, enabled),
   getToolsetConfig: (name: string) => getToolsetConfig(name),
   selectToolsetProvider: (toolset: string, provider: string) => selectToolsetProvider(toolset, provider),
   getUsageAnalytics: (days: number) => getUsageAnalytics(days),
-  getSkillHubSources: () => getSkillHubSources()
+  getSkillHubSources: (profile?: null | string) => getSkillHubSources(profile),
+  installSkillFromHub: (identifier: string, profile?: null | string) => installSkillFromHub(identifier, profile),
+  getActionStatus: (name: string, tail?: number) => getActionStatus(name, tail)
 }))
 
 // Notifications hit nanostores/timers we don't care about here.
@@ -82,9 +87,13 @@ beforeEach(() => {
   getToolsetConfig.mockResolvedValue({ has_category: true, active_provider: null, providers: [] })
   getUsageAnalytics.mockResolvedValue({ tools: [] })
   getSkillHubSources.mockResolvedValue({ sources: [], featured: [], installed: {} })
+  installSkillFromHub.mockResolvedValue({ name: 'skill-install-1' })
+  getActionStatus.mockResolvedValue({ name: 'skill-install-1', running: false, exit_code: 0, lines: [] })
+  toggleSkill.mockResolvedValue({ ok: true, name: 'pdf', enabled: false })
 })
 
 afterEach(() => {
+  $settingsScopeOverride.set(null)
   cleanup()
   vi.clearAllMocks()
   // Shared singleton client — drop cached skills/toolsets so each test refetches.
@@ -169,5 +178,57 @@ describe('SkillsView hub browser', () => {
     // Falls back to 'skills' (useRouteEnumParam drops unknown values), which
     // is where the hub now lives — the link keeps working.
     expect(await screen.findByText('Connected hubs:')).toBeTruthy()
+  })
+})
+
+describe('SkillsView profile scope', () => {
+  // The fixture disagrees on purpose: the app-wide profile is the default, and
+  // the Capabilities scope points somewhere else. Every read and write has to
+  // follow the SCOPE, not the app.
+  const scoped = async () => {
+    $settingsScopeOverride.set('research')
+    getSkills.mockResolvedValue([{ name: 'pdf', description: 'pdf things', category: 'docs', enabled: true }])
+
+    return renderSkills('/skills?tab=skills')
+  }
+
+  it("lists the scoped profile's skills, not the active profile's", async () => {
+    await scoped()
+
+    await waitFor(() => expect(getSkills).toHaveBeenCalledWith('research'))
+  })
+
+  it('toggles a skill on the scoped profile', async () => {
+    await scoped()
+
+    const sw = await screen.findByRole('switch', { name: 'pdf' })
+    await act(async () => {
+      fireEvent.click(sw)
+    })
+
+    await waitFor(() => expect(toggleSkill).toHaveBeenCalledWith('pdf', false, 'research'))
+  })
+
+  it('installs a hub skill into the scoped profile', async () => {
+    getSkillHubSources.mockResolvedValue({
+      sources: [],
+      featured: [{ identifier: 'acme/pdf-tools', name: 'pdf-tools', description: '', trust_level: 'community' }],
+      installed: {}
+    })
+
+    await scoped()
+
+    const install = await screen.findByRole('button', { name: 'Install' })
+    await act(async () => {
+      fireEvent.click(install)
+    })
+
+    await waitFor(() => expect(installSkillFromHub).toHaveBeenCalledWith('acme/pdf-tools', 'research'))
+  })
+
+  it('reads the hub under the scoped profile', async () => {
+    await scoped()
+
+    await waitFor(() => expect(getSkillHubSources).toHaveBeenCalledWith('research'))
   })
 })
