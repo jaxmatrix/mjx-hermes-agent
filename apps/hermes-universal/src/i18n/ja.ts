@@ -936,7 +936,10 @@ export const ja = defineLocale({
       deepLinkErrorConfig: 'リンクの設定が有効な base64 エンコード JSON ではありません。',
       deepLinkErrorShape: '設定は文字列の `url` または `command` を持つ JSON オブジェクトである必要があります。',
       deepLinkErrorUrl: 'http:// と https:// のサーバー URL のみ許可されています。',
-      deepLinkErrorTooLarge: '設定のペイロードが 32KB の上限を超えています。'
+      deepLinkErrorTooLarge: '設定のペイロードが 32KB の上限を超えています。',
+      costTokens: tokens => `約 ${tokens} トークン/回`,
+      usage30d: uses => `${uses} 回/30日`,
+      unusedPill: '未使用'
     },
     model: {
       loading: 'モデル設定を読み込み中...',

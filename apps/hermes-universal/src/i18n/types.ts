@@ -836,6 +836,9 @@ export interface Translations {
       deepLinkErrorShape: string
       deepLinkErrorUrl: string
       deepLinkErrorTooLarge: string
+      costTokens: (tokens: string) => string
+      usage30d: (uses: string) => string
+      unusedPill: string
     }
     model: {
       loading: string

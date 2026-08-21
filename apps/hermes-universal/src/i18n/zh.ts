@@ -1126,7 +1126,10 @@ export const zh: Translations = {
       deepLinkErrorConfig: '链接中的配置不是有效的 base64 编码 JSON。',
       deepLinkErrorShape: '配置必须是包含字符串 `url` 或 `command` 字段的 JSON 对象。',
       deepLinkErrorUrl: '仅允许 http:// 和 https:// 的服务器 URL。',
-      deepLinkErrorTooLarge: '配置负载超过 32KB 上限。'
+      deepLinkErrorTooLarge: '配置负载超过 32KB 上限。',
+      costTokens: tokens => `约 ${tokens} 词元/次`,
+      usage30d: uses => `${uses} 次/30 天`,
+      unusedPill: '未使用'
     },
     model: {
       loading: '正在加载模型配置...',

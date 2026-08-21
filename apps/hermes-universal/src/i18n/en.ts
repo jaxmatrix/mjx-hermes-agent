@@ -959,7 +959,10 @@ export const en: Translations = {
       deepLinkErrorConfig: 'The link\u2019s config is not valid base64-encoded JSON.',
       deepLinkErrorShape: 'The config must be a JSON object with a string `url` or `command` field.',
       deepLinkErrorUrl: 'Only http:// and https:// server URLs are allowed.',
-      deepLinkErrorTooLarge: 'The config payload exceeds the 32KB limit.'
+      deepLinkErrorTooLarge: 'The config payload exceeds the 32KB limit.',
+      costTokens: tokens => `~${tokens} tok/call`,
+      usage30d: uses => `${uses} uses/30d`,
+      unusedPill: 'unused'
     },
     model: {
       loading: 'Loading model configuration...',

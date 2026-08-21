@@ -919,7 +919,9 @@ export function toggleSkill(
 export interface McpTestResult {
   ok: boolean
   error?: string
-  tools: { name: string; description: string }[]
+  /** `schema_chars` (the JSON-stringified registry schema's length) is additive —
+   *  older backends omit it and the cost overlay shows no token estimate. */
+  tools: { name: string; description: string; schema_chars?: number }[]
   /** Capability counts (absent on older backends / failed probes). */
   prompts?: number
   resources?: number

@@ -793,7 +793,10 @@ export const ar = defineLocale({
       deepLinkErrorConfig: 'إعداد الرابط ليس JSON مُرمّزًا بصيغة base64 صالحة.',
       deepLinkErrorShape: 'يجب أن يكون الإعداد كائن JSON يحتوي على حقل `url` أو `command` نصي.',
       deepLinkErrorUrl: 'يُسمح فقط بعناوين الخوادم http:// و https://.',
-      deepLinkErrorTooLarge: 'حمولة الإعداد تتجاوز حد 32 كيلوبايت.'
+      deepLinkErrorTooLarge: 'حمولة الإعداد تتجاوز حد 32 كيلوبايت.',
+      costTokens: tokens => `~${tokens} رمز/استدعاء`,
+      usage30d: uses => `${uses} استخدام/30 يومًا`,
+      unusedPill: 'غير مستخدم'
     },
     model: {
       loading: 'جار تحميل إعدادات النموذج...',
