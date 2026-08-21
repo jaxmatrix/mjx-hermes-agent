@@ -775,7 +775,12 @@ export const ar = defineLocale({
       name: 'الاسم',
       serverJson: 'JSON الخادم',
       remove: 'إزالة',
-      saveServer: 'حفظ الخادم'
+      saveServer: 'حفظ الخادم',
+      importButton: 'استيراد',
+      importPlaceholder: 'الصق مقتطف mcp.json أو أمر npx/docker أو سطر claude mcp add أو رابطًا أو رابط Cursor…',
+      importNoMatch: 'لم يتم التعرف على أي إعداد خادم في النص الملصق.',
+      importConfirm: 'إضافة إلى mcp.json',
+      importConfirmMany: count => `إضافة ${count} خوادم إلى mcp.json`
     },
     model: {
       loading: 'جار تحميل إعدادات النموذج...',

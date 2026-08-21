@@ -1109,7 +1109,12 @@ export const zh: Translations = {
       unsavedConnect: '未保存 — 保存 mcp.json 以连接。',
       enableTool: tool => `启用 ${tool}`,
       disableTool: tool => `禁用 ${tool}`,
-      noOutput: '暂无输出。'
+      noOutput: '暂无输出。',
+      importButton: '导入',
+      importPlaceholder: '粘贴 mcp.json 片段、npx/docker 命令、claude mcp add 行、URL 或 Cursor 链接…',
+      importNoMatch: '在粘贴的文本中未识别到服务器配置。',
+      importConfirm: '添加到 mcp.json',
+      importConfirmMany: count => `将 ${count} 个服务器添加到 mcp.json`
     },
     model: {
       loading: '正在加载模型配置...',

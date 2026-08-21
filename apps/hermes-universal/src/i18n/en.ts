@@ -940,7 +940,12 @@ export const en: Translations = {
       unsavedConnect: 'Unsaved — save mcp.json to connect.',
       enableTool: tool => `Enable ${tool}`,
       disableTool: tool => `Disable ${tool}`,
-      noOutput: 'No output yet.'
+      noOutput: 'No output yet.',
+      importButton: 'Import',
+      importPlaceholder: 'Paste an mcp.json snippet, npx/docker command, claude mcp add line, URL, or Cursor link…',
+      importNoMatch: 'No server config recognized in the pasted text.',
+      importConfirm: 'Add to mcp.json',
+      importConfirmMany: count => `Add ${count} servers to mcp.json`
     },
     model: {
       loading: 'Loading model configuration...',

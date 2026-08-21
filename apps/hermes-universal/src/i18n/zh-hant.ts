@@ -885,7 +885,12 @@ export const zhHant = defineLocale({
       unsavedConnect: '未儲存 — 儲存 mcp.json 以連線。',
       enableTool: tool => `啟用 ${tool}`,
       disableTool: tool => `停用 ${tool}`,
-      noOutput: '尚無輸出。'
+      noOutput: '尚無輸出。',
+      importButton: '匯入',
+      importPlaceholder: '貼上 mcp.json 片段、npx/docker 指令、claude mcp add 行、URL 或 Cursor 連結…',
+      importNoMatch: '在貼上的文字中未辨識到伺服器設定。',
+      importConfirm: '新增至 mcp.json',
+      importConfirmMany: count => `將 ${count} 個伺服器新增至 mcp.json`
     },
     model: {
       loading: '正在載入模型設定...',

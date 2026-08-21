@@ -819,6 +819,11 @@ export interface Translations {
       enableTool: (tool: string) => string
       disableTool: (tool: string) => string
       noOutput: string
+      importButton: string
+      importPlaceholder: string
+      importNoMatch: string
+      importConfirm: string
+      importConfirmMany: (count: number) => string
     }
     model: {
       loading: string
