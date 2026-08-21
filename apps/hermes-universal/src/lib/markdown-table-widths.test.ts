@@ -15,6 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const STORAGE_KEY = 'hermes.desktop.mdTableColumns.v1'
 const DAY_MS = 24 * 60 * 60 * 1000
 const EPOCH = new Date('2026-08-21T00:00:00Z').getTime()
+/** The byte the key joins header cells on. */
+const SEPARATOR = '\u0001'
 
 /** A module instance with a cold in-memory mirror — i.e. an app restart. */
 async function restart() {
@@ -47,9 +49,11 @@ describe('markdownTableKey', () => {
     const { markdownTableKey } = await restart()
 
     expect(markdownTableKey(['A', 'B'])).not.toBe(markdownTableKey(['A', 'B', 'C']))
-    // The count prefix is what stops a header containing the separator byte
-    // from impersonating a table with a different number of columns.
-    expect(markdownTableKey(['AB'])).not.toBe(markdownTableKey(['A', 'B']))
+    // The count prefix earns its place on exactly one case: a header cell that
+    // CONTAINS the separator byte joins to the same string as two cells split
+    // on it. Without the prefix these two collide; asserting it with a header
+    // that has no separator in it proves nothing (mutation M5 caught that).
+    expect(markdownTableKey([`A${SEPARATOR}B`])).not.toBe(markdownTableKey(['A', 'B']))
   })
 })
 

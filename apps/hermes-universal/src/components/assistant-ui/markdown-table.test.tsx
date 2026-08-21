@@ -176,6 +176,34 @@ describe('ResizableMarkdownTable', () => {
     expect(document.querySelectorAll('tbody tr')).toHaveLength(4)
   })
 
+  it('does not let a streaming re-render pull the columns out from under a live drag', () => {
+    const headers = ['Live', 'Drag', 'Stream']
+    const { rerender } = render(<Table headers={headers} />)
+    measure()
+
+    fire(handles()[0], 'pointerdown', 100)
+    fire(window, 'pointermove', 130)
+    expect(widths()).toEqual([43.33, 23.33, 33.33])
+
+    // A token lands WHILE the finger is down. The identity effect re-runs and
+    // reads a record that does not exist yet, so without the drag guard it
+    // resets the table to auto layout under the pointer.
+    act(() => {
+      rerender(<Table headers={headers} rows={3} />)
+    })
+
+    expect(widths()).toEqual([43.33, 23.33, 33.33])
+
+    // ...and the drag is still tracking after the re-render, not orphaned.
+    // 145 keeps the neighbour above the 48px floor; 160 would clamp and hide
+    // whether the drag was still live at all.
+    fire(window, 'pointermove', 145)
+    expect(widths()).toEqual([48.33, 18.33, 33.33])
+
+    fire(window, 'pointerup', 145)
+    expect(widths()).toEqual([48.33, 18.33, 33.33])
+  })
+
   it('restores the widths when the same table is mounted again (session switch)', () => {
     const headers = ['Restored', 'After', 'Switch']
     const first = render(<Table headers={headers} />)
