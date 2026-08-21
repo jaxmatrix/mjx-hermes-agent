@@ -1039,6 +1039,15 @@ export const zhHant = defineLocale({
 
   skills: {
     tabSkills: '技能',
+    project: {
+      trust: '信任此儲存庫',
+      untrust: '取消信任',
+      trustedCount: count => `已從此儲存庫載入 ${count} 個專案技能`,
+      untrustedCount: count => `此儲存庫中的 ${count} 個技能在你信任它之前不會載入`,
+      quarantinedCount: count => `${count} 個遭安全掃描封鎖`,
+      disabled: '此設定檔已關閉專案技能探索。',
+      title: '專案技能'
+    },
     tabToolsets: '工具集',
     tabMcp: 'MCP',
     all: '全部',

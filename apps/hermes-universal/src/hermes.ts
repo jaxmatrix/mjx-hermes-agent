@@ -820,6 +820,44 @@ export function getSkillContent(
   })
 }
 
+export interface ProjectSkillsStatus {
+  /** Every SKILL.md the project tier holds, quarantined ones included. */
+  skills: { name: string; path: string; quarantined: boolean }[]
+  /** False when `skills.project_discovery` is off for this profile. */
+  discovery_enabled: boolean
+  /** The enclosing git root, or null when the cwd is not inside a checkout. */
+  root: null | string
+  trusted: boolean
+}
+
+/** What the project-local skill tier holds for `cwd`, and whether that repo is
+ *  trusted. Skills vendored in a repo do not load until the user says so — this
+ *  is the read half of that gate (the CLI half is `hermes skills trust`). */
+export function getProjectSkills(cwd?: null | string, profile?: null | string): Promise<ProjectSkillsStatus> {
+  const dir = (cwd ?? '').trim()
+
+  return api<ProjectSkillsStatus>({
+    ...profileScoped(profile),
+    path: `/api/skills/project${dir ? `?cwd=${encodeURIComponent(dir)}` : ''}`
+  })
+}
+
+/** Trust (or stop trusting) a repo's project-local skills. `path` must be the
+ *  `root` a `getProjectSkills` call resolved — trust is stored by resolved path,
+ *  so trusting a subdirectory would silently load nothing. */
+export function setProjectSkillsTrust(
+  path: string,
+  trusted: boolean,
+  profile?: null | string
+): Promise<{ ok: boolean; root: string; trusted: boolean }> {
+  return api<{ ok: boolean; root: string; trusted: boolean }>({
+    ...profileScoped(profile),
+    path: '/api/skills/project/trust',
+    method: 'PUT',
+    body: { path, trusted, ...profileScoped(profile) }
+  })
+}
+
 export function getStarmapGraph(): Promise<StarmapGraph> {
   return api<StarmapGraph>({
     ...profileScoped(),

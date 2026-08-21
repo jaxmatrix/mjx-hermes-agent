@@ -1374,6 +1374,15 @@ export const zh: Translations = {
       noCatalog: '没有可用的目录条目。',
       catalogFailed: '目录加载失败'
     },
+    project: {
+      trust: '信任此仓库',
+      untrust: '取消信任',
+      trustedCount: count => `已从此仓库加载 ${count} 个项目技能`,
+      untrustedCount: count => `此仓库中的 ${count} 个技能在你信任它之前不会加载`,
+      quarantinedCount: count => `${count} 个被安全扫描拦截`,
+      disabled: '此配置档案已关闭项目技能发现。',
+      title: '项目技能'
+    },
     hub: {
       searchPlaceholder: '搜索技能中心',
       search: '搜索',

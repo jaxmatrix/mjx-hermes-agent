@@ -1079,6 +1079,15 @@ export const ja = defineLocale({
 
   skills: {
     tabSkills: 'スキル',
+    project: {
+      trust: 'このリポジトリを信頼',
+      untrust: '信頼を解除',
+      trustedCount: count => `このリポジトリから ${count} 件のプロジェクトスキルを読み込みました`,
+      untrustedCount: count => `このリポジトリの ${count} 件のスキルは、信頼するまで読み込まれません`,
+      quarantinedCount: count => `${count} 件はセキュリティスキャンによりブロックされました`,
+      disabled: 'このプロファイルではプロジェクトスキルの検出が無効です。',
+      title: 'プロジェクトスキル'
+    },
     tabToolsets: 'ツールセット',
     tabMcp: 'MCP',
     all: 'すべて',

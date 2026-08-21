@@ -1005,6 +1005,15 @@ export interface Translations {
   }
 
   skills: {
+    project: {
+      disabled: string
+      quarantinedCount: (count: number) => string
+      title: string
+      trust: string
+      trustedCount: (count: number) => string
+      untrust: string
+      untrustedCount: (count: number) => string
+    }
     tabSkills: string
     tabToolsets: string
     tabMcp: string

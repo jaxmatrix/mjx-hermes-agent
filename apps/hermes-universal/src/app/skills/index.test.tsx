@@ -27,6 +27,7 @@ const getSkillHubSources = vi.fn()
 const installSkillFromHub = vi.fn()
 const getActionStatus = vi.fn()
 const getSkillContent = vi.fn()
+const getProjectSkills = vi.fn()
 
 // Partial mock: keep the real module (SkillsView pulls in @/store/profile,
 // whose import-time subscription calls setApiRequestProfile) and stub only the
@@ -43,7 +44,8 @@ vi.mock('@/hermes', async importOriginal => ({
   getSkillHubSources: (profile?: null | string) => getSkillHubSources(profile),
   installSkillFromHub: (identifier: string, profile?: null | string) => installSkillFromHub(identifier, profile),
   getActionStatus: (name: string, tail?: number) => getActionStatus(name, tail),
-  getSkillContent: (name: string, profile?: null | string) => getSkillContent(name, profile)
+  getSkillContent: (name: string, profile?: null | string) => getSkillContent(name, profile),
+  getProjectSkills: (cwd?: null | string, profile?: null | string) => getProjectSkills(cwd, profile)
 }))
 
 // Notifications hit nanostores/timers we don't care about here.
@@ -93,6 +95,9 @@ beforeEach(() => {
   getActionStatus.mockResolvedValue({ name: 'skill-install-1', running: false, exit_code: 0, lines: [] })
   toggleSkill.mockResolvedValue({ ok: true, name: 'pdf', enabled: false })
   getSkillContent.mockResolvedValue({ name: 'pdf', path: '/skills/pdf/SKILL.md', content: '' })
+  // No project skills by default — the gate renders nothing and stays out of
+  // every other assertion in this file.
+  getProjectSkills.mockResolvedValue({ root: null, trusted: false, discovery_enabled: true, skills: [] })
 })
 
 afterEach(() => {

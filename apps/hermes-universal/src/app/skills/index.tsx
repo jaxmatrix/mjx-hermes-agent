@@ -58,6 +58,7 @@ import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
 
 import { SkillsHub } from './hub'
 import { McpTab } from './mcp-tab'
+import { ProjectSkillsGate } from './project-skills'
 import { $skillsSortDesc, $toolsetsSortDesc, HUB_PANE_ID } from './store'
 
 // 'hub' is gone as a top-level tab — the hub browser is docked inside the
@@ -610,6 +611,11 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
           {/* Which profile am I editing? Same store (and chips) as the
               settings pages, so the choice carries across both. */}
           <SettingsProfileScope className="shrink-0 px-3 pb-3" />
+          {/* The repo's own skills, and the gate that decides whether they
+              load at all. Renders nothing outside a checkout that has any. */}
+          <div className="shrink-0 px-3 pb-2 empty:hidden">
+            <ProjectSkillsGate profile={scopeOverride} />
+          </div>
           <div className="min-h-40 flex-1 overflow-hidden">
             {visibleSkills.length === 0 ? (
               capabilityEmpty('skills')
