@@ -976,6 +976,7 @@ export const zhHant = defineLocale({
       messages: count => `${count} 則訊息`,
       restored: '已還原',
       deleteConfirm: title => `永久刪除「${title}」？此操作無法復原。`,
+      deletePinnedWarning: '此對話已釘選。釘選表示保留，批次清理會略過它，但在此處刪除無法復原。',
       defaultDirTitle: '預設專案目錄',
       defaultDirDesc: '新工作階段預設從此資料夾開始，除非您選擇其他目錄。留空則使用您的家目錄。',
       defaultDirUpdated: '預設專案目錄已更新',

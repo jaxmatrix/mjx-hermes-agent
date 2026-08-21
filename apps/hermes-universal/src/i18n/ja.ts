@@ -1012,6 +1012,8 @@ export const ja = defineLocale({
       messages: count => `${count} 件のメッセージ`,
       restored: '復元しました',
       deleteConfirm: title => `"${title}" を完全に削除しますか？この操作は元に戻せません。`,
+      deletePinnedWarning:
+        'このチャットはピン留めされています。ピン留めは「保持」の印で、一括整理では対象外になりますが、ここでの削除は元に戻せません。',
       defaultDirTitle: 'デフォルトのプロジェクトディレクトリ',
       defaultDirDesc:
         '別のフォルダーを選択しない限り、新しいセッションはこのフォルダーで開始します。未設定の場合はホームディレクトリが使用されます。',

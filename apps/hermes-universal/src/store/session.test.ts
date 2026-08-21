@@ -56,6 +56,7 @@ import {
   clearUnreadFinishedSession,
   deleteSessionLocal,
   isMessagingSource,
+  isSessionPinned,
   knownSessionProfile,
   loadMoreSessions,
   messagingSourceLabel,
@@ -1546,5 +1547,37 @@ describe('messaging sources stay in sync with the icon table', () => {
   it('labels the new platforms rather than falling back to a capitalised id', () => {
     expect(messagingSourceLabel('photon')).toBe('Photon')
     expect(messagingSourceLabel('buzz')).toBe('Buzz')
+  })
+})
+
+// The keep-flag question asked before a DESTRUCTIVE action. It cannot be the
+// pin toggles' `$pinnedSessionIds.includes(sessionPinId(row))`: Settings →
+// Archived fetches its own rows and archived ids never enter `$sessions`, so
+// the local set is routinely empty for exactly the rows this decides about.
+describe('isSessionPinned', () => {
+  it('reads the backend keep flag off the row being acted on', () => {
+    // Fixture DISAGREES with the local set: nothing is pinned locally.
+    $pinnedSessionIds.set([])
+    expect(isSessionPinned({ id: 'a', pinned: true } as unknown as SessionInfo)).toBe(true)
+    expect(isSessionPinned({ id: 'a', pinned: false } as unknown as SessionInfo)).toBe(false)
+  })
+
+  it('keys the local set on the lineage root, not the row id', () => {
+    // The row is a post-compaction TIP and the backend never heard about the
+    // pin. Keyed on `id` this returns false and the delete goes unwarned.
+    $pinnedSessionIds.set(['root'])
+    expect(isSessionPinned({ _lineage_root_id: 'root', id: 'tip', pinned: false } as unknown as SessionInfo)).toBe(true)
+  })
+
+  it('does not fire on a pin belonging to another conversation', () => {
+    $pinnedSessionIds.set(['someone-else'])
+    expect(isSessionPinned({ _lineage_root_id: 'root', id: 'tip', pinned: false } as unknown as SessionInfo)).toBe(
+      false
+    )
+  })
+
+  it('treats a gateway that predates the column as unpinned', () => {
+    $pinnedSessionIds.set([])
+    expect(isSessionPinned({ id: 'a' } as unknown as SessionInfo)).toBe(false)
   })
 })

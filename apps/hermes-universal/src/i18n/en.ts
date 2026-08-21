@@ -1047,6 +1047,8 @@ export const en: Translations = {
       messages: count => `${count} ${count === 1 ? 'message' : 'messages'}`,
       restored: 'Restored',
       deleteConfirm: title => `Permanently delete "${title}"? This cannot be undone.`,
+      deletePinnedWarning:
+        'This chat is pinned. Pinning marks it as kept — bulk cleanups skip it, but deleting it here is permanent.',
       defaultDirTitle: 'Default project directory',
       defaultDirDesc:
         'New sessions start in this folder unless you pick another. Leave it unset to use your home directory.',
