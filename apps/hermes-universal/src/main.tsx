@@ -20,6 +20,11 @@ import './store/gateway-switch-sync'
 // agent tool until the client answers, so the responder has to be listening
 // before the first turn — see store/agent-read-requests.ts.
 import './store/agent-read-requests'
+// And its non-blocking sibling: `agent.terminal.output` arrives for every
+// `terminal(background=true)` run whether or not any pane is mounted, and it is
+// only ever sent once — nothing replays it — so the buffer has to exist before
+// the first turn, not when the terminal pane happens to open.
+import './store/agent-terminal-bridge'
 // And the same for appearance: a skin or light/dark switch is global, but each
 // WebView holds its own copy, so without this one every OTHER surface — a
 // detached tile, the HUD, Quick Entry — keeps painting the appearance it booted

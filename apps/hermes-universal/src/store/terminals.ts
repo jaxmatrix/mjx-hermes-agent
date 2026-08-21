@@ -25,6 +25,14 @@ export function setTerminalHostPreference(preference: TerminalHostPreference): v
 
 export interface TerminalEntry {
   id: string
+  /**
+   * The background process this tab MIRRORS, when it is one (MJXHRM-472).
+   *
+   * Present ⇒ the tab is READ-ONLY: no PTY is spawned for it and its contents
+   * come from `agent.terminal.output` chunks (app/right-pane/terminal/
+   * agent-terminal-stream.ts). Absent ⇒ an ordinary user shell.
+   */
+  procId?: string
   title: string
   /** The directory this shell was SPAWNED in, recorded by the view once the
    *  transport settles. A terminal keeps the directory it was opened in, so this
@@ -35,6 +43,14 @@ export interface TerminalEntry {
 }
 
 let counter = 0
+
+/** Processes whose read-only tab has been closed; see `ensureAgentTerminal`. */
+const dismissedProcs = new Set<string>()
+
+/** Test seam — forgets which agent tabs were dismissed. */
+export function __resetAgentTerminals(): void {
+  dismissedProcs.clear()
+}
 
 export const $terminals = atom<TerminalEntry[]>([])
 export const $activeTerminalId = atom<string | null>(null)
@@ -48,9 +64,69 @@ export function createTerminal(): string {
   return id
 }
 
+/**
+ * The read-only tab mirroring a background process, created on demand.
+ *
+ * Called when the FIRST `agent.terminal.output` chunk for a process arrives.
+ * Deliberately does NOT front the tab or open the terminal area: the agent
+ * running something in the background is not a request for the user's screen
+ * (desktop AGENTS.md: offer, don't hijack). The tab appears in the rail with
+ * its buffered output waiting, and `close_terminal` can drop it again.
+ *
+ * Desktop opens these from its status stack instead; universal has no
+ * background-process feed yet (store/composer-status.ts), so first output is
+ * the opener. Idempotent — returns the existing tab's id when there is one.
+ */
+export function ensureAgentTerminal(procId: string, title?: string): string {
+  const existing = $terminals.get().find(term => term.procId === procId)
+
+  if (existing) {
+    return existing.id
+  }
+
+  // Once the agent (or the user) has closed this process's tab, later output
+  // must not drag it back — a long-running build would otherwise reopen the tab
+  // it was just told to drop, on its very next chunk. Desktop calls the same
+  // idea `surfacedProcs`. Session-scoped and bounded by the number of processes
+  // whose tabs were closed.
+  if (dismissedProcs.has(procId)) {
+    return ''
+  }
+
+  const id = `agent-${procId}`
+
+  $terminals.set([...$terminals.get(), { id, procId, title: title || procId }])
+
+  return id
+}
+
+/**
+ * Close the read-only tab mirroring a background process — the agent's
+ * `close_terminal` tool → `terminal.close`. The process is NOT killed and its
+ * output keeps buffering; only the view is dropped. False when no such tab is
+ * open, which is the honest answer to closing a tab that was never surfaced.
+ */
+export function closeAgentTerminalByProc(procId: string): boolean {
+  // Dismissed even when no tab is open: `close_terminal` on a process that was
+  // never surfaced still means "do not show this one".
+  dismissedProcs.add(procId)
+
+  const term = $terminals.get().find(entry => entry.procId === procId)
+
+  if (!term) {
+    return false
+  }
+
+  closeTerminal(term.id)
+
+  return true
+}
+
 /** Ensure at least one terminal exists + is active (called when the area opens). */
 export function ensureTerminal(): void {
-  if ($terminals.get().length === 0) {
+  // A read-only agent tab is not a shell the user can type in, so opening the
+  // area with only those present must still spawn one.
+  if (!$terminals.get().some(term => term.procId === undefined)) {
     createTerminal()
   } else if (!$activeTerminalId.get()) {
     $activeTerminalId.set($terminals.get()[0].id)
@@ -101,6 +177,19 @@ export function selectTerminal(id: string): void {
 }
 
 function afterRemoval(next: TerminalEntry[], removedActive: boolean): void {
+  // Whoever closed an agent tab — the rail's five close verbs, or the agent's
+  // own `close_terminal` — meant it. Recording the dismissal HERE rather than in
+  // `closeAgentTerminalByProc` is what stops the next output chunk from dragging
+  // a user-closed tab straight back (`ensureAgentTerminal`); a guard in one of
+  // six callers would have left the other five broken.
+  const kept = new Set(next.map(term => term.procId))
+
+  for (const term of $terminals.get()) {
+    if (term.procId !== undefined && !kept.has(term.procId)) {
+      dismissedProcs.add(term.procId)
+    }
+  }
+
   $terminals.set(next)
 
   if (removedActive) {
@@ -190,6 +279,12 @@ export function closeActiveTerminal(): void {
 }
 
 export function closeAllTerminals(): void {
+  for (const term of $terminals.get()) {
+    if (term.procId !== undefined) {
+      dismissedProcs.add(term.procId)
+    }
+  }
+
   $terminals.set([])
   $activeTerminalId.set(null)
   setTerminalOpen(false)

@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $connection } from '@/store/connection'
 import { forgetGatewayFeatures } from '@/store/gateway-features'
-import { $terminalHostPreference, noteTerminalCwd } from '@/store/terminals'
+import { $terminalHostPreference, $terminals, noteTerminalCwd } from '@/store/terminals'
 import { $effectiveCwd } from '@/store/workspace-events'
 import { useTheme } from '@/themes/context'
 import type { DesktopTheme } from '@/themes/types'
@@ -28,6 +28,7 @@ import {
   type TerminalTransportKind
 } from '@/transport/terminal-transport'
 
+import { registerAgentTerminalWriter } from './agent-terminal-stream'
 import { makeTerminalReader, registerTerminalReader } from './buffer'
 import { terminalClipboardIntent } from './clipboard'
 import { terminalLinkHandler, terminalWebLinksAddon } from './links'
@@ -122,6 +123,11 @@ export function TerminalView({ id }: { id: string }) {
   // IS the config→atom sync. Peer WebViews (a detached tile, the Android
   // Settings activity) are covered by ./terminal-font-sync instead.
   useTerminalFontFromConfig()
+
+  // A read-only tab mirroring one of the agent's background processes: no PTY of
+  // its own, contents streamed in as `agent.terminal.output` chunks. Read once
+  // from the store rather than subscribed — a tab never changes what it mirrors.
+  const procId = useRef($terminals.get().find(term => term.id === id)?.procId).current
 
   const hostRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -366,14 +372,25 @@ export function TerminalView({ id }: { id: string }) {
       return
     }
 
-    setStatus('connecting')
-    setEnd(null)
-
     try {
       fitRef.current?.fit()
     } catch {
       /* host not laid out yet */
     }
+
+    // Agent tab: subscribe to the process's stream instead of spawning a shell.
+    // The registration replays whatever was buffered before this tab existed, so
+    // opening one mid-run shows the run so far rather than starting blank.
+    if (procId) {
+      setStatus('open')
+      setEnd(null)
+      term.options.disableStdin = true
+
+      return registerAgentTerminalWriter(procId, chunk => termRef.current?.write(chunk))
+    }
+
+    setStatus('connecting')
+    setEnd(null)
 
     const conn = $connection.get()
 
@@ -469,7 +486,7 @@ export function TerminalView({ id }: { id: string }) {
     // `connection`/`preference` are intentionally not deps — see the snapshot note
     // above; they are read from the atoms at spawn time. `id` is stable per mounted
     // pane (the map is keyed on it), so it never re-triggers a spawn.
-  }, [attempt, fellBack, id])
+  }, [attempt, fellBack, id, procId])
 
   // Pinch to resize the type — the universal terminal gesture (Termius, Blink),
   // and the only practical answer to "80 columns don't fit on a phone": you zoom
@@ -716,7 +733,7 @@ export function TerminalView({ id }: { id: string }) {
       {/* Esc, Tab, Ctrl and the arrows don't exist on a phone keyboard, and they
           are most of what a shell is driven by. No point showing the row once the
           shell is gone. */}
-      {IS_MOBILE && status !== 'ended' && (
+      {IS_MOBILE && !procId && status !== 'ended' && (
         <MobileTerminalKeys
           modifiers={modifiers}
           onCycleModifier={modifier =>
