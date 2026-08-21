@@ -70,7 +70,9 @@ export const zhHant = defineLocale({
     globalClaimTitle: '已在系統層級保留一組快速鍵',
     globalClaimMessage: combos =>
       `Hermes 已向作業系統取得 ${combos}，因此其他應用程式在前景時也會回應。Hermes 執行期間其他應用程式無法使用它。`,
-    globalClaimAction: '變更'
+    globalClaimAction: '變更',
+    // Only the keys this locale actually translates; the rest fall back to en.
+    actions: { 'session.archive': '封存目前的工作階段' }
   },
 
   files: {

@@ -71,7 +71,9 @@ export const ja = defineLocale({
     globalClaimTitle: 'ショートカットをシステム全体で予約しました',
     globalClaimMessage: combos =>
       `Hermes はオペレーティングシステムから ${combos} を予約しました。他のアプリが手前にあるときも反応します。Hermes の実行中は他のアプリがこのキーを使えません。`,
-    globalClaimAction: '変更する'
+    globalClaimAction: '変更する',
+    // Only the keys this locale actually translates; the rest fall back to en.
+    actions: { 'session.archive': '現在のセッションをアーカイブ' }
   },
 
   files: {

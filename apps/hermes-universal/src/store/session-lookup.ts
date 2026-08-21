@@ -41,9 +41,11 @@ import {
   $activeStoredSessionId,
   $pinnedSessionCache,
   $sessions,
+  archiveSessionLocal,
   sessionMatchesStoredId,
   sessionPinId
 } from '@/store/session'
+import { $focusedStoredSessionId } from '@/store/session-states'
 import type { SessionInfo } from '@/types/hermes'
 
 /** The atoms `sessionRowFor` reads. Pass these to a pane mirror's `also`, or to
@@ -189,6 +191,25 @@ export function liveSessionIdFor(storedSessionId: string): string {
  * lookup, and `store/session` cannot import this module without a cycle — this
  * one reads `$projectTree`, and `store/projects` already imports `store/session`.
  */
+/** Archive whatever session is on screen — the `session.archive` hotkey.
+ *
+ *  The FOCUSED session, not the selected one: on a multi-tile shell the chat you
+ *  are looking at can be a tile, and archiving the workspace's session out from
+ *  under a focused tile is the opposite of what the key promises. No-op on a
+ *  fresh draft, which has no stored row to archive.
+ *
+ *  Lives here rather than in `store/session` for the same reason its sibling
+ *  `toggleSelectedPin` does: reaching `$focusedStoredSessionId` means importing
+ *  `store/session-states`, and a static edge from `store/session` to that would
+ *  close the module cycle `session-entry.test.ts` guards. */
+export async function archiveActiveSession(): Promise<void> {
+  const target = $focusedStoredSessionId.get()
+
+  if (target) {
+    await archiveSessionLocal(target)
+  }
+}
+
 export function toggleSelectedPin(): void {
   const sessionId = $activeStoredSessionId.get()
 
