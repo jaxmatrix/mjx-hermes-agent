@@ -261,3 +261,25 @@ describe('midnight — a shipped theme that shades its accent', () => {
     }
   })
 })
+
+// `retintTheme` short-circuits when the seed already IS the theme's accent, so
+// the identity case above never actually exercises ACCENT_MIX — it returns the
+// same object. That short-circuit is correct (it avoids an invisible one-bit
+// round trip), but it means the load-bearing claim in retint.ts, that these
+// ratios are the converter's own and reproduce the shipped palette, was going
+// unchecked. Move the primary out of the way first, then re-seed with the real
+// accent: the derived surfaces have to come back byte-identical.
+describe('the mix ratios are the ones that produced the shipped palette', () => {
+  const displaced = { ...nousTheme, colors: { ...nousTheme.colors, primary: '#7a7a7a' }, darkColors: undefined }
+  const rebuilt = retintTheme(displaced, nousTheme.colors.primary).colors
+
+  it.each(['accent', 'secondary', 'userBubble'] as const)('re-derives %s exactly', key => {
+    expect(rebuilt[key]).toBe(nousTheme.colors[key])
+  })
+
+  it('lands back on the shipped seed slots too', () => {
+    for (const key of ['primary', 'ring', 'midground', 'composerRing'] as const) {
+      expect(rebuilt[key], key).toBe(nousTheme.colors[key])
+    }
+  })
+})
