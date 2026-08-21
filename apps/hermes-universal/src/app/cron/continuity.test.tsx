@@ -154,7 +154,8 @@ describe('continuity toggle', () => {
     await waitFor(() =>
       expect(hermes.updateCronJob).toHaveBeenCalledWith(
         'j1',
-        expect.objectContaining({ context_from: ['upstream-a', 'self'] })
+        expect.objectContaining({ context_from: ['upstream-a', 'self'] }),
+        undefined
       )
     )
   })
@@ -181,7 +182,11 @@ describe('continuity toggle', () => {
     fireEvent.click(screen.getByText('Save changes'))
 
     await waitFor(() =>
-      expect(hermes.updateCronJob).toHaveBeenCalledWith('j1', expect.objectContaining({ context_from: null }))
+      expect(hermes.updateCronJob).toHaveBeenCalledWith(
+        'j1',
+        expect.objectContaining({ context_from: null }),
+        undefined
+      )
     )
   })
 })

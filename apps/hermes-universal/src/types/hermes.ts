@@ -780,6 +780,11 @@ export interface CronJob {
   name?: null | string
   next_run_at?: null | string
   no_agent?: boolean
+  // Which per-profile cron store this job came from. Stamped on every record by
+  // web_server `_annotate_cron_job`, including in the aggregated 'all' listing —
+  // which is the only thing that makes a row in that view actionable, since the
+  // routes address a store, not a global job table.
+  profile?: null | string
   prompt?: null | string
   provider?: null | string
   // A run-count cap plus its progress: {"times": null = forever}.

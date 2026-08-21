@@ -77,7 +77,7 @@ interface SidebarCronJobsSectionProps {
   max?: number
   onOpenRun: (sessionId: string) => void
   onManageJob: (jobId: string) => void
-  onTriggerJob: (jobId: string) => void
+  onTriggerJob: (jobId: string, profile?: null | string) => void
   onToggle: () => void
   open: boolean
 }
@@ -159,7 +159,7 @@ export function SidebarCronJobsSection({
               onManage={() => onManageJob(job.id)}
               onOpenRun={onOpenRun}
               onTogglePeek={() => setPeekJobId(prev => (prev === job.id ? null : job.id))}
-              onTrigger={() => onTriggerJob(job.id)}
+              onTrigger={() => onTriggerJob(job.id, job.profile)}
             />
           ))}
           {hiddenCount > 0 && (
@@ -206,7 +206,7 @@ function CronJobSidebarRow({
   // row updates in place.
   const togglePause = async () => {
     try {
-      const updated = isPaused ? await resumeCronJob(job.id) : await pauseCronJob(job.id)
+      const updated = isPaused ? await resumeCronJob(job.id, job.profile) : await pauseCronJob(job.id, job.profile)
       updateCronJobs(rows => rows.map(row => (row.id === job.id ? updated : row)))
       notify({ kind: 'success', title: isPaused ? c.resumed : c.paused, message: label })
     } catch (err) {
@@ -227,7 +227,7 @@ function CronJobSidebarRow({
     }
 
     try {
-      await deleteCronJob(job.id)
+      await deleteCronJob(job.id, job.profile)
       updateCronJobs(rows => rows.filter(row => row.id !== job.id))
       notify({ kind: 'success', title: c.deleted, message: label })
     } catch (err) {
@@ -344,12 +344,20 @@ function CronJobSidebarRow({
           </div>
         </div>
       </ActionsContextMenu>
-      {expanded && <CronJobSidebarRuns jobId={job.id} onOpenRun={onOpenRun} />}
+      {expanded && <CronJobSidebarRuns jobId={job.id} onOpenRun={onOpenRun} profile={job.profile} />}
     </div>
   )
 }
 
-function CronJobSidebarRuns({ jobId, onOpenRun }: { jobId: string; onOpenRun: (sessionId: string) => void }) {
+function CronJobSidebarRuns({
+  jobId,
+  onOpenRun,
+  profile
+}: {
+  jobId: string
+  onOpenRun: (sessionId: string) => void
+  profile?: null | string
+}) {
   const { t } = useI18n()
   const c = t.cron
   const selectedSessionId = useStore($activeStoredSessionId)
@@ -361,7 +369,7 @@ function CronJobSidebarRuns({ jobId, onOpenRun }: { jobId: string; onOpenRun: (s
     let cancelled = false
 
     const load = () =>
-      getCronJobRuns(jobId, PEEK_RUN_LIMIT)
+      getCronJobRuns(jobId, PEEK_RUN_LIMIT, profile)
         .then(result => {
           if (!cancelled) {
             setRuns(result)
@@ -391,7 +399,7 @@ function CronJobSidebarRuns({ jobId, onOpenRun }: { jobId: string; onOpenRun: (s
     // cronChangeTick in the deps IS the refresh: a run the scheduler just wrote
     // moves cron/jobs.json, the watcher broadcasts, and this effect re-runs and
     // reloads — instead of the peek sitting stale for up to a poll window.
-  }, [changeEventsAvailable, cronChangeTick, jobId])
+  }, [changeEventsAvailable, cronChangeTick, jobId, profile])
 
   return (
     <div className="mb-1 ms-[1.375rem] flex flex-col gap-px">

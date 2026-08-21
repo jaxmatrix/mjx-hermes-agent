@@ -389,6 +389,9 @@ export function CronView({
   // default — scope the fetch to the sidebar's profile scope so this overlay
   // and the sidebar (which share the $cronJobs atom) agree on what's shown.
   const profileScope = useStore($profileScope)
+  // 'all' aggregates other profiles' stores and is not somewhere a job can be
+  // WRITTEN; every create path collapses it the same way.
+  const writeProfile = profileScope === ALL_PROFILES ? 'default' : profileScope
 
   const refresh = useCallback(async () => {
     try {
@@ -462,7 +465,7 @@ export function CronView({
 
     try {
       const isPaused = jobState(job) === 'paused'
-      const updated = isPaused ? await resumeCronJob(job.id) : await pauseCronJob(job.id)
+      const updated = isPaused ? await resumeCronJob(job.id, job.profile) : await pauseCronJob(job.id, job.profile)
       updateCronJobs(rows => rows.map(row => (row.id === job.id ? updated : row)))
       notify({
         kind: 'success',
@@ -480,7 +483,7 @@ export function CronView({
     setBusyJobId(job.id)
 
     try {
-      const updated = await triggerCronJob(job.id)
+      const updated = await triggerCronJob(job.id, job.profile)
       updateCronJobs(rows => rows.map(row => (row.id === job.id ? updated : row)))
       notify({ kind: 'success', title: c.triggered, message: truncate(jobTitle(job), 60) })
     } catch (err) {
@@ -498,23 +501,29 @@ export function CronView({
     // No try/catch: ConfirmDialog owns the pending → done beat and turns a
     // throw into an inline error, which is where the user is already looking.
     // The old toast fired from behind a dialog that had just closed itself.
-    await deleteCronJob(pendingDelete.id)
+    await deleteCronJob(pendingDelete.id, pendingDelete.profile)
     updateCronJobs(rows => rows.filter(row => row.id !== pendingDelete.id))
     notify({ kind: 'success', title: c.deleted, message: truncate(jobTitle(pendingDelete), 60) })
   }
 
   async function handleEditorSave(values: EditorValues) {
     if (editor.mode === 'create') {
-      const created = await createCronJob({
-        prompt: values.prompt,
-        schedule: values.schedule,
-        name: values.name || undefined,
-        deliver: values.deliver || DEFAULT_DELIVER,
-        // A create has no stored refs to preserve, so the toggle is the whole
-        // list. Omitted entirely when off, to keep the payload what it was.
-        ...(values.continuity ? { context_from: ['self'] } : {}),
-        ...(values.model.trim() ? { model: values.model.trim(), provider: values.provider.trim() || undefined } : {})
-      })
+      const created = await createCronJob(
+        {
+          prompt: values.prompt,
+          schedule: values.schedule,
+          name: values.name || undefined,
+          deliver: values.deliver || DEFAULT_DELIVER,
+          // A create has no stored refs to preserve, so the toggle is the whole
+          // list. Omitted entirely when off, to keep the payload what it was.
+          ...(values.continuity ? { context_from: ['self'] } : {}),
+          ...(values.model.trim() ? { model: values.model.trim(), provider: values.provider.trim() || undefined } : {})
+        },
+        // The profile being browsed, so a job created while looking at another
+        // one lands in ITS store. 'all' is not a writable target — collapse it to
+        // 'default', matching the blueprint path below.
+        writeProfile
+      )
 
       updateCronJobs(rows => [...rows, created])
       notify({ kind: 'success', title: c.created, message: truncate(jobTitle(created), 60) })
@@ -525,7 +534,8 @@ export function CronView({
         editor.job.id,
         // The job's OWN external refs, so flipping the one checkbox this editor
         // shows cannot delete a cross-job link set from the CLI or dashboard.
-        cronEditorUpdates(values, { externalContextFrom: cronExternalContextFrom(editor.job), scriptOnlyJob })
+        cronEditorUpdates(values, { externalContextFrom: cronExternalContextFrom(editor.job), scriptOnlyJob }),
+        editor.job.profile
       )
 
       updateCronJobs(rows => rows.map(row => (row.id === updated.id ? updated : row)))
@@ -541,8 +551,7 @@ export function CronView({
   // real per-profile job, and "all" is not a writable target — collapse it to
   // 'default', matching the manual create path in handleEditorSave.
   async function handleBlueprintCreate(blueprint: AutomationBlueprint, values: Record<string, string>) {
-    const profile = profileScope === ALL_PROFILES ? 'default' : profileScope
-    const job = await instantiateAutomationBlueprint({ blueprint: blueprint.key, values }, profile)
+    const job = await instantiateAutomationBlueprint({ blueprint: blueprint.key, values }, writeProfile)
 
     updateCronJobs(rows => [...rows.filter(row => row.id !== job.id), job])
     notify({ kind: 'success', title: c.blueprints.scheduled, message: asText(job.schedule_display) || blueprint.title })
@@ -779,7 +788,7 @@ function CronJobDetail({
         </section>
       ) : null}
 
-      <CronJobRuns c={c} jobId={job.id} onOpenSession={onOpenSession} />
+      <CronJobRuns c={c} jobId={job.id} onOpenSession={onOpenSession} profile={job.profile} />
     </PanelDetail>
   )
 }
@@ -806,11 +815,13 @@ const RUNS_BACKSTOP_INTERVAL_MS = 60_000
 function CronJobRuns({
   c,
   jobId,
-  onOpenSession
+  onOpenSession,
+  profile
 }: {
   c: Translations['cron']
   jobId: string
   onOpenSession?: (sessionId: string) => void
+  profile?: null | string
 }) {
   const changeEventsAvailable = useStore($changeEventsAvailable)
   const cronChangeTick = useStore($cronChangeTick)
@@ -820,7 +831,7 @@ function CronJobRuns({
     let cancelled = false
 
     const load = () =>
-      getCronJobRuns(jobId)
+      getCronJobRuns(jobId, undefined, profile)
         .then(result => {
           if (!cancelled) {
             setRuns(result)
@@ -857,7 +868,7 @@ function CronJobRuns({
       document.removeEventListener('visibilitychange', onVisible)
     }
     // cronChangeTick: a run the scheduler just finished reloads the history.
-  }, [changeEventsAvailable, cronChangeTick, jobId])
+  }, [changeEventsAvailable, cronChangeTick, jobId, profile])
 
   return (
     <div>

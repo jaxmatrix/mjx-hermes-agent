@@ -114,7 +114,7 @@ describe('cron sidebar row actions', () => {
     openRowMenu('Alpha backup')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pause cron' }))
 
-    await waitFor(() => expect(hermes.pauseCronJob).toHaveBeenCalledWith('alpha-job'))
+    await waitFor(() => expect(hermes.pauseCronJob).toHaveBeenCalledWith('alpha-job', undefined))
     expect(hermes.pauseCronJob).toHaveBeenCalledTimes(1)
 
     openRowMenu('Alpha backup')
@@ -128,12 +128,12 @@ describe('cron sidebar row actions', () => {
     openRowMenu('Alpha backup')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Trigger now' }))
 
-    expect(props.onTriggerJob).toHaveBeenLastCalledWith('alpha-job')
+    expect(props.onTriggerJob).toHaveBeenLastCalledWith('alpha-job', undefined)
 
     openRowMenu('Zulu digest')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Trigger now' }))
 
-    expect(props.onTriggerJob).toHaveBeenLastCalledWith('zulu-job')
+    expect(props.onTriggerJob).toHaveBeenLastCalledWith('zulu-job', undefined)
   })
 
   it('asks before deleting, and deletes the row it was opened on', async () => {
@@ -157,7 +157,7 @@ describe('cron sidebar row actions', () => {
     openRowMenu('Alpha backup')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }))
 
-    await waitFor(() => expect(hermes.deleteCronJob).toHaveBeenCalledWith('alpha-job'))
+    await waitFor(() => expect(hermes.deleteCronJob).toHaveBeenCalledWith('alpha-job', undefined))
   })
 
   it('reaches the same actions by right-click, from one shared item set', async () => {

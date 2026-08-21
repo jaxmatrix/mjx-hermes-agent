@@ -1121,24 +1121,36 @@ export function setWebhookEnabled(
   })
 }
 
-export function getCronJobs(profile?: string): Promise<CronJob[]> {
-  const suffix = profile ? `?profile=${encodeURIComponent(profile)}` : ''
+/**
+ * `?profile=` for a cron route.
+ *
+ * Cron jobs live in PER-PROFILE stores on disk, and every one of these routes
+ * takes an optional `profile` that decides which store it opens. Only the list
+ * ever sent one, so browsing another profile (or the aggregated 'all' view) and
+ * then pausing, triggering, editing or deleting a row addressed the ACTIVE
+ * profile's store instead — where that job id does not exist. Every job record
+ * comes back annotated with its own `profile` (web_server `_annotate_cron_job`),
+ * so the caller passes the job's, and the action lands on the job the row names.
+ */
+const cronProfileQuery = (profile: null | string | undefined, separator = '?'): string =>
+  profile ? `${separator}profile=${encodeURIComponent(profile)}` : ''
 
+export function getCronJobs(profile?: string): Promise<CronJob[]> {
   return api<CronJob[]>({
-    path: `/api/cron/jobs${suffix}`,
+    path: `/api/cron/jobs${cronProfileQuery(profile)}`,
     timeoutMs: STARTUP_REQUEST_TIMEOUT_MS
   })
 }
 
-export function getCronJob(jobId: string): Promise<CronJob> {
+export function getCronJob(jobId: string, profile?: null | string): Promise<CronJob> {
   return api<CronJob>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}`
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}${cronProfileQuery(profile)}`
   })
 }
 
-export async function getCronJobRuns(jobId: string, limit = 20): Promise<SessionInfo[]> {
+export async function getCronJobRuns(jobId: string, limit = 20, profile?: null | string): Promise<SessionInfo[]> {
   const { runs } = await api<{ runs: SessionInfo[] }>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/runs?limit=${limit}`
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/runs?limit=${limit}${cronProfileQuery(profile, '&')}`
   })
 
   return runs ?? []
@@ -1153,46 +1165,46 @@ export async function getCronDeliveryTargets(): Promise<CronDeliveryTarget[]> {
   return targets ?? []
 }
 
-export function createCronJob(body: CronJobCreatePayload): Promise<CronJob> {
+export function createCronJob(body: CronJobCreatePayload, profile?: null | string): Promise<CronJob> {
   return api<CronJob>({
-    path: '/api/cron/jobs',
+    path: `/api/cron/jobs${cronProfileQuery(profile)}`,
     method: 'POST',
     body
   })
 }
 
-export function updateCronJob(jobId: string, updates: CronJobUpdates): Promise<CronJob> {
+export function updateCronJob(jobId: string, updates: CronJobUpdates, profile?: null | string): Promise<CronJob> {
   return api<CronJob>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}`,
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}${cronProfileQuery(profile)}`,
     method: 'PUT',
     body: { updates }
   })
 }
 
-export function pauseCronJob(jobId: string): Promise<CronJob> {
+export function pauseCronJob(jobId: string, profile?: null | string): Promise<CronJob> {
   return api<CronJob>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/pause`,
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/pause${cronProfileQuery(profile)}`,
     method: 'POST'
   })
 }
 
-export function resumeCronJob(jobId: string): Promise<CronJob> {
+export function resumeCronJob(jobId: string, profile?: null | string): Promise<CronJob> {
   return api<CronJob>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/resume`,
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/resume${cronProfileQuery(profile)}`,
     method: 'POST'
   })
 }
 
-export function triggerCronJob(jobId: string): Promise<CronJob> {
+export function triggerCronJob(jobId: string, profile?: null | string): Promise<CronJob> {
   return api<CronJob>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/trigger`,
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/trigger${cronProfileQuery(profile)}`,
     method: 'POST'
   })
 }
 
-export function deleteCronJob(jobId: string): Promise<{ ok: boolean }> {
+export function deleteCronJob(jobId: string, profile?: null | string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}`,
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}${cronProfileQuery(profile)}`,
     method: 'DELETE'
   })
 }
