@@ -70,9 +70,13 @@ describe('pane.reveal → revealBridgePane', () => {
 
   // Not `revealTreePane('review')`: the diff has to be LOADED, and on a narrow
   // viewport the pane is an overlay rather than a tree pane.
-  it('routes review through revealReview, which also loads the diff', () => {
+  // `revealReview` is reached through a dynamic import (MJXHRM-452: a static
+  // edge to `@/store/review` here closes a cycle that makes `@/store/session`
+  // un-importable as a module-graph entry), so the call lands a microtask after
+  // the synchronous `true`.
+  it('routes review through revealReview, which also loads the diff', async () => {
     expect(revealBridgePane('review')).toBe(true)
-    expect(shell.revealReview).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(shell.revealReview).toHaveBeenCalledTimes(1))
     expect(shell.revealTreePane).not.toHaveBeenCalled()
   })
 

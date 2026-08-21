@@ -23,7 +23,6 @@ import { applyLayoutPreset, LAYOUTS_AREA } from '@/components/pane-shell/tree/pr
 import { revealTreePane } from '@/components/pane-shell/tree/store'
 import { registry } from '@/contrib/registry'
 import { WORKSPACE_PANE_ID } from '@/lib/pane-ids'
-import { revealReview } from '@/store/review'
 import { ownsPersistedAppState } from '@/store/windows'
 
 /**
@@ -48,7 +47,16 @@ import { ownsPersistedAppState } from '@/store/windows'
 const PANE_REVEALERS: Record<string, () => void> = {
   chat: () => revealTreePane(WORKSPACE_PANE_ID),
   files: () => revealTreePane('files'),
-  review: () => revealReview(),
+  // Loaded on demand, not at module scope. `store/review` pulls
+  // `store/coding-status` → `store/workspace-events` → `store/session-states`,
+  // which imports `@/store/session` — and `store/session` imports THIS module's
+  // caller (`store/event-router`). A static edge here therefore closes a cycle
+  // that makes `@/store/session` unusable as a module-graph entry point:
+  // session-states' module-scope `$activeStoredSessionId.listen` reads an
+  // atom that has not been initialized yet and the whole import dies. Revealing
+  // a pane is a user/agent act many frames after boot, so the dynamic import
+  // costs nothing (in the running app review.ts is long since loaded).
+  review: () => void import('@/store/review').then(m => m.revealReview()),
   sessions: () => revealTreePane('sessions'),
   terminal: () => revealTreePane('terminal')
 }
