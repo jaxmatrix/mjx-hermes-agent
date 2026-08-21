@@ -33,6 +33,7 @@ import math
 import mimetypes
 import os
 import re
+import shlex
 import shutil
 import socket
 import stat
@@ -133,6 +134,7 @@ _LOCAL_OPENVIKING_AUTOSTART_TIMEOUT = 60.0
 # is refused in well under this; it exists only so a wedged listener cannot
 # block the autostart path.
 _LOCAL_OPENVIKING_PROBE_TIMEOUT = 2.0
+_DEFAULT_SERVER_COMMAND = "openviking-server"
 _LOCAL_SERVER_STARTED = "started"
 _LOCAL_SERVER_OCCUPIED = "occupied"
 _LOCAL_SERVER_FAILED = "failed"
@@ -1479,6 +1481,24 @@ def _local_listener_suffix(endpoint: str) -> str:
     return f" The listener on {host}:{port} is {_describe_local_port_listener(host, port)}."
 
 
+def _local_server_command() -> list[str]:
+    """Argv Hermes runs to autostart a local server: env -> config.yaml -> default.
+
+    Pointing it at a source checkout runs a branch instead of the installed
+    package, e.g. ``uv run --project ~/src/OpenViking openviking-server
+    --config ~/.openviking/ov.conf``; ``--host``/``--port`` are appended.
+    """
+    raw = _first_nonempty(
+        _env_value("OPENVIKING_SERVER_COMMAND"),
+        _clean_config_value(_load_hermes_openviking_config().get("server_command")),
+        default=_DEFAULT_SERVER_COMMAND,
+    )
+    try:
+        return shlex.split(raw)
+    except ValueError:
+        return []
+
+
 def _start_local_openviking_server(endpoint: str) -> tuple[str, str]:
     try:
         host, port = _local_openviking_bind(endpoint)
@@ -1496,18 +1516,20 @@ def _start_local_openviking_server(endpoint: str) -> tuple[str, str]:
             f"Port {host}:{port} is occupied by {listener}. Hermes did not start "
             "openviking-server because the listener has not passed OpenViking's /health check.",
         )
-    server_cmd = shutil.which("openviking-server")
+    command = _local_server_command()
+    server_cmd = shutil.which(command[0]) if command else None
     if not server_cmd:
         return (
             _LOCAL_SERVER_FAILED,
-            "openviking-server was not found on PATH. Start it manually, then retry.",
+            f"{command[0] if command else _DEFAULT_SERVER_COMMAND} was not found on PATH. "
+            "Start it manually, then retry.",
         )
     log_path = _openviking_server_log_path()
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("ab") as log_file:
             subprocess.Popen(
-                [server_cmd, "--host", host, "--port", str(port)],
+                [server_cmd, *command[1:], "--host", host, "--port", str(port)],
                 stdout=log_file,
                 stderr=log_file,
                 stdin=subprocess.DEVNULL,

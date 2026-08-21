@@ -3991,6 +3991,36 @@ OPTIONAL_ENV_VARS = {
         "category": "tool",
         "advanced": True,
     },
+    "OPENVIKING_AGENT": {
+        "description": "Hermes' peer ID in OpenViking (default: hermes)",
+        "prompt": "OpenViking agent",
+        "category": "tool",
+        "advanced": True,
+    },
+    "OPENVIKING_ACCOUNT": {
+        "description": "OpenViking account override for local/trusted mode",
+        "prompt": "OpenViking account",
+        "category": "tool",
+        "advanced": True,
+    },
+    "OPENVIKING_USER": {
+        "description": "OpenViking user override for local/trusted mode",
+        "prompt": "OpenViking user",
+        "category": "tool",
+        "advanced": True,
+    },
+    "OPENVIKING_CLI_CONFIG_FILE": {
+        "description": "Path to the ovcli.conf profile Hermes links (default: ~/.openviking/ovcli.conf)",
+        "prompt": "OpenViking ovcli.conf path",
+        "category": "tool",
+        "advanced": True,
+    },
+    "OPENVIKING_SERVER_COMMAND": {
+        "description": "Command Hermes runs to autostart a local OpenViking server (default: openviking-server)",
+        "prompt": "OpenViking server command",
+        "category": "tool",
+        "advanced": True,
+    },
 
     # ── Langfuse observability ──
     "HERMES_LANGFUSE_PUBLIC_KEY": {

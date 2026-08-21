@@ -4810,6 +4810,9 @@ _SCHEMA_DEFINED_DICT_KEYS = frozenset({
     "email", "sms", "dingtalk",
     # MCP server template / dynamic auth dicts
     "sessions", "checkpoints",
+    # memory.<provider>.* — each provider plugin owns its own sub-block
+    # (e.g. memory.openviking.recall_limit), declared in its config_schema.py.
+    "memory",
 })
 
 # Top-level keys that can be ANY user-supplied name (platform/provider dict

@@ -1609,3 +1609,67 @@ def test_is_available_false_without_any_endpoint(monkeypatch):
         openviking_module, "_load_hermes_openviking_config", lambda: {}
     )
     assert OpenVikingMemoryProvider().is_available() is False
+
+
+def test_start_local_openviking_server_honours_server_command(monkeypatch):
+    """A source checkout runs via ``memory.openviking.server_command``; host/port are appended."""
+    popen_calls = []
+    monkeypatch.delenv("OPENVIKING_SERVER_COMMAND", raising=False)
+    monkeypatch.setattr(openviking_module, "_local_openviking_port_is_open", lambda host, port: False)
+    monkeypatch.setattr(
+        openviking_module,
+        "_load_hermes_openviking_config",
+        lambda: {"server_command": "uv run --project /src/OpenViking openviking-server --config /home/u/.openviking/ov.conf"},
+    )
+    monkeypatch.setattr(openviking_module.shutil, "which", lambda name: "/usr/local/bin/uv" if name == "uv" else None)
+    monkeypatch.setattr(openviking_module.subprocess, "Popen", lambda args, **kwargs: popen_calls.append(args) or object())
+
+    state, _message = openviking_module._start_local_openviking_server("http://127.0.0.1:1934")
+
+    assert state == openviking_module._LOCAL_SERVER_STARTED
+    assert popen_calls == [[
+        "/usr/local/bin/uv", "run", "--project", "/src/OpenViking",
+        "openviking-server", "--config", "/home/u/.openviking/ov.conf",
+        "--host", "127.0.0.1", "--port", "1934",
+    ]]
+
+
+def test_start_local_openviking_server_env_command_wins_and_is_named_when_missing(monkeypatch):
+    monkeypatch.setenv("OPENVIKING_SERVER_COMMAND", "ov-dev --reload")
+    monkeypatch.setattr(openviking_module, "_load_hermes_openviking_config", lambda: {"server_command": "openviking-server"})
+    monkeypatch.setattr(openviking_module, "_local_openviking_port_is_open", lambda host, port: False)
+    monkeypatch.setattr(openviking_module.shutil, "which", lambda name: None)
+
+    state, message = openviking_module._start_local_openviking_server("http://127.0.0.1:1934")
+
+    assert state == openviking_module._LOCAL_SERVER_FAILED
+    assert "ov-dev was not found on PATH" in message
+
+
+def test_declared_schema_covers_runtime_config_and_matches_defaults():
+    """config_schema.py is pure declaration; pin it to what the runtime actually reads."""
+    from plugins.memory.config_schema import STORAGE_CONFIG_YAML, get_provider_config_schema
+
+    schema = get_provider_config_schema("openviking")
+    assert schema is not None
+    assert schema.storage == STORAGE_CONFIG_YAML
+
+    defaults = {field.key: field.default for field in schema.fields}
+    assert defaults["endpoint"] == openviking_module._DEFAULT_ENDPOINT
+    assert defaults["agent"] == openviking_module._DEFAULT_AGENT
+    assert defaults["server_command"] == openviking_module._DEFAULT_SERVER_COMMAND
+    for key, runtime_default in {
+        "recall_limit": openviking_module._DEFAULT_RECALL_LIMIT,
+        "recall_score_threshold": openviking_module._DEFAULT_RECALL_SCORE_THRESHOLD,
+        "recall_max_injected_chars": openviking_module._DEFAULT_RECALL_MAX_INJECTED_CHARS,
+        "profile_token_budget": openviking_module._DEFAULT_PROFILE_TOKEN_BUDGET,
+        "recall_timeout_seconds": openviking_module._DEFAULT_RECALL_TIMEOUT_SECONDS,
+        "recall_request_timeout_seconds": openviking_module._DEFAULT_RECALL_REQUEST_TIMEOUT_SECONDS,
+        "recall_full_read_limit": openviking_module._DEFAULT_RECALL_FULL_READ_LIMIT,
+    }.items():
+        assert float(defaults[key]) == float(runtime_default), key
+
+    # Every knob the legacy dashboard schema exposes is reachable from the declared one.
+    legacy_env = {field["env_var"] for field in OpenVikingMemoryProvider().get_config_schema()}
+    declared_env = {env for field in schema.fields for env in (field.env_key, *field.env_fallbacks) if env}
+    assert legacy_env <= declared_env
