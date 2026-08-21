@@ -374,10 +374,13 @@ describe('reconcileSessionTurn', () => {
     await Promise.all([lifecycle.reconcileSessionTurn('runtime-1'), lifecycle.reconcileSessionTurn('runtime-1')])
 
     expect(requestGateway).toHaveBeenCalledTimes(1)
+    // No `source`: it is the gateway's PLATFORM field, and anything other than
+    // "desktop" strips the whole desktop_ui toolset from the rebuilt agent
+    // (MJXHRM-472). `session.create` sends none either — the two must agree, or
+    // a cold resume silently costs the session nine tools.
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-1',
-      omit_messages: true,
-      source: 'universal'
+      omit_messages: true
     })
     // Gateway says idle → the turn we thought was live is settled, not stranded.
     expect(lifecycle.isTurnLive('runtime-1')).toBe(false)
