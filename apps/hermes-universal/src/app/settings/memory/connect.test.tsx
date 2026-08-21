@@ -16,6 +16,7 @@ const startMemoryProviderOAuth = vi.fn()
 
 vi.mock('@/hermes', () => ({
   getMemoryProviderOAuthStatus: (provider: string) => getMemoryProviderOAuthStatus(provider),
+  setApiRequestProfile: vi.fn(),
   startMemoryProviderOAuth: (provider: string) => startMemoryProviderOAuth(provider)
 }))
 
