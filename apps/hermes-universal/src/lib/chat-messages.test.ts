@@ -8,6 +8,7 @@ import {
   type ChatPart,
   collectUnspokenTurnSpeech,
   dedupeRepeatedTextInParts,
+  sealOpenToolParts,
   userTurnOrdinal
 } from './chat-messages'
 
@@ -256,5 +257,57 @@ describe('dedupeRepeatedTextInParts', () => {
     const parts: ChatPart[] = [text('   '), text('\n')]
 
     expect(dedupeRepeatedTextInParts(parts)).toEqual(parts)
+  })
+})
+
+// A `tool.complete` lost to a degraded websocket (reconnect, profile swap,
+// hidden window) leaves its part without a `result`, which renders as a
+// permanently spinning tool row in a session the UI already shows as idle.
+describe('sealOpenToolParts', () => {
+  const toolPart = (over: Partial<ChatPart> = {}): ChatPart =>
+    ({ args: {}, toolCallId: 'call-1', toolName: 'terminal', type: 'tool-call', ...over }) as ChatPart
+
+  const assistantWithParts = (parts: ChatPart[], over: Partial<ChatMessage> = {}): ChatMessage =>
+    ({ id: 'a1', parts, role: 'assistant', ...over }) as ChatMessage
+
+  it('seals open tool-call parts in settled assistant messages', () => {
+    const messages = [assistantWithParts([toolPart()])]
+
+    expect(sealOpenToolParts(messages)[0].parts[0]).toHaveProperty('result')
+  })
+
+  it('leaves already-completed tool parts untouched', () => {
+    const done = toolPart({ result: { code: 0 } } as Partial<ChatPart>)
+    const messages = [assistantWithParts([done])]
+
+    expect(sealOpenToolParts(messages)[0].parts[0]).toBe(done)
+  })
+
+  it('leaves pending messages alone', () => {
+    // Still streaming — an open tool part there is live work, not a lost event.
+    const messages = [assistantWithParts([toolPart()], { pending: true })]
+
+    expect(sealOpenToolParts(messages)[0].parts[0]).not.toHaveProperty('result')
+  })
+
+  it('leaves non-tool parts untouched', () => {
+    const text = { text: 'hello', type: 'text' } as ChatPart
+    const messages = [assistantWithParts([text, toolPart()])]
+    const next = sealOpenToolParts(messages)
+
+    expect(next[0].parts[0]).toBe(text)
+    expect(next[0].parts[1]).toHaveProperty('result')
+  })
+
+  it('returns the same array reference when nothing needs sealing', () => {
+    const messages = [assistantWithParts([toolPart({ result: { code: 0 } } as Partial<ChatPart>)])]
+
+    expect(sealOpenToolParts(messages)).toBe(messages)
+  })
+
+  it('leaves a user message alone even with an open tool part', () => {
+    const messages = [assistantWithParts([toolPart()], { role: 'user' })]
+
+    expect(sealOpenToolParts(messages)[0].parts[0]).not.toHaveProperty('result')
   })
 })

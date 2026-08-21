@@ -420,6 +420,47 @@ const normalizeForCompare = (value: string): string => value.replace(/\s+/g, ' '
  * renders twice, most visibly `::preview` frames. The LAST occurrence is the
  * authoritative one; keep it.
  */
+/**
+ * Turn-settle reconciliation: close every tool-call part that never received
+ * its completion event. A `tool.complete` lost to a degraded websocket
+ * (reconnect, profile swap, hidden window) leaves the part without a `result`,
+ * which renders as a permanently spinning tool row even though the turn itself
+ * completed. A settled session cannot have tools still running, so an open part
+ * at settle time is a lost event, not live work. Pending messages are left
+ * alone, and no-op calls return the input array unchanged.
+ */
+export function sealOpenToolParts(messages: ChatMessage[]): ChatMessage[] {
+  let changed = false
+
+  const next = messages.map(message => {
+    if (message.role !== 'assistant' || message.pending) {
+      return message
+    }
+
+    let partChanged = false
+
+    const parts = message.parts.map(part => {
+      if (part.type !== 'tool-call' || Object.hasOwn(part, 'result')) {
+        return part
+      }
+
+      partChanged = true
+
+      return { ...part, result: {} }
+    })
+
+    if (!partChanged) {
+      return message
+    }
+
+    changed = true
+
+    return { ...message, parts }
+  })
+
+  return changed ? next : messages
+}
+
 const normalizeRepeatedText = (value: string) => value.replace(/\s+/g, ' ').trim()
 
 export function dedupeRepeatedTextInParts(parts: ChatPart[]): ChatPart[] {
