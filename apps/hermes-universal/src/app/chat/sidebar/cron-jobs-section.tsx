@@ -10,6 +10,7 @@ import { deleteCronJob, getCronJobRuns, pauseCronJob, resumeCronJob } from '@/he
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
+import { confirm } from '@/store/confirm'
 import { updateCronJobs } from '@/store/cron'
 import { $changeEventsAvailable, $cronChangeTick, livePollIntervalMs } from '@/store/live-sync'
 import { notify, notifyError } from '@/store/notifications'
@@ -214,7 +215,14 @@ function CronJobSidebarRow({
   }
 
   const remove = async () => {
-    if (!window.confirm(`${c.deleteDescPrefix}${label}${c.deleteDescSuffix}`)) {
+    const ok = await confirm({
+      confirmLabel: t.common.delete,
+      description: `${c.deleteDescPrefix}${label}${c.deleteDescSuffix}`,
+      destructive: true,
+      title: c.deleteTitle
+    })
+
+    if (!ok) {
       return
     }
 

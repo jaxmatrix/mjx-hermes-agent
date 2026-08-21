@@ -10,6 +10,7 @@ import { RemoteFolderPicker } from '@/app/right-pane/files/remote-picker'
 import { TileWindowRoot } from '@/app/tile-window'
 import { WakeIndicatorOverlay } from '@/app/wake-indicator-overlay'
 import { WakeIndicatorWindowRoot } from '@/app/wake-indicator/wake-indicator-window'
+import { ConfirmHost } from '@/components/confirm-host'
 import { FindBar } from '@/components/find-bar'
 import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFACE } from '@/store/windows'
 
@@ -49,6 +50,13 @@ import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFAC
  * exist wherever that guard does. A window whose shell forgot it would park the
  * first close and never draw the question, which is a dead titlebar button.
  *
+ * `ConfirmHost` (MJXHRM-479) is the sixth, and it is the strongest case of all:
+ * `confirm()` is called from plain async handlers and store actions that have no
+ * component of their own, so the promise is parked with NOTHING on screen unless
+ * a host is mounted in that window. A settings panel, a command-center action
+ * and a sidebar row each reach it from a different shell, so the shell level is
+ * again one level too low.
+ *
  * Mounted HERE rather than once per root so the next root cannot forget them —
  * the failure mode is silence, which is the kind that ships.
  */
@@ -60,6 +68,7 @@ export function App() {
       <FindBar />
       <CloseConfirm />
       <BackgroundCloseDialog />
+      <ConfirmHost />
       <WakeIndicatorOverlay />
     </>
   )
