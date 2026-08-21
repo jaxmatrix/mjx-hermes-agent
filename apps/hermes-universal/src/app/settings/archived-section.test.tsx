@@ -40,8 +40,10 @@ vi.mock('@/store/projects', () => ({ pickProjectFolder: vi.fn(async () => null) 
 
 import { MemoryRouter } from 'react-router-dom'
 
+import { ConfirmHost } from '@/components/confirm-host'
 import { deleteSession, setSessionArchived } from '@/hermes'
 import { I18nProvider } from '@/i18n'
+import { $confirmRequest } from '@/store/confirm'
 import { isSessionPinned } from '@/store/session'
 
 import { ArchivedSection } from './archived-section'
@@ -65,6 +67,9 @@ const renderSection = () =>
     <MemoryRouter>
       <I18nProvider>
         <ArchivedSection />
+        {/* The confirm is raised imperatively and drawn by the ONE host in
+            app.tsx, so the real host is what these assertions need. */}
+        <ConfirmHost />
       </I18nProvider>
     </MemoryRouter>
   )
@@ -75,7 +80,10 @@ describe('ArchivedSection', () => {
     pinned.mockReset()
     pinned.mockReturnValue(false)
   })
-  afterEach(() => localStorage.clear())
+  afterEach(() => {
+    localStorage.clear()
+    $confirmRequest.set(null)
+  })
 
   it('lists archived sessions', async () => {
     renderSection()
@@ -94,14 +102,16 @@ describe('ArchivedSection', () => {
   it('warns that the row carries the keep flag before deleting it', async () => {
     pinned.mockReturnValue(true)
     await openDeleteConfirm()
-    expect(await screen.findByText(PINNED_WARNING)).toBeInTheDocument()
+    expect(await screen.findByRole('dialog')).toHaveTextContent(PINNED_WARNING)
   })
 
   it('does not warn for an unpinned row', async () => {
     // The confirm still opens — only the extra line is conditional.
     await openDeleteConfirm()
-    expect(await screen.findByText('Permanently delete "Old chat"? This cannot be undone.')).toBeInTheDocument()
-    expect(screen.queryByText(PINNED_WARNING)).not.toBeInTheDocument()
+    const dialog = await screen.findByRole('dialog')
+
+    expect(dialog).toHaveTextContent('Permanently delete "Old chat"? This cannot be undone.')
+    expect(dialog).not.toHaveTextContent(PINNED_WARNING)
   })
 
   it('asks about the row it is about to delete, not the first one', async () => {
@@ -109,17 +119,17 @@ describe('ArchivedSection', () => {
     renderSection()
     await screen.findByText('Another')
     fireEvent.click(screen.getAllByRole('button', { name: 'Delete permanently' })[1])
-    expect(await screen.findByText(PINNED_WARNING)).toBeInTheDocument()
+    expect(await screen.findByRole('dialog')).toHaveTextContent(PINNED_WARNING)
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     fireEvent.click(screen.getAllByRole('button', { name: 'Delete permanently' })[0])
-    await waitFor(() => expect(screen.queryByText(PINNED_WARNING)).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('dialog')).not.toHaveTextContent(PINNED_WARNING))
   })
 
   it('still deletes when the user confirms past the warning', async () => {
     pinned.mockReturnValue(true)
     await openDeleteConfirm()
-    await screen.findByText(PINNED_WARNING)
+    expect(await screen.findByRole('dialog')).toHaveTextContent(PINNED_WARNING)
     const buttons = screen.getAllByRole('button', { name: 'Delete permanently' })
     fireEvent.click(buttons[buttons.length - 1])
     await waitFor(() => expect(vi.mocked(deleteSession)).toHaveBeenCalledWith('s1'))

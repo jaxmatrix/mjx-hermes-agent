@@ -26,6 +26,11 @@ const envVar = (over: Partial<EnvVarInfo>): EnvVarInfo => ({
   ...over
 })
 
+// MJXHRM-479: `window.confirm` is gone — these surfaces now ask through the
+// imperative `confirm()` front door, which parks a promise until the one
+// `<ConfirmHost />` in `app.tsx` answers it. No host renders here, so mock it.
+vi.mock('@/store/confirm', () => ({ confirm: vi.fn(async () => true) }))
+
 vi.mock('@/hermes', () => ({
   // Whole-module mock, so EVERY `@/hermes` export this file's import graph
   // touches has to be listed. `store/profiles` calls `setApiRequestProfile` at
@@ -123,7 +128,6 @@ describe('ProvidersSection', () => {
   })
 
   it('accounts view: disconnect calls the RPC after confirm', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     providers.mockResolvedValue({
       providers: [
         oauthProvider({ id: 'openai-codex', name: 'OpenAI', status: { logged_in: true }, disconnectable: true })

@@ -120,8 +120,19 @@ function DialogContent({
         <DialogOverlay />
         <DialogPrimitive.Content
           className={cn(
+            // CENTRED IN THE VISIBLE RECTANGLE, not the layout viewport
+            // (MJXHRM-479). This is a portalled `position: fixed` surface on
+            // <body>, outside the shell that lifts its content by
+            // `--keyboard-inset` — so with the soft keyboard up, plain `top: 50%`
+            // centres against a rectangle half of which is behind the keyboard,
+            // and the dialog's buttons go with it. A confirm carries no input of
+            // its own, but the keyboard is routinely ALREADY up when one is
+            // raised (composer focused, then a menu row deletes something).
+            // `--visual-viewport-top/-height` are the same live vars `Sheet`
+            // uses; both are absent on desktop, where the fallbacks reduce this
+            // to exactly `top-1/2` / `max-h-[85vh]`, so it is a no-op there.
             // eslint-disable-next-line better-tailwindcss/no-restricted-classes -- centring, not an edge — pairs with a physical -translate-x-1/2, and start-1/2 would resolve to right:50% while the transform still pulled left
-            'fixed left-1/2 top-1/2 z-(--z-modal) pointer-events-auto flex max-h-[85vh] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl bg-(--ui-chat-bubble-background) text-[length:var(--conversation-text-font-size)] text-foreground shadow-nous duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+            'fixed left-1/2 top-[calc(var(--visual-viewport-top,0px)+var(--visual-viewport-height,100vh)/2)] z-(--z-modal) pointer-events-auto flex max-h-[min(85vh,calc(var(--visual-viewport-height,100vh)-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl bg-(--ui-chat-bubble-background) text-[length:var(--conversation-text-font-size)] text-foreground shadow-nous duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
             widthClass,
             className,
             // Callers often pass `gap-*` for the no-banner grid layout — suppress
@@ -134,7 +145,9 @@ function DialogContent({
         >
           {/* Scroll lives on an inner box so this shell keeps a painted bottom radius. */}
           <div className="relative z-10 overflow-hidden rounded-xl border border-b-0 border-(--stroke-nous) bg-(--ui-chat-bubble-background)">
-            <div className="grid max-h-[calc(85vh-5rem)] min-h-0 gap-3 overflow-y-auto p-4">{children}</div>
+            <div className="grid max-h-[calc(min(85vh,calc(var(--visual-viewport-height,100vh)-2rem))-5rem)] min-h-0 gap-3 overflow-y-auto p-4">
+              {children}
+            </div>
           </div>
           <div
             className={cn(
@@ -163,7 +176,7 @@ function DialogContent({
           // instead of overflowing off-screen (long cron titles, tool detail
           // dumps, etc.). Individual dialogs can still override via className.
           // eslint-disable-next-line better-tailwindcss/no-restricted-classes -- centring, not an edge — pairs with a physical -translate-x-1/2, and start-1/2 would resolve to right:50% while the transform still pulled left
-          'fixed left-1/2 top-1/2 z-(--z-modal) pointer-events-auto grid max-h-[85vh] -translate-x-1/2 -translate-y-1/2 gap-3 overflow-y-auto rounded-xl border border-(--stroke-nous) bg-(--ui-chat-bubble-background) p-4 text-[length:var(--conversation-text-font-size)] text-foreground shadow-nous duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+          'fixed left-1/2 top-[calc(var(--visual-viewport-top,0px)+var(--visual-viewport-height,100vh)/2)] z-(--z-modal) pointer-events-auto grid max-h-[min(85vh,calc(var(--visual-viewport-height,100vh)-2rem))] -translate-x-1/2 -translate-y-1/2 gap-3 overflow-y-auto rounded-xl border border-(--stroke-nous) bg-(--ui-chat-bubble-background) p-4 text-[length:var(--conversation-text-font-size)] text-foreground shadow-nous duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
           widthClass,
           className
         )}
