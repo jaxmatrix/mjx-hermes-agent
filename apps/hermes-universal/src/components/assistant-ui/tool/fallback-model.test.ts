@@ -589,7 +589,7 @@ describe('multimodal tool results', () => {
       { text: 'Screenshot of the desktop, 1512x982, 41 elements.', type: 'text' },
       { image_url: { url: PNG }, type: 'image_url' }
     ],
-    meta: { elements: 41, image_url: 'https://example.test/original-source-url', mode: 'screenshot' },
+    meta: { elements: 41, image_url: 'https://example.test/original-source.png', mode: 'screenshot' },
     text_summary: 'Screenshot of the desktop, 1512x982, 41 elements.',
     ...extra
   })
@@ -611,7 +611,9 @@ describe('multimodal tool results', () => {
   })
 
   // `meta.image_url` is the ORIGINAL source URL truncated to 200 chars —
-  // provenance, not pixels. Falling back to it would point the <img> at a page.
+  // provenance, not pixels. The fixture's is a `.png` on purpose: it would sail
+  // through the renderable-image test, so this fails if it is ever consulted
+  // rather than merely being rejected for its extension.
   it('never falls back to the provenance url in meta', () => {
     const withoutImage = envelope({ content: [{ text: 'no image came back', type: 'text' }] })
 
