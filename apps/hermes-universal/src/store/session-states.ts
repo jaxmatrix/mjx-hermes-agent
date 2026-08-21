@@ -50,7 +50,8 @@ import {
   clearUnreadFinishedSession,
   newSession,
   sameStoredSession,
-  setActiveSessionStoredIdRotation
+  setActiveSessionStoredIdRotation,
+  unreadPersistenceHooks
 } from '@/store/session'
 import {
   $activeSessionKey,
@@ -187,6 +188,10 @@ function handleTransition(previous: ClientSessionState | null, next: ClientSessi
     if (!cur.includes(storedId)) {
       $unreadFinishedSessionIds.set([...cur, storedId])
     }
+
+    // And durably: the transient atom dies with the window, so without this a
+    // turn that finished while you were elsewhere is forgotten by a restart.
+    unreadPersistenceHooks()?.markFinished(storedId)
   }
 }
 

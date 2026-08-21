@@ -372,6 +372,35 @@ export const $unreadFinishedSessionIds = atom<string[]>([])
  *  id), while the surface that clears it — a tile keyed at open time, a sidebar
  *  row from a page fetched before the rotation — can be holding the lineage
  *  root. Comparing on identity left those markers unclearable. */
+/**
+ * The persisted unread layer (`store/session-unread`), injected rather than
+ * imported.
+ *
+ * That module needs `$focusedStoredSessionId` from `store/session-states`, and
+ * session-states imports THIS module — so a static edge from here would close a
+ * cycle that makes `@/store/session` unusable as a module-graph entry
+ * (session-entry.test.ts). Same shape as session-states' own
+ * `setSessionTransitionHook`: the durable layer registers itself at boot, and
+ * everything here degrades to the transient-only behaviour when it has not.
+ */
+export interface UnreadPersistence {
+  /** Sidebar "Mark all as read": watermark every loaded row, retire its markers. */
+  ackAll(): void
+  /** A session left the user's world — drop its watermark and marker. */
+  forget(ids: readonly (null | string | undefined)[], profile?: null | string): void
+  /** A background turn finished: persist the marker so it survives a restart. */
+  markFinished(storedSessionId: string): void
+}
+
+let unreadPersistence: null | UnreadPersistence = null
+
+export function setUnreadPersistence(hooks: null | UnreadPersistence): void {
+  unreadPersistence = hooks
+}
+
+/** The registered durable layer, or null before boot / in a secondary window. */
+export const unreadPersistenceHooks = (): null | UnreadPersistence => unreadPersistence
+
 export function clearUnreadFinishedSession(storedSessionId: string): void {
   const cur = $unreadFinishedSessionIds.get()
   const next = cur.filter(id => id !== storedSessionId && !sameStoredSession(id, storedSessionId))
@@ -385,6 +414,10 @@ export function clearUnreadFinishedSession(storedSessionId: string): void {
  *  filter menu's "Mark all as read". Skips the write when there is nothing to
  *  clear, so it can't churn subscribers on a repeated press. */
 export function markAllSessionsRead(): void {
+  // FLUSH the persisted layer too, or the next list refresh recomputes every dot
+  // the user just dismissed straight back out of the watermarks and markers.
+  unreadPersistence?.ackAll()
+
   if ($unreadFinishedSessionIds.get().length) {
     $unreadFinishedSessionIds.set([])
   }
@@ -1887,6 +1920,11 @@ export async function deleteSessionLocal(id: string): Promise<void> {
   // carries the stamp is gone and the mutation would go out unscoped.
   const owner = knownSessionProfile(id)
 
+  // The session is gone from the user's world, so its persisted watermark and
+  // marker are dead weight — and an id that comes back (an unarchive) should
+  // come back read, not carrying a marker from before it left.
+  unreadPersistence?.forget(ids, owner)
+
   // DELETING UNPINS (MJXHRM-414). Nothing else ever dropped the pin, and the
   // Pinned section falls back to `$pinnedSessionCache` once the row leaves
   // `$sessions` — which is exactly the state a delete leaves behind. So a
@@ -1939,6 +1977,8 @@ export async function archiveSessionLocal(id: string): Promise<void> {
   const archived = prev.find(s => sessionMatchesStoredId(s, id))
   const ids = removalIds(archived, id)
   const owner = knownSessionProfile(id)
+
+  unreadPersistence?.forget(ids, owner)
 
   // By ALIAS — see the same edit in `deleteSessionLocal`. `set_session_archived`
   // flips the whole compression chain on the backend, so the row is gone there

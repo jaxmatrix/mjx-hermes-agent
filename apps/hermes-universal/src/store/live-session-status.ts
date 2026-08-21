@@ -64,7 +64,8 @@ import {
   $unreadFinishedSessionIds,
   refreshMessagingSessions,
   refreshSessions,
-  sameStoredSession
+  sameStoredSession,
+  unreadPersistenceHooks
 } from '@/store/session'
 import {
   $focusedStoredSessionId,
@@ -238,6 +239,8 @@ export function rehydrateLiveSessionStatuses(
     if (!unread.includes(storedSessionId)) {
       $unreadFinishedSessionIds.set([...unread, storedSessionId])
     }
+
+    unreadPersistenceHooks()?.markFinished(storedSessionId)
   }
 }
 
