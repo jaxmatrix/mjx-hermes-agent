@@ -492,6 +492,8 @@ export const zh: Translations = {
       toolViewDesc: '产品模式隐藏原始工具数据；技术模式显示完整输入/输出。',
       backdropTitle: '对话背景图',
       backdropDesc: '对话后方那张淡淡的雕像图。',
+      introSplashTitle: '开场画面',
+      introSplashDesc: '新建的空对话中显示的字标和标语。',
       reactionsTitle: '消息回应',
       reactionsDesc: 'iMessage 风格的表情回应 — 你可以给消息添加回应，Hermes 也能回应你的消息。',
       uiScaleTitle: '界面缩放',

@@ -400,6 +400,8 @@ export const ja = defineLocale({
       toolViewDesc: 'プロダクト表示は生のツールペイロードを隠し、テクニカル表示は入出力をすべて表示します。',
       backdropTitle: 'チャットの背景',
       backdropDesc: '会話の背後にうっすら見える彫像の画像。',
+      introSplashTitle: 'イントロ画面',
+      introSplashDesc: '新しい空のチャットに表示されるワードマークとタグライン。',
       reactionsTitle: 'メッセージリアクション',
       reactionsDesc:
         'iMessage 風の絵文字リアクション — メッセージにリアクションでき、Hermes もあなたのメッセージにリアクションできます。',

@@ -15,10 +15,15 @@ type TestMessage = { id: string; parts: { text: string; type: 'text' }[]; role: 
 // Real atoms, not `{ get }` stubs: everything under `<Thread>` that reads the
 // view does so through `useStore`, which subscribes.
 const view = await vi.hoisted(async () => {
-  const { atom } = await import('nanostores')
+  const { atom, computed } = await import('nanostores')
+  const $messages = atom<TestMessage[]>([])
 
   return {
-    $messages: atom<TestMessage[]>([]),
+    $messages,
+    // The real `SessionView` carries this too, and `Thread` reads it to decide
+    // the intro splash — a `$messages`-derived computed here, so the mock cannot
+    // drift into claiming a transcript is empty while it holds messages.
+    $messagesEmpty: computed($messages, messages => messages.length === 0),
     $runtimeId: atom<null | string>(null)
   }
 })
@@ -39,7 +44,10 @@ vi.mock('@/store/chat', async importOriginal => ({
 // and takes the key as a PROP, so recording the prop is the only way to see it —
 // nothing it drives (the render-budget cut, the pin-to-bottom settle loop, the
 // per-session scroll mirror) is observable from outside.
-const listProps = vi.hoisted(() => ({ sessionKeys: [] as (null | string | undefined)[] }))
+const listProps = vi.hoisted(() => ({
+  emptyPlaceholders: [] as boolean[],
+  sessionKeys: [] as (null | string | undefined)[]
+}))
 
 // The transcript list is a windowed, stick-to-bottom scroller; all this test
 // needs from it is that the components map it is handed is what renders each
@@ -48,11 +56,14 @@ const listProps = vi.hoisted(() => ({ sessionKeys: [] as (null | string | undefi
 vi.mock('./list', () => ({
   ThreadMessageList: ({
     components,
+    emptyPlaceholder,
     sessionKey
   }: {
     components: { UserMessage: () => ReactNode }
+    emptyPlaceholder?: ReactNode
     sessionKey?: null | string
   }) => {
+    listProps.emptyPlaceholders.push(emptyPlaceholder !== undefined)
     listProps.sessionKeys.push(sessionKey)
 
     return (
@@ -105,6 +116,8 @@ vi.mock('@assistant-ui/react', () => {
 vi.mock('@/hooks/use-resize-observer', () => ({ useResizeObserver: () => {} }))
 
 import { restoreToMessage } from '@/store/chat'
+import { setIntroSplash } from '@/store/intro-splash'
+import { hydratingKey, newDraftKey } from '@/store/session-state-types'
 
 import { Thread } from './thread'
 
@@ -149,7 +162,9 @@ const confirm = async () => {
 
 beforeEach(() => {
   seedSession()
+  listProps.emptyPlaceholders.length = 0
   listProps.sessionKeys.length = 0
+  setIntroSplash(true)
   vi.mocked(restoreToMessage).mockClear()
   vi.mocked(restoreToMessage).mockResolvedValue(undefined)
 })
@@ -265,5 +280,60 @@ describe('Thread → the HUD response panel selector', () => {
     const { container } = render(<Thread />)
 
     expect(container.querySelector('[data-slot="thread-root"]')).not.toBeNull()
+  })
+})
+
+/**
+ * The intro splash's four clauses, at the seam that actually decides them
+ * (MJXHRM-483). `intro-visibility.test.ts` pins the predicate; this pins that
+ * `Thread` calls it with THIS surface's state and turns a `false` into "hand the
+ * list no empty placeholder at all". Before this the placeholder was a module
+ * constant handed over unconditionally, so every clause was unreachable.
+ */
+describe('Thread → intro splash gating', () => {
+  const asDraft = async () => {
+    await act(async () => {
+      view.$messages.set([])
+      view.$runtimeId.set(newDraftKey())
+    })
+  }
+
+  it('hands the list the splash on an empty fresh draft', async () => {
+    render(<Thread />)
+    await asDraft()
+
+    expect(listProps.emptyPlaceholders.at(-1)).toBe(true)
+  })
+
+  it('withholds it when the Appearance toggle is off', async () => {
+    render(<Thread />)
+    await asDraft()
+    await act(async () => {
+      setIntroSplash(false)
+    })
+
+    expect(listProps.emptyPlaceholders.at(-1)).toBe(false)
+  })
+
+  it('withholds it while a stored session hydrates into an empty transcript', async () => {
+    render(<Thread />)
+    // The cold-open shape: transcript emptied, toggle on — only the key differs
+    // from the draft case above, which is what has to stop the flash.
+    await act(async () => {
+      view.$messages.set([])
+      view.$runtimeId.set(hydratingKey('stored-7'))
+    })
+
+    expect(listProps.emptyPlaceholders.at(-1)).toBe(false)
+  })
+
+  it('withholds it once the draft has a transcript', async () => {
+    render(<Thread />)
+    await asDraft()
+    await act(async () => {
+      view.$messages.set([userTurn('h0-user', 'the first ask')])
+    })
+
+    expect(listProps.emptyPlaceholders.at(-1)).toBe(false)
   })
 })

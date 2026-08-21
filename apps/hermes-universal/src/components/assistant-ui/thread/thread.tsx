@@ -1,6 +1,7 @@
 import { ThreadPrimitive } from '@assistant-ui/react'
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 
+import { shouldShowIntro } from '@/app/chat/intro-visibility'
 import { useSessionView } from '@/app/chat/session-view'
 import { Intro } from '@/components/chat/intro'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -8,6 +9,8 @@ import { useI18n } from '@/i18n'
 import { userTurnOrdinal } from '@/lib/chat-messages'
 import { useStore } from '@/store/atom'
 import { interruptSession, restoreToMessage } from '@/store/chat'
+import { $introSplash } from '@/store/intro-splash'
+import { isSecondaryWindow } from '@/store/windows'
 
 import { AssistantMessage } from './assistant-message'
 import { ThreadMessageList } from './list'
@@ -28,6 +31,11 @@ const EmptyPlaceholder = (
 )
 
 const LOADING_INDICATOR = <ResponseLoadingIndicator />
+
+// Which webview this is never changes for its lifetime (it is read off `?win=`,
+// and `store/windows.ts` caches it), so it is resolved once at module scope
+// rather than per render.
+const PRIMARY_WINDOW = !isSecondaryWindow()
 
 /**
  * How a user bubble asks for the restore confirm.
@@ -100,7 +108,25 @@ export function Thread() {
   // `sessionKey` was permanently `undefined` inside the memo'd list and both of
   // those switch-triggered paths were dead (MJXHRM-381).
   const mountedSessionKey = useStore(view.$runtimeId)
+  // Coarse derivations, not `$messages`: both only notify when their VALUE
+  // changes, so a token stream does not re-render the whole thread through here.
+  const transcriptEmpty = useStore(view.$messagesEmpty)
+  const introSplash = useStore($introSplash)
   const [target, setTarget] = useState<null | RestoreConfirmTarget>(null)
+
+  // The splash is a property of THIS surface, not of the app: `view` is the
+  // primary chat in the main pane and each tile's own slice in a tile, so an
+  // empty draft tile keeps its wordmark while the tile beside it shows a
+  // transcript. Passing `undefined` is how the list is told not to render an
+  // empty state at all — it only paints `emptyPlaceholder` when there is one.
+  const emptyPlaceholder = shouldShowIntro({
+    enabled: introSplash,
+    primaryWindow: PRIMARY_WINDOW,
+    sessionKey: mountedSessionKey,
+    transcriptEmpty
+  })
+    ? EmptyPlaceholder
+    : undefined
 
   // The ordinal is resolved HERE, from the session's own message list, because
   // it is a store-global count and the bubble that asked can only see the
@@ -179,7 +205,7 @@ export function Thread() {
         <ThreadMessageList
           clampToComposer
           components={MESSAGE_COMPONENTS}
-          emptyPlaceholder={EmptyPlaceholder}
+          emptyPlaceholder={emptyPlaceholder}
           loadingIndicator={LOADING_INDICATOR}
           sessionKey={mountedSessionKey}
         />

@@ -512,6 +512,8 @@ export const en: Translations = {
       toolViewDesc: 'Product hides raw tool payloads; Technical shows full input/output.',
       backdropTitle: 'Chat Backdrop',
       backdropDesc: 'The faint statue image behind the conversation.',
+      introSplashTitle: 'Intro Splash',
+      introSplashDesc: 'The wordmark and tagline shown on a new, empty chat.',
       reactionsTitle: 'Message Reactions',
       reactionsDesc: 'iMessage-style emoji tapbacks — react to messages, and Hermes can react to yours.',
       uiScaleTitle: 'UI Scale',
