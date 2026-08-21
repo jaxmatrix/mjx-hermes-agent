@@ -52,10 +52,13 @@ const DOT_VARIANTS: Record<SessionDotState, DotVariant> = {
     role: 'status',
     title: r => r.sessionRunning
   },
-  // Green — the turn finished while the user was looking elsewhere.
+  // Emerald — the turn finished while the user was looking elsewhere. The
+  // colour is theme-derived (`--ui-success`, a success green rotated toward the
+  // accent) so eight finished dots can't sit in the sidebar fighting a palette
+  // they don't belong to. Under a green accent it stays emerald.
   unread: {
     ariaLabel: r => r.finishedUnread,
-    className: `${DOT_BASE} bg-(--ui-green)`,
+    className: `${DOT_BASE} bg-(--ui-success)`,
     role: 'status',
     title: r => r.finishedUnread
   },

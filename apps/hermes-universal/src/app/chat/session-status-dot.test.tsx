@@ -92,6 +92,11 @@ describe('SessionStatusDot — a session whose stored id rotated', () => {
     render(<SessionStatusDot session={compressedRow('tip-2', 'root-1')} storedSessionId="tip-2" />)
 
     expect(screen.getByRole('status')).toBeTruthy()
+    // MJXHRM-497: the finished dot reads the THEME-derived success colour, not
+    // the fixed `--ui-green` the rest of the diff/status UI uses. Eight of these
+    // sit in the sidebar at once, so a fixed green fights every palette that
+    // isn't emerald.
+    expect(screen.getByRole('status').className).toContain('bg-(--ui-success)')
   })
 
   it('claims nothing for an unrelated session', () => {

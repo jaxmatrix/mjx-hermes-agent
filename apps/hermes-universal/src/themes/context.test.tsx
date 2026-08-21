@@ -2,9 +2,13 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { setAccentOverride } from './accent-override'
 import { __resetBackendSkinSync, ingestBackendSkin } from './backend-sync'
+import { hexToOklch, hueDelta } from './color'
 import { ThemeProvider, useTheme } from './context'
+import { nousTheme } from './presets'
 import { BUILTIN_THEME_LIST } from './presets'
+import { retintTheme } from './retint'
 
 function Harness() {
   const { themeName, resolvedMode, setMode, setTheme } = useTheme()
@@ -251,5 +255,122 @@ describe('every builtin family paints a complete theme, in both appearances', ()
         expect(value, key).not.toMatch(/color-mix\(|oklch\(from|light-dark\(/)
       }
     }
+  })
+})
+
+describe('accent override', () => {
+  const ROSE = '#e11d48'
+
+  beforeEach(() => {
+    localStorage.clear()
+    root().className = ''
+    root().removeAttribute('style')
+  })
+
+  afterEach(() => {
+    setAccentOverride(null)
+    cleanup()
+  })
+
+  // The painted seed is the override adapted to nous's own sidebar (seedFor
+  // clamps it to AA), not the raw hex — so compare against what retintTheme
+  // itself produces rather than re-deriving it here.
+  const ROSE_ON_NOUS = retintTheme(nousTheme, ROSE).colors.primary.toLowerCase()
+
+  const paintNous = () =>
+    act(() => {
+      render(
+        <ThemeProvider>
+          <Painter mode="light" name="nous" />
+        </ThemeProvider>
+      )
+    })
+
+  const primary = () => root().style.getPropertyValue('--theme-primary').toLowerCase()
+
+  it('repaints the accent family without touching the chrome', () => {
+    paintNous()
+
+    const chromeBefore = root().style.getPropertyValue('--theme-background-seed')
+
+    expect(primary()).toBe('#0053fd')
+
+    act(() => setAccentOverride(ROSE))
+
+    expect(primary()).toBe(ROSE_ON_NOUS)
+    expect(ROSE_ON_NOUS).not.toBe('#0053fd')
+    // The neutrals are the app's surface, not its brand.
+    expect(root().style.getPropertyValue('--theme-background-seed')).toBe(chromeBefore)
+    // The mixed surfaces have to follow the seed, or the theme is half-retinted.
+    expect(root().style.getPropertyValue('--theme-accent-soft')).not.toBe('#dfe8ff')
+  })
+
+  it('never persists — nothing on disk carries the override', () => {
+    paintNous()
+    act(() => setAccentOverride(ROSE))
+
+    const stored = Object.keys(localStorage).map(key => `${key}=${localStorage.getItem(key)}`)
+
+    expect(stored.join('|').toLowerCase()).not.toContain(ROSE)
+  })
+
+  it('restores the authored palette when cleared', () => {
+    paintNous()
+    act(() => setAccentOverride(ROSE))
+    act(() => setAccentOverride(null))
+
+    expect(primary()).toBe('#0053fd')
+  })
+
+  it('ignores a half-typed hex rather than blanking the theme', () => {
+    paintNous()
+    act(() => setAccentOverride(ROSE))
+    act(() => setAccentOverride('#e1'))
+
+    expect(primary()).toBe(ROSE_ON_NOUS)
+  })
+})
+
+// MJXHRM-497. The finished-session dot used to be a fixed green, so eight of
+// them sat in the sidebar fighting whatever palette was on.
+describe('--ui-success follows the accent', () => {
+  const EMERALD_HUE = 162
+
+  beforeEach(() => {
+    localStorage.clear()
+    root().className = ''
+    root().removeAttribute('style')
+  })
+  afterEach(cleanup)
+
+  const successHue = (name: string) => {
+    act(() => {
+      render(
+        <ThemeProvider>
+          <Painter mode="light" name={name} />
+        </ThemeProvider>
+      )
+    })
+
+    const value = root().style.getPropertyValue('--ui-success')
+
+    expect(value, '--ui-success is painted').toMatch(/^#[0-9a-f]{6}$/i)
+
+    return hexToOklch(value)!.h
+  }
+
+  it('bends toward a blue accent, without becoming it', () => {
+    const hue = successHue('nous')
+
+    expect(Math.abs(hueDelta(EMERALD_HUE, hue))).toBeGreaterThan(5)
+    // Still a green: "done" and "running" must not collapse into one colour.
+    expect(Math.abs(hueDelta(hue, hexToOklch('#0053fd')!.h))).toBeGreaterThan(30)
+  })
+
+  it('barely moves under an accent that is already green', () => {
+    cleanup()
+    root().removeAttribute('style')
+
+    expect(Math.abs(hueDelta(EMERALD_HUE, successHue('github')))).toBeLessThan(6)
   })
 })
