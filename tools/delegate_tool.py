@@ -3331,6 +3331,15 @@ def _run_single_child(
         # than after is what lets it ride along; the call is idempotent per
         # child and the entry is returned with the same payload either way.
         complete_kwargs["truncated"] = bool(entry.get("truncated"))
+        # ``agent.run_budget_seconds`` applies to a delegated child like any
+        # other agent — it is resolved in ``agent_init`` from the same config
+        # section — and past 80% of the budget the child is told to wrap up
+        # (``agent/conversation_loop._maybe_inject_run_budget_wrapup``). A child
+        # that was hurried into finishing looks EXACTLY like one that finished
+        # on its own, and the latch is the only thing that knows. Dormant when
+        # no budget is configured, which is the default.
+        if getattr(child, "_run_budget_wrapup_injected", False):
+            complete_kwargs["budget_wrapup"] = True
         _attach_worktree(entry)
         if isinstance(entry.get("worktree"), dict):
             complete_kwargs["worktree"] = entry["worktree"]

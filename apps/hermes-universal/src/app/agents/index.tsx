@@ -585,6 +585,16 @@ function SubagentRow({ node, depth = 0, nowMs }: { node: SubagentNode; depth?: n
       {/* A child that ran out of steps still says `completed` and still returns
           a summary, so the status glyph alone reads as success. The gateway now
           names the difference on `subagent.complete` (MJXHRM-459). */}
+      {node.budgetWrapup ? (
+        <p
+          className="ps-6 text-[0.62rem] leading-[0.95rem] text-(--ui-yellow)"
+          data-selectable-text="true"
+          role="status"
+        >
+          {t.agents.budgetWrapup}
+        </p>
+      ) : null}
+
       {node.truncated ? (
         <p
           className="ps-6 text-[0.62rem] leading-[0.95rem] text-(--ui-yellow)"

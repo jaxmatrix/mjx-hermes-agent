@@ -1333,6 +1333,7 @@ export const en: Translations = {
     steerMissed: (text: string) => `Steer never landed — this subagent finished first: ${text}`,
     stop: 'Stop',
     stopRequested: 'Stopping — its partial result still comes back',
+    budgetWrapup: 'Told to wrap up — it ran out of time, not of work',
     truncatedNotice: 'Ran out of steps — this summary is partial',
     worktree: 'Worktree',
     worktreeCommits: (count: number) => `${count} commits`,

@@ -1188,6 +1188,7 @@ export interface Translations {
     steerMissed: (text: string) => string
     stop: string
     stopRequested: string
+    budgetWrapup: string
     truncatedNotice: string
     worktree: string
     worktreeCommits: (count: number) => string

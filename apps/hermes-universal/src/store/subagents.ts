@@ -75,6 +75,13 @@ export interface SubagentProgress {
    * "max_iterations"`).
    */
   truncated?: boolean
+  /**
+   * The child passed 80% of `agent.run_budget_seconds` and was told to wrap up
+   * (`agent/conversation_loop._maybe_inject_run_budget_wrapup`). It did not
+   * simply finish — it was hurried, and its result reflects that. Absent unless
+   * a run budget is configured.
+   */
+  budgetWrapup?: boolean
   /** Set only when `delegation.worktree_isolation` engaged for this child. */
   worktree?: SubagentWorktree
 }
@@ -276,6 +283,7 @@ function toProgress(payload: SubagentPayload, prev: SubagentProgress | undefined
     currentTool: TERMINAL.has(status) ? undefined : tool || prev?.currentTool,
     missedSteer: str(payload.missed_steer) || prev?.missedSteer,
     truncated: bool(payload.truncated) ?? prev?.truncated,
+    budgetWrapup: bool(payload.budget_wrapup) ?? prev?.budgetWrapup,
     worktree: asWorktree(payload.worktree) ?? prev?.worktree
   }
 }

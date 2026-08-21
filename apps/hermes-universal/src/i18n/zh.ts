@@ -1491,6 +1491,7 @@ export const zh: Translations = {
     steerMissed: (text: string) => `引导未送达 — 该子代理先结束了：${text}`,
     stop: '停止',
     stopRequested: '正在停止 — 仍会返回其部分结果',
+    budgetWrapup: '因超时被要求收尾 — 并非工作已完成',
     truncatedNotice: '步数已用尽 — 此摘要并不完整',
     worktree: '工作树',
     worktreeCommits: (count: number) => `${count} 次提交`,

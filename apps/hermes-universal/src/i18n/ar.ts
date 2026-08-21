@@ -980,6 +980,7 @@ export const ar = defineLocale({
     tokens: value => `${value} رمز`,
     stop: 'إيقاف',
     stopRequested: 'جارٍ الإيقاف — ستعود نتيجته الجزئية على أي حال',
+    budgetWrapup: 'طُلب منه الإنهاء — نفد وقته لا عمله',
     truncatedNotice: 'نفدت الخطوات — هذا الملخّص جزئي',
     worktree: 'شجرة العمل',
     worktreeCommits: (count: number) => `${count} إيداع`,

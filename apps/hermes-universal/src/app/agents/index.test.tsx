@@ -209,6 +209,20 @@ describe('agents overlay · truncation and worktree', () => {
     expect(screen.queryByText(en.agents.truncatedNotice)).toBeNull()
   })
 
+  // Time, not work: a child hurried into finishing looks exactly like one that
+  // finished on its own, and the wrap-up latch is the only thing that knows.
+  it('says when a child was told to wrap up rather than finishing', () => {
+    renderAgents([row({ budgetWrapup: true, status: 'completed' })])
+
+    expect(screen.getByText(en.agents.budgetWrapup)).toBeTruthy()
+  })
+
+  it('says nothing about a budget for a child that had all the time it needed', () => {
+    renderAgents([row({ status: 'completed' })])
+
+    expect(screen.queryByText(en.agents.budgetWrapup)).toBeNull()
+  })
+
   it('names the isolated checkout and what it holds', () => {
     renderAgents([
       row({

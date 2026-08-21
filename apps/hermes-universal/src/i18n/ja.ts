@@ -1209,6 +1209,7 @@ export const ja = defineLocale({
     steerMissed: (text: string) => `誘導は届きませんでした — サブエージェントが先に終了しました: ${text}`,
     stop: '停止',
     stopRequested: '停止中 — 途中までの結果は返ります',
+    budgetWrapup: '時間切れで打ち切り指示 — 作業が終わったわけではありません',
     truncatedNotice: 'ステップ上限に達しました — この要約は途中までです',
     worktree: 'ワークツリー',
     worktreeCommits: (count: number) => `${count} 件のコミット`,

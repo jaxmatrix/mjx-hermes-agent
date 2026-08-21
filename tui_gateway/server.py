@@ -6271,6 +6271,10 @@ def _on_tool_progress(
         # ``delegation.worktree_isolation``. Same argument as ``missed_steer``.
         if _kwargs.get("truncated") is not None:
             payload["truncated"] = bool(_kwargs["truncated"])
+        # The child was told to wrap up because it passed 80% of
+        # ``agent.run_budget_seconds`` — it did not simply finish.
+        if _kwargs.get("budget_wrapup"):
+            payload["budget_wrapup"] = True
         if isinstance(_kwargs.get("worktree"), dict):
             payload["worktree"] = dict(_kwargs["worktree"])
         # A steer this child ACCEPTED and then never got to deliver. The parent

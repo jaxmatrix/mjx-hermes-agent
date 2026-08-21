@@ -246,6 +246,16 @@ describe('subagents truncation + worktree', () => {
     expect(complete({}).truncated).toBeUndefined()
   })
 
+  it('carries the run-budget wrap-up latch', () => {
+    expect(complete({ budget_wrapup: true }).budgetWrapup).toBe(true)
+  })
+
+  // Dormant unless a run budget is configured, which is the default — so an
+  // absent key must stay absent rather than becoming a `false` the row draws.
+  it('leaves the wrap-up latch unset when no budget was in play', () => {
+    expect(complete({}).budgetWrapup).toBeUndefined()
+  })
+
   it('normalises the worktree finalize report', () => {
     expect(
       complete({

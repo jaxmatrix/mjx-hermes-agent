@@ -1169,6 +1169,7 @@ export const zhHant = defineLocale({
     steerMissed: (text: string) => `引導未送達 — 該子代理先結束了：${text}`,
     stop: '停止',
     stopRequested: '正在停止 — 仍會回傳其部分結果',
+    budgetWrapup: '因逾時被要求收尾 — 並非工作已完成',
     truncatedNotice: '步數已用盡 — 此摘要並不完整',
     worktree: '工作樹',
     worktreeCommits: (count: number) => `${count} 次提交`,

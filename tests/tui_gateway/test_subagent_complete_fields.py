@@ -1,8 +1,8 @@
-"""``subagent.complete`` must carry spend, truncation and worktree state.
+"""``subagent.complete`` must carry spend, truncation, worktree and budget state.
 
 ``_on_tool_progress``'s subagent branch is an ALLOW-LIST: a key the delegate
 tool puts on the callback kwargs reaches no client unless this builder copies
-it. Three facts were being dropped there (MJXHRM-459):
+it. Four facts were being dropped there (MJXHRM-459):
 
 * ``cost_usd`` — ``delegate_tool`` has emitted it on the completion callback
   since the cost rollup landed, and both GUI clients read ``payload.cost_usd``
@@ -14,6 +14,9 @@ it. Three facts were being dropped there (MJXHRM-459):
 * ``worktree`` — under ``delegation.worktree_isolation`` the child's work lands
   on its own branch in its own checkout; the finalize report is the only thing
   that says whether there is anything there to review.
+* ``budget_wrapup`` — past 80% of ``agent.run_budget_seconds`` the child is told
+  to wrap up, so it ran out of TIME, not of work. A hurried child otherwise
+  looks exactly like one that finished on its own.
 
 Same argument as ``missed_steer`` (MJXHRM-410): the event stream is all a UI
 gets.
@@ -122,6 +125,27 @@ def test_omitted_fields_stay_omitted(server, emits):
     assert "cost_usd" not in payload
     assert "truncated" not in payload
     assert "worktree" not in payload
+
+
+def test_the_run_budget_wrapup_latch_reaches_the_client(server, emits):
+    """A hurried child looks exactly like one that finished on its own.
+
+    ``agent.run_budget_seconds`` applies to a delegated child like any other
+    agent, and past 80% of it the child is told to wrap up. Only the latch
+    knows the difference.
+    """
+    _complete(server, budget_wrapup=True)
+
+    _event, _sid, payload = emits[0]
+    assert payload["budget_wrapup"] is True
+
+
+def test_no_budget_no_wrapup_key(server, emits):
+    """Dormant when no budget is configured, which is the default."""
+    _complete(server, budget_wrapup=False)
+
+    _event, _sid, payload = emits[0]
+    assert "budget_wrapup" not in payload
 
 
 def test_a_non_dict_worktree_is_dropped_not_forwarded(server, emits):
