@@ -1330,7 +1330,17 @@ export const en: Translations = {
     steerFailed: 'Could not reach the gateway',
     steerGone: 'That subagent is no longer running',
     steerNotOwned: 'That subagent belongs to another chat — steer it from there',
-    steerMissed: (text: string) => `Steer never landed — this subagent finished first: ${text}`
+    steerMissed: (text: string) => `Steer never landed — this subagent finished first: ${text}`,
+    stop: 'Stop',
+    stopRequested: 'Stopping — its partial result still comes back',
+    budgetWrapup: 'Told to wrap up — it ran out of time, not of work',
+    truncatedNotice: 'Ran out of steps — this summary is partial',
+    worktree: 'Worktree',
+    worktreeCommits: (count: number) => `${count} commits`,
+    worktreeDirty: 'uncommitted changes',
+    worktreeKept: 'kept for review',
+    worktreePruned: 'removed — it held no work',
+    worktreeUnknown: 'state unknown — inspect it before assuming no work'
   },
 
   commandCenter: {
@@ -3020,6 +3030,10 @@ export const en: Translations = {
       statusRecovered: 'Recovered',
       statusDone: 'Done',
       memoryWriteNoted: 'Memory write noted',
+      spilloverLabel: 'Full output',
+      spilloverSaved: (size: string) => `Too large to inline (${size}) — saved to a file`,
+      spilloverSavedUnsized: 'Too large to inline — saved to a file',
+      spilloverOpen: 'Open',
       actions: {
         read: 'Read',
         reading: 'Reading',

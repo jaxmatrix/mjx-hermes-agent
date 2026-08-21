@@ -762,8 +762,56 @@ function toolPreviewTarget(toolName: string, args: Record<string, unknown>, resu
   return ''
 }
 
+/**
+ * Unwrap the multimodal tool-result envelope.
+ *
+ * A computer-use screenshot and a native-vision image load do not return a
+ * string or a flat record — they return
+ * `{_multimodal: true, content: [{type:'text'}, {type:'image_url', image_url:{url}}],
+ * text_summary, meta}` (`tools/computer_use/tool.py`,
+ * `tools/vision_tools.py`), and the gateway forwards it verbatim as
+ * `tool.complete`'s `result`.
+ *
+ * Nothing here knew that shape. `toolImageUrl` reads FLAT top-level strings, so
+ * the data URI three levels down was invisible and the screenshot never
+ * rendered; and the generic detail summarizer had the whole envelope to
+ * describe, base64 payload included. Both are the same missing unwrap.
+ *
+ * `meta.image_url` is deliberately not a fallback: it is the ORIGINAL source
+ * URL, truncated to 200 chars — provenance, not pixels.
+ */
+export function multimodalResult(record: Record<string, unknown>): undefined | { imageUrl: string; text: string } {
+  if (record._multimodal !== true || !Array.isArray(record.content)) {
+    return undefined
+  }
+
+  let imageUrl = ''
+  const texts: string[] = []
+
+  for (const block of record.content) {
+    const part = block && typeof block === 'object' ? (block as Record<string, unknown>) : undefined
+
+    if (!part) {
+      continue
+    }
+
+    if (!imageUrl && part.type === 'image_url') {
+      const nested = part.image_url
+
+      if (nested && typeof nested === 'object') {
+        imageUrl = firstStringField(nested as Record<string, unknown>, ['url'])
+      }
+    } else if (part.type === 'text' && typeof part.text === 'string') {
+      texts.push(part.text.trim())
+    }
+  }
+
+  return { imageUrl, text: firstStringField(record, ['text_summary']) || texts.filter(Boolean).join('\n\n') }
+}
+
 function toolImageUrl(args: Record<string, unknown>, result: Record<string, unknown>): string {
   const candidate =
+    multimodalResult(result)?.imageUrl ||
     firstStringField(result, ['image_url', 'url', 'path', 'image_path']) ||
     firstStringField(args, ['image_url', 'url', 'path'])
 
@@ -807,12 +855,56 @@ function htmlPathFromInlineDiff(value: string): string {
   return ''
 }
 
+const PERSISTED_OUTPUT_TAG = '<persisted-output>'
+
 function stripDividerLines(value: string): string {
   return value
     .split('\n')
     .filter(line => !/^[-=]{3,}\s*$/.test(line.trim()))
     .join('\n')
     .trim()
+}
+
+/**
+ * The spillover reference an oversized tool result leaves behind.
+ *
+ * `tools/tool_result_storage.py` does not truncate a huge result any more — it
+ * writes the whole thing to `HERMES_HOME/cache/spillover/` and REPLACES the
+ * result with a `<persisted-output>` block naming the file. There is no
+ * structured field for it on the wire: the path is prose inside the result
+ * text, exactly as `agent/tool_guardrails.py` reads it server-side
+ * (`extract_persisted_path`). So the client parses the same block, or the user
+ * gets a wall of marker text with an un-openable path in the middle of it.
+ *
+ * Returns the path, the original size as the backend phrased it, and the
+ * preview body with the machine-facing recovery instructions stripped — those
+ * are addressed to the MODEL ("use the read_file tool"), and the human reading
+ * this row has an Open button instead.
+ */
+export function spilloverReference(text: string): undefined | { path: string; preview: string; sizeLabel: string } {
+  if (!text.includes(PERSISTED_OUTPUT_TAG)) {
+    return undefined
+  }
+
+  const path = /^Full output saved to: (.+)$/m.exec(text)?.[1]?.trim()
+
+  if (!path) {
+    return undefined
+  }
+
+  const body = text.slice(text.indexOf(PERSISTED_OUTPUT_TAG) + PERSISTED_OUTPUT_TAG.length)
+  const closing = body.indexOf('</persisted-output>')
+  const inner = closing >= 0 ? body.slice(0, closing) : body
+  const previewStart = /^Preview \(first \d+ chars\):$/m.exec(inner)
+
+  return {
+    path,
+    preview: (previewStart?.index === undefined
+      ? inner
+      : inner.slice(previewStart.index + previewStart[0].length)
+    ).trim(),
+    sizeLabel: /^This tool result was too large \([\d,]+ characters, ([^)]+)\)/m.exec(inner)?.[1]?.trim() ?? ''
+  }
 }
 
 export function inlineDiffFromResult(result: unknown): string {
@@ -1083,6 +1175,15 @@ function toolDetailText(
   argsRecord: Record<string, unknown>,
   resultRecord: Record<string, unknown>
 ): string {
+  // The image itself is rendered by `toolImageUrl`; what belongs in the detail
+  // is the summary that came with it, never the envelope — describing that
+  // generically means describing a megabyte of base64.
+  const multimodal = multimodalResult(resultRecord)
+
+  if (multimodal) {
+    return multimodal.text
+  }
+
   if (part.toolName === 'browser_snapshot') {
     const snapshot = firstStringField(resultRecord, ['snapshot'])
 
@@ -1444,7 +1545,17 @@ export function buildToolView(part: ToolPart, inlineDiff: string): ToolView {
     (isFileEditTool(part.toolName) && Boolean(baseSubtitle.trim()))
 
   const subtitle = titleEnriched && !error && !keepSubtitleWithTitle ? '' : baseSubtitle
-  const detailBody = stripDividerLines(toolDetailText(part, argsRecord, resultRecord))
+  const rawDetailBody = stripDividerLines(toolDetailText(part, argsRecord, resultRecord))
+
+  // Persistence replaces the whole tool-result STRING, so for a tool whose
+  // per-field extractor finds nothing in it (`terminal` returns '' for a result
+  // that is not a stdout record) the block only exists on the raw result. Check
+  // both, or the tools that produce the biggest outputs are the ones that show
+  // no reference at all.
+  const spillover =
+    spilloverReference(rawDetailBody) ?? (typeof part.result === 'string' ? spilloverReference(part.result) : undefined)
+
+  const detailBody = spillover ? spillover.preview : rawDetailBody
 
   const detail = error
     ? [error, detailBody]
@@ -1486,6 +1597,8 @@ export function buildToolView(part: ToolPart, inlineDiff: string): ToolView {
     imageUrl: toolImageUrl(argsRecord, resultRecord),
     inlineDiff,
     previewTarget: toolPreviewTarget(part.toolName, argsRecord, resultRecord),
+    spilloverPath: spillover?.path,
+    spilloverSizeLabel: spillover?.sizeLabel || undefined,
     rendersAnsi: rendersAnsi || undefined,
     searchQuery: searchQuery || undefined,
     searchHits: searchHits?.length ? searchHits : undefined,

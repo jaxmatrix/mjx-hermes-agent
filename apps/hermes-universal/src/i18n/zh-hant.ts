@@ -1166,7 +1166,17 @@ export const zhHant = defineLocale({
     steerFailed: '無法連線至閘道',
     steerGone: '該子代理已不在執行',
     steerNotOwned: '該子代理屬於其他對話 — 請在那裡引導',
-    steerMissed: (text: string) => `引導未送達 — 該子代理先結束了：${text}`
+    steerMissed: (text: string) => `引導未送達 — 該子代理先結束了：${text}`,
+    stop: '停止',
+    stopRequested: '正在停止 — 仍會回傳其部分結果',
+    budgetWrapup: '因逾時被要求收尾 — 並非工作已完成',
+    truncatedNotice: '步數已用盡 — 此摘要並不完整',
+    worktree: '工作樹',
+    worktreeCommits: (count: number) => `${count} 次提交`,
+    worktreeDirty: '有未提交的變更',
+    worktreeKept: '已保留以供查看',
+    worktreePruned: '已刪除 — 其中沒有成果',
+    worktreeUnknown: '狀態未知 — 請先查看，不要逕自斷定沒有成果'
   },
 
   commandCenter: {
@@ -2649,6 +2659,10 @@ export const zhHant = defineLocale({
       statusRecovered: '已復原',
       statusDone: '完成',
       memoryWriteNoted: '已記下記憶寫入',
+      spilloverLabel: '完整輸出',
+      spilloverSaved: (size: string) => `內容過大（${size}），無法內嵌顯示 — 已儲存為檔案`,
+      spilloverSavedUnsized: '內容過大，無法內嵌顯示 — 已儲存為檔案',
+      spilloverOpen: '開啟',
       actions: {
         read: '已讀取',
         reading: '正在讀取',

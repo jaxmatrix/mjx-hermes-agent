@@ -3315,6 +3315,34 @@ def _run_single_child(
         # miss did NOT ride along in the summary text either (MJXHRM-410).
         if isinstance(_missed_steer, str) and _missed_steer.strip():
             complete_kwargs["missed_steer"] = _missed_steer
+        # Same rule as ``missed_steer`` above, for the other two facts a UI has
+        # no other channel for (MJXHRM-459):
+        #
+        # ``truncated`` — a child that exhausted its iteration budget still
+        # returns a summary and still reports ``status: "completed"``, so an
+        # overlay showing only the status calls a half-finished run finished.
+        # The parent MODEL has had this on its tool-result entry since
+        # ``dc2fe99ecf``; the event stream never carried it.
+        #
+        # ``worktree`` — with ``delegation.worktree_isolation`` on, the child's
+        # work lands on its own branch in its own checkout, and the finalize
+        # report (commits/dirty/pruned) is the only thing that says whether
+        # there is anything there to review. Finalizing BEFORE the event rather
+        # than after is what lets it ride along; the call is idempotent per
+        # child and the entry is returned with the same payload either way.
+        complete_kwargs["truncated"] = bool(entry.get("truncated"))
+        # ``agent.run_budget_seconds`` applies to a delegated child like any
+        # other agent — it is resolved in ``agent_init`` from the same config
+        # section — and past 80% of the budget the child is told to wrap up
+        # (``agent/conversation_loop._maybe_inject_run_budget_wrapup``). A child
+        # that was hurried into finishing looks EXACTLY like one that finished
+        # on its own, and the latch is the only thing that knows. Dormant when
+        # no budget is configured, which is the default.
+        if getattr(child, "_run_budget_wrapup_injected", False):
+            complete_kwargs["budget_wrapup"] = True
+        _attach_worktree(entry)
+        if isinstance(entry.get("worktree"), dict):
+            complete_kwargs["worktree"] = entry["worktree"]
 
         if child_progress_cb:
             try:
@@ -3322,7 +3350,6 @@ def _run_single_child(
             except Exception as e:
                 logger.debug("Progress callback completion failed: %s", e)
 
-        _attach_worktree(entry)
         return entry
 
     except Exception as exc:

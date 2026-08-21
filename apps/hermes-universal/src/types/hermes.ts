@@ -365,6 +365,12 @@ export interface ModelOptionProvider {
 }
 
 export interface ModelCapabilities {
+  /** False when the route REJECTS a reasoning disable ("mandatory" in the
+   *  provider catalog, `hermes_cli/inventory.py`), so "thinking off" must not
+   *  be offered — asking for it is an HTTP 400, not a preference. Absent when
+   *  the catalog does not say, which is why every read is `!== false` rather
+   *  than a truthiness test. */
+  can_disable_reasoning?: boolean
   fast: boolean
   reasoning: boolean
 }

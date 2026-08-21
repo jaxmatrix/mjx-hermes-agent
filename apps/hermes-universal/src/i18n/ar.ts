@@ -977,7 +977,17 @@ export const ar = defineLocale({
     ageHours: hours => `قبل ${hours} س`,
     durationSeconds: seconds => `${seconds} ث`,
     durationMinutes: (minutes, seconds) => `${minutes} د ${seconds} ث`,
-    tokens: value => `${value} رمز`
+    tokens: value => `${value} رمز`,
+    stop: 'إيقاف',
+    stopRequested: 'جارٍ الإيقاف — ستعود نتيجته الجزئية على أي حال',
+    budgetWrapup: 'طُلب منه الإنهاء — نفد وقته لا عمله',
+    truncatedNotice: 'نفدت الخطوات — هذا الملخّص جزئي',
+    worktree: 'شجرة العمل',
+    worktreeCommits: (count: number) => `${count} إيداع`,
+    worktreeDirty: 'تغييرات غير مودعة',
+    worktreeKept: 'محفوظة للمراجعة',
+    worktreePruned: 'أُزيلت — لم تحتوِ على أي عمل',
+    worktreeUnknown: 'الحالة غير معروفة — افحصها قبل افتراض عدم وجود عمل'
   },
   commandCenter: {
     close: 'إغلاق',
@@ -2492,6 +2502,10 @@ export const ar = defineLocale({
       statusRecovered: 'تم الاسترداد',
       statusDone: 'تم',
       memoryWriteNoted: 'تم تسجيل كتابة الذاكرة',
+      spilloverLabel: 'الخرج الكامل',
+      spilloverSaved: (size: string) => `أكبر من أن يُعرض هنا (${size}) — حُفظ في ملف`,
+      spilloverSavedUnsized: 'أكبر من أن يُعرض هنا — حُفظ في ملف',
+      spilloverOpen: 'فتح',
       actions: {
         read: 'قراءة',
         reading: 'جار القراءة',

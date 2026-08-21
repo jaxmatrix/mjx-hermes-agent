@@ -1206,7 +1206,17 @@ export const ja = defineLocale({
     steerFailed: 'ゲートウェイに接続できませんでした',
     steerGone: 'このサブエージェントはもう実行されていません',
     steerNotOwned: 'このサブエージェントは別のチャットのものです — そちらから誘導してください',
-    steerMissed: (text: string) => `誘導は届きませんでした — サブエージェントが先に終了しました: ${text}`
+    steerMissed: (text: string) => `誘導は届きませんでした — サブエージェントが先に終了しました: ${text}`,
+    stop: '停止',
+    stopRequested: '停止中 — 途中までの結果は返ります',
+    budgetWrapup: '時間切れで打ち切り指示 — 作業が終わったわけではありません',
+    truncatedNotice: 'ステップ上限に達しました — この要約は途中までです',
+    worktree: 'ワークツリー',
+    worktreeCommits: (count: number) => `${count} 件のコミット`,
+    worktreeDirty: '未コミットの変更あり',
+    worktreeKept: 'レビュー用に保持',
+    worktreePruned: '削除済み — 成果物はありませんでした',
+    worktreeUnknown: '状態不明 — 成果なしと判断する前に確認してください'
   },
 
   commandCenter: {
@@ -2736,6 +2746,10 @@ export const ja = defineLocale({
       statusRecovered: '回復しました',
       statusDone: '完了',
       memoryWriteNoted: 'メモリへの書き込みを記録',
+      spilloverLabel: '完全な出力',
+      spilloverSaved: (size: string) => `大きすぎて表示できません（${size}）— ファイルに保存しました`,
+      spilloverSavedUnsized: '大きすぎて表示できません — ファイルに保存しました',
+      spilloverOpen: '開く',
       actions: {
         read: '読み取り完了',
         reading: '読み取り中',

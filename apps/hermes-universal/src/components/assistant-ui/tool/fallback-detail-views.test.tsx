@@ -17,6 +17,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { $toolDisclosureStates, $toolViewMode } from '@/store/tool-view'
 
+const { previewFile } = vi.hoisted(() => ({ previewFile: vi.fn() }))
+
+vi.mock('@/store/preview-open', () => ({ previewFile }))
+
 vi.mock('@assistant-ui/react', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useAuiState: (select: (state: unknown) => unknown) =>
@@ -167,5 +171,80 @@ describe('technical payload disclosure', () => {
     renderRow({ args: { path: '/tmp/demo.txt' }, result: { content: 'hello' }, toolName: 'read_file' })
 
     expect(screen.queryByRole('button', { name: /tool payload/i })).toBeNull()
+  })
+})
+
+/**
+ * The spillover reference.
+ *
+ * An oversized tool result is no longer truncated — the backend writes it whole
+ * to HERMES_HOME/cache/spillover and substitutes a `<persisted-output>` block
+ * naming the file. The row used to print that block verbatim: marker tags,
+ * instructions addressed to the model, and a path the user could not open.
+ */
+describe('spillover reference', () => {
+  const persisted = [
+    '<persisted-output>',
+    'This tool result was too large (2,097,152 characters, 2.0 MB).',
+    'Full output saved to: /tmp/spill/call-1.txt',
+    'Use the read_file tool with offset and limit to access specific sections of this output.',
+    '',
+    'Preview (first 11 chars):',
+    'first bytes',
+    '...',
+    '</persisted-output>'
+  ].join('\n')
+
+  it('names the file, its size, and opens it in the preview pane', () => {
+    renderRow({ args: { command: 'cat huge.log' }, result: persisted, toolName: 'terminal' })
+
+    expect(screen.getByText('/tmp/spill/call-1.txt')).toBeTruthy()
+    expect(screen.getByText(/2\.0 MB/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }))
+
+    expect(previewFile).toHaveBeenCalledWith('/tmp/spill/call-1.txt')
+  })
+
+  it('shows the preview that WAS kept, not the marker block', () => {
+    renderRow({ args: { command: 'cat huge.log' }, result: persisted, toolName: 'terminal' })
+
+    expect(screen.getByText(/first bytes/)).toBeTruthy()
+    expect(screen.queryByText(/persisted-output/)).toBeNull()
+    expect(screen.queryByText(/use the read_file tool/i)).toBeNull()
+  })
+
+  // A spilled result whose kept preview is empty has NOTHING else expandable:
+  // no detail, no diff, no image. Without the reference in the row's
+  // expandable gate the caret never appears, and the only pointer to the file
+  // that holds the output is unreachable.
+  it('still opens a row whose only content is the reference', () => {
+    renderRow(
+      {
+        args: { path: '/tmp/huge.bin' },
+        result: [
+          '<persisted-output>',
+          'This tool result was too large (2,097,152 characters, 2.0 MB).',
+          'Full output saved to: /tmp/spill/call-1.txt',
+          '',
+          'Preview (first 0 chars):',
+          '</persisted-output>'
+        ].join('\n'),
+        toolName: 'read_file'
+      },
+      false
+    )
+
+    expect(screen.queryByText('/tmp/spill/call-1.txt')).toBeNull()
+
+    fireEvent.click(headerButton())
+
+    expect(screen.getByText('/tmp/spill/call-1.txt')).toBeTruthy()
+  })
+
+  it('offers nothing to open for an ordinary result', () => {
+    renderRow({ args: { command: 'echo hi' }, result: { output: 'hi' }, toolName: 'terminal' })
+
+    expect(screen.queryByRole('button', { name: 'Open' })).toBeNull()
   })
 })

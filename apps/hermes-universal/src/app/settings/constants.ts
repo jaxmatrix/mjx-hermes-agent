@@ -4,6 +4,7 @@
 // BUILTIN_PERSONALITIES, plus the FIELD_LABELS/FIELD_DESCRIPTIONS copy that i18n
 // en.ts imports. Icons come from the shared @/lib/icons seam.
 import { Box, Brain, Lock, MessageCircle, Mic, Monitor, Palette, Wrench } from '@/lib/icons'
+import { REASONING_EFFORTS } from '@/lib/reasoning-effort'
 import type { ConfigFieldSchema } from '@/types/hermes'
 
 import { defineFieldCopy } from './field-copy'
@@ -234,7 +235,10 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   // agent/context_compressor.py: anything but 'lean' falls back to 'legacy'.
   'compression.tail_mode': ['legacy', 'lean'],
   'context.engine': ['compressor', 'default', 'custom'],
-  'delegation.reasoning_effort': ['', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+  // Derived, never re-typed: this list had stopped at `xhigh`, so a subagent
+  // could not be asked for `max`/`ultra` from the UI even though the gateway
+  // accepts both (MJXHRM-459).
+  'delegation.reasoning_effort': ['', ...REASONING_EFFORTS],
   // NOTE: memory.provider is intentionally NOT listed here. Its options are
   // discovery-driven and served by the backend config schema (merged
   // per-request in web_server._schema_with_dynamic_provider_options), so

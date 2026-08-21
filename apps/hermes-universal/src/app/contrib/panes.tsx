@@ -22,10 +22,9 @@ import { ARTIFACTS_ROUTE, contributedRoutes, MESSAGING_ROUTE, ROUTES_AREA, SKILL
 import { ContribBoundary, ContribRender } from '@/contrib/react/boundary'
 import { useContributions } from '@/contrib/react/use-contributions'
 import { registry } from '@/contrib/registry'
-import { normalizeOrLocalPreviewTarget } from '@/lib/local-preview'
 import { useStore } from '@/store/atom'
 import { $currentCwd } from '@/store/chat'
-import { setCurrentSessionPreviewTarget } from '@/store/preview'
+import { previewFile } from '@/store/preview-open'
 
 // Dev-only markdown/KaTeX perf bench — same build-time guard as MobileController
 // so it never reaches a release bundle. Kept reachable from the workspace pane.
@@ -34,19 +33,6 @@ const BENCH_ENABLED = import.meta.env.DEV || import.meta.env.VITE_ENABLE_BENCH =
 const MarkdownBench = BENCH_ENABLED
   ? lazy(() => import('@/dev/markdown-bench').then(module => ({ default: module.MarkdownBench })))
   : null
-
-/** Open a file from the tree in the real preview pipeline. Verbatim from the
- *  old AppShell's `previewFile`. Exported so the mobile Workspace opens files
- *  through the same pipeline instead of growing a third copy of it. */
-export function previewFile(path: string) {
-  void normalizeOrLocalPreviewTarget(path, $currentCwd.get() || undefined)
-    .then(target => {
-      if (target) {
-        setCurrentSessionPreviewTarget(target, 'file-browser', path)
-      }
-    })
-    .catch(() => undefined)
-}
 
 /** The `files` pane — the file browser; activating a file opens it in preview. */
 export function FilesPane() {

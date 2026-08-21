@@ -161,13 +161,10 @@ export {
   ModelMenuCloseContext,
   type ModelMenuController
 } from '@/app/shell/model-catalog-menu'
-/** The reasoning levels the app offers, and what an unset effort resolves to —
- *  so a plugin storing a thinking depth stores one the app agrees with. */
-export { DEFAULT_REASONING_EFFORT, REASONING_EFFORTS } from '@/app/shell/model-edit-submenu'
+export type { StatusbarItem } from '@/app/shell/statusbar-controls'
 
 // -- ui: the design language --------------------------------------------------
 
-export type { StatusbarItem } from '@/app/shell/statusbar-controls'
 /**
  * A layout TILE — what `ctx.registerTile(...)` takes. Prefer it over
  * `ctx.register({ area: PANES_AREA, … })`, which hands a tile's chrome and
@@ -235,10 +232,10 @@ export { Switch } from '@/components/ui/switch'
 export { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 export { Textarea } from '@/components/ui/textarea'
 export { Tip, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+export type { GatewayEventListener } from '@/contrib/events'
 
 // -- contracts ----------------------------------------------------------------
 
-export type { GatewayEventListener } from '@/contrib/events'
 export type {
   HermesPlugin,
   PluginContext,
@@ -285,16 +282,19 @@ export { formatModifierToken } from '@/lib/keybinds/combo'
  *  variant tag, `reasoningEffortLabel` to render a thinking depth ('high' →
  *  'High'). A plugin showing a model should never hand-roll these. */
 export { displayModelName, modelDisplayParts, reasoningEffortLabel } from '@/lib/model-status-label'
-
-export const PANES_AREA = 'panes'
 /** The app's deterministic identity color for a name (profiles, assignees,
  *  authors) + its translucent tag fill — so plugin-rendered identities read
  *  the same hue as everywhere else. */
 export { profileColor, profileColorSoft } from '@/lib/profile-color'
+
+export const PANES_AREA = 'panes'
 /** The shared client itself, for invalidation OUTSIDE React (e.g. a
  *  `ctx.socket` frame invalidating a query). Inside components keep using
  *  `useQueryClient`. */
 export { queryClient } from '@/lib/query-client'
+/** The reasoning levels the app offers, and what an unset effort resolves to —
+ *  so a plugin storing a thinking depth stores one the app agrees with. */
+export { DEFAULT_REASONING_EFFORT, REASONING_EFFORTS } from '@/lib/reasoning-effort'
 
 /** The app's own gateway-readiness evaluation (setup.status +
  *  setup.runtime_check, reconciled) — pass `host.request`. Don't hand-roll

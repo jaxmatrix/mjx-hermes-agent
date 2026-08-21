@@ -1186,6 +1186,16 @@ export interface Translations {
     steerGone: string
     steerNotOwned: string
     steerMissed: (text: string) => string
+    stop: string
+    stopRequested: string
+    budgetWrapup: string
+    truncatedNotice: string
+    worktree: string
+    worktreeCommits: (count: number) => string
+    worktreeDirty: string
+    worktreeKept: string
+    worktreePruned: string
+    worktreeUnknown: string
   }
 
   commandCenter: {
@@ -2631,6 +2641,10 @@ export interface Translations {
       statusRecovered: string
       statusDone: string
       memoryWriteNoted: string
+      spilloverLabel: string
+      spilloverSaved: (size: string) => string
+      spilloverSavedUnsized: string
+      spilloverOpen: string
       actions: {
         read: string
         reading: string
