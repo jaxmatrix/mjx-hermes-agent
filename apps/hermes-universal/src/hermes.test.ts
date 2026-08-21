@@ -6,11 +6,13 @@ import { api } from '@/lib/api'
 import type { SessionInfo } from '@/types/hermes'
 
 import {
+  cancelMcpOAuthFlow,
   createWebhook,
   deleteWebhook,
   enableWebhooks,
   getAutomationBlueprints,
   getHermesConfig,
+  getMcpOAuthFlow,
   getSession,
   getStatus,
   getWebhooks,
@@ -183,5 +185,30 @@ describe('session list paging keeps back-filled pins', () => {
     const result = await listAllProfileSessions(2)
 
     expect(result.sessions.map(s => s.id)).toEqual(['a', 'b', 'old-pin'])
+  })
+})
+
+// --- MCP OAuth flow cancel (MJXHRM-444) ------------------------------------
+
+describe('MCP OAuth flow lifecycle', () => {
+  it('cancels the same flow the poller reads, by DELETE on that one path', async () => {
+    await getMcpOAuthFlow('flow 1')
+    await cancelMcpOAuthFlow('flow 1')
+
+    const [poll, cancel] = mockApi.mock.calls.map(call => call[0])
+
+    // Same URL, opposite verbs: a cancel spelled against a different path would
+    // leave the flow (and its loopback redirect listener) running.
+    expect(cancel).toMatchObject({ path: poll.path, method: 'DELETE' })
+    expect(poll).not.toHaveProperty('method')
+    expect(cancel.path).toBe('/api/mcp/oauth/flows/flow%201')
+  })
+
+  // An unknown or garbage-collected id answers {ok, status: 'expired'}, not a
+  // 404 — so a cleanup path can fire this without first checking existence.
+  it('treats an already-gone flow as a resolved cancel', async () => {
+    mockApi.mockResolvedValueOnce({ ok: true, status: 'expired' })
+
+    await expect(cancelMcpOAuthFlow('gone')).resolves.toEqual({ ok: true, status: 'expired' })
   })
 })

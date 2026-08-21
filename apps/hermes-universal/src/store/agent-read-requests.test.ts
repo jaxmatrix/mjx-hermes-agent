@@ -24,7 +24,13 @@ vi.mock('@/store/gateway', () => ({
 
 import { requestGateway } from '@/store/gateway'
 
-import { __resetAgentReadRequests, registerPreviewReader, registerWindowBelowReader } from './agent-read-requests'
+import {
+  __resetAgentReadRequests,
+  registerPreviewActor,
+  registerPreviewReader,
+  registerTourDriver,
+  registerWindowBelowReader
+} from './agent-read-requests'
 
 const rpc = vi.mocked(requestGateway)
 
@@ -148,5 +154,120 @@ describe('reader registration', () => {
 
     expect(second).toHaveBeenCalled()
     expect(rpc).toHaveBeenCalledWith('preview.read.respond', { request_id: 'r6', text: '{"b":2}' })
+  })
+})
+
+// --- preview.act / tour (MJXHRM-444) ---------------------------------------
+//
+// The 08-20 additions join the same blocking family. Both are already in the
+// gateway's `_block` expire allowlist, so their frames — request AND expire —
+// arrive today and had no listener at all: the agent's drive_preview and tour
+// tools sat blocked for their full timeout on every call.
+
+describe('preview.act.request', () => {
+  it('answers empty when no actor is registered, rather than parking the tool for 45s', async () => {
+    send('preview.act.request', { request_id: 'a1', action: 'click', selector: '#go' })
+    await settle()
+
+    expect(rpc).toHaveBeenCalledWith('preview.act.respond', { request_id: 'a1', text: '' })
+  })
+
+  // The payload IS the tool call. Forwarding it wholesale is what lets a verb
+  // or argument added backend-side reach a registered actor with no change here
+  // — so the actor must receive the arguments, and NOT the envelope key.
+  it('hands the actor the whole tool call minus the envelope', async () => {
+    const actor = vi.fn().mockReturnValue({ url: 'about:blank' })
+
+    registerPreviewActor(actor)
+    send('preview.act.request', { request_id: 'a2', action: 'type', selector: '#q', text: 'hi', submit: true })
+    await settle()
+
+    expect(actor).toHaveBeenCalledWith({ action: 'type', selector: '#q', text: 'hi', submit: true })
+    expect(rpc).toHaveBeenCalledWith('preview.act.respond', {
+      request_id: 'a2',
+      text: JSON.stringify({ url: 'about:blank' })
+    })
+  })
+
+  it('answers empty when the actor throws — a broken surface must not become a stalled agent', async () => {
+    registerPreviewActor(() => {
+      throw new Error('no preview mounted')
+    })
+    send('preview.act.request', { request_id: 'a3', action: 'click' })
+    await settle()
+
+    expect(rpc).toHaveBeenCalledWith('preview.act.respond', { request_id: 'a3', text: '' })
+  })
+
+  it('drops a request the gateway already expired instead of answering a tool that gave up', async () => {
+    let release: (value: unknown) => void = () => {}
+
+    registerPreviewActor(() => new Promise(resolve => (release = resolve)))
+    send('preview.act.request', { request_id: 'a4', action: 'click' })
+    send('preview.act.expire', { request_id: 'a4' })
+    release({ url: 'late' })
+    await settle()
+
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
+  it('ignores a frame with no request id — there is nothing to answer', async () => {
+    registerPreviewActor(() => ({ url: 'x' }))
+    send('preview.act.request', { action: 'click' })
+    await settle()
+
+    expect(rpc).not.toHaveBeenCalled()
+  })
+})
+
+describe('tour.request', () => {
+  it('answers empty when no driver is registered', async () => {
+    send('tour.request', { request_id: 't1', action: 'start' })
+    await settle()
+
+    expect(rpc).toHaveBeenCalledWith('tour.respond', { request_id: 't1', text: '' })
+  })
+
+  it('hands the driver the tour call and returns its outcome', async () => {
+    const driver = vi.fn().mockResolvedValue({ matched: 2, step: 0 })
+
+    registerTourDriver(driver)
+    send('tour.request', { request_id: 't2', action: 'targets', surface: 'app', selector: '.rail' })
+    await settle()
+
+    expect(driver).toHaveBeenCalledWith({ action: 'targets', surface: 'app', selector: '.rail' })
+    expect(rpc).toHaveBeenCalledWith('tour.respond', {
+      request_id: 't2',
+      text: JSON.stringify({ matched: 2, step: 0 })
+    })
+  })
+
+  it('drops a request the gateway already expired', async () => {
+    let release: (value: unknown) => void = () => {}
+
+    registerTourDriver(() => new Promise(resolve => (release = resolve)))
+    send('tour.request', { request_id: 't3', action: 'next' })
+    send('tour.expire', { request_id: 't3' })
+    release({ step: 1 })
+    await settle()
+
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
+  // Both registrars hand back an unregister; a stale one must not tear down a
+  // reader that replaced it.
+  it('unregisters idempotently, without clobbering a replacement', async () => {
+    const first = vi.fn().mockReturnValue({ from: 'first' })
+    const unregisterFirst = registerTourDriver(first)
+    const second = vi.fn().mockReturnValue({ from: 'second' })
+
+    registerTourDriver(second)
+    unregisterFirst()
+
+    send('tour.request', { request_id: 't4', action: 'show' })
+    await settle()
+
+    expect(second).toHaveBeenCalled()
+    expect(rpc).toHaveBeenCalledWith('tour.respond', { request_id: 't4', text: JSON.stringify({ from: 'second' }) })
   })
 })
