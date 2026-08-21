@@ -13141,17 +13141,34 @@ def _is_session_cwd_junk(cwd: str) -> bool:
 
 
 def _repo_discovery_policy(raw: dict | None = None) -> dict:
-    """Return the effective, profile-local Desktop repository scan policy.
+    """Return the effective, profile-local Desktop repository scan policy."""
+    from hermes_cli.config import DEFAULT_CONFIG
 
-    The normalization lives in
-    :func:`hermes_cli.web_repo_scan.resolve_repo_discovery_policy` so this RPC
-    sink and the ``GET /api/git/scan-repos`` crawl that feeds it cannot drift
-    apart on what a policy means.
-    """
-    from hermes_cli.web_repo_scan import resolve_repo_discovery_policy
-
+    defaults = DEFAULT_CONFIG["desktop"]
     source = raw if isinstance(raw, dict) else (_load_cfg().get("desktop") or {})
-    return resolve_repo_discovery_policy(source)
+    if not isinstance(source, dict):
+        source = {}
+
+    enabled = source.get("enabled", source.get("repo_scan_enabled", defaults["repo_scan_enabled"]))
+    roots = source.get("roots", source.get("repo_scan_roots", defaults["repo_scan_roots"]))
+    excludes = source.get(
+        "exclude_paths",
+        source.get("repo_scan_exclude_paths", defaults["repo_scan_exclude_paths"]),
+    )
+
+    return {
+        "enabled": enabled if isinstance(enabled, bool) else defaults["repo_scan_enabled"],
+        "roots": [value.strip() for value in roots if isinstance(value, str) and value.strip()]
+        if isinstance(roots, list)
+        else list(defaults["repo_scan_roots"]),
+        "exclude_paths": [
+            value.strip()
+            for value in excludes
+            if isinstance(value, str) and value.strip()
+        ]
+        if isinstance(excludes, list)
+        else list(defaults["repo_scan_exclude_paths"]),
+    }
 
 
 def _repo_discovery_policy_key(policy: dict) -> str:
@@ -13202,7 +13219,16 @@ def _scan_discovered_repos_remote(conn, policy: dict) -> bool:
     """
     from hermes_cli import projects_db as pdb
 
-    roots = policy.get("roots") or []
+    # FORK DIVERGENCE (MJXHRM-474) — keep this on merge. `repo_scan_roots` ships
+    # EMPTY (hermes_cli/config_defaults.py), and an empty root list has always
+    # meant "the user's home directory": that is what desktop's Electron crawl
+    # and hermes-universal's Rust crawl both do with it, and what the fork's now
+    # deleted `GET /api/git/scan-repos` did. Walking nothing instead makes
+    # `scan: true` a silent no-op on the SHIPPED DEFAULT config — the very
+    # unpopulated sidebar of #81723 that `scan: true` exists to fix — because
+    # every remote client that used to reach the REST crawl now comes through
+    # here.
+    roots = policy.get("roots") or [os.path.expanduser("~")]
     excludes = policy.get("exclude_paths") or []
     pairs: list[tuple[str, str | None]] = []
     seen: set[str] = set()
