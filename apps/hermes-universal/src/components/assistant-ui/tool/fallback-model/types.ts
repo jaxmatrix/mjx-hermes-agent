@@ -47,6 +47,12 @@ export interface ToolView {
    *  execute_code), the renderer shows it as its own labeled, neutrally
    *  tinted block under stdout — distinct from an error tone. */
   stderr?: string
+  /** Where an oversized result was spilled to, parsed out of the
+   *  `<persisted-output>` block the backend substituted for it. The row offers
+   *  to open it; `detail` then holds only the preview body. */
+  spilloverPath?: string
+  /** The original size, as the backend phrased it ("4.2 MB"). */
+  spilloverSizeLabel?: string
   /** Terminal-only command shown as the prompt in the expanded transcript. */
   terminalCommand?: string
   /** Terminal-only process exit code, when the backend reported one. */

@@ -2640,6 +2640,10 @@ export interface Translations {
       statusRecovered: string
       statusDone: string
       memoryWriteNoted: string
+      spilloverLabel: string
+      spilloverSaved: (size: string) => string
+      spilloverSavedUnsized: string
+      spilloverOpen: string
       actions: {
         read: string
         reading: string

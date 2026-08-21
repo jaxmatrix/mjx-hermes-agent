@@ -3029,6 +3029,10 @@ export const en: Translations = {
       statusRecovered: 'Recovered',
       statusDone: 'Done',
       memoryWriteNoted: 'Memory write noted',
+      spilloverLabel: 'Full output',
+      spilloverSaved: (size: string) => `Too large to inline (${size}) — saved to a file`,
+      spilloverSavedUnsized: 'Too large to inline — saved to a file',
+      spilloverOpen: 'Open',
       actions: {
         read: 'Read',
         reading: 'Reading',

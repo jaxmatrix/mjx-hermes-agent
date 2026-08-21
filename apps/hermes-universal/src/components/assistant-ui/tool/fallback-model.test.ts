@@ -9,6 +9,7 @@ import {
   inlineDiffFromResult,
   MAX_TOOL_RENDER_CHARS,
   prettyJson,
+  spilloverReference,
   type ToolPart
 } from './fallback-model'
 
@@ -482,5 +483,91 @@ describe('prettyJson caps serialized result size', () => {
 describe('countDiffLineStats', () => {
   it('counts added and removed lines', () => {
     expect(countDiffLineStats(`--- a/x\n+++ b/x\n@@\n-old\n+new\n context\n+another`)).toEqual({ added: 2, removed: 1 })
+  })
+})
+
+/**
+ * Spillover: the backend stopped truncating oversized results and started
+ * writing them whole to HERMES_HOME/cache/spillover, leaving a
+ * `<persisted-output>` block in their place. There is no structured field for
+ * the path — it is prose inside the result text — so the row has to parse it
+ * exactly the way `agent/tool_guardrails.py` does server-side.
+ */
+describe('spilloverReference', () => {
+  const persisted = (path = '/home/me/.hermes/cache/spillover/call_1.txt') =>
+    [
+      '<persisted-output>',
+      'This tool result was too large (2,097,152 characters, 2.0 MB).',
+      `Full output saved to: ${path}`,
+      'Use the read_file tool with offset and limit to access specific sections of this output.',
+      'Recovery: page through the saved file with read_file (offset/limit) or process it with',
+      'execute_code — do NOT re-request the same data from the remote API; the full result is',
+      'already on disk.',
+      '',
+      'Preview (first 34 chars):',
+      'the first bytes of the real output',
+      '...',
+      '</persisted-output>'
+    ].join('\n')
+
+  it('pulls the path, the size and the preview out of the block', () => {
+    const reference = spilloverReference(persisted())
+
+    expect(reference?.path).toBe('/home/me/.hermes/cache/spillover/call_1.txt')
+    expect(reference?.sizeLabel).toBe('2.0 MB')
+    expect(reference?.preview).toContain('the first bytes of the real output')
+  })
+
+  // Those instructions address the MODEL. The human reading this row gets an
+  // Open button, so repeating "use the read_file tool" at them is noise.
+  it('drops the model-facing recovery instructions from the preview', () => {
+    const reference = spilloverReference(persisted())
+
+    expect(reference?.preview).not.toContain('read_file')
+    expect(reference?.preview).not.toContain('Recovery:')
+    expect(reference?.preview).not.toContain('too large')
+  })
+
+  it('ignores ordinary output that merely mentions the words', () => {
+    expect(spilloverReference('Full output saved to: /tmp/notes.txt')).toBeUndefined()
+    expect(spilloverReference('nothing persisted here')).toBeUndefined()
+  })
+
+  it('ignores a block whose path line never arrived', () => {
+    expect(spilloverReference('<persisted-output>\ntruncated mid-write\n')).toBeUndefined()
+  })
+
+  it('reports a block with no size line rather than inventing one', () => {
+    const reference = spilloverReference('<persisted-output>\nFull output saved to: /tmp/big.txt\n</persisted-output>')
+
+    expect(reference?.path).toBe('/tmp/big.txt')
+    expect(reference?.sizeLabel).toBe('')
+  })
+})
+
+describe('buildToolView spillover', () => {
+  const persistedResult =
+    '<persisted-output>\n' +
+    'This tool result was too large (2,097,152 characters, 2.0 MB).\n' +
+    'Full output saved to: /tmp/spill/call_1.txt\n' +
+    'Use the read_file tool with offset and limit to access specific sections of this output.\n\n' +
+    'Preview (first 12 chars):\nfirst bytes\n...\n' +
+    '</persisted-output>'
+
+  it('exposes the reference and shows the preview instead of the marker block', () => {
+    const view = buildToolView(part({ result: persistedResult, toolName: 'terminal' }), '')
+
+    expect(view.spilloverPath).toBe('/tmp/spill/call_1.txt')
+    expect(view.spilloverSizeLabel).toBe('2.0 MB')
+    expect(view.detail).toContain('first bytes')
+    expect(view.detail).not.toContain('persisted-output')
+  })
+
+  it('leaves an ordinary result completely alone', () => {
+    const view = buildToolView(part({ result: { output: 'plain output' }, toolName: 'terminal' }), '')
+
+    expect(view.spilloverPath).toBeUndefined()
+    expect(view.spilloverSizeLabel).toBeUndefined()
+    expect(view.detail).toContain('plain output')
   })
 })

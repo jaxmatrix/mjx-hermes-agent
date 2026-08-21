@@ -2501,6 +2501,10 @@ export const ar = defineLocale({
       statusRecovered: 'تم الاسترداد',
       statusDone: 'تم',
       memoryWriteNoted: 'تم تسجيل كتابة الذاكرة',
+      spilloverLabel: 'الخرج الكامل',
+      spilloverSaved: (size: string) => `أكبر من أن يُعرض هنا (${size}) — حُفظ في ملف`,
+      spilloverSavedUnsized: 'أكبر من أن يُعرض هنا — حُفظ في ملف',
+      spilloverOpen: 'فتح',
       actions: {
         read: 'قراءة',
         reading: 'جار القراءة',

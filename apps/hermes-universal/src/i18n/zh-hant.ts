@@ -2658,6 +2658,10 @@ export const zhHant = defineLocale({
       statusRecovered: '已復原',
       statusDone: '完成',
       memoryWriteNoted: '已記下記憶寫入',
+      spilloverLabel: '完整輸出',
+      spilloverSaved: (size: string) => `內容過大（${size}），無法內嵌顯示 — 已儲存為檔案`,
+      spilloverSavedUnsized: '內容過大，無法內嵌顯示 — 已儲存為檔案',
+      spilloverOpen: '開啟',
       actions: {
         read: '已讀取',
         reading: '正在讀取',

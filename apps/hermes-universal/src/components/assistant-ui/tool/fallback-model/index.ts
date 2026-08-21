@@ -807,12 +807,56 @@ function htmlPathFromInlineDiff(value: string): string {
   return ''
 }
 
+const PERSISTED_OUTPUT_TAG = '<persisted-output>'
+
 function stripDividerLines(value: string): string {
   return value
     .split('\n')
     .filter(line => !/^[-=]{3,}\s*$/.test(line.trim()))
     .join('\n')
     .trim()
+}
+
+/**
+ * The spillover reference an oversized tool result leaves behind.
+ *
+ * `tools/tool_result_storage.py` does not truncate a huge result any more — it
+ * writes the whole thing to `HERMES_HOME/cache/spillover/` and REPLACES the
+ * result with a `<persisted-output>` block naming the file. There is no
+ * structured field for it on the wire: the path is prose inside the result
+ * text, exactly as `agent/tool_guardrails.py` reads it server-side
+ * (`extract_persisted_path`). So the client parses the same block, or the user
+ * gets a wall of marker text with an un-openable path in the middle of it.
+ *
+ * Returns the path, the original size as the backend phrased it, and the
+ * preview body with the machine-facing recovery instructions stripped — those
+ * are addressed to the MODEL ("use the read_file tool"), and the human reading
+ * this row has an Open button instead.
+ */
+export function spilloverReference(text: string): undefined | { path: string; preview: string; sizeLabel: string } {
+  if (!text.includes(PERSISTED_OUTPUT_TAG)) {
+    return undefined
+  }
+
+  const path = /^Full output saved to: (.+)$/m.exec(text)?.[1]?.trim()
+
+  if (!path) {
+    return undefined
+  }
+
+  const body = text.slice(text.indexOf(PERSISTED_OUTPUT_TAG) + PERSISTED_OUTPUT_TAG.length)
+  const closing = body.indexOf('</persisted-output>')
+  const inner = closing >= 0 ? body.slice(0, closing) : body
+  const previewStart = /^Preview \(first \d+ chars\):$/m.exec(inner)
+
+  return {
+    path,
+    preview: (previewStart?.index === undefined
+      ? inner
+      : inner.slice(previewStart.index + previewStart[0].length)
+    ).trim(),
+    sizeLabel: /^This tool result was too large \([\d,]+ characters, ([^)]+)\)/m.exec(inner)?.[1]?.trim() ?? ''
+  }
 }
 
 export function inlineDiffFromResult(result: unknown): string {
@@ -1444,7 +1488,17 @@ export function buildToolView(part: ToolPart, inlineDiff: string): ToolView {
     (isFileEditTool(part.toolName) && Boolean(baseSubtitle.trim()))
 
   const subtitle = titleEnriched && !error && !keepSubtitleWithTitle ? '' : baseSubtitle
-  const detailBody = stripDividerLines(toolDetailText(part, argsRecord, resultRecord))
+  const rawDetailBody = stripDividerLines(toolDetailText(part, argsRecord, resultRecord))
+
+  // Persistence replaces the whole tool-result STRING, so for a tool whose
+  // per-field extractor finds nothing in it (`terminal` returns '' for a result
+  // that is not a stdout record) the block only exists on the raw result. Check
+  // both, or the tools that produce the biggest outputs are the ones that show
+  // no reference at all.
+  const spillover =
+    spilloverReference(rawDetailBody) ?? (typeof part.result === 'string' ? spilloverReference(part.result) : undefined)
+
+  const detailBody = spillover ? spillover.preview : rawDetailBody
 
   const detail = error
     ? [error, detailBody]
@@ -1486,6 +1540,8 @@ export function buildToolView(part: ToolPart, inlineDiff: string): ToolView {
     imageUrl: toolImageUrl(argsRecord, resultRecord),
     inlineDiff,
     previewTarget: toolPreviewTarget(part.toolName, argsRecord, resultRecord),
+    spilloverPath: spillover?.path,
+    spilloverSizeLabel: spillover?.sizeLabel || undefined,
     rendersAnsi: rendersAnsi || undefined,
     searchQuery: searchQuery || undefined,
     searchHits: searchHits?.length ? searchHits : undefined,

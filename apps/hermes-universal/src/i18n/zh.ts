@@ -3158,6 +3158,10 @@ export const zh: Translations = {
       statusRecovered: '已恢复',
       statusDone: '完成',
       memoryWriteNoted: '已记下记忆写入',
+      spilloverLabel: '完整输出',
+      spilloverSaved: (size: string) => `内容过大（${size}），无法内联显示 — 已保存为文件`,
+      spilloverSavedUnsized: '内容过大，无法内联显示 — 已保存为文件',
+      spilloverOpen: '打开',
       actions: {
         read: '已读取',
         reading: '正在读取',

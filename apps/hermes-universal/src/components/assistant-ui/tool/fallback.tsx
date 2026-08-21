@@ -42,6 +42,7 @@ import { useEnterAnimation } from '@/lib/use-enter-animation'
 import { cn } from '@/lib/utils'
 import { useDisplayPath } from '@/store/display-home'
 import { $focusRevealedRuns, $focusView, isFocusRunRevealed, revealFocusRun } from '@/store/focus-view'
+import { previewFile } from '@/store/preview-open'
 import { recordPreviewArtifact } from '@/store/preview-status'
 import { sessionApprovalRequest } from '@/store/prompts'
 import { $toolInlineDiffs } from '@/store/tool-diffs'
@@ -206,17 +207,10 @@ function statusGlyph(status: ToolStatus, copy: ToolStatusCopy): ReactNode {
   }
 
   if (status === 'warning') {
-    return (
-      <AlertCircle aria-label={copy.statusRecovered} className="size-3.5 shrink-0 text-(--ui-yellow)" />
-    )
+    return <AlertCircle aria-label={copy.statusRecovered} className="size-3.5 shrink-0 text-(--ui-yellow)" />
   }
 
-  return (
-    <CheckCircle2
-      aria-label={copy.statusDone}
-      className="size-3.5 shrink-0 text-(--ui-green)/85"
-    />
-  )
+  return <CheckCircle2 aria-label={copy.statusDone} className="size-3.5 shrink-0 text-(--ui-green)/85" />
 }
 
 // Leading glyph for any tool-row header. Status (running/error/warning)
@@ -462,6 +456,7 @@ function ToolEntry({ part }: ToolEntryProps) {
   const hasExpandableContent = Boolean(
     view.imageUrl ||
     view.inlineDiff ||
+    view.spilloverPath ||
     showDetail ||
     hasSearchHits ||
     view.stdout ||
@@ -563,12 +558,8 @@ function ToolEntry({ part }: ToolEntryProps) {
             {!isPending && view.countLabel && <span className={TOOL_HEADER_DURATION_CLASS}>{view.countLabel}</span>}
             {showDiffStats && diffStats && (
               <span className="flex shrink-0 items-center gap-1 font-mono text-[0.625rem] tabular-nums">
-                {diffStats.added > 0 && (
-                  <span className="text-(--ui-green)">+{diffStats.added}</span>
-                )}
-                {diffStats.removed > 0 && (
-                  <span className="text-(--ui-red)">−{diffStats.removed}</span>
-                )}
+                {diffStats.added > 0 && <span className="text-(--ui-green)">+{diffStats.added}</span>}
+                {diffStats.removed > 0 && <span className="text-(--ui-red)">−{diffStats.removed}</span>}
               </span>
             )}
             {!isFileEdit && !isPending && view.durationLabel && (
@@ -611,6 +602,38 @@ function ToolEntry({ part }: ToolEntryProps) {
               )}
               {searchResultsLabel && <p className={TOOL_SECTION_LABEL_CLASS}>{searchResultsLabel}</p>}
               <SearchResultsList hits={view.searchHits} />
+            </div>
+          )}
+          {/* An oversized result is no longer truncated — the backend writes it
+              whole to HERMES_HOME/cache/spillover and leaves a
+              `<persisted-output>` block naming the file. Without this the user
+              saw the marker prose with an un-openable path in the middle of it,
+              and no way to reach the output that WAS kept. Opening goes through
+              the same right-pane tab the file tree uses, which reads the file
+              over the gateway's fs surface. */}
+          {view.spilloverPath && (
+            <div className="max-w-full text-xs leading-relaxed text-(--ui-text-secondary)">
+              <p className={TOOL_SECTION_LABEL_CLASS}>{copy.spilloverLabel}</p>
+              <p className="text-(--ui-text-tertiary)">
+                {view.spilloverSizeLabel ? copy.spilloverSaved(view.spilloverSizeLabel) : copy.spilloverSavedUnsized}
+              </p>
+              <p className="flex min-w-0 items-center gap-2">
+                <span className="min-w-0 flex-1 truncate font-mono text-[0.7rem]" title={view.spilloverPath}>
+                  {displayPath(view.spilloverPath)}
+                </span>
+                <Button
+                  className="h-5 shrink-0 rounded-md px-1.5 text-[0.7rem]"
+                  onClick={event => {
+                    event.stopPropagation()
+                    previewFile(view.spilloverPath!)
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  {copy.spilloverOpen}
+                </Button>
+              </p>
             </div>
           )}
           {view.inlineDiff && (
