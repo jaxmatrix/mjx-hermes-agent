@@ -11,6 +11,7 @@ import {
 import { translateNow } from '@/i18n'
 import { isNotFoundError } from '@/lib/api'
 import { chatMessageText } from '@/lib/chat-messages'
+import { sessionTitle } from '@/lib/chat-runtime'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { appendLiveSessionProjection, toChatMessages } from '@/lib/session-history'
 import { stableArray } from '@/lib/stable-array'
@@ -18,6 +19,7 @@ import { readJson, writeJson } from '@/lib/storage'
 import { reuseUnchanged } from '@/lib/structural-share'
 import { atom, computed } from '@/store/atom'
 import { $busy, $clarify, $currentCwd, $messages, $sessionId, type ChatMessage, resetChat } from '@/store/chat'
+import { confirm } from '@/store/confirm'
 import { resetUnscopedStreamPin } from '@/store/event-router'
 import { requestGateway } from '@/store/gateway'
 import { $pinnedSessionIds } from '@/store/layout'
@@ -1847,6 +1849,31 @@ function idNamesSession(ids: readonly string[], candidate: null | string): boole
 export async function deleteSessionLocal(id: string): Promise<void> {
   const prev = $sessions.get()
   const removed = prev.find(s => sessionMatchesStoredId(s, id))
+
+  // A PINNED session is the one delete that asks (MJXHRM-479). Deleting a chat
+  // is otherwise unconfirmed here on purpose — desktop's `removeSession` is too,
+  // and the sidebar row, the tab menu, the chat title and the mobile bubble all
+  // funnel through this one function, so a blanket prompt would put a modal in
+  // front of six routine verbs. A pin is different: it is the user's own durable
+  // "keep this" flag, the flag the backend's bulk prune and archive sweeps
+  // deliberately honour. Deleting straight through it with no word is the app
+  // contradicting an instruction the user gave it, so this is the one case worth
+  // a question. Asked HERE rather than at the six call sites because five of
+  // them are menu rows with no dialog of their own — which is precisely what the
+  // imperative `confirm()` front door exists for.
+  if (removed && isSessionPinned(removed)) {
+    const ok = await confirm({
+      confirmLabel: translateNow('settings.sessions.deletePermanently'),
+      description: translateNow('settings.sessions.deletePinnedWarning'),
+      destructive: true,
+      title: translateNow('settings.sessions.deleteConfirm', sessionTitle(removed))
+    })
+
+    if (!ok) {
+      return
+    }
+  }
+
   const ids = removalIds(removed, id)
   // Read the owner BEFORE the optimistic removal — afterwards the row that
   // carries the stamp is gone and the mutation would go out unscoped.

@@ -149,6 +149,44 @@ export default [
     }
   },
   {
+    // The browser's own modal dialogs are banned in this app (MJXHRM-479). Two
+    // separate traps, hence two rules:
+    //
+    //  - `window.confirm` BLOCKS the webview's event loop, cannot be styled,
+    //    themed, translated or given an Enter/Esc contract, and on Android it
+    //    renders as a bare system dialog over a themed app. Six of them had
+    //    quietly survived here. Use `confirm()` from `@/store/confirm` (backed
+    //    by the one `<ConfirmHost />` in `app.tsx`) or mount `<ConfirmDialog>`.
+    //
+    //  - the BARE global is the nastier one: forget the import and `confirm({…})`
+    //    still resolves — to `window.confirm` — so lint stays green and the app
+    //    ships a native popup reading "[object Object]". Only `tsc` catches that
+    //    today, by argument type, which is one refactor away from not catching
+    //    it. This rule names it directly.
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        {
+          message: "Import { confirm } from '@/store/confirm' — the bare global silently resolves to window.confirm.",
+          name: 'confirm'
+        },
+        { message: 'Use notify() from @/store/notifications.', name: 'alert' },
+        { message: 'Use a ConfirmDialog or a real input surface.', name: 'prompt' }
+      ],
+      'no-restricted-properties': [
+        'error',
+        {
+          message: "Blocks the event loop and cannot be themed or translated. Use confirm() from '@/store/confirm'.",
+          object: 'window',
+          property: 'confirm'
+        },
+        { message: 'Use notify() from @/store/notifications.', object: 'window', property: 'alert' },
+        { message: 'Use a ConfirmDialog or a real input surface.', object: 'window', property: 'prompt' }
+      ]
+    }
+  },
+  {
     // The perf bench is a plain script served straight to the browser, not part
     // of the app's module graph — it has no TS build step and legitimately uses
     // script-scope globals.

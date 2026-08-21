@@ -14,6 +14,11 @@ vi.mock('@/hermes', () => ({
 // reaches `store/connection` through `lib/api`, and `branchStoredSession` now
 // resolves its parent through `store/session-lookup` (which reads the project
 // tree). Omitting either makes the whole suite fail to import, not one test.
+// `deleteSessionLocal` now asks before deleting a PINNED session (MJXHRM-479).
+// Nothing here renders a `<ConfirmHost />`, so an unmocked `confirm()` would
+// park a promise and every pinned-delete test would time out. Default: yes.
+vi.mock('@/store/confirm', () => ({ confirm: vi.fn(async () => true) }))
+
 vi.mock('@/store/gateway', async () => {
   const { atom } = await import('@/store/atom')
 
@@ -28,6 +33,7 @@ vi.mock('@/store/gateway', async () => {
 import { deleteSession, getSession, getSessionMessages, listAllProfileSessions, renameSession } from '@/hermes'
 import { ApiError } from '@/lib/api'
 import { $busy, $currentCwd, $messages, $sessionId } from '@/store/chat'
+import { confirm } from '@/store/confirm'
 import { requestGateway } from '@/store/gateway'
 import { $showAllProfiles } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
@@ -1427,6 +1433,40 @@ describe('pinned rows survive the loaded window', () => {
     await deleteSessionLocal('tip')
 
     expect($pinnedSessionIds.get()).toEqual([])
+  })
+
+  // MJXHRM-479. `deleteSessionLocal` is the one function six delete surfaces
+  // funnel through, so the "are you sure?" for a pinned chat lives here rather
+  // than in six menu rows. Unpinned deletes stay unconfirmed (desktop parity).
+  it('asks before deleting a PINNED session, and deletes nothing when told no', async () => {
+    $pinnedSessionIds.set(['stored-pin'])
+    $sessions.set([row('stored-pin', 'Pinned chat')])
+    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
+    // Seed the ANSWER against the outcome asserted: if the guard were missing,
+    // the row would be gone regardless of what confirm() said.
+    vi.mocked(confirm).mockResolvedValueOnce(false)
+
+    await deleteSessionLocal('stored-pin')
+
+    expect(confirm).toHaveBeenCalled()
+    expect(vi.mocked(confirm).mock.calls[0]?.[0]).toMatchObject({ destructive: true })
+    // Nothing moved: not the RPC, not the optimistic removal, not the pin.
+    expect(deleteSession).not.toHaveBeenCalled()
+    expect($sessions.get().map(entry => entry.id)).toEqual(['stored-pin'])
+    expect($pinnedSessionIds.get()).toEqual(['stored-pin'])
+  })
+
+  it('does NOT ask when the session is unpinned', async () => {
+    // Pin a DIFFERENT row, so "no pins at all" cannot be what makes this pass.
+    $pinnedSessionIds.set(['someone-else'])
+    $sessions.set([row('plain', 'Plain chat'), row('someone-else', 'Pinned chat')])
+    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
+
+    await deleteSessionLocal('plain')
+
+    expect(confirm).not.toHaveBeenCalled()
+    expect(deleteSession).toHaveBeenCalledWith('plain', undefined)
+    expect($sessions.get().map(entry => entry.id)).toEqual(['someone-else'])
   })
 
   it('restores the pin when the delete RPC fails', async () => {
