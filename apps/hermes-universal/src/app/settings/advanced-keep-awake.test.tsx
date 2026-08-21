@@ -14,7 +14,10 @@ import type * as PlatformModule from '@/lib/platform'
 vi.mock('@/hermes', () => ({
   setApiRequestProfile: vi.fn(),
   getHermesConfigRecord: vi.fn(async () => ({})),
-  getHermesConfigSchema: vi.fn(async () => ({ fields: {} })),
+  // One real Advanced key, so the loaded body has a field of its own to wait
+  // for. An empty schema no longer means an empty section: FALLBACK_FIELD_SCHEMA
+  // (MJXHRM-443) renders the keys the backend never declares.
+  getHermesConfigSchema: vi.fn(async () => ({ fields: { 'terminal.docker_image': { type: 'string' } } })),
   saveHermesConfig: vi.fn(async () => ({ ok: true }))
 }))
 
@@ -96,8 +99,9 @@ describe('Advanced → keep computer awake', () => {
     desktop.value = false
     renderAdvanced()
 
-    // The page still renders — wait for it before asserting the row is missing.
-    await screen.findByText('Nothing to configure')
+    // The page still renders — wait for its schema field before asserting the
+    // keep-awake row is missing.
+    await screen.findByRole('textbox')
     expect(screen.queryByRole('switch', { name: 'Keep computer awake' })).not.toBeInTheDocument()
   })
 })
