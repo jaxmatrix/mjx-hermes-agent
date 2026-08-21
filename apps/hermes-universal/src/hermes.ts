@@ -799,10 +799,62 @@ export function getMemoryProviderOAuthStatus(
   })
 }
 
-export function getSkills(): Promise<SkillInfo[]> {
+export function getSkills(profile?: null | string): Promise<SkillInfo[]> {
   return api<SkillInfo[]>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/skills'
+  })
+}
+
+/** One skill's FULL text — frontmatter + the whole SKILL.md body — for any
+ *  provenance. The list rows only carry name/description/category; the detail
+ *  pane shows the file. Profile-scoped: the same skill name can be a different
+ *  file in another profile. */
+export function getSkillContent(
+  name: string,
+  profile?: null | string
+): Promise<{ content: string; name: string; path: string }> {
+  return api<{ content: string; name: string; path: string }>({
+    ...profileScoped(profile),
+    path: `/api/skills/content?name=${encodeURIComponent(name)}`
+  })
+}
+
+export interface ProjectSkillsStatus {
+  /** Every SKILL.md the project tier holds, quarantined ones included. */
+  skills: { name: string; path: string; quarantined: boolean }[]
+  /** False when `skills.project_discovery` is off for this profile. */
+  discovery_enabled: boolean
+  /** The enclosing git root, or null when the cwd is not inside a checkout. */
+  root: null | string
+  trusted: boolean
+}
+
+/** What the project-local skill tier holds for `cwd`, and whether that repo is
+ *  trusted. Skills vendored in a repo do not load until the user says so — this
+ *  is the read half of that gate (the CLI half is `hermes skills trust`). */
+export function getProjectSkills(cwd?: null | string, profile?: null | string): Promise<ProjectSkillsStatus> {
+  const dir = (cwd ?? '').trim()
+
+  return api<ProjectSkillsStatus>({
+    ...profileScoped(profile),
+    path: `/api/skills/project${dir ? `?cwd=${encodeURIComponent(dir)}` : ''}`
+  })
+}
+
+/** Trust (or stop trusting) a repo's project-local skills. `path` must be the
+ *  `root` a `getProjectSkills` call resolved — trust is stored by resolved path,
+ *  so trusting a subdirectory would silently load nothing. */
+export function setProjectSkillsTrust(
+  path: string,
+  trusted: boolean,
+  profile?: null | string
+): Promise<{ ok: boolean; root: string; trusted: boolean }> {
+  return api<{ ok: boolean; root: string; trusted: boolean }>({
+    ...profileScoped(profile),
+    path: '/api/skills/project/trust',
+    method: 'PUT',
+    body: { path, trusted, ...profileScoped(profile) }
   })
 }
 
@@ -822,34 +874,42 @@ export interface LearningNodeDetail {
   ok: boolean
 }
 
-export function getLearningNode(id: string): Promise<LearningNodeDetail> {
+export function getLearningNode(id: string, profile?: null | string): Promise<LearningNodeDetail> {
   return api<LearningNodeDetail>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/learning/node?id=${encodeURIComponent(id)}`
   })
 }
 
-export function deleteLearningNode(id: string): Promise<{ message: string; ok: boolean }> {
+export function deleteLearningNode(id: string, profile?: null | string): Promise<{ message: string; ok: boolean }> {
   return api<{ message: string; ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/learning/node',
     method: 'DELETE',
     body: { id }
   })
 }
 
-export function editLearningNode(id: string, content: string): Promise<{ message: string; ok: boolean }> {
+export function editLearningNode(
+  id: string,
+  content: string,
+  profile?: null | string
+): Promise<{ message: string; ok: boolean }> {
   return api<{ message: string; ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/learning/node',
     method: 'PUT',
     body: { content, id }
   })
 }
 
-export function toggleSkill(name: string, enabled: boolean): Promise<{ ok: boolean; name: string; enabled: boolean }> {
+export function toggleSkill(
+  name: string,
+  enabled: boolean,
+  profile?: null | string
+): Promise<{ ok: boolean; name: string; enabled: boolean }> {
   return api<{ ok: boolean; name: string; enabled: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/skills/toggle',
     method: 'PUT',
     body: { name, enabled }
@@ -1473,61 +1533,69 @@ export function getElevenLabsVoices(profile?: null | string): Promise<ElevenLabs
 
 const HUB_REQUEST_TIMEOUT_MS = 45_000
 
-export function getSkillHubSources(): Promise<SkillHubSourcesResponse> {
+export function getSkillHubSources(profile?: null | string): Promise<SkillHubSourcesResponse> {
   return api<SkillHubSourcesResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/skills/hub/sources',
     timeoutMs: HUB_REQUEST_TIMEOUT_MS
   })
 }
 
-export function searchSkillsHub(query: string, source = 'all', limit = 20): Promise<SkillHubSearchResponse> {
+export function searchSkillsHub(
+  query: string,
+  source = 'all',
+  limit = 20,
+  profile?: null | string
+): Promise<SkillHubSearchResponse> {
   const params = new URLSearchParams({ q: query, source, limit: String(limit) })
 
   return api<SkillHubSearchResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/skills/hub/search?${params.toString()}`,
     timeoutMs: HUB_REQUEST_TIMEOUT_MS
   })
 }
 
-export function previewSkillHub(identifier: string): Promise<SkillHubPreview> {
+export function previewSkillHub(identifier: string, profile?: null | string): Promise<SkillHubPreview> {
   return api<SkillHubPreview>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/skills/hub/preview?identifier=${encodeURIComponent(identifier)}`,
     timeoutMs: HUB_REQUEST_TIMEOUT_MS
   })
 }
 
-export function scanSkillHub(identifier: string): Promise<SkillHubScanResult> {
+export function scanSkillHub(identifier: string, profile?: null | string): Promise<SkillHubScanResult> {
   return api<SkillHubScanResult>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/skills/hub/scan?identifier=${encodeURIComponent(identifier)}`,
     timeoutMs: HUB_REQUEST_TIMEOUT_MS
   })
 }
 
-export function installSkillFromHub(identifier: string): Promise<ActionResponse> {
+export function installSkillFromHub(identifier: string, profile?: null | string): Promise<ActionResponse> {
   return api<ActionResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/skills/hub/install',
     method: 'POST',
-    body: { identifier }
+    // The profile rides BOTH the querystring (profileScoped) and the body: the
+    // install route reads `body.profile or profile`, and the body field is the
+    // one that survives into the spawned `hermes skills install` action.
+    body: { identifier, ...profileScoped(profile) }
   })
 }
 
-export function uninstallSkillFromHub(name: string): Promise<ActionResponse> {
+export function uninstallSkillFromHub(name: string, profile?: null | string): Promise<ActionResponse> {
   return api<ActionResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/skills/hub/uninstall',
     method: 'POST',
-    body: { name }
+    body: { name, ...profileScoped(profile) }
   })
 }
 
-export function updateSkillsFromHub(): Promise<ActionResponse> {
+export function updateSkillsFromHub(profile?: null | string): Promise<ActionResponse> {
   return api<ActionResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/skills/hub/update',
     method: 'POST',
     body: {}

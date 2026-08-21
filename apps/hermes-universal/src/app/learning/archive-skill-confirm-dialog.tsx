@@ -9,8 +9,8 @@ export function notifySkillArchived(t: Translations): void {
   notify({ kind: 'success', message: t.skills.skillArchivedMessage, title: t.skills.skillArchivedTitle })
 }
 
-export async function archiveLearningSkill(id: string): Promise<void> {
-  const res = await deleteLearningNode(id)
+export async function archiveLearningSkill(id: string, profile?: null | string): Promise<void> {
+  const res = await deleteLearningNode(id, profile)
 
   if (!res.ok) {
     throw new Error(res.message || 'Archive failed')
@@ -32,6 +32,9 @@ interface ArchiveSkillConfirmDialogProps {
   onFailure?: (err: unknown, skillName: string) => void
   onSuccess?: () => void
   open: boolean
+  /** Archive in THIS profile — the Capabilities scope the row came from, not
+   *  whichever profile the app happens to be on. */
+  profile?: null | string
   skillId: string
   skillName: string
 }
@@ -43,6 +46,7 @@ export function ArchiveSkillConfirmDialog({
   onFailure,
   onSuccess,
   open,
+  profile,
   skillId,
   skillName
 }: ArchiveSkillConfirmDialogProps) {
@@ -59,7 +63,7 @@ export function ArchiveSkillConfirmDialog({
         const rollback = onApply()
 
         fireOptimistic(
-          archiveLearningSkill(skillId).then(() => {
+          archiveLearningSkill(skillId, profile).then(() => {
             notifySkillArchived(t)
             onSuccess?.()
           }),

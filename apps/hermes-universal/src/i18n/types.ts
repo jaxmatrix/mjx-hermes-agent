@@ -1005,6 +1005,15 @@ export interface Translations {
   }
 
   skills: {
+    project: {
+      disabled: string
+      quarantinedCount: (count: number) => string
+      title: string
+      trust: string
+      trustedCount: (count: number) => string
+      untrust: string
+      untrustedCount: (count: number) => string
+    }
     tabSkills: string
     tabToolsets: string
     tabMcp: string
@@ -1108,6 +1117,10 @@ export interface Translations {
       policyBlock: string
       findings: (count: number) => string
       noFindings: string
+      advisory: string
+      advisoryPassed: string
+      advisoryFlagged: (count: number) => string
+      advisoryIncomplete: (count: number) => string
       installStarted: (name: string) => string
       uninstallStarted: (name: string) => string
       updateStarted: string

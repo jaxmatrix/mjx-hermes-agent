@@ -1214,6 +1214,15 @@ export const en: Translations = {
       noCatalog: 'No catalog entries available.',
       catalogFailed: 'Catalog failed to load'
     },
+    project: {
+      trust: 'Trust this repo',
+      untrust: 'Stop trusting',
+      trustedCount: count => `${count} project skill${count === 1 ? '' : 's'} loaded from this repo`,
+      untrustedCount: count => `${count} skill${count === 1 ? '' : 's'} in this repo are not loaded until you trust it`,
+      quarantinedCount: count => `${count} blocked by the security scan`,
+      disabled: 'Project skill discovery is off for this profile.',
+      title: 'Project skills'
+    },
     hub: {
       searchPlaceholder: 'Search the skill hub',
       search: 'Search',
@@ -1252,6 +1261,10 @@ export const en: Translations = {
       policyBlock: 'Install blocked by policy',
       findings: count => `${count} finding${count === 1 ? '' : 's'}`,
       noFindings: 'No security findings.',
+      advisory: 'SkillEvaluator (advisory)',
+      advisoryPassed: 'no issues',
+      advisoryFlagged: count => `${count} issue${count === 1 ? '' : 's'} flagged`,
+      advisoryIncomplete: count => `${count} check${count === 1 ? '' : 's'} could not run`,
       installStarted: name => `Installing ${name}...`,
       uninstallStarted: name => `Uninstalling ${name}...`,
       updateStarted: 'Updating installed skills...',

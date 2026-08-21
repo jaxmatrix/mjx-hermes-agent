@@ -1,5 +1,13 @@
 import { useStore } from '@nanostores/react'
-import { type ReactNode, type PointerEvent as ReactPointerEvent, useEffect, useState } from 'react'
+import {
+  Children,
+  type CSSProperties,
+  type ReactNode,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useRef,
+  useState
+} from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
@@ -8,8 +16,15 @@ import { RowButton } from '@/components/ui/row-button'
 import { Switch } from '@/components/ui/switch'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
+import { startPointerDrag } from '@/lib/pointer-drag'
 import { cn } from '@/lib/utils'
-import { $paneHeightOverride, $paneState, setPaneHeightOverride } from '@/store/panes'
+import {
+  $paneHeightOverride,
+  $paneState,
+  $paneWidthOverride,
+  setPaneHeightOverride,
+  setPaneWidthOverride
+} from '@/store/panes'
 
 // Monospace capability chip (tool name, transport, …). Shared by the Skills
 // and MCP tabs so the pill reads identically everywhere.
@@ -34,20 +49,68 @@ export function ToolChip({ children, title }: { children: ReactNode; title?: str
 // The wide-rail track shared by every Capabilities tab (skills/tools/mcp) so
 // the three read as one page. Exported for pages that build their own grid
 // (the MCP tab's cursor-driven layout) but must stay in step.
-export const MASTER_DETAIL_WIDE_COLS = 'sm:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)]'
+// `--md-split` is the drag override slot: unset, it falls back to the declared
+// track, so grids without a resize sash render exactly as before.
+export const MASTER_DETAIL_WIDE_COLS = 'sm:grid-cols-[minmax(0,var(--md-split,0.75fr))_minmax(0,1fr)]'
+
+// Column-seam drag clamps: the rail can't shrink below a readable row, the
+// detail keeps enough room for its centered column.
+const SPLIT_MIN_LEFT_PX = 180
+const SPLIT_MIN_RIGHT_PX = 320
 
 // `split="wide"` gives list-heavy pages a rail that shares the page with a
 // sparse detail (skills/tools/mcp); the default 14rem rail suits pages whose
-// detail carries the weight (messaging).
+// detail carries the weight (messaging). A `resizeId` turns the column seam
+// into a drag sash: the rail width persists in the pane store under that id
+// (the same store the terminal/editor panes use), double-click resets it.
 export function MasterDetail({
   children,
   pane,
+  resizeId,
   split = 'rail'
 }: {
   children: ReactNode
   pane?: ReactNode
+  /** Pane-store key — when set, the seam between the two columns becomes a
+   *  drag-resizable sash and the rail width persists under this id. The sash
+   *  is `hidden sm:block`: below that breakpoint the grid collapses to a
+   *  single column, so there is no seam to drag (and nothing for a touch
+   *  gesture to hit). */
+  resizeId?: string
   split?: 'rail' | 'wide'
 }) {
+  const gridRef = useRef<HTMLDivElement>(null)
+  // Unconditional hook (rules of hooks) — the '' atom is inert without an id.
+  const override = useStore($paneWidthOverride(resizeId ?? ''))
+  const [dragging, setDragging] = useState(false)
+
+  const startSplitDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const grid = gridRef.current
+
+    if (!resizeId || !grid || event.button !== 0) {
+      return
+    }
+
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = (grid.children[0] as HTMLElement).getBoundingClientRect().width
+    const max = Math.max(SPLIT_MIN_LEFT_PX, grid.getBoundingClientRect().width - SPLIT_MIN_RIGHT_PX)
+    setDragging(true)
+
+    startPointerDrag(
+      move =>
+        setPaneWidthOverride(
+          resizeId,
+          Math.round(Math.min(max, Math.max(SPLIT_MIN_LEFT_PX, startWidth + (move.clientX - startX))))
+        ),
+      () => setDragging(false)
+    )
+  }
+
+  // With a sash the detail side gets a relative wrapper so the seam handle can
+  // sit on the boundary itself (junction-owned, like the shell's sashes).
+  const [list, ...rest] = Children.toArray(children)
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
@@ -55,8 +118,31 @@ export function MasterDetail({
           'grid min-h-0 flex-1 grid-cols-1',
           split === 'wide' ? MASTER_DETAIL_WIDE_COLS : 'sm:grid-cols-[14rem_minmax(0,1fr)]'
         )}
+        ref={gridRef}
+        style={override !== undefined ? ({ '--md-split': `${override}px` } as CSSProperties) : undefined}
       >
-        {children}
+        {resizeId ? (
+          <>
+            {list}
+            <div className="relative grid min-h-0 min-w-0">
+              <div
+                className="group/vsash absolute inset-y-0 start-0 z-10 hidden w-1 -translate-x-1/2 cursor-col-resize sm:block rtl:translate-x-1/2"
+                onDoubleClick={() => setPaneWidthOverride(resizeId, undefined)}
+                onPointerDown={startSplitDrag}
+              >
+                <div
+                  className={cn(
+                    'absolute inset-y-0 start-1/2 w-px -translate-x-1/2 transition-colors rtl:translate-x-1/2',
+                    dragging ? 'bg-(--ui-stroke-secondary)' : 'group-hover/vsash:bg-(--ui-stroke-secondary)'
+                  )}
+                />
+              </div>
+              {rest}
+            </div>
+          </>
+        ) : (
+          children
+        )}
       </div>
       {pane}
     </div>
@@ -189,19 +275,19 @@ export function DetailPane({
       }
     }
 
-    const onUp = () => {
+    // startPointerDrag (not a hand-rolled pointerup listener) because it also
+    // ends on `pointercancel`: on Android the platform steals the pointer
+    // mid-gesture and delivers cancel INSTEAD of up, which with the two-event
+    // version left the pane glued to the finger and leaked the move handler.
+    startPointerDrag(onMove, () => {
       // Land the released position even if the pointer went up mid-frame.
       if (frame) {
         cancelAnimationFrame(frame)
         flush()
       }
 
-      window.removeEventListener('pointermove', onMove)
       setDragging(false)
-    }
-
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp, { once: true })
+    })
   }
 
   return (

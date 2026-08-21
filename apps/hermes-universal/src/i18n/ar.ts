@@ -925,6 +925,21 @@ export const ar = defineLocale({
   },
   skills: {
     tabSkills: 'المهارات',
+    hub: {
+      advisory: 'SkillEvaluator (استشاري)',
+      advisoryPassed: 'لا توجد مشكلات',
+      advisoryFlagged: count => `تم الإبلاغ عن ${count} مشكلة`,
+      advisoryIncomplete: count => `تعذّر تنفيذ ${count} من الفحوصات`
+    },
+    project: {
+      trust: 'الوثوق بهذا المستودع',
+      untrust: 'إلغاء الثقة',
+      trustedCount: count => `تم تحميل ${count} من مهارات المشروع من هذا المستودع`,
+      untrustedCount: count => `${count} من المهارات في هذا المستودع لن تُحمَّل حتى تثق به`,
+      quarantinedCount: count => `${count} محظورة بواسطة الفحص الأمني`,
+      disabled: 'اكتشاف مهارات المشروع معطَّل لهذا الملف الشخصي.',
+      title: 'مهارات المشروع'
+    },
     tabToolsets: 'مجموعات الأدوات',
     all: 'الكل',
     searchSkills: 'البحث في المهارات',

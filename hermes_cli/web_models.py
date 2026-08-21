@@ -644,6 +644,14 @@ class SkillToggle(BaseModel):
     profile: Optional[str] = None
 
 
+class ProjectSkillTrust(BaseModel):
+    """Trust (or untrust) a project root for project-local skill discovery."""
+
+    path: str
+    trusted: bool = True
+    profile: Optional[str] = None
+
+
 # --- from web_server.py (originally lines 15883-15893) ---
 
 class SkillCreate(BaseModel):

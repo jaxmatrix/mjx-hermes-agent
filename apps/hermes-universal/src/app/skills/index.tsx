@@ -12,6 +12,7 @@ import { CountSkeleton } from '@/components/ui/skeleton'
 import {
   editLearningNode,
   getLearningNode,
+  getSkillContent,
   getSkills,
   getToolsets,
   getUsageAnalytics,
@@ -28,6 +29,7 @@ import { normalize } from '@/lib/text'
 import { $gateway } from '@/store/gateway'
 import { notify, notifyError } from '@/store/notifications'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
+import { $settingsScopeOverride, $settingsScopeProfile } from '@/store/settings-scope'
 import type { SkillInfo, ToolsetInfo } from '@/types/hermes'
 
 import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
@@ -49,15 +51,22 @@ import { PanelEmpty, PanelPill } from '../overlays/panel'
 import { PageSearchShell } from '../page-search-shell'
 import { ComputerUsePanel } from '../settings/computer-use-panel'
 import { asText, includesQuery, prettyName, toolNames, toolsetDisplayLabel } from '../settings/helpers'
+import { SettingsProfileScope } from '../settings/profile-scope'
 import { TerminalBackendPanel } from '../settings/terminal-backend-panel'
 import { ToolsetConfigPanel } from '../settings/toolset-config-panel'
 import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
 
 import { SkillsHub } from './hub'
 import { McpTab } from './mcp-tab'
-import { $skillsSortDesc, $toolsetsSortDesc } from './store'
+import { ProjectSkillsGate } from './project-skills'
+import { $skillsSortDesc, $toolsetsSortDesc, HUB_PANE_ID } from './store'
 
-const SKILLS_MODES = ['skills', 'toolsets', 'mcp', 'hub'] as const
+// 'hub' is gone as a top-level tab — the hub browser is docked inside the
+// Skills tab now. Legacy `?tab=hub` links fall back to 'skills' through
+// useRouteEnumParam's unknown-value guard, so they keep working.
+const SKILLS_MODES = ['skills', 'toolsets', 'mcp'] as const
+
+const HUB_PANE_DEFAULT_PX = 320
 
 // Skills + toolsets live in the RQ cache so switching tabs/pages paints the
 // cached lists instantly (no reload flash) and mount only fires a deduped
@@ -67,8 +76,9 @@ const SKILLS_QUERY_KEY = ['skills-list'] as const
 const TOOLSETS_QUERY_KEY = ['toolsets-list'] as const
 
 // Optimistic write-through: toggles/bulk/archive repaint instantly; the next
-// background refetch reconciles with the backend.
-const setSkills = writeCache<SkillInfo[]>(SKILLS_QUERY_KEY)
+// background refetch reconciles with the backend. The Skills writer is built
+// per scope inside the view (the key carries the profile); Toolsets is not
+// scoped (see the scope comment in SkillsView).
 const setToolsets = writeCache<ToolsetInfo[]>(TOOLSETS_QUERY_KEY)
 
 // Per-tool call counts come from a 365-day message scan — heavy, and purely
@@ -187,13 +197,29 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
 
   const [query, setQuery] = useState('')
 
+  // Capabilities scope: WHICH profile's skills this view reads and writes.
+  // Shared with the settings pages through 450's one store, so a profile
+  // picked there carries here (and back). `scopeOverride` is what rides the
+  // wire — null means "no override", which keeps every request byte-identical
+  // for single-profile users; `scopeKey` is the concrete profile the caches
+  // are keyed by.
+  //
+  // SKILLS ONLY, deliberately: Tools' per-toolset config panels and the MCP
+  // tab's live-reload RPC are not profile-threaded yet (MJXHRM-451/454 own
+  // that surface), and a scope chip above a tab that ignores it would lie. So
+  // the chips render on the Skills tab, where every action honours them.
+  const scopeOverride = useStore($settingsScopeOverride)
+  const scopeKey = useStore($settingsScopeProfile)
+  const skillsQueryKey = useMemo(() => [...SKILLS_QUERY_KEY, scopeKey], [scopeKey])
+  const setSkills = useMemo(() => writeCache<SkillInfo[]>(skillsQueryKey), [skillsQueryKey])
+
   const {
     data: skills,
     isError: skillsFailed,
     error: skillsError
   } = useQuery({
-    queryKey: SKILLS_QUERY_KEY,
-    queryFn: getSkills,
+    queryKey: skillsQueryKey,
+    queryFn: () => getSkills(scopeOverride),
     staleTime: 0
   })
 
@@ -336,7 +362,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
     setSkills(current => current?.map(row => (row.name === skill.name ? { ...row, enabled } : row)) ?? current)
 
     try {
-      await toggleSkill(skill.name, enabled)
+      await toggleSkill(skill.name, enabled, scopeOverride)
       // A disabled skill loses its `/name` command, so the composer's cached
       // `/` list has to be dropped along with the row repaint.
       invalidateSlashCompletions()
@@ -379,7 +405,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
 
     try {
       for (const row of skillTargets) {
-        await toggleSkill(row.name, enabled)
+        await toggleSkill(row.name, enabled, scopeOverride)
         setSkills(cur => cur?.map(r => (r.name === row.name ? { ...r, enabled } : r)) ?? cur)
         done += 1
       }
@@ -478,7 +504,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
     const epoch = skillEditorEpoch.current
 
     try {
-      const node = await getLearningNode(name)
+      const node = await getLearningNode(name, scopeOverride)
 
       if (skillEditorEpoch.current !== epoch) {
         return
@@ -499,7 +525,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
     setSkillSaving(true)
 
     try {
-      await editLearningNode(skillEditor.name, skillDraft)
+      await editLearningNode(skillEditor.name, skillDraft, scopeOverride)
       notify({
         kind: 'success',
         title: t.skills.skillUpdated,
@@ -546,24 +572,15 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
       // searching it is noise.
       searchHidden={mode === 'mcp'}
       searchHints={searchHints}
-      searchPlaceholder={
-        mode === 'skills'
-          ? t.skills.searchSkills
-          : mode === 'hub'
-            ? t.skills.hub.searchPlaceholder
-            : t.skills.searchToolsets
-      }
+      searchPlaceholder={mode === 'skills' ? t.skills.searchSkills : t.skills.searchToolsets}
       searchValue={query}
       tabs={[
         { id: 'skills', label: t.skills.tabSkills, meta: skills?.length ?? null },
         { id: 'toolsets', label: t.skills.tabToolsets, meta: toolsets ? visibleToolsetCount(toolsets) : null },
-        { id: 'mcp', label: t.skills.tabMcp },
-        { id: 'hub', label: t.skills.tabHub }
+        { id: 'mcp', label: t.skills.tabMcp }
       ]}
     >
-      {mode === 'hub' ? (
-        <SkillsHub query={query} />
-      ) : mode === 'mcp' ? (
+      {mode === 'mcp' ? (
         <McpTab gateway={gateway} />
       ) : (skillsFailed || toolsetsFailed) && (!skills || !toolsets) ? (
         <PanelEmpty
@@ -579,56 +596,91 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
       ) : !skills || !toolsets ? (
         <PageLoader label={t.skills.loading} />
       ) : mode === 'skills' ? (
-        visibleSkills.length === 0 ? (
-          capabilityEmpty('skills')
-        ) : (
-          <MasterDetail pane={skillEditorPane} split="wide">
-            <ListColumn
-              header={
-                <ListStrip
-                  left={sortButton(skillsSortDesc, () => $skillsSortDesc.set(!$skillsSortDesc.get()))}
-                  right={
-                    <ListStripMenu
-                      items={[
-                        { disabled: bulkBusy, label: t.skills.disableUnused, onSelect: () => void disableUnused() }
-                      ]}
-                      label={t.skills.tabSkills}
-                      toggle={bulkSwitch(allSkillsEnabled)}
+        // Installed skills on top, the hub browser docked underneath —
+        // discovery sits with management, so there is no separate tab to go
+        // to (and no tab switch between "what do I have" and "what can I
+        // get"). The list region keeps a floor (min-h-40) so dragging the hub
+        // up shrinks the HUB, never the list, and the empty state renders
+        // INSIDE that region: a user with no skills is exactly who needs the
+        // hub, so it must not take the browser down with it.
+        // ponytail: the docked pane is shrink-0 with a px height, so on a
+        // viewport under ~34rem tall the hub is clipped rather than shrunk;
+        // collapse or drag it. Give DetailPane a flexible body if that stops
+        // being good enough.
+        <div className="flex h-full min-h-0 flex-col">
+          {/* Which profile am I editing? Same store (and chips) as the
+              settings pages, so the choice carries across both. */}
+          <SettingsProfileScope className="shrink-0 px-3 pb-3" />
+          {/* The repo's own skills, and the gate that decides whether they
+              load at all. Renders nothing outside a checkout that has any. */}
+          <div className="shrink-0 px-3 pb-2 empty:hidden">
+            <ProjectSkillsGate profile={scopeOverride} />
+          </div>
+          <div className="min-h-40 flex-1 overflow-hidden">
+            {visibleSkills.length === 0 ? (
+              capabilityEmpty('skills')
+            ) : (
+              <MasterDetail pane={skillEditorPane} resizeId="capabilities-split" split="wide">
+                <ListColumn
+                  header={
+                    <ListStrip
+                      left={sortButton(skillsSortDesc, () => $skillsSortDesc.set(!$skillsSortDesc.get()))}
+                      right={
+                        <ListStripMenu
+                          items={[
+                            { disabled: bulkBusy, label: t.skills.disableUnused, onSelect: () => void disableUnused() }
+                          ]}
+                          label={t.skills.tabSkills}
+                          toggle={bulkSwitch(allSkillsEnabled)}
+                        />
+                      }
                     />
                   }
-                />
-              }
-            >
-              {visibleSkills.map(skill => (
-                <CapRow
-                  active={activeSkill?.name === skill.name}
-                  busy={bulkBusy}
-                  enabled={skill.enabled}
-                  key={skill.name}
-                  meta={usageOf(skill) > 0 ? `×${compactNumber(usageOf(skill))}` : undefined}
-                  onSelect={() => setSelectedSkill(skill.name)}
-                  onToggle={enabled => void handleToggleSkill(skill, enabled)}
-                  subtitle={skillSubtitle(skill)}
-                  title={skill.name}
-                  toggleLabel={skill.name}
-                />
-              ))}
-            </ListColumn>
-            <DetailColumn footer={t.skills.changesApplyNewSessions}>
-              {activeSkill && (
-                <SkillDetail
-                  onArchive={() => setArchiveTarget(activeSkill.name)}
-                  onEdit={() => void openSkillEditor(activeSkill.name)}
-                  skill={activeSkill}
-                />
-              )}
-            </DetailColumn>
-          </MasterDetail>
-        )
+                >
+                  {visibleSkills.map(skill => (
+                    <CapRow
+                      active={activeSkill?.name === skill.name}
+                      busy={bulkBusy}
+                      enabled={skill.enabled}
+                      key={skill.name}
+                      meta={usageOf(skill) > 0 ? `×${compactNumber(usageOf(skill))}` : undefined}
+                      onSelect={() => setSelectedSkill(skill.name)}
+                      onToggle={enabled => void handleToggleSkill(skill, enabled)}
+                      subtitle={skillSubtitle(skill)}
+                      title={skill.name}
+                      toggleLabel={skill.name}
+                    />
+                  ))}
+                </ListColumn>
+                <DetailColumn footer={t.skills.changesApplyNewSessions}>
+                  {activeSkill && (
+                    <SkillDetail
+                      onArchive={() => setArchiveTarget(activeSkill.name)}
+                      onEdit={() => void openSkillEditor(activeSkill.name)}
+                      profile={scopeOverride}
+                      skill={activeSkill}
+                    />
+                  )}
+                </DetailColumn>
+              </MasterDetail>
+            )}
+          </div>
+          {/* The hub browser, docked: the same persisted, drag-resizable,
+              collapsible pane every other work surface uses. One search box
+              drives both halves — typing filters the installed list AND
+              searches the hub underneath it. */}
+          <DetailPane
+            defaultHeight={HUB_PANE_DEFAULT_PX}
+            id={HUB_PANE_ID}
+            title={<span className="text-[0.68rem] font-normal text-muted-foreground/60">{t.skills.tabHub}</span>}
+          >
+            <SkillsHub profile={scopeOverride} query={query} />
+          </DetailPane>
+        </div>
       ) : visibleToolsets.length === 0 ? (
         capabilityEmpty('tools')
       ) : (
-        <MasterDetail split="wide">
+        <MasterDetail resizeId="capabilities-split" split="wide">
           <ListColumn
             header={
               <ListStrip
@@ -690,6 +742,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
           onClose={() => setArchiveTarget(null)}
           onFailure={(err, name) => notifyError(err, name)}
           open
+          profile={scopeOverride}
           skillId={archiveTarget}
           skillName={archiveTarget}
         />
@@ -722,11 +775,76 @@ function DetailHeader({
   )
 }
 
-function SkillDetail({ onArchive, onEdit, skill }: { onArchive: () => void; onEdit: () => void; skill: SkillInfo }) {
+// Frontmatter parse for display: the YAML block between the leading `---`
+// fences, flattened to top-level `key: value` rows (nested blocks render as
+// their raw indented text). Display-only — never fed back to the backend.
+export function parseFrontmatter(content: string): { body: string; meta: [string, string][] } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(content)
+
+  if (!match) {
+    return { body: content, meta: [] }
+  }
+
+  const meta: [string, string][] = []
+  let currentKey: null | string = null
+  let block: string[] = []
+
+  const flush = () => {
+    if (currentKey !== null) {
+      meta.push([currentKey, block.join('\n').trim()])
+    }
+
+    currentKey = null
+    block = []
+  }
+
+  for (const line of match[1].split(/\r?\n/)) {
+    const kv = /^(\w[\w-]*):\s?(.*)$/.exec(line)
+
+    if (kv) {
+      flush()
+      currentKey = kv[1]
+      block = kv[2] ? [kv[2]] : []
+    } else if (currentKey !== null) {
+      block.push(line.replace(/^ {2}/, ''))
+    }
+  }
+
+  flush()
+
+  return { body: content.slice(match[0].length), meta }
+}
+
+function SkillDetail({
+  onArchive,
+  onEdit,
+  profile,
+  skill
+}: {
+  onArchive: () => void
+  onEdit: () => void
+  /** Capabilities scope — the same skill name is a different file per profile. */
+  profile?: null | string
+  skill: SkillInfo
+}) {
   const { t } = useI18n()
   // Only learned/local skills are the user's to rewrite or archive — bundled
   // and hub skills are managed by their sources.
   const editable = skill.provenance === 'agent'
+
+  // The FULL skill — frontmatter metadata + the whole SKILL.md body — for any
+  // provenance. The row list only carries name/description, so without this the
+  // pane could never answer "what does this skill actually do".
+  const contentQuery = useQuery({
+    queryKey: ['skill-content', skill.name, profile ?? ''],
+    queryFn: () => getSkillContent(skill.name, profile),
+    staleTime: 60_000
+  })
+
+  const parsed = useMemo(
+    () => (contentQuery.data ? parseFrontmatter(contentQuery.data.content) : null),
+    [contentQuery.data]
+  )
 
   return (
     <>
@@ -754,6 +872,26 @@ function SkillDetail({ onArchive, onEdit, skill }: { onArchive: () => void; onEd
           </Button>
         </div>
       )}
+      {parsed && parsed.meta.length > 0 && (
+        <div className="grid gap-1 rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) p-3">
+          {parsed.meta.map(([key, value]) => (
+            <div className="flex gap-2 text-[0.68rem] leading-4" key={key}>
+              <span className="w-24 shrink-0 font-medium text-(--ui-text-tertiary)">{key}</span>
+              <span className="min-w-0 whitespace-pre-wrap break-words text-(--ui-text-secondary)">{value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {contentQuery.isLoading ? (
+        <CountSkeleton />
+      ) : parsed ? (
+        <pre
+          className="overflow-auto whitespace-pre-wrap wrap-break-word rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) p-3 font-mono text-[0.68rem] leading-relaxed"
+          data-selectable-text="true"
+        >
+          {parsed.body.trim() || t.skills.noDescription}
+        </pre>
+      ) : null}
     </>
   )
 }
