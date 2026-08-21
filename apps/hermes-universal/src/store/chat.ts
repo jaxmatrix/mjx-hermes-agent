@@ -873,6 +873,13 @@ export interface EditPlan {
   sourceIndex: number
   text: string
   truncateOrdinal?: number
+  /** The durable `messages.id` of the turn being rewound, when the transcript
+   *  has learned it. The gateway REFUSES an ordinal-only truncation of a
+   *  durable session (4004), so this is the real address; the ordinal is now
+   *  only a cross-check. Undefined for a turn that has not round-tripped
+   *  through a hydration yet — the edit-just-sent case, resolved by content in
+   *  `runRewindSubmit`. */
+  truncateRowId?: number
 }
 
 /**
@@ -910,7 +917,8 @@ export function planEdit(messages: ChatMessage[], sourceId: string, rawText: str
     isFailedTurn,
     sourceIndex,
     text,
-    truncateOrdinal: isFailedTurn ? undefined : truncateOrdinal
+    truncateOrdinal: isFailedTurn ? undefined : truncateOrdinal,
+    truncateRowId: isFailedTurn ? undefined : source.rowId
   }
 }
 
@@ -963,16 +971,160 @@ const isStaleTargetError = (error: unknown): boolean =>
  * Ordinal 0 additionally truncates to an EMPTY transcript (restoring or editing
  * the first user turn), which the gateway gates behind its own second opt-in.
  */
-function truncateSubmitParams(truncateOrdinal: number | undefined): Record<string, unknown> {
-  if (truncateOrdinal === undefined) {
+export function truncateSubmitParams(
+  truncateOrdinal: number | undefined,
+  truncateRowId?: number
+): Record<string, unknown> {
+  const hasRowId = typeof truncateRowId === 'number' && Number.isInteger(truncateRowId)
+
+  if (truncateOrdinal === undefined && !hasRowId) {
     return {}
   }
 
   return {
     confirm_truncate: true,
-    truncate_before_user_ordinal: truncateOrdinal,
+    ...(truncateOrdinal === undefined ? {} : { truncate_before_user_ordinal: truncateOrdinal }),
+    ...(hasRowId ? { truncate_before_row_id: truncateRowId } : {}),
     ...(truncateOrdinal === 0 ? { confirm_empty_truncate: true } : {})
   }
+}
+
+/** One row of the gateway's stamped transcript (`session.history`). */
+interface DurableHistoryMessage {
+  display_kind?: string
+  role?: string
+  row_id?: unknown
+  text?: unknown
+  content?: unknown
+}
+
+/**
+ * Resolve a user turn's durable row id by CONTENT against `session.history`.
+ *
+ * For the turn the user JUST sent there is no bound `rowId` — the durable row
+ * exists, this client simply never learned its id, because ids arrive on
+ * hydration and the live row was appended locally. Editing what you just sent
+ * is a completely ordinary action, so without this the most common rewind of
+ * all still has no durable address and the gateway refuses it.
+ *
+ * Ordinal arithmetic cannot substitute: the renderer's user-turn space and the
+ * gateway's diverge (tagged `display_kind` rows are outside the gateway's
+ * space, and a compression lineage renumbers it), and guessing wrong here cuts
+ * a DIFFERENT turn and everything after it — an unrecoverable overwrite.
+ *
+ * So the match is exact-or-nothing. A unique text match wins. Several matching
+ * turns resolve only when the caller's ordinal says the target is the newest
+ * persisted turn AND the last match IS that turn — the edit-just-sent shape, in
+ * which the newest is by definition the one meant. Anything else returns
+ * undefined and the caller resubmits plainly rather than guessing a cut.
+ *
+ * Ported from desktop's `resolveDurableRowId` (use-prompt-actions/rewind.ts).
+ */
+export async function resolveDurableRowId(
+  sessionId: string,
+  sourceText: string,
+  expectedOrdinal: number | undefined,
+  request: typeof requestGateway = requestGateway
+): Promise<number | undefined> {
+  const wanted = sourceText.trim()
+
+  if (!wanted) {
+    return undefined
+  }
+
+  let messages: DurableHistoryMessage[]
+
+  try {
+    const result = await request<{ messages?: unknown }>('session.history', { session_id: sessionId })
+
+    messages = Array.isArray(result?.messages) ? (result.messages as DurableHistoryMessage[]) : []
+  } catch {
+    return undefined
+  }
+
+  const durableUsers = messages.filter(
+    message =>
+      message.role === 'user' &&
+      !message.display_kind &&
+      typeof message.row_id === 'number' &&
+      Number.isInteger(message.row_id)
+  )
+
+  const textOf = (message: DurableHistoryMessage): string => {
+    const raw = message.text ?? message.content
+
+    return typeof raw === 'string' ? raw.trim() : ''
+  }
+
+  const matches = durableUsers.filter(message => textOf(message) === wanted)
+
+  if (matches.length === 1) {
+    return matches[0].row_id as number
+  }
+
+  if (matches.length > 1 && typeof expectedOrdinal === 'number' && expectedOrdinal >= durableUsers.length - 1) {
+    const last = matches[matches.length - 1]
+
+    return durableUsers[durableUsers.length - 1] === last ? (last.row_id as number) : undefined
+  }
+
+  return undefined
+}
+
+/**
+ * Post-rewind durable ids of the surviving user turns, in user-turn order —
+ * the gateway's `survivor_user_row_ids` on a truncating `prompt.submit`.
+ *
+ * A rewind's `replace_messages` re-inserts the kept prefix as NEW SQLite rows,
+ * so every `rowId` already cached on a surviving bubble is stale the instant
+ * the rewind lands. Targeting one on the NEXT rewind gets a fail-closed 4018,
+ * which universal degrades into a plain resubmit — so without rebinding, a
+ * second consecutive rewind silently appends instead of rewinding. `null` means
+ * that turn has no durable id and its cached one must be dropped, not kept.
+ * Absent entirely = the submit did not truncate a durable session, or the
+ * gateway predates the field: leave state untouched.
+ */
+export type SurvivorUserRowIds = readonly (null | number)[]
+
+export function survivorRowIdsFrom(result: unknown): SurvivorUserRowIds | undefined {
+  const raw = (result as { survivor_user_row_ids?: unknown } | undefined)?.survivor_user_row_ids
+
+  if (!Array.isArray(raw)) {
+    return undefined
+  }
+
+  return raw.map(entry => (typeof entry === 'number' && Number.isInteger(entry) ? entry : null))
+}
+
+/**
+ * Rebind surviving user turns to their authoritative post-rewind row ids.
+ *
+ * Positional, over the same `role === 'user'` filter `userOrdinalAt` counts —
+ * deliberately the same one, so the rebind and the truncate math can never
+ * disagree with each other about which turn is the nth. Turns past the end of
+ * the survivor list (the resubmitted turn, whose durable row does not exist
+ * yet) and `null` entries have their cached id CLEARED: a stale id addresses an
+ * archived row and would be refused, whereas no id degrades to the content
+ * resolver above, which is correct.
+ */
+export function rebindSurvivorRowIds(messages: ChatMessage[], survivorRowIds: SurvivorUserRowIds): ChatMessage[] {
+  let ordinal = 0
+
+  return messages.map(message => {
+    if (message.role !== 'user') {
+      return message
+    }
+
+    const next = ordinal < survivorRowIds.length ? survivorRowIds[ordinal] : null
+
+    ordinal += 1
+
+    if (typeof next === 'number') {
+      return message.rowId === next ? message : { ...message, rowId: next }
+    }
+
+    return message.rowId === undefined ? message : { ...message, rowId: undefined }
+  })
 }
 
 /**
@@ -1021,9 +1173,31 @@ async function runRewindSubmit(
   target: RewindTarget,
   text: string,
   truncateOrdinal: number | undefined,
-  interruptFirst: boolean
-): Promise<void> {
+  interruptFirst: boolean,
+  truncateRowId?: number,
+  sourceText?: string
+): Promise<SurvivorUserRowIds | undefined> {
   const { withSessionNotFoundResume } = await sessionRecovery()
+
+  // A truncation with no durable address can only fail: the gateway refuses
+  // ordinal-only truncation of any persisted session (4004, fail-closed — it
+  // treats "cannot read the durable history" as durable too). Resolve the row
+  // id by content first; the row almost always exists and only its id is
+  // missing. If that fails too, degrade to a PLAIN resubmit — append the text
+  // without dropping anything — rather than send a cut we cannot aim.
+  let resolvedRowId = truncateRowId
+  let resolvedOrdinal = truncateOrdinal
+
+  if (truncateOrdinal !== undefined && truncateRowId === undefined) {
+    resolvedRowId =
+      sourceText === undefined ? undefined : await resolveDurableRowId(target.sessionId, sourceText, truncateOrdinal)
+
+    // Either way the client ordinal is now untrustworthy — its divergence from
+    // the gateway's space is precisely why the row id had to be resolved. Sent
+    // alongside a resolved id it would trip the gateway's 4030 cross-check;
+    // sent alone it is the 4004 refusal again. Drop it in both branches.
+    resolvedOrdinal = undefined
+  }
 
   const recover = async <T>(call: (liveSessionId: string) => Promise<T>): Promise<T> => {
     const { result } = await withSessionNotFoundResume(target.sessionId, target.storedId, call, {
@@ -1050,9 +1224,22 @@ async function runRewindSubmit(
 
   const submit = () =>
     recover(live =>
-      requestGateway(
+      requestGateway<unknown>(
         'prompt.submit',
-        { session_id: live, text, ...truncateSubmitParams(truncateOrdinal) },
+        {
+          session_id: live,
+          text,
+          ...truncateSubmitParams(resolvedOrdinal, resolvedRowId),
+          // A first-turn rewind resolves to an empty transcript, which the
+          // gateway gates behind its own second opt-in. `truncateSubmitParams`
+          // derives that flag from the ordinal, which the resolver branch above
+          // just dropped — so carry it from the caller's original belief:
+          // required when that belief was right, ignored by the gateway when
+          // the cut turns out not to be empty.
+          ...(resolvedRowId !== undefined && resolvedOrdinal === undefined && truncateOrdinal === 0
+            ? { confirm_empty_truncate: true }
+            : {})
+        },
         PROMPT_SUBMIT_TIMEOUT_MS
       )
     )
@@ -1068,14 +1255,15 @@ async function runRewindSubmit(
 
   try {
     try {
-      await submit()
+      return survivorRowIdsFrom(await submit())
     } catch (err) {
       if (!isSessionBusyError(err)) {
         throw err
       }
 
       await interrupt()
-      await withSessionBusyRetry(submit)
+
+      return survivorRowIdsFrom(await withSessionBusyRetry(submit))
     }
   } catch (err) {
     // Nothing is running: the caller is about to roll its optimistic truncation
@@ -1085,6 +1273,16 @@ async function runRewindSubmit(
 
     throw err
   }
+}
+
+/** Fold the gateway's post-rewind row ids onto a session's surviving turns.
+ *  Addressed to `target.key`, which a mid-flight recovery may have moved. */
+function applySurvivorRowIds(key: string, survivors: SurvivorUserRowIds | undefined): void {
+  if (!survivors) {
+    return
+  }
+
+  updateSession(key, state => ({ ...state, messages: rebindSurvivorRowIds(state.messages, survivors) }))
 }
 
 /**
@@ -1151,6 +1349,11 @@ export async function submitEditedPrompt(
   // the interrupt its own live turn needed.
   const wasBusy = Boolean(slice.busy)
 
+  // The turn's ORIGINAL text, not the replacement: it is what the durable row
+  // still says, so it is what the content resolver has to match on when the
+  // bubble carries no row id (editing a turn you just sent).
+  const sourceText = chatMessageText(messages[plan.sourceIndex])
+
   const target: RewindTarget = {
     key: editKey,
     sessionId,
@@ -1166,7 +1369,10 @@ export async function submitEditedPrompt(
   }))
 
   try {
-    await runRewindSubmit(target, plan.text, plan.truncateOrdinal, wasBusy)
+    applySurvivorRowIds(
+      target.key,
+      await runRewindSubmit(target, plan.text, plan.truncateOrdinal, wasBusy, plan.truncateRowId, sourceText)
+    )
   } catch (err) {
     // The target turn moved under us (e.g. auto-compression rotated the
     // history). We already interrupted, so land the text as a plain resend.
@@ -1187,7 +1393,7 @@ export async function submitEditedPrompt(
           messages: [...messages, { ...plan.editedMessage, id: nextId() }]
         }))
 
-        await runRewindSubmit(target, plan.text, undefined, false)
+        applySurvivorRowIds(target.key, await runRewindSubmit(target, plan.text, undefined, false))
 
         return
       } catch {
@@ -1214,6 +1420,10 @@ export interface RestorePlan {
   sourceIndex: number
   text: string
   truncateOrdinal: number
+  /** See `EditPlan.truncateRowId`. A restore re-runs the turn unchanged, so its
+   *  own text doubles as the content the resolver matches on when this is
+   *  undefined. */
+  truncateRowId?: number
 }
 
 /** The nth user turn's index, or -1. The backend truncates by user ordinal, and
@@ -1282,7 +1492,7 @@ export function planRestore(
     throw new Error(translateNow('desktop.restoreEmpty'))
   }
 
-  return { sourceIndex, text, truncateOrdinal: userOrdinalAt(messages, sourceIndex) }
+  return { sourceIndex, text, truncateOrdinal: userOrdinalAt(messages, sourceIndex), truncateRowId: source.rowId }
 }
 
 /**
@@ -1338,7 +1548,10 @@ export async function restoreToMessage(
   }))
 
   try {
-    await runRewindSubmit(target, plan.text, plan.truncateOrdinal, wasBusy)
+    applySurvivorRowIds(
+      target.key,
+      await runRewindSubmit(target, plan.text, plan.truncateOrdinal, wasBusy, plan.truncateRowId, plan.text)
+    )
   } catch (err) {
     // The rewind never landed. Roll the optimistic truncation back to the full
     // history so the transcript matches what is persisted — leaving it truncated
