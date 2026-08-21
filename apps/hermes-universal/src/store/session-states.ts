@@ -47,6 +47,7 @@ import { clearAllPrompts } from '@/store/prompts'
 import {
   $activeStoredSessionId,
   $unreadFinishedSessionIds,
+  clearUnreadFinishedSession,
   newSession,
   sameStoredSession,
   setActiveSessionStoredIdRotation
@@ -176,7 +177,11 @@ function handleTransition(previous: ClientSessionState | null, next: ClientSessi
   }
 
   // The busy→idle EDGE is what marks a background session unread ("your turn").
-  if (!next.busy && (previous?.busy ?? false) && storedId !== $activeStoredSessionId.get()) {
+  // Gated on the FOCUSED session, not the selected one: a tile is never
+  // `$activeStoredSessionId`, so keying this on the selection marked every tiled
+  // chat unread the moment it finished a turn the user was watching — and
+  // nothing on the tile-fronting path could clear it again.
+  if (!next.busy && (previous?.busy ?? false) && !sameStoredSession(storedId, $focusedStoredSessionId.get())) {
     const cur = $unreadFinishedSessionIds.get()
 
     if (!cur.includes(storedId)) {
@@ -1116,6 +1121,17 @@ export const $focusedStoredSessionId = computed(
   [$focusedChatPane, $activeStoredSessionId],
   (pane, selected) => storedIdFromTilePane(pane) ?? selected
 )
+
+// Looking at a session is what makes it read — and on a multi-tile shell that
+// is the FOCUSED chat, not the selected one. `$activeStoredSessionId` has its
+// own listener in store/session (a primary navigation), which covers the case
+// where a tile keeps focus while the workspace switches sessions; this covers
+// the one that listener cannot see: fronting an already-open tile.
+$focusedStoredSessionId.listen(storedId => {
+  if (storedId) {
+    clearUnreadFinishedSession(storedId)
+  }
+})
 
 /** Session key of the focused session (a tile's bound key, else the active one). */
 export const $focusedRuntimeId = computed(

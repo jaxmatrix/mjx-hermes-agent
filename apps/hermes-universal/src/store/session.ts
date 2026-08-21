@@ -365,11 +365,19 @@ export const $searchLoading = atom(false)
 // `store/session-states.ts#handleTransition`; a view clears its id when seen.
 export const $unreadFinishedSessionIds = atom<string[]>([])
 
+/** Retire the unread marker for a conversation, under EVERY id it answers to.
+ *
+ *  Auto-compression rotates the stored id, and the two halves routinely hold
+ *  different tips: the marker is written from the live transition (the fresh
+ *  id), while the surface that clears it — a tile keyed at open time, a sidebar
+ *  row from a page fetched before the rotation — can be holding the lineage
+ *  root. Comparing on identity left those markers unclearable. */
 export function clearUnreadFinishedSession(storedSessionId: string): void {
   const cur = $unreadFinishedSessionIds.get()
+  const next = cur.filter(id => id !== storedSessionId && !sameStoredSession(id, storedSessionId))
 
-  if (cur.includes(storedSessionId)) {
-    $unreadFinishedSessionIds.set(cur.filter(id => id !== storedSessionId))
+  if (next.length !== cur.length) {
+    $unreadFinishedSessionIds.set(next)
   }
 }
 
