@@ -8,14 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createBudgetedLoop } from './budgeted-loop'
 
-let now = 0
 let callbacks: Map<number, FrameRequestCallback>
 let nextHandle = 1
 
-/** Run one frame at `now = at`, the way rAF would. */
+/** Run one frame stamped `at`, the way rAF would. The loop reads only the
+ *  timestamp its callback is handed, so there is no clock to advance here. */
 function frame(at: number) {
-  now = at
-
   const pending = [...callbacks.entries()]
   callbacks.clear()
 
@@ -25,7 +23,6 @@ function frame(at: number) {
 }
 
 beforeEach(() => {
-  now = 0
   nextHandle = 1
   callbacks = new Map()
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
