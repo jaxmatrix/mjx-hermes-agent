@@ -19,7 +19,7 @@ vi.mock('@/hermes', () => ({
 import { act } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
-import { getHermesConfigRecord, saveHermesConfig } from '@/hermes'
+import { getHermesConfigRecord, getHermesConfigSchema, saveHermesConfig } from '@/hermes'
 import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 import { $approvalModes } from '@/store/approval-mode'
@@ -96,6 +96,65 @@ describe('ConfigSection', () => {
     // …and the debounced autosave it scheduled never reaches B.
     await new Promise(resolve => setTimeout(resolve, 900))
     expect(save).not.toHaveBeenCalled()
+  })
+
+  /**
+   * MJXHRM-443 — the two silent-data-loss shapes of the 08-20 contract delta.
+   * A save PUTs the WHOLE draft back, so every untouched key rides along; the
+   * question is whether it rides along unchanged. `agent.max_turns` is null =
+   * unlimited (DEFAULT_CONFIG, not a migration), and an unset `stt.provider` is
+   * what makes the backend's autodetect ladder run. Coercing either on the way
+   * out silently re-caps every run / pins every fresh install to faster-whisper.
+   */
+  describe('values the user never touched', () => {
+    it('writes back a null agent.max_turns as null, not 0 or a default', async () => {
+      vi.mocked(getHermesConfigRecord).mockResolvedValue({ agent: { api_max_retries: 3, max_turns: null } })
+      vi.mocked(getHermesConfigSchema).mockResolvedValue({
+        fields: { 'agent.api_max_retries': { type: 'number' }, 'agent.max_turns': { type: 'number' } }
+      })
+
+      renderSection('advanced')
+
+      // Both rows render; edit the OTHER one so max_turns is only along for the
+      // ride — which is exactly the case a coercing save loses.
+      const inputs = await screen.findAllByRole('spinbutton')
+      // Both declared rows plus timeouts.tools.sequential_call, which renders
+      // from FALLBACK_FIELD_SCHEMA with nothing seeding it.
+      expect(inputs).toHaveLength(3)
+      // Pick the field by its VALUE: a null max_turns renders as an empty box,
+      // so an index would silently drift if the section order changed.
+      const retries = inputs.find(input => (input as HTMLInputElement).value === '3')
+
+      expect(retries).toBeDefined()
+      fireEvent.change(retries!, { target: { value: '5' } })
+
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 1500 })
+
+      const saved = save.mock.calls[0][0]
+      expect(getNested(saved, 'agent.api_max_retries')).toBe(5)
+      expect(getNested(saved, 'agent.max_turns')).toBeNull()
+    })
+
+    it('leaves an unset stt.provider unset instead of writing local back', async () => {
+      // A fresh install: stt exists, provider does not, and the backend schema
+      // no longer declares it either (the seed removal stranded its override).
+      vi.mocked(getHermesConfigRecord).mockResolvedValue({ stt: { echo_transcripts: true } })
+      vi.mocked(getHermesConfigSchema).mockResolvedValue({ fields: { 'stt.echo_transcripts': { type: 'boolean' } } })
+
+      renderSection('voice')
+
+      // The picker still renders — that is FALLBACK_FIELD_SCHEMA doing its job.
+      expect(await screen.findByRole('combobox')).toBeInTheDocument()
+
+      fireEvent.click(await screen.findByRole('switch'))
+
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 1500 })
+
+      const saved = save.mock.calls[0][0]
+      expect(getNested(saved, 'stt.echo_transcripts')).toBe(false)
+      expect(getNested(saved, 'stt.provider')).toBeUndefined()
+      expect(Object.prototype.hasOwnProperty.call(saved.stt as object, 'provider')).toBe(false)
+    })
   })
 
   // MJXHRM-399. `approvals.mode` has three writers — this panel (Safety), the
