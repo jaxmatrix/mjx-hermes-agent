@@ -14,6 +14,7 @@ import { WakeIndicatorWindowRoot } from '@/app/wake-indicator/wake-indicator-win
 import { ConfirmHost } from '@/components/confirm-host'
 import { FindBar } from '@/components/find-bar'
 import { startMcpDeepLinkListener } from '@/store/mcp-deeplink-install'
+import { startMcpHealthChecker } from '@/store/mcp-health'
 import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFACE } from '@/store/windows'
 
 /**
@@ -70,6 +71,9 @@ import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFAC
  */
 export function App() {
   startMcpDeepLinkListener()
+  // Both are idempotent and refuse to arm twice; the health checker also
+  // refuses in a satellite window, so the fleet gets ONE sweeper.
+  startMcpHealthChecker()
 
   return (
     <>

@@ -156,6 +156,14 @@ export const zh: Translations = {
       backgroundDoneTitle: '后台任务已完成',
       backgroundFailedTitle: '后台任务失败',
       creditsTitle: '额度'
+    },
+    mcp: {
+      needsAuthTitle: 'MCP 服务器需要重新认证',
+      needsAuthMessage: name => `${name} MCP 需要重新认证。`,
+      errorTitle: 'MCP 服务器不可达',
+      errorMessage: name => `${name} MCP 健康检查失败。`,
+      signIn: '登录',
+      view: '查看'
     }
   },
 

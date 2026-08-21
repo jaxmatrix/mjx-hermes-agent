@@ -172,6 +172,14 @@ export const ja = defineLocale({
       backgroundDoneTitle: 'バックグラウンドタスクが完了しました',
       backgroundFailedTitle: 'バックグラウンドタスクが失敗しました',
       creditsTitle: 'クレジット'
+    },
+    mcp: {
+      needsAuthTitle: 'MCP サーバーの再認証が必要です',
+      needsAuthMessage: name => `${name} MCP の再認証が必要です。`,
+      errorTitle: 'MCP サーバーに接続できません',
+      errorMessage: name => `${name} MCP のヘルスチェックに失敗しました。`,
+      signIn: 'サインイン',
+      view: '表示'
     }
   },
 

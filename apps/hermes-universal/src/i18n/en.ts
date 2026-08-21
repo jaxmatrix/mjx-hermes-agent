@@ -158,6 +158,14 @@ export const en: Translations = {
       backgroundDoneTitle: 'Background task finished',
       backgroundFailedTitle: 'Background task failed',
       creditsTitle: 'Credits'
+    },
+    mcp: {
+      needsAuthTitle: 'MCP server needs re-authentication',
+      needsAuthMessage: name => `${name} MCP needs re-authentication.`,
+      errorTitle: 'MCP server unreachable',
+      errorMessage: name => `${name} MCP failed its health check.`,
+      signIn: 'Sign in',
+      view: 'View'
     }
   },
 

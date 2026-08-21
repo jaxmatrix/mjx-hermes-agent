@@ -118,6 +118,14 @@ export const ar = defineLocale({
       turnErrorTitle: 'فشلت الجولة',
       backgroundDoneTitle: 'انتهت المهمة في الخلفية',
       backgroundFailedTitle: 'فشلت المهمة في الخلفية'
+    },
+    mcp: {
+      needsAuthTitle: 'خادم MCP يحتاج إعادة مصادقة',
+      needsAuthMessage: name => `يحتاج خادم ${name} إلى إعادة المصادقة.`,
+      errorTitle: 'تعذّر الوصول إلى خادم MCP',
+      errorMessage: name => `فشل فحص سلامة خادم ${name}.`,
+      signIn: 'تسجيل الدخول',
+      view: 'عرض'
     }
   },
   remoteDisplayBanner: {

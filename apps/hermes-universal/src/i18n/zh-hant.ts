@@ -169,6 +169,14 @@ export const zhHant = defineLocale({
       backgroundDoneTitle: '背景工作已完成',
       backgroundFailedTitle: '背景工作失敗',
       creditsTitle: '額度'
+    },
+    mcp: {
+      needsAuthTitle: 'MCP 伺服器需要重新驗證',
+      needsAuthMessage: name => `${name} MCP 需要重新驗證。`,
+      errorTitle: 'MCP 伺服器無法連線',
+      errorMessage: name => `${name} MCP 健康檢查失敗。`,
+      signIn: '登入',
+      view: '檢視'
     }
   },
 

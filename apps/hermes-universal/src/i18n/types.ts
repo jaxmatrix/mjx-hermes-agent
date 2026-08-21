@@ -209,6 +209,14 @@ export interface Translations {
       backgroundFailedTitle: string
       creditsTitle: string
     }
+    mcp: {
+      needsAuthTitle: string
+      needsAuthMessage: (name: string) => string
+      errorTitle: string
+      errorMessage: (name: string) => string
+      signIn: string
+      view: string
+    }
   }
 
   billingBlock: {

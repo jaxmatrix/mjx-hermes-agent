@@ -317,7 +317,6 @@
     "updates.checkFailedTitle",
     "updates.connectionRetry",
     "updates.errorBody",
-    "updates.errorTitle",
     "updates.guiSkewBody",
     "updates.guiSkewTitle",
     "updates.latestBody",
