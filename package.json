@@ -64,7 +64,8 @@
     "@types/react-dom": "19.2.3",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "shiki": "^4.4.2"
+    "shiki": "^4.4.2",
+    "@assistant-ui/tap": "0.9.11"
   },
   "engines": {
     "node": ">=22.22.0",
