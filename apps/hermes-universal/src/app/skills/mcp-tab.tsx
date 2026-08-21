@@ -49,9 +49,9 @@ import { notify, notifyError } from '@/store/notifications'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import { $activeSessionId } from '@/store/session'
 
-import { setHermesConfigCache, useHermesConfigRecord } from '../hooks/use-config-record'
+import { hermesConfigCacheWriter, useHermesConfigRecord } from '../hooks/use-config-record'
 import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
-import { DetailPane, ICON_BUTTON, MASTER_DETAIL_WIDE_COLS } from '../master-detail'
+import { DetailPane, ICON_BUTTON, MasterDetail } from '../master-detail'
 import { PanelAddButton, PanelEmpty } from '../overlays/panel'
 import { prettyName } from '../settings/helpers'
 import { useDeepLinkHighlight } from '../settings/use-deep-link-highlight'
@@ -94,6 +94,10 @@ const serverEnabled = (server: Record<string, unknown>) => server.enabled !== fa
 // Shared cache for the Nous-approved catalog — feeds both description enrichment
 // and the Catalog install view; invalidated after an install.
 const MCP_CATALOG_KEY = ['mcp-catalog'] as const
+
+// Pane-store key for the list/editor sash (MasterDetail `resizeId`) — the same
+// store the terminal and editor panes persist their widths in.
+const MCP_SPLIT_ID = 'skills-mcp'
 
 type Probe = McpTestResult | 'probing'
 
@@ -302,14 +306,19 @@ function scanServerBlocks(text: string): ServerBlock[] {
   return blocks
 }
 
-export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
+export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; profile?: null | string }) {
   const { t } = useI18n()
   const m = t.settings.mcp
   const activeSessionId = useStore($activeSessionId)
 
-  // The profile this tab configures. Keys the probe cache and the catalog
-  // query so a switch never paints another profile's servers or probes.
-  const scopeProfileKey = normalizeProfileKey(useStore($activeGatewayProfile))
+  // The profile this tab configures: the Capabilities "Applies to" scope
+  // (`profile`, from store/settings-scope) when set, otherwise the app-wide
+  // active profile. Every fetch/save below is scoped to it, and it keys the
+  // config/catalog/probe caches so switching the selector refetches and never
+  // shows another profile's servers. With no override this resolves to
+  // $activeGatewayProfile, so behavior is identical to before.
+  const appProfile = useStore($activeGatewayProfile)
+  const scopeProfileKey = normalizeProfileKey(profile ?? appProfile)
 
   // Shared config cache (see use-config-record): revisiting the tab paints the
   // cached record instantly; mutations write through `setConfig` and stay
@@ -322,9 +331,9 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
     refetch: refetchConfig,
     dataUpdatedAt: configUpdatedAt,
     errorUpdatedAt: configErroredAt
-  } = useHermesConfigRecord()
+  } = useHermesConfigRecord(profile)
 
-  const setConfig = setHermesConfigCache
+  const setConfig = hermesConfigCacheWriter(profile)
 
   // True from a profile switch until the config query resettles for the new
   // profile. Until then `config` (and thus `servers`) still holds profile A's
@@ -378,20 +387,26 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
   // Config/document order, not alphabetical — the list mirrors mcp.json.
   const names = useMemo(() => Object.keys(servers), [servers])
 
-  // Left column view: the configured fleet, or the Nous-approved catalog to
-  // install from. Both share one cached catalog fetch (also feeds description
-  // enrichment below), so switching between them never re-requests.
-  const [leftView, setLeftView] = useState<'catalog' | 'servers'>('servers')
-
-  // Key by active profile — installed/enabled badges are per-profile, so sharing
-  // one cache across profiles would flash the previous profile's state on switch.
+  // Key by the SCOPED profile — installed/enabled badges are per-profile, so
+  // sharing one cache across profiles would flash the previous profile's state
+  // on switch. With no override this is the active profile, identical to before.
   const catalogQuery = useQuery({
     queryKey: [...MCP_CATALOG_KEY, scopeProfileKey],
-    queryFn: getMcpCatalog,
+    queryFn: () => getMcpCatalog(profile ?? undefined),
     staleTime: 5 * 60_000
   })
 
-  const catalog = catalogQuery.data?.entries ?? []
+  const catalog = useMemo(() => catalogQuery.data?.entries ?? [], [catalogQuery.data])
+
+  // The catalog SECTION of the unified list only offers entries that aren't
+  // already configured — installed servers appear once, in the fleet list
+  // above, with live status. Match by catalog `installed` flag or a config
+  // entry under the same name (covers a just-saved doc the catalog refetch
+  // hasn't caught up with yet).
+  const availableCatalog = useMemo(
+    () => catalog.filter((entry: McpCatalogEntry) => !entry.installed && !(entry.name in servers)),
+    [catalog, servers]
+  )
 
   const descriptionFor = (serverName: string, server: Record<string, unknown>): null | string => {
     const lower = serverName.toLowerCase()
@@ -516,7 +531,7 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
     setProbes(current => ({ ...current, [serverName]: 'probing' }))
 
     try {
-      const result = await testMcpServer(serverName)
+      const result = await testMcpServer(serverName, profile ?? undefined)
 
       // Drop the result if the profile changed mid-probe — it belongs to A.
       if (profileEpoch.current !== epoch) {
@@ -547,8 +562,8 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
     try {
       const flow = await completeMcpDesktopOAuth({
         serverName,
-        start: authMcpServer,
-        status: getMcpOAuthFlow,
+        start: name => authMcpServer(name, profile ?? undefined),
+        status: flowId => getMcpOAuthFlow(flowId, profile ?? undefined),
         openExternal: url => openExternalLink(url)
       })
 
@@ -648,7 +663,7 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
   // caller must skip its post-await writes.
   const persist = async (nextServers: McpServers): Promise<boolean> => {
     const epoch = profileEpoch.current
-    await saveMcpServers(nextServers)
+    await saveMcpServers(nextServers, profile ?? undefined)
 
     if (profileEpoch.current !== epoch) {
       return false
@@ -885,30 +900,6 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
     return <PageLoader className="min-h-24" label={configLoading ? m.loading : t.skills.loading} />
   }
 
-  // Zero servers and a pristine doc: one centered invitation — with a path into
-  // the catalog (kept out when the user is already browsing it).
-  if (Object.keys(servers).length === 0 && !dirty && leftView === 'servers') {
-    return (
-      <div className="flex h-full min-h-0 flex-1">
-        <PanelEmpty
-          action={
-            <span className="flex items-center gap-2">
-              <Button onClick={addServer} size="sm">
-                {m.newServer}
-              </Button>
-              <Button onClick={() => setLeftView('catalog')} size="sm" variant="text">
-                {m.tabCatalog}
-              </Button>
-            </span>
-          }
-          description={m.emptyDesc}
-          icon="plug"
-          title={m.emptyTitle}
-        />
-      </div>
-    )
-  }
-
   // Selection may reference an unsaved block (freshly pasted) — fall back to
   // the draft's parsed entry so the config pane can still describe it.
   const savedEntry = selected ? servers[selected] : undefined
@@ -928,10 +919,10 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
   const activeEntry = savedEntry ?? draftEntry
 
   return (
-    <div className={cn('grid h-full min-h-0 grid-cols-1', MASTER_DETAIL_WIDE_COLS)}>
-      {/* LEFT: the focused block's server config, or the fleet list / catalog. */}
+    <MasterDetail resizeId={MCP_SPLIT_ID} split="wide">
+      {/* LEFT: the focused block's server config, or the unified fleet+catalog list. */}
       <aside className="flex min-h-0 flex-col overflow-hidden border-e border-(--ui-stroke-quaternary)">
-        {leftView === 'servers' && selected && activeEntry ? (
+        {selected && activeEntry ? (
           <ServerConfig
             authing={authing === selected}
             description={descriptionFor(selected, activeEntry)}
@@ -949,23 +940,28 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
           />
         ) : (
           <div className="flex min-h-0 flex-1 flex-col p-2">
-            {/* Geometry mirrors ListStrip (mb-1 h-6 pl-2) so these tabs land on
-                the exact line the sort link occupies in the Skills/Tools views. */}
-            <div className="mb-1 flex h-6 shrink-0 items-center gap-3 ps-2 pe-1">
-              {(['servers', 'catalog'] as const).map(view => (
-                <TextTab
-                  active={leftView === view}
-                  className="h-6 px-0 text-[0.72rem]"
-                  key={view}
-                  onClick={() => setLeftView(view)}
-                >
-                  {view === 'servers' ? m.tabServers : m.tabCatalog}
-                </TextTab>
-              ))}
+            {/* ONE coherent column: the configured fleet on top, the
+                Nous-approved catalog below it. Installed entries live in the
+                fleet list (with live status), so the catalog section only
+                offers what's NOT installed yet — no duplicate rows, no tab
+                flipping to find the install button. */}
+            {/* Geometry mirrors ListStrip (mb-1 h-6 ps-2) so this header lands
+                on the exact line the sort link occupies in the Skills/Tools views. */}
+            <div className="mb-1 flex h-6 shrink-0 items-center ps-2 pe-1">
+              <span className="flex-1 text-[0.72rem] font-medium text-(--ui-text-tertiary)">{m.tabServers}</span>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
-              {leftView === 'catalog' ? (
-                <McpCatalog entries={catalog} loading={catalogQuery.isLoading} onInstalled={onCatalogInstalled} />
+              {names.length === 0 ? (
+                <PanelEmpty
+                  action={
+                    <Button onClick={addServer} size="sm">
+                      {m.newServer}
+                    </Button>
+                  }
+                  description={m.emptyDesc}
+                  icon="plug"
+                  title={m.emptyTitle}
+                />
               ) : (
                 <>
                   {names.map(serverName => {
@@ -989,6 +985,19 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
                     )
                   })}
                   <PanelAddButton label={m.newServer} onClick={addServer} />
+                </>
+              )}
+              {(catalogQuery.isLoading || availableCatalog.length > 0) && (
+                <>
+                  <div className="mt-3 mb-1 flex h-6 shrink-0 items-center border-t border-(--ui-stroke-quaternary) ps-2 pe-1 pt-2">
+                    <span className="text-[0.72rem] font-medium text-(--ui-text-tertiary)">{m.tabCatalog}</span>
+                  </div>
+                  <McpCatalog
+                    entries={availableCatalog}
+                    loading={catalogQuery.isLoading}
+                    onInstalled={onCatalogInstalled}
+                    profile={profile}
+                  />
                 </>
               )}
             </div>
@@ -1050,7 +1059,7 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
           <McpLogs emptyLabel={m.noOutput} server={selected && savedEntry ? selected : null} source={logSource} />
         </DetailPane>
       </main>
-    </div>
+    </MasterDetail>
   )
 }
 
@@ -1303,11 +1312,13 @@ function CatalogTag({ children }: { children: string }) {
 function McpCatalog({
   entries,
   loading,
-  onInstalled
+  onInstalled,
+  profile
 }: {
   entries: McpCatalogEntry[]
   loading: boolean
   onInstalled: () => void
+  profile?: null | string
 }) {
   const { t } = useI18n()
   const m = t.settings.mcp
@@ -1335,7 +1346,7 @@ function McpCatalog({
     setInstalling(entry.name)
 
     try {
-      const res = await installMcpCatalogEntry(entry.name, draft)
+      const res = await installMcpCatalogEntry(entry.name, draft, profile ?? undefined)
 
       // Git-backed entries clone in the background — keep the row busy and poll
       // the action to completion before refetching / re-enabling, so a re-click
@@ -1343,7 +1354,7 @@ function McpCatalog({
       // exit is a real failure — surface it instead of a false success.
       if (res.background && res.action) {
         for (;;) {
-          const status = await getActionStatus(res.action, 1)
+          const status = await getActionStatus(res.action, 1, profile ?? undefined)
 
           if (!status.running) {
             if (status.exit_code !== 0) {
