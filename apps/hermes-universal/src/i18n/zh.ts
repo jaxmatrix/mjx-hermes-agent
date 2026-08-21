@@ -2239,6 +2239,8 @@ export const zh: Translations = {
       unpin: '取消置顶',
       copyId: '复制 ID',
       openInTile: '在平铺中打开',
+      openInTerminal: '在终端中打开',
+      openInTerminalFailed: '此处无法打开终端应用',
       openInBubble: '在气泡中打开',
       export: '导出',
       branchFrom: '分支',

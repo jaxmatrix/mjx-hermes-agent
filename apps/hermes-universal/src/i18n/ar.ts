@@ -1723,6 +1723,8 @@ export const ar = defineLocale({
       pin: 'تثبيت',
       unpin: 'إلغاء التثبيت',
       copyId: 'نسخ المعرف',
+      openInTerminal: 'فتح في الطرفية',
+      openInTerminalFailed: 'تعذر فتح أي تطبيق طرفية هنا',
       export: 'تصدير',
       branchFrom: 'فرع',
       rename: 'إعادة تسمية',

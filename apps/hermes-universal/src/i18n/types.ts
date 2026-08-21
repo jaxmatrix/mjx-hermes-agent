@@ -1796,6 +1796,8 @@ export interface Translations {
       unpin: string
       copyId: string
       openInTile: string
+      openInTerminal: string
+      openInTerminalFailed: string
       openInBubble: string
       export: string
       branchFrom: string

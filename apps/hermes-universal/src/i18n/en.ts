@@ -2088,6 +2088,8 @@ export const en: Translations = {
       unpin: 'Unpin',
       copyId: 'Copy ID',
       openInTile: 'Open in tile',
+      openInTerminal: 'Open in terminal',
+      openInTerminalFailed: 'No terminal application could be opened here',
       openInBubble: 'Open in bubble',
       export: 'Export',
       branchFrom: 'Branch',

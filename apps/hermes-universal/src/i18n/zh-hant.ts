@@ -1856,6 +1856,8 @@ export const zhHant = defineLocale({
       pin: '釘選',
       unpin: '取消釘選',
       copyId: '複製 ID',
+      openInTerminal: '在終端機中開啟',
+      openInTerminalFailed: '此處無法開啟終端機應用程式',
       export: '匯出',
       branchFrom: '分支',
       moveToProject: '移動到專案',

@@ -271,6 +271,10 @@ export function useSessionRowLookup(): (storedSessionId: null | string) => null 
 
 /** The three scalars a tab's context menu actually renders. */
 export interface SessionRowScalars {
+  /** The session's working directory, when a source has seen the row. What
+   *  "Open in terminal" hands to the OS — absent for a detached chat, and for a
+   *  row this window has never loaded. */
+  cwd?: null | string
   /** DURABLE pin key — the lineage root when a row is known, the raw stored id
    *  otherwise (matching what the sidebar row keys pins by). */
   pinId: string
@@ -310,12 +314,13 @@ export function useSessionRowScalars(storedSessionId: string): SessionRowScalars
     const pinId = stored ? sessionPinId(stored) : storedSessionId
     const title = stored ? sessionTitle(stored) : null
     const profile = stored?.profile
+    const cwd = stored?.cwd
     // NUL-joined so a title containing the separator can't collide with a
-    // different (pinId, title, profile) triple.
-    const key = `${pinId}\u0000${title ?? ''}\u0000${profile ?? ''}`
+    // different (pinId, title, profile, cwd) tuple.
+    const key = `${pinId}\u0000${title ?? ''}\u0000${profile ?? ''}\u0000${cwd ?? ''}`
 
     if (cache.current?.key !== key) {
-      cache.current = { key, value: { pinId, profile, title } }
+      cache.current = { key, value: { cwd, pinId, profile, title } }
     }
 
     return cache.current.value

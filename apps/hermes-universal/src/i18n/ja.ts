@@ -1919,6 +1919,8 @@ export const ja = defineLocale({
       pin: 'ピン留め',
       unpin: 'ピン留めを解除',
       copyId: 'ID をコピー',
+      openInTerminal: 'ターミナルで開く',
+      openInTerminalFailed: 'ここでターミナルアプリを開けませんでした',
       export: 'エクスポート',
       branchFrom: '分岐',
       moveToProject: 'プロジェクトへ移動',
