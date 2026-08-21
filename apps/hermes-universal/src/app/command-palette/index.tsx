@@ -82,6 +82,7 @@ import { type ThemeMode, useTheme } from '@/themes/context'
 import { isUserTheme, resolveTheme } from '@/themes/user-themes'
 
 import { usePaletteContributions } from './contrib'
+import { HighlightWatcher } from './highlight-watcher'
 import {
   PAGE_PARENTS,
   type PaletteGroup,
@@ -301,6 +302,13 @@ const THEME_MODES: ReadonlyArray<{ icon: IconComponent; mode: ThemeMode }> = [
 // (the engine synthesises the missing side). Imported VS Code themes only carry
 // the variant(s) the extension shipped — a single dark theme like Dracula lives
 // under Dark only, while a GitHub/Solarized family (light + dark) lives in both.
+// The mode a theme would actually paint in if picked now: the current one when
+// it supports it, otherwise the side it does have (a dark-only import flips the
+// app to dark rather than rendering a light theme it never shipped).
+function previewModeFor(name: string, current: 'dark' | 'light'): 'dark' | 'light' {
+  return themeSupportsMode(name, current) ? current : current === 'dark' ? 'light' : 'dark'
+}
+
 function themeSupportsMode(name: string, target: 'dark' | 'light'): boolean {
   if (!isUserTheme(name)) {
     return true
@@ -382,12 +390,16 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
   const { t } = useI18n()
   const pendingPage = useStore($commandPalettePage)
   const pendingSeed = useStore($commandPaletteSeed)
+  const paletteOpen = useStore($commandPaletteOpen)
   const bindings = useStore($bindings)
   const worktrees = useStore($repoWorktrees)
   const projectTree = useStore($projectTree)
   const dismissedProjects = useStore($dismissedAutoProjectIds)
   const terminalOpen = useStore($terminalOpen)
-  const { availableThemes, mode, resolvedMode, setMode, setTheme, themeName } = useTheme()
+
+  const { availableThemes, clearThemePreview, mode, previewTheme, resolvedMode, setMode, setTheme, themeName } =
+    useTheme()
+
   const [search, setSearch] = useState('')
   const [page, setPage] = useState<null | string>(null)
   // A deliberate re-read trigger, not a value: a `keepOpen` row stays on screen
@@ -844,11 +856,14 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
         keepOpen: true,
         keywords: ['theme', 'appearance', 'color', 'skin', theme.name, theme.description],
         label: theme.label,
+        onHighlight: () => previewTheme(theme.name, previewModeFor(theme.name, resolvedMode)),
         run: () => {
+          const next = previewModeFor(theme.name, resolvedMode)
+
           setTheme(theme.name)
 
-          if (!themeSupportsMode(theme.name, resolvedMode)) {
-            setMode(resolvedMode === 'dark' ? 'light' : 'dark')
+          if (next !== resolvedMode) {
+            setMode(next)
           }
         }
       }))
@@ -865,6 +880,7 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
         keepOpen: true,
         keywords: ['appearance', 'color mode', 'brightness', entry.mode, t.settings.modeOptions[entry.mode].label],
         label: t.settings.modeOptions[entry.mode].label,
+        onHighlight: () => previewTheme(themeName, entry.mode === 'system' ? resolvedMode : entry.mode),
         run: () => setMode(entry.mode)
       }))
     })
@@ -945,6 +961,7 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
     goSession,
     mcpServers,
     mode,
+    previewTheme,
     resolvedMode,
     search,
     sessions,
@@ -965,26 +982,46 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
         title: t.settings.appearance.themeTitle,
         placeholder: t.settings.appearance.themeDesc,
         groups: [
-          // Built-ins and imported families list under the mode(s) they support;
-          // picking sets skin + mode at once. A multi-variant import (GitHub,
-          // Solarized) appears in both groups and switches variants with the mode.
-          ...(['light', 'dark'] as const).map(groupMode => ({
-            heading: groupMode === 'light' ? t.settings.modeOptions.light.label : t.settings.modeOptions.dark.label,
-            items: availableThemes
-              .filter(theme => themeSupportsMode(theme.name, groupMode))
-              .map(theme => ({
-                active: themeName === theme.name && resolvedMode === groupMode,
-                icon: groupMode === 'light' ? Sun : Moon,
-                id: `theme-${theme.name}-${groupMode}`,
-                keepOpen: true,
-                keywords: ['theme', 'appearance', 'palette', groupMode, theme.label, theme.description ?? ''],
-                label: theme.label,
-                run: () => {
-                  setTheme(theme.name)
-                  setMode(groupMode)
+          // ONE list, with the brightness toggle sitting above it in the same
+          // page — not a Light group and a Dark group. Splitting them listed
+          // every dual-variant family twice and made the list read as twice as
+          // many themes as there are; brightness is one axis, so it gets one
+          // control. A theme that only ships one side still flips the mode when
+          // picked (previewModeFor), which is what the split used to encode.
+          {
+            heading: t.settings.appearance.colorMode,
+            items: THEME_MODES.map(entry => ({
+              active: mode === entry.mode,
+              icon: entry.icon,
+              id: `theme-mode-${entry.mode}`,
+              keepOpen: true,
+              keywords: ['appearance', 'brightness', t.settings.modeOptions[entry.mode].label],
+              label: t.settings.modeOptions[entry.mode].label,
+              onHighlight: () => previewTheme(themeName, entry.mode === 'system' ? resolvedMode : entry.mode),
+              run: () => setMode(entry.mode)
+            }))
+          },
+          {
+            heading: t.settings.appearance.themeTitle,
+            items: availableThemes.map(theme => ({
+              active: themeName === theme.name,
+              icon: themeSupportsMode(theme.name, resolvedMode) ? Palette : resolvedMode === 'dark' ? Sun : Moon,
+              id: `theme-${theme.name}`,
+              keepOpen: true,
+              keywords: ['theme', 'appearance', 'palette', theme.label, theme.description ?? ''],
+              label: theme.label,
+              onHighlight: () => previewTheme(theme.name, previewModeFor(theme.name, resolvedMode)),
+              run: () => {
+                const next = previewModeFor(theme.name, resolvedMode)
+
+                setTheme(theme.name)
+
+                if (next !== resolvedMode) {
+                  setMode(next)
                 }
-              }))
-          }))
+              }
+            }))
+          }
         ]
       },
       // The Settings-scoped palette: the same body, filtered to settings only.
@@ -1033,6 +1070,7 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
       configEntries,
       credentialEntries,
       mode,
+      previewTheme,
       resolvedMode,
       search,
       setMode,
@@ -1085,6 +1123,52 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
     }
   }, [])
 
+  // cmdk reports the highlight as the row's `value`, so the map is keyed the same
+  // way paletteValue writes it. Built from the VISIBLE groups: a row filtered out
+  // cannot be highlighted, and keying off every group would let a stale entry win.
+  const itemByValue = useMemo(() => {
+    const map = new Map<string, PaletteItem>()
+
+    for (const group of visibleGroups) {
+      for (const item of group.items) {
+        map.set(paletteValue(item), item)
+      }
+    }
+
+    return map
+  }, [visibleGroups])
+
+  const handleHighlight = useCallback(
+    (value: string) => {
+      const item = itemByValue.get(value)
+
+      // Anything without its own preview clears the last one — arrowing off the
+      // theme list has to put the committed look back, not leave it painted.
+      if (item?.onHighlight) {
+        item.onHighlight()
+      } else {
+        clearThemePreview()
+      }
+    },
+    [clearThemePreview, itemByValue]
+  )
+
+  // Three clears, three different escapes from a browse:
+  //  - leaving the page (Back out of the theme list),
+  //  - the palette CLOSING — at close start, not unmount: this body outlives the
+  //    close by the whole exit animation, so an unmount-only clear would leave
+  //    the previewed theme painted for the length of the fade,
+  //  - unmount, as the backstop for a body retired some other way.
+  useEffect(() => clearThemePreview(), [page, clearThemePreview])
+
+  useEffect(() => {
+    if (!paletteOpen) {
+      clearThemePreview()
+    }
+  }, [paletteOpen, clearThemePreview])
+
+  useEffect(() => clearThemePreview, [clearThemePreview])
+
   return (
     <DialogPrimitive.Portal>
       {/* Transparent overlay: keeps click-away + focus trap, but no dim/blur. */}
@@ -1108,6 +1192,7 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
       >
         <DialogPrimitive.Title className="sr-only">{t.commandCenter.paletteTitle}</DialogPrimitive.Title>
         <Command className="bg-transparent" loop shouldFilter={false}>
+          <HighlightWatcher onValue={handleHighlight} />
           {activePage && (
             <button
               className="flex w-full items-center gap-1.5 border-b border-border px-3 py-1.5 text-start text-xs text-muted-foreground transition-colors hover:text-foreground"
