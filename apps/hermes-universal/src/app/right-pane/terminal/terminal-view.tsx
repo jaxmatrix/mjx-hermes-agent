@@ -28,6 +28,7 @@ import {
   type TerminalTransportKind
 } from '@/transport/terminal-transport'
 
+import { makeTerminalReader, registerTerminalReader } from './buffer'
 import { terminalClipboardIntent } from './clipboard'
 import { terminalLinkHandler, terminalWebLinksAddon } from './links'
 import { applyTerminalModifiers, MobileTerminalKeys, nextModifierState, type TerminalModifiers } from './mobile-keys'
@@ -231,6 +232,12 @@ export function TerminalView({ id }: { id: string }) {
     termRef.current = term
     fitRef.current = fit
 
+    // The agent's `read_terminal` tool blocks the gateway until this window
+    // answers, and the buffer it asks about lives on this local `term`. Register
+    // here rather than in a later effect: a turn can ask before the transport
+    // settles, and an unregistered id answers "no in-app terminal is open".
+    const unregisterReader = registerTerminalReader(id, makeTerminalReader(term))
+
     // xterm measures the glyph cell ONCE, at open(). With `font-display: swap`
     // that measurement can land on the fallback face and never be redone, which
     // leaves the grid mis-sized for the rest of the session. Re-measure as soon
@@ -328,6 +335,7 @@ export function TerminalView({ id }: { id: string }) {
 
     return () => {
       disposed = true
+      unregisterReader()
       onData.dispose()
       onSelection.dispose()
       onResize.dispose()

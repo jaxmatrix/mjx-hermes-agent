@@ -11,6 +11,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // initialised.
 const stream = vi.hoisted(() => ({ route: null as ((event: { payload?: unknown; type: string }) => void) | null }))
 
+const terminal = vi.hoisted(() => ({ read: vi.fn<(options: unknown) => unknown>() }))
+
+vi.mock('@/app/right-pane/terminal/buffer', () => ({ readActiveTerminal: terminal.read }))
+
 vi.mock('@/store/gateway', () => ({
   addGatewayEventListener: (listener: (event: { payload?: unknown; type: string }) => void) => {
     stream.route = listener
@@ -43,6 +47,8 @@ beforeEach(() => {
   __resetAgentReadRequests()
   rpc.mockClear()
   rpc.mockResolvedValue({ status: 'ok' })
+  terminal.read.mockReset()
+  terminal.read.mockReturnValue(null)
 })
 
 afterEach(() => __resetAgentReadRequests())
@@ -95,6 +101,73 @@ describe('preview.read.request', () => {
     await settle()
 
     expect(rpc).not.toHaveBeenCalled()
+  })
+})
+
+// --- terminal.read (MJXHRM-472) --------------------------------------------
+//
+// The one blocking bridge universal can actually SATISFY today: it owns a real
+// PTY terminal. Unlike the other four it has no registry seam — the reader is
+// resolved per-read from the active tab, so there is nothing to register.
+
+describe('terminal.read.request', () => {
+  it('answers empty when no terminal is mounted, rather than blocking the tool for 30s', async () => {
+    send('terminal.read.request', { request_id: 'x1' })
+    await settle()
+
+    expect(rpc).toHaveBeenCalledWith('terminal.read.respond', { request_id: 'x1', text: '' })
+  })
+
+  it('serialises the active terminal and forwards the tool windowing', async () => {
+    const result = {
+      cursor_row: 2,
+      end: 3,
+      start: 0,
+      text: 'ok',
+      total_lines: 3,
+      viewport_rows: 3
+    }
+
+    terminal.read.mockReturnValue(result)
+    send('terminal.read.request', { count: 200, request_id: 'x2', start: 10 })
+    await settle()
+
+    expect(terminal.read).toHaveBeenCalledWith({ count: 200, start: 10 })
+    expect(rpc).toHaveBeenCalledWith('terminal.read.respond', { request_id: 'x2', text: JSON.stringify(result) })
+  })
+
+  // The tool sends bare ints or nothing at all; a non-numeric value must not
+  // reach the reader as a window it would then clamp against.
+  it('drops a non-numeric window instead of forwarding it', async () => {
+    terminal.read.mockReturnValue({ text: '' })
+    send('terminal.read.request', { count: null, request_id: 'x3', start: 'top' })
+    await settle()
+
+    expect(terminal.read).toHaveBeenCalledWith({ count: undefined, start: undefined })
+  })
+
+  // `terminal.read.request` is in the gateway's expire allowlist
+  // (tui_gateway/server.py), so this frame arrives and was previously dropped.
+  it('drops a request the gateway already expired', async () => {
+    let release: (value: unknown) => void = () => {}
+
+    terminal.read.mockReturnValue(new Promise(resolve => (release = resolve)))
+    send('terminal.read.request', { request_id: 'x4' })
+    send('terminal.read.expire', { request_id: 'x4' })
+    release({ text: 'late' })
+    await settle()
+
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
+  it('answers empty when the reader throws — a broken pane must not stall the agent', async () => {
+    terminal.read.mockImplementation(() => {
+      throw new Error('xterm gone')
+    })
+    send('terminal.read.request', { request_id: 'x5' })
+    await settle()
+
+    expect(rpc).toHaveBeenCalledWith('terminal.read.respond', { request_id: 'x5', text: '' })
   })
 })
 

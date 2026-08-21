@@ -1,7 +1,7 @@
 /**
  * The agent's blocking client-side requests — `preview.read.request`,
- * `window.read.request`, and (MJXHRM-444) `preview.act.request` /
- * `tour.request`.
+ * `window.read.request`, `terminal.read.request` (MJXHRM-472), and
+ * (MJXHRM-444) `preview.act.request` / `tour.request`.
  *
  * This is the one event family where the gateway is BLOCKED on the client:
  * `_block()` parks the tool for 45s (read_preview) / 30s (read_window_below)
@@ -36,11 +36,13 @@
  * fails closed on a session it doesn't know (store/event-router.ts).
  */
 
+import { readActiveTerminal } from '@/app/right-pane/terminal/buffer'
 import type { GatewayEvent } from '@/gateway'
 import {
   type AgentReadRespondResult,
   respondPreviewAct,
   respondPreviewRead,
+  respondTerminalRead,
   respondTour,
   respondWindowRead
 } from '@/lib/gateway-rpc'
@@ -257,6 +259,21 @@ function routeAgentReadRequest(event: GatewayEvent): void {
       break
     }
 
+    case 'terminal.read.request': {
+      if (!requestId) {
+        return
+      }
+
+      const options: PreviewReadOptions = { count: num(payload.count), start: num(payload.start) }
+
+      // No registry seam here, unlike the other four: the terminal's reader is
+      // resolved per-read from `$activeTerminalId`, so which terminal the agent
+      // sees is always the tab the user is looking at (buffer.ts).
+      void answer(requestId, () => readActiveTerminal(options), respondTerminalRead)
+
+      break
+    }
+
     case 'window.read.request': {
       if (!requestId) {
         return
@@ -305,6 +322,8 @@ function routeAgentReadRequest(event: GatewayEvent): void {
     case 'preview.act.expire':
 
     case 'preview.read.expire':
+
+    case 'terminal.read.expire':
 
     case 'tour.expire':
 
