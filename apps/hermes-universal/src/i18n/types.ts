@@ -1275,6 +1275,7 @@ export interface Translations {
     settingsFields: string
     settingsPreferences: string
     settingsSearchPlaceholder: string
+    settingsSearchPill: string
     mcpServers: string
     archivedChats: string
     sections: Record<'maintenance' | 'sessions' | 'system' | 'usage', string>

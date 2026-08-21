@@ -1421,6 +1421,7 @@ export const en: Translations = {
     settingsFields: 'Settings fields',
     settingsPreferences: 'Preferences',
     settingsSearchPlaceholder: 'Search settings…',
+    settingsSearchPill: 'Search settings',
     mcpServers: 'MCP servers',
     archivedChats: 'Archived chats',
     sections: { maintenance: 'Maintenance', sessions: 'Sessions', system: 'System', usage: 'Usage' },

@@ -1255,6 +1255,7 @@ export const zhHant = defineLocale({
     settingsFields: '設定欄位',
     settingsPreferences: '偏好設定',
     settingsSearchPlaceholder: '搜尋設定…',
+    settingsSearchPill: '搜尋設定',
     mcpServers: 'MCP 伺服器',
     archivedChats: '已封存聊天',
     sections: { sessions: '工作階段', system: '系統', usage: '使用量' },

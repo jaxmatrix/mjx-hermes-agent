@@ -1578,6 +1578,7 @@ export const zh: Translations = {
     settingsFields: '设置字段',
     settingsPreferences: '偏好设置',
     settingsSearchPlaceholder: '搜索设置…',
+    settingsSearchPill: '搜索设置',
     mcpServers: 'MCP 服务器',
     archivedChats: '已归档对话',
     sections: { maintenance: '维护', sessions: '会话', system: '系统', usage: '用量' },

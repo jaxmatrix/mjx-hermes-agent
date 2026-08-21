@@ -66,6 +66,7 @@ import { $repoWorktrees } from '@/store/coding-status'
 import {
   $commandPaletteOpen,
   $commandPalettePage,
+  $commandPaletteSeed,
   closeCommandPalette,
   setCommandPaletteOpen
 } from '@/store/command-palette'
@@ -380,6 +381,7 @@ export function CommandPalette() {
 function CommandPaletteBody({ onExited }: { onExited: () => void }) {
   const { t } = useI18n()
   const pendingPage = useStore($commandPalettePage)
+  const pendingSeed = useStore($commandPaletteSeed)
   const bindings = useStore($bindings)
   const worktrees = useStore($repoWorktrees)
   const projectTree = useStore($projectTree)
@@ -431,6 +433,15 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
       $commandPalettePage.set(null)
     }
   }, [pendingPage])
+
+  // Type-to-search hand-off: the character that opened the palette from another
+  // surface lands in the filter, so the keystroke isn't swallowed.
+  useEffect(() => {
+    if (pendingSeed) {
+      setSearch(pendingSeed)
+      $commandPaletteSeed.set(null)
+    }
+  }, [pendingSeed])
 
   // One door for every destination: openAppRoute promotes Settings, Command
   // Center and Profiles to their native Android activity and navigates in-app
