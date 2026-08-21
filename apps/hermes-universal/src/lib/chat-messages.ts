@@ -412,6 +412,43 @@ export function completionErrorText(finalText: string): null | string {
 const normalizeForCompare = (value: string): string => value.replace(/\s+/g, ' ').trim()
 
 /**
+ * Drop earlier text parts that a later text part repeats verbatim (after
+ * whitespace normalisation). Providers that continue a turn after a tool call
+ * sometimes re-send the previous assistant text as the next message's prefix
+ * (a tool_calls row, then a stop row with identical prose — both persisted).
+ * The turn merge then holds the same paragraph twice and everything in it
+ * renders twice, most visibly `::preview` frames. The LAST occurrence is the
+ * authoritative one; keep it.
+ */
+const normalizeRepeatedText = (value: string) => value.replace(/\s+/g, ' ').trim()
+
+export function dedupeRepeatedTextInParts(parts: ChatPart[]): ChatPart[] {
+  const lastByText = new Map<string, number>()
+
+  parts.forEach((part, index) => {
+    if (part.type === 'text') {
+      const key = normalizeRepeatedText(part.text)
+
+      if (key) {
+        lastByText.set(key, index)
+      }
+    }
+  })
+
+  const dropped = parts.filter((part, index) => {
+    if (part.type !== 'text') {
+      return true
+    }
+
+    const key = normalizeRepeatedText(part.text)
+
+    return !key || lastByText.get(key) === index
+  })
+
+  return dropped.length === parts.length ? parts : dropped
+}
+
+/**
  * Settle a turn's parts against the authoritative `final_response` the gateway
  * ships on `message.complete` (tui_gateway/server.py).
  *

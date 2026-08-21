@@ -7,6 +7,7 @@ import {
   type ChatMessage,
   type ChatPart,
   collectUnspokenTurnSpeech,
+  dedupeRepeatedTextInParts,
   userTurnOrdinal
 } from './chat-messages'
 
@@ -204,5 +205,56 @@ describe('sealed reasoning blocks', () => {
         sealed('◇ MoA aggregating…\n')
       ])
     })
+  })
+})
+
+// Some providers re-send the previous assistant text verbatim when a turn
+// continues past a tool call (a tool_calls row, then a stop row with identical
+// prose — both persisted). The turn merge folds both into one bubble, so every
+// paragraph rendered twice.
+describe('dedupeRepeatedTextInParts', () => {
+  const text = (value: string): ChatPart => ({ text: value, type: 'text' })
+
+  it('keeps the LAST of two identical text parts', () => {
+    const parts: ChatPart[] = [
+      text('Here is the plan.'),
+      { toolCallId: 't1', toolName: 'read', type: 'tool-call' } as ChatPart,
+      text('Here is the plan.')
+    ]
+
+    expect(dedupeRepeatedTextInParts(parts)).toEqual([parts[1], parts[2]])
+  })
+
+  it('treats whitespace-only differences as the same text', () => {
+    // The seed disagrees with the assertion on purpose: the two strings are not
+    // equal, so only normalisation can collapse them.
+    const parts: ChatPart[] = [text('Here is\n  the plan.'), text('Here is the plan.')]
+
+    expect(dedupeRepeatedTextInParts(parts)).toHaveLength(1)
+  })
+
+  it('leaves genuinely different paragraphs alone', () => {
+    const parts: ChatPart[] = [text('First.'), text('Second.')]
+
+    expect(dedupeRepeatedTextInParts(parts)).toEqual(parts)
+  })
+
+  it('never drops a non-text part', () => {
+    const tool = { toolCallId: 't1', toolName: 'read', type: 'tool-call' } as ChatPart
+    const parts: ChatPart[] = [tool, tool]
+
+    expect(dedupeRepeatedTextInParts(parts)).toEqual(parts)
+  })
+
+  it('returns the same array reference when nothing is dropped', () => {
+    const parts: ChatPart[] = [text('One.')]
+
+    expect(dedupeRepeatedTextInParts(parts)).toBe(parts)
+  })
+
+  it('keeps every empty text part rather than collapsing them into one', () => {
+    const parts: ChatPart[] = [text('   '), text('\n')]
+
+    expect(dedupeRepeatedTextInParts(parts)).toEqual(parts)
   })
 })
