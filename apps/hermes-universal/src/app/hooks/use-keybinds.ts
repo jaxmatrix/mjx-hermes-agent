@@ -44,7 +44,7 @@ import {
 } from '@/store/profile'
 import { openFolderAsProject } from '@/store/projects'
 import { toggleReview } from '@/store/review'
-import { toggleSelectedPin } from '@/store/session-lookup'
+import { archiveActiveSession, toggleSelectedPin } from '@/store/session-lookup'
 import { focusOpenSession, reopenLastClosedTile } from '@/store/session-states'
 import {
   $switcherOpen,
@@ -197,6 +197,10 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
     ...sessionSlotHandlers,
     'session.focusSearch': requestSessionSearchFocus,
     'session.togglePin': toggleSelectedPin,
+    // Ships unbound — see lib/keybinds/actions.ts. No-op with no active
+    // session, so a bound chord on a fresh draft does nothing rather than
+    // archiving whatever was last selected.
+    'session.archive': () => void archiveActiveSession(),
     // ⌘⇧B spins up a new git worktree. openWorktreeDialog resolves the target
     // (the focused surface's cwd, else the entered project's root) and publishes
     // it to the ONE mounted dialog, so this no longer tests $repoStatus first and

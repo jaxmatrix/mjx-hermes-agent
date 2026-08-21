@@ -70,7 +70,9 @@ export const zhHant = defineLocale({
     globalClaimTitle: '已在系統層級保留一組快速鍵',
     globalClaimMessage: combos =>
       `Hermes 已向作業系統取得 ${combos}，因此其他應用程式在前景時也會回應。Hermes 執行期間其他應用程式無法使用它。`,
-    globalClaimAction: '變更'
+    globalClaimAction: '變更',
+    // Only the keys this locale actually translates; the rest fall back to en.
+    actions: { 'session.archive': '封存目前的工作階段' }
   },
 
   files: {
@@ -202,6 +204,7 @@ export const zhHant = defineLocale({
     swapSidebarSidesTitle: '交換工作階段欄和檔案瀏覽器的位置',
     hideRightSidebar: '隱藏右側邊欄',
     showRightSidebar: '顯示右側邊欄',
+    unreadSessions: count => (count === 1 ? '1 個未讀工作階段' : `${count} 個未讀工作階段`),
     muteHaptics: '靜音觸感回饋',
     unmuteHaptics: '開啟觸感回饋',
     openSettings: '開啟設定',
@@ -1755,6 +1758,10 @@ export const zhHant = defineLocale({
       orderCost: '費用',
       orderManual: '手動',
       show: '顯示',
+      density: '列密度',
+      densityCompact: '緊湊',
+      densityComfortable: '舒適',
+      densityDetailed: '詳細',
       metaUpdated: '更新時間',
       metaTokens: '權杖',
       metaCost: '費用',
@@ -1853,6 +1860,10 @@ export const zhHant = defineLocale({
       pin: '釘選',
       unpin: '取消釘選',
       copyId: '複製 ID',
+      messageCount: count => `${count} 則訊息`,
+      toolCallCount: count => `${count} 次工具呼叫`,
+      openInTerminal: '在終端機中開啟',
+      openInTerminalFailed: '此處無法開啟終端機應用程式',
       export: '匯出',
       branchFrom: '分支',
       moveToProject: '移動到專案',

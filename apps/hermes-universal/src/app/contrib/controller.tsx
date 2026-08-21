@@ -66,6 +66,7 @@ import {
   openBranchTile,
   setVisibleBubbleKeysProvider
 } from '@/store/session-states'
+import { watchPersistedUnread } from '@/store/session-unread'
 import { $statusbarVisible } from '@/store/statusbar-prefs'
 import { $effectiveCwd, ensureWorkspaceCwd } from '@/store/workspace-events'
 
@@ -359,6 +360,13 @@ watchPreviewTiles()
 // list endpoints' pinned back-fill both read. Pre-existing local pins migrate
 // transparently on the first reconcile.
 watchSessionPins()
+
+// The DURABLE half of "finished — unread". The transient marker dies with the
+// window, so without this a turn that finished while you were elsewhere — or
+// while the app was closed — is forgotten by the next start. Registers itself
+// as `store/session`'s unread-persistence hook; a secondary window opts out
+// (it sees a sliver of the lists and would clobber the primary's records).
+watchPersistedUnread()
 
 // A reconnect issues new runtime ids, so every binding we hold is dead. Drop
 // the bindings (NOT the sessions — a draft's unsent text is the one thing that

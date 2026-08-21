@@ -287,6 +287,17 @@ async def search_sessions(
                     row = db.get_session_rich_row(sid)
                 except Exception:
                     row = None
+                # A hidden session is one a surface manages and keeps out of the
+                # shared list (session.set_hidden — bot chats, canonical
+                # per-profile chats). Every *listing* route honours that through
+                # list_sessions_rich's include_hidden=False default; search did
+                # not, so a query that matched a hidden chat's message text put
+                # the row straight back into the sidebar it was hidden from.
+                # Drop it here, where the row is already in hand — filtering
+                # client-side is impossible, since the search payload carries no
+                # hidden flag.
+                if row and row.get("hidden"):
+                    return
                 if row:
                     payload.update(
                         {

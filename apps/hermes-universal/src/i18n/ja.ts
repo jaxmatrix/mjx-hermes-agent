@@ -71,7 +71,9 @@ export const ja = defineLocale({
     globalClaimTitle: 'ショートカットをシステム全体で予約しました',
     globalClaimMessage: combos =>
       `Hermes はオペレーティングシステムから ${combos} を予約しました。他のアプリが手前にあるときも反応します。Hermes の実行中は他のアプリがこのキーを使えません。`,
-    globalClaimAction: '変更する'
+    globalClaimAction: '変更する',
+    // Only the keys this locale actually translates; the rest fall back to en.
+    actions: { 'session.archive': '現在のセッションをアーカイブ' }
   },
 
   files: {
@@ -210,6 +212,7 @@ export const ja = defineLocale({
     swapSidebarSidesTitle: 'セッションとファイルブラウザーの位置を入れ替える',
     hideRightSidebar: '右サイドバーを非表示',
     showRightSidebar: '右サイドバーを表示',
+    unreadSessions: count => (count === 1 ? '未読セッション 1 件' : `未読セッション ${count} 件`),
     muteHaptics: '触覚フィードバックをオフ',
     unmuteHaptics: '触覚フィードバックをオン',
     openSettings: '設定を開く',
@@ -1815,6 +1818,10 @@ export const ja = defineLocale({
       orderCost: 'コスト',
       orderManual: '手動',
       show: '表示',
+      density: '行の密度',
+      densityCompact: 'コンパクト',
+      densityComfortable: '標準',
+      densityDetailed: '詳細',
       metaUpdated: '更新日時',
       metaTokens: 'トークン',
       metaCost: 'コスト',
@@ -1916,6 +1923,10 @@ export const ja = defineLocale({
       pin: 'ピン留め',
       unpin: 'ピン留めを解除',
       copyId: 'ID をコピー',
+      messageCount: count => `${count} 件のメッセージ`,
+      toolCallCount: count => `${count} 件のツール呼び出し`,
+      openInTerminal: 'ターミナルで開く',
+      openInTerminalFailed: 'ここでターミナルアプリを開けませんでした',
       export: 'エクスポート',
       branchFrom: '分岐',
       moveToProject: 'プロジェクトへ移動',

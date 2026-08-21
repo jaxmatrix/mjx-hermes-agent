@@ -61,12 +61,14 @@ import { clearLiveSessionStatuses, type LiveSessionStatus, setLiveSessionStatuse
 import { $changeEventsAvailable, $sessionsChangeTick } from '@/store/live-sync'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import {
-  $activeStoredSessionId,
   $unreadFinishedSessionIds,
   refreshMessagingSessions,
-  refreshSessions
+  refreshSessions,
+  sameStoredSession,
+  unreadPersistenceHooks
 } from '@/store/session'
 import {
+  $focusedStoredSessionId,
   $sessionStates,
   publishSessionState,
   runtimeKeyForStoredSession,
@@ -222,7 +224,13 @@ export function rehydrateLiveSessionStatuses(
   // registry diff instead, or a cron / messaging / TUI turn finishing while
   // nothing local held the session would never raise "your turn".
   for (const storedSessionId of setLiveSessionStatuses(profileKey, live)) {
-    if (runtimeKeyForStoredSession(storedSessionId) || storedSessionId === $activeStoredSessionId.get()) {
+    // Same FOCUS gate as the local busy→idle edge: a session the user is
+    // looking at in a tile is not "finished while you were away", and a tile is
+    // never `$activeStoredSessionId`.
+    if (
+      runtimeKeyForStoredSession(storedSessionId) ||
+      sameStoredSession(storedSessionId, $focusedStoredSessionId.get())
+    ) {
       continue
     }
 
@@ -231,6 +239,8 @@ export function rehydrateLiveSessionStatuses(
     if (!unread.includes(storedSessionId)) {
       $unreadFinishedSessionIds.set([...unread, storedSessionId])
     }
+
+    unreadPersistenceHooks()?.markFinished(storedSessionId)
   }
 }
 
