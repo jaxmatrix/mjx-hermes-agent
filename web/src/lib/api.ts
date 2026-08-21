@@ -451,19 +451,25 @@ export const api = {
     older_than_days: number,
     source?: string,
     profile = getManagementProfile(),
+    // Pin is a durable keep flag: the gateway spares pinned rows unless this
+    // is set, and reports how many it spared either way.
+    include_pinned = false,
   ) =>
-    fetchJSON<{ ok: boolean; removed: number; skipped_open: number }>(
-      "/api/sessions/prune",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          older_than_days,
-          source,
-          profile: profile || undefined,
-        }),
-      },
-    ),
+    fetchJSON<{
+      ok: boolean;
+      removed: number;
+      skipped_open: number;
+      skipped_pinned: number;
+    }>("/api/sessions/prune", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        older_than_days,
+        source,
+        profile: profile || undefined,
+        include_pinned,
+      }),
+    }),
   listFiles: (path?: string) => {
     const query = path ? `?path=${encodeURIComponent(path)}` : "";
     return fetchJSON<ManagedFilesResponse>(`/api/files${query}`);
