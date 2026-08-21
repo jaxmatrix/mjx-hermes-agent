@@ -1117,6 +1117,10 @@ export interface Translations {
       policyBlock: string
       findings: (count: number) => string
       noFindings: string
+      advisory: string
+      advisoryPassed: string
+      advisoryFlagged: (count: number) => string
+      advisoryIncomplete: (count: number) => string
       installStarted: (name: string) => string
       uninstallStarted: (name: string) => string
       updateStarted: string

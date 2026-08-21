@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { WritableAtom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as HermesApi from '@/hermes'
@@ -46,7 +47,9 @@ async function renderGate(profile?: null | string) {
 }
 
 beforeEach(async () => {
-  const { $currentCwd } = await import('@/store/chat')
+  // The real export is a read-only atom; the mock above swaps in a writable
+  // one, so the cast is describing the mock, not defeating a real contract.
+  const { $currentCwd } = (await import('@/store/chat')) as unknown as { $currentCwd: WritableAtom<string> }
 
   $currentCwd.set('/repo/src')
   setProjectSkillsTrust.mockResolvedValue({ ok: true, root: '/repo', trusted: true })

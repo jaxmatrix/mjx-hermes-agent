@@ -439,6 +439,35 @@ export function SkillsHub({ profile, query }: SkillsHubProps) {
                         {finding.line !== null ? `:${finding.line}` : ''} — {finding.description}
                       </div>
                     ))}
+                    {/* SkillEvaluator's advisory second opinion. It never
+                        blocks — the policy above is the gate — but it is the
+                        only place the user gets to see what another scanner
+                        found, so a scan that dropped it was hiding evidence.
+                        Absent (null) when the optional scanner isn't
+                        installed or the advisory is switched off. */}
+                    {scan.tier1 && (
+                      <div className="mt-2 border-t border-(--ui-stroke-tertiary) pt-2">
+                        <div
+                          className={cn('font-medium', scan.tier1.passed ? 'text-(--ui-green)' : 'text-(--ui-yellow)')}
+                        >
+                          {h.advisory}
+                          {' · '}
+                          {scan.tier1.passed ? h.advisoryPassed : h.advisoryFlagged(scan.tier1.findings.length)}
+                        </div>
+                        {scan.tier1.incomplete_checks > 0 && (
+                          <div className="mt-0.5 text-muted-foreground">
+                            {h.advisoryIncomplete(scan.tier1.incomplete_checks)}
+                          </div>
+                        )}
+                        {scan.tier1.findings.slice(0, 12).map((finding, index) => (
+                          <div className="mt-1.5 font-mono text-[0.65rem] text-(--ui-text-tertiary)" key={index}>
+                            [{finding.severity}] {finding.check}
+                            {finding.file ? ` ${finding.file}` : ''}
+                            {finding.line !== null ? `:${finding.line}` : ''} — {finding.message}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 

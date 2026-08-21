@@ -1039,6 +1039,12 @@ export const zhHant = defineLocale({
 
   skills: {
     tabSkills: '技能',
+    hub: {
+      advisory: 'SkillEvaluator（參考）',
+      advisoryPassed: '未發現問題',
+      advisoryFlagged: count => `標記了 ${count} 個問題`,
+      advisoryIncomplete: count => `${count} 項檢查未能執行`
+    },
     project: {
       trust: '信任此儲存庫',
       untrust: '取消信任',

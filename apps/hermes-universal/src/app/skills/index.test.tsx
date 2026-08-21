@@ -28,6 +28,8 @@ const installSkillFromHub = vi.fn()
 const getActionStatus = vi.fn()
 const getSkillContent = vi.fn()
 const getProjectSkills = vi.fn()
+const previewSkillHub = vi.fn()
+const scanSkillHub = vi.fn()
 
 // Partial mock: keep the real module (SkillsView pulls in @/store/profile,
 // whose import-time subscription calls setApiRequestProfile) and stub only the
@@ -45,7 +47,9 @@ vi.mock('@/hermes', async importOriginal => ({
   installSkillFromHub: (identifier: string, profile?: null | string) => installSkillFromHub(identifier, profile),
   getActionStatus: (name: string, tail?: number) => getActionStatus(name, tail),
   getSkillContent: (name: string, profile?: null | string) => getSkillContent(name, profile),
-  getProjectSkills: (cwd?: null | string, profile?: null | string) => getProjectSkills(cwd, profile)
+  getProjectSkills: (cwd?: null | string, profile?: null | string) => getProjectSkills(cwd, profile),
+  previewSkillHub: (identifier: string, profile?: null | string) => previewSkillHub(identifier, profile),
+  scanSkillHub: (identifier: string, profile?: null | string) => scanSkillHub(identifier, profile)
 }))
 
 // Notifications hit nanostores/timers we don't care about here.
@@ -98,6 +102,7 @@ beforeEach(() => {
   // No project skills by default — the gate renders nothing and stays out of
   // every other assertion in this file.
   getProjectSkills.mockResolvedValue({ root: null, trusted: false, discovery_enabled: true, skills: [] })
+  previewSkillHub.mockResolvedValue({ skill_md: '# hi', files: [] })
 })
 
 afterEach(() => {
@@ -294,5 +299,59 @@ describe('parseFrontmatter', () => {
       ['name', 'pdf']
     ])
     expect(parsed.body).toBe('body\r\n')
+  })
+})
+
+describe('hub security scan', () => {
+  it("shows SkillEvaluator's advisory verdict alongside the built-in scan", async () => {
+    getSkills.mockResolvedValue([])
+    getSkillHubSources.mockResolvedValue({
+      sources: [],
+      featured: [{ identifier: 'acme/pdf-tools', name: 'pdf-tools', description: '', trust_level: 'community' }],
+      installed: {}
+    })
+    // The disagreeing fixture: the BUILT-IN guard is happy (allow/safe, no
+    // findings) and only the advisory scanner flagged something. If the
+    // advisory is dropped the dialog looks clean, which is the failure mode.
+    scanSkillHub.mockResolvedValue({
+      name: 'pdf-tools',
+      identifier: 'acme/pdf-tools',
+      source: 'hub',
+      trust_level: 'community',
+      verdict: 'safe',
+      summary: '',
+      policy: 'allow',
+      policy_reason: null,
+      findings: [],
+      severity_counts: {},
+      tier1: {
+        passed: false,
+        incomplete_checks: 2,
+        findings: [
+          {
+            check: 'secrets',
+            validator: 'gitleaks',
+            severity: 'high',
+            message: 'possible token in setup.sh',
+            file: 'setup.sh',
+            line: 12,
+            secrets_class: true
+          }
+        ]
+      }
+    })
+
+    await renderSkills('/skills?tab=skills')
+
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Preview' }))
+    })
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Scan' }))
+    })
+
+    expect(await screen.findByText(/SkillEvaluator \(advisory\)/)).toBeTruthy()
+    expect(screen.getByText(/possible token in setup.sh/)).toBeTruthy()
+    expect(screen.getByText(/2 checks could not run/)).toBeTruthy()
   })
 })

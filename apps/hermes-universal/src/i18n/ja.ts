@@ -1079,6 +1079,12 @@ export const ja = defineLocale({
 
   skills: {
     tabSkills: 'スキル',
+    hub: {
+      advisory: 'SkillEvaluator（参考）',
+      advisoryPassed: '問題なし',
+      advisoryFlagged: count => `${count} 件の問題を検出`,
+      advisoryIncomplete: count => `${count} 件のチェックを実行できませんでした`
+    },
     project: {
       trust: 'このリポジトリを信頼',
       untrust: '信頼を解除',

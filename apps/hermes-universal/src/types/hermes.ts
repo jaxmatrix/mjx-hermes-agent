@@ -1461,6 +1461,26 @@ export interface SkillHubScanResult {
   policy_reason: string | null
   findings: SkillHubScanFinding[]
   severity_counts: Record<string, number>
+  /** SkillEvaluator's advisory second opinion. Null when the optional scanner
+   *  isn't installed or `skills.tier1_advisory` is off. ADVISORY: it never
+   *  blocks an install, it only tells the user what another scanner saw. */
+  tier1?: SkillEvaluatorAdvisory | null
+}
+
+/** SkillEvaluator (Tier 1) advisory scan — a second opinion alongside the
+ *  built-in guard, from `GET /api/skills/hub/scan`. */
+export interface SkillEvaluatorAdvisory {
+  passed: boolean
+  incomplete_checks: number
+  findings: {
+    check: string
+    validator: string
+    severity: string
+    message: string
+    file: string | null
+    line: number | null
+    secrets_class: boolean
+  }[]
 }
 
 /** One configured MCP server row from `GET /api/mcp/servers`. */

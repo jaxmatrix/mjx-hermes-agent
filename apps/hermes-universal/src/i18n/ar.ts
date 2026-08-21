@@ -925,6 +925,12 @@ export const ar = defineLocale({
   },
   skills: {
     tabSkills: 'المهارات',
+    hub: {
+      advisory: 'SkillEvaluator (استشاري)',
+      advisoryPassed: 'لا توجد مشكلات',
+      advisoryFlagged: count => `تم الإبلاغ عن ${count} مشكلة`,
+      advisoryIncomplete: count => `تعذّر تنفيذ ${count} من الفحوصات`
+    },
     project: {
       trust: 'الوثوق بهذا المستودع',
       untrust: 'إلغاء الثقة',
