@@ -11,6 +11,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // initialised.
 const stream = vi.hoisted(() => ({ route: null as ((event: { payload?: unknown; type: string }) => void) | null }))
 
+const terminal = vi.hoisted(() => ({ read: vi.fn<(options: unknown) => unknown>() }))
+
+vi.mock('@/app/right-pane/terminal/buffer', () => ({ readActiveTerminal: terminal.read }))
+
 vi.mock('@/store/gateway', () => ({
   addGatewayEventListener: (listener: (event: { payload?: unknown; type: string }) => void) => {
     stream.route = listener
@@ -43,6 +47,8 @@ beforeEach(() => {
   __resetAgentReadRequests()
   rpc.mockClear()
   rpc.mockResolvedValue({ status: 'ok' })
+  terminal.read.mockReset()
+  terminal.read.mockReturnValue(null)
 })
 
 afterEach(() => __resetAgentReadRequests())
@@ -95,6 +101,73 @@ describe('preview.read.request', () => {
     await settle()
 
     expect(rpc).not.toHaveBeenCalled()
+  })
+})
+
+// --- terminal.read (MJXHRM-472) --------------------------------------------
+//
+// The one blocking bridge universal can actually SATISFY today: it owns a real
+// PTY terminal. Unlike the other four it has no registry seam — the reader is
+// resolved per-read from the active tab, so there is nothing to register.
+
+describe('terminal.read.request', () => {
+  it('answers empty when no terminal is mounted, rather than blocking the tool for 30s', async () => {
+    send('terminal.read.request', { request_id: 'x1' })
+    await settle()
+
+    expect(rpc).toHaveBeenCalledWith('terminal.read.respond', { request_id: 'x1', text: '' })
+  })
+
+  it('serialises the active terminal and forwards the tool windowing', async () => {
+    const result = {
+      cursor_row: 2,
+      end: 3,
+      start: 0,
+      text: 'ok',
+      total_lines: 3,
+      viewport_rows: 3
+    }
+
+    terminal.read.mockReturnValue(result)
+    send('terminal.read.request', { count: 200, request_id: 'x2', start: 10 })
+    await settle()
+
+    expect(terminal.read).toHaveBeenCalledWith({ count: 200, start: 10 })
+    expect(rpc).toHaveBeenCalledWith('terminal.read.respond', { request_id: 'x2', text: JSON.stringify(result) })
+  })
+
+  // The tool sends bare ints or nothing at all; a non-numeric value must not
+  // reach the reader as a window it would then clamp against.
+  it('drops a non-numeric window instead of forwarding it', async () => {
+    terminal.read.mockReturnValue({ text: '' })
+    send('terminal.read.request', { count: null, request_id: 'x3', start: 'top' })
+    await settle()
+
+    expect(terminal.read).toHaveBeenCalledWith({ count: undefined, start: undefined })
+  })
+
+  // `terminal.read.request` is in the gateway's expire allowlist
+  // (tui_gateway/server.py), so this frame arrives and was previously dropped.
+  it('drops a request the gateway already expired', async () => {
+    let release: (value: unknown) => void = () => {}
+
+    terminal.read.mockReturnValue(new Promise(resolve => (release = resolve)))
+    send('terminal.read.request', { request_id: 'x4' })
+    send('terminal.read.expire', { request_id: 'x4' })
+    release({ text: 'late' })
+    await settle()
+
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
+  it('answers empty when the reader throws — a broken pane must not stall the agent', async () => {
+    terminal.read.mockImplementation(() => {
+      throw new Error('xterm gone')
+    })
+    send('terminal.read.request', { request_id: 'x5' })
+    await settle()
+
+    expect(rpc).toHaveBeenCalledWith('terminal.read.respond', { request_id: 'x5', text: '' })
   })
 })
 
@@ -165,11 +238,29 @@ describe('reader registration', () => {
 // tools sat blocked for their full timeout on every call.
 
 describe('preview.act.request', () => {
-  it('answers empty when no actor is registered, rather than parking the tool for 45s', async () => {
+  // NOT an empty answer (MJXHRM-472). `drive_preview_tool.py` renders an empty
+  // one as "The action timed out, or no GUI window answered. Open a page with
+  // open_preview first." — a lie on a client with no browser pane, and an
+  // invitation to retry. The shaped refusal passes through the tool verbatim.
+  it('answers a shaped refusal when no actor is registered, not an empty string', async () => {
     send('preview.act.request', { request_id: 'a1', action: 'click', selector: '#go' })
     await settle()
 
-    expect(rpc).toHaveBeenCalledWith('preview.act.respond', { request_id: 'a1', text: '' })
+    expect(rpc).toHaveBeenCalledTimes(1)
+
+    const [method, params] = rpc.mock.calls[0]
+
+    expect(method).toBe('preview.act.respond')
+    expect((params as { request_id: string }).request_id).toBe('a1')
+
+    const answer = JSON.parse((params as { text: string }).text) as { error: string; success: boolean }
+
+    expect(answer.success).toBe(false)
+    // Assert the fact only THIS branch can state: nothing happened to a page,
+    // because there is no page. A generic "error" substring would also match a
+    // thrown-actor answer.
+    expect(answer.error).toContain('no in-app browser pane')
+    expect(answer.error).toContain('Nothing was clicked or typed')
   })
 
   // The payload IS the tool call. Forwarding it wholesale is what lets a verb
@@ -189,14 +280,31 @@ describe('preview.act.request', () => {
     })
   })
 
-  it('answers empty when the actor throws — a broken surface must not become a stalled agent', async () => {
+  // A throwing actor reports ITS error, not the unsupported text: the surface
+  // exists, it just failed. Desktop's bridge answers the same shape.
+  it('answers the actor\u2019s own error when it throws — a broken surface must not become a stalled agent', async () => {
     registerPreviewActor(() => {
       throw new Error('no preview mounted')
     })
     send('preview.act.request', { request_id: 'a3', action: 'click' })
     await settle()
 
-    expect(rpc).toHaveBeenCalledWith('preview.act.respond', { request_id: 'a3', text: '' })
+    expect(rpc).toHaveBeenCalledWith('preview.act.respond', {
+      request_id: 'a3',
+      text: JSON.stringify({ error: 'no preview mounted', success: false })
+    })
+  })
+
+  // An actor that resolves to nothing is not "it worked": fall back to the same
+  // refusal rather than the empty string the tool misreads as a timeout.
+  it('answers the refusal when a registered actor resolves to null', async () => {
+    registerPreviewActor(() => null)
+    send('preview.act.request', { request_id: 'a5', action: 'click', selector: '#go' })
+    await settle()
+
+    const answer = JSON.parse((rpc.mock.calls[0][1] as { text: string }).text) as { success: boolean }
+
+    expect(answer.success).toBe(false)
   })
 
   it('drops a request the gateway already expired instead of answering a tool that gave up', async () => {
@@ -221,11 +329,22 @@ describe('preview.act.request', () => {
 })
 
 describe('tour.request', () => {
-  it('answers empty when no driver is registered', async () => {
+  // Same reasoning as preview.act: `tour_tool.py` turns an empty answer into
+  // "The tour request timed out, or no GUI window answered", which reads as a
+  // transient fault the model should retry. MJXHRM-473 registers a real driver;
+  // until then this is the honest answer.
+  it('answers a shaped refusal when no driver is registered, not an empty string', async () => {
     send('tour.request', { request_id: 't1', action: 'start' })
     await settle()
 
-    expect(rpc).toHaveBeenCalledWith('tour.respond', { request_id: 't1', text: '' })
+    const answer = JSON.parse((rpc.mock.calls[0][1] as { text: string }).text) as {
+      error: string
+      success: boolean
+    }
+
+    expect(answer.success).toBe(false)
+    expect(answer.error).toContain('cannot run guided tours')
+    expect(answer.error).toContain('Nothing was highlighted')
   })
 
   it('hands the driver the tour call and returns its outcome', async () => {

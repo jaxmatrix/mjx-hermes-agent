@@ -1,7 +1,7 @@
 /**
  * The agent's blocking client-side requests — `preview.read.request`,
- * `window.read.request`, and (MJXHRM-444) `preview.act.request` /
- * `tour.request`.
+ * `window.read.request`, `terminal.read.request` (MJXHRM-472), and
+ * (MJXHRM-444) `preview.act.request` / `tour.request`.
  *
  * This is the one event family where the gateway is BLOCKED on the client:
  * `_block()` parks the tool for 45s (read_preview) / 30s (read_window_below)
@@ -10,12 +10,19 @@
  * so this module ALWAYS answers, with an empty string when nothing can, which
  * both tools read as "nothing on screen".
  *
- * Universal has neither a browser preview (store/preview.ts is files-only) nor
- * native window enumeration, so no handler is registered today and every
- * request gets that empty answer. Registering one is the whole seam: the
- * feature that gains the capability calls `registerPreviewReader` /
- * `registerWindowBelowReader` / `registerPreviewActor` / `registerTourDriver`
- * and nothing here changes.
+ * Universal has no browser preview (store/preview.ts is files-only), so no
+ * preview handler is registered today; `window.read` DOES have one
+ * (store/window-below.ts, installed at boot). Registering is the whole seam:
+ * the feature that gains the capability calls `registerPreviewReader` /
+ * `registerWindowBelowReader` / `registerPreviewActor` (MJXHRM-447) /
+ * `registerTourDriver` (MJXHRM-473) and nothing here changes.
+ *
+ * READ and DRIVE answer unregistered differently (MJXHRM-472). An empty READ
+ * answer is honest — both read tools document it as "nothing on screen". An
+ * empty DRIVE answer is not: `drive_preview_tool.py` / `tour_tool.py` render it
+ * as "timed out, or no GUI window answered", which tells the model to open a
+ * preview and try again on a client that structurally cannot. So the drive pair
+ * answers a shaped `{success: false, error}` instead — see `drive()` below.
  *
  * The two 08-20 additions are the same lifecycle with a different payload. The
  * read pair carries a read WINDOW (two optional ints); `preview.act` and `tour`
@@ -29,11 +36,13 @@
  * fails closed on a session it doesn't know (store/event-router.ts).
  */
 
+import { readActiveTerminal } from '@/app/right-pane/terminal/buffer'
 import type { GatewayEvent } from '@/gateway'
 import {
   type AgentReadRespondResult,
   respondPreviewAct,
   respondPreviewRead,
+  respondTerminalRead,
   respondTour,
   respondWindowRead
 } from '@/lib/gateway-rpc'
@@ -185,6 +194,53 @@ async function answer(
   }
 }
 
+/**
+ * The answer a DRIVE request gets when nothing is registered to satisfy it.
+ *
+ * Not an empty string. Both tools treat an empty answer as "the action timed
+ * out, or no GUI window answered" (`tools/drive_preview_tool.py`,
+ * `tools/tour_tool.py`) and tell the model to open a preview / retry — which is
+ * a lie on a client that structurally cannot do either, and buys a retry loop.
+ * A JSON object passes through the tool verbatim (`json.dumps(json.loads(raw))`),
+ * so this text is what the model actually reads.
+ *
+ * These are agent-facing wire strings, not UI copy — deliberately not i18n'd,
+ * exactly like desktop's equivalents in `desktop-bridge.ts`.
+ */
+const PREVIEW_ACT_UNSUPPORTED =
+  'This Hermes client has no in-app browser pane, so there is no page to act on. ' +
+  'Nothing was clicked or typed. Use the browser_* tools for an automated browser, ' +
+  'or ask the user to do it in their own browser.'
+
+const TOUR_UNSUPPORTED =
+  'This Hermes client cannot run guided tours (no tour engine on this surface). ' +
+  'Nothing was highlighted. Describe the steps in chat instead.'
+
+/**
+ * Run a registered driver, or report honestly that there is none.
+ *
+ * Unlike the READ pair, an unanswered/empty DRIVE answer is indistinguishable
+ * from "it ran and did nothing", so every branch here returns a shaped result:
+ * `{success: false, error}` when unregistered or when the driver throws (a
+ * driver that throws is desktop's behaviour too), and whatever the driver
+ * returned otherwise.
+ */
+async function drive<T>(
+  driver: null | ((request: T) => Promise<unknown> | unknown),
+  request: T,
+  unsupported: string
+): Promise<unknown> {
+  if (!driver) {
+    return { error: unsupported, success: false }
+  }
+
+  try {
+    return (await driver(request)) ?? { error: unsupported, success: false }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error), success: false }
+  }
+}
+
 function routeAgentReadRequest(event: GatewayEvent): void {
   const payload = (event.payload ?? {}) as Record<string, unknown>
   const requestId = typeof payload.request_id === 'string' ? payload.request_id : ''
@@ -199,6 +255,21 @@ function routeAgentReadRequest(event: GatewayEvent): void {
       const options: PreviewReadOptions = { count: num(payload.count), start: num(payload.start) }
 
       void answer(requestId, () => reader?.(options) ?? null, respondPreviewRead)
+
+      break
+    }
+
+    case 'terminal.read.request': {
+      if (!requestId) {
+        return
+      }
+
+      const options: PreviewReadOptions = { count: num(payload.count), start: num(payload.start) }
+
+      // No registry seam here, unlike the other four: the terminal's reader is
+      // resolved per-read from `$activeTerminalId`, so which terminal the agent
+      // sees is always the tab the user is looking at (buffer.ts).
+      void answer(requestId, () => readActiveTerminal(options), respondTerminalRead)
 
       break
     }
@@ -226,7 +297,11 @@ function routeAgentReadRequest(event: GatewayEvent): void {
       // backend-side reaches a registered actor without a change here.
       const { request_id: _ignored, ...request } = payload
 
-      void answer(requestId, () => actor?.(request as unknown as PreviewActRequest) ?? null, respondPreviewAct)
+      void answer(
+        requestId,
+        () => drive(actor, request as unknown as PreviewActRequest, PREVIEW_ACT_UNSUPPORTED),
+        respondPreviewAct
+      )
 
       break
     }
@@ -236,10 +311,10 @@ function routeAgentReadRequest(event: GatewayEvent): void {
         return
       }
 
-      const driver = tourDriver
+      const tour = tourDriver
       const { request_id: _ignored, ...request } = payload
 
-      void answer(requestId, () => driver?.(request as unknown as TourRequest) ?? null, respondTour)
+      void answer(requestId, () => drive(tour, request as unknown as TourRequest, TOUR_UNSUPPORTED), respondTour)
 
       break
     }
@@ -247,6 +322,8 @@ function routeAgentReadRequest(event: GatewayEvent): void {
     case 'preview.act.expire':
 
     case 'preview.read.expire':
+
+    case 'terminal.read.expire':
 
     case 'tour.expire':
 

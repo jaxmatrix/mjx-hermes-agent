@@ -87,7 +87,7 @@ export function reactToMessage(params: {
   })
 }
 
-// --- preview.read.respond / window.read.respond ----------------------------
+// --- preview.read / terminal.read / window.read respond --------------------
 
 /** `expired` means the tool's bounded wait already timed out — the answer was
  *  accepted and discarded, which is not an error (the gateway passes
@@ -100,6 +100,14 @@ export interface AgentReadRespondResult {
  *  JSON string of the active preview tab's contents; empty means nothing open. */
 export function respondPreviewRead(requestId: string, text: string): Promise<AgentReadRespondResult> {
   return requestGateway<AgentReadRespondResult>('preview.read.respond', { request_id: requestId, text })
+}
+
+/** Answer a `terminal.read.request` (the agent's read_terminal tool). `text` is
+ *  a JSON string of the active terminal's serialized buffer; empty means no
+ *  terminal is mounted, which the tool reports as "No in-app terminal is open".
+ *  See app/right-pane/terminal/buffer.ts for the serializer. */
+export function respondTerminalRead(requestId: string, text: string): Promise<AgentReadRespondResult> {
+  return requestGateway<AgentReadRespondResult>('terminal.read.respond', { request_id: requestId, text })
 }
 
 /** Answer a `window.read.request` (the agent's read_window_below tool). `text`

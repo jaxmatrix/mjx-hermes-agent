@@ -57,6 +57,7 @@ import {
 } from '@/store/live-sync'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notify } from '@/store/notifications'
+import { applyBridgeLayoutPreset, revealBridgePane } from '@/store/pane-focus'
 import { flashPetActivity, setPetActivity } from '@/store/pet'
 import { $activeGatewayProfile } from '@/store/profile'
 import {
@@ -632,6 +633,35 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       // (coding rail, review pane, file tree) to refresh. Event-driven, not
       // polled: fires exactly when the agent touches the tree.
       void notifyWorkspaceChangeFromTool(payload)
+
+      break
+    }
+
+    // The agent revealed a pane through its own `focus_pane` tool, in response
+    // to an explicit user request. ACTIVE session only — desktop's
+    // `isActiveEvent` gate, i.e. "offer, don't hijack": a background turn must
+    // never move the focus of the chat the user is looking at.
+    //
+    // Fire-and-forget: `tools/desktop_ui.py::emit` has no respond method, so an
+    // unknown pane id is simply not revealed (`revealBridgePane` returns false)
+    // and the tool has already told the agent `{"success": true}`. The enum is
+    // closed backend-side, so an unknown id means a version skew, not a typo.
+    case 'pane.reveal': {
+      if (isActive) {
+        revealBridgePane(typeof payload.pane === 'string' ? payload.pane : '')
+      }
+
+      break
+    }
+
+    // The agent applied a layout preset through its own `apply_layout` tool.
+    // Same contract as pane.reveal, and the preset resolves against the SAME
+    // layouts registry the picker reads — so core, plugin and user-saved
+    // presets are all addressable.
+    case 'layout.apply': {
+      if (isActive) {
+        applyBridgeLayoutPreset(typeof payload.preset === 'string' ? payload.preset : '')
+      }
 
       break
     }
