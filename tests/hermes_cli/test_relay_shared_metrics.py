@@ -145,6 +145,28 @@ def _legacy_dimensions() -> dict[str, str]:
     }
 
 
+def _wait_out_a_contended_writer(record: Any) -> Any:
+    """Run one store write, retrying while another process holds the file.
+
+    The store's 250 ms busy timeout is a budget, not a durability promise: its
+    only production caller (``SharedMetricsSubscriber.__call__``) catches
+    ``database is locked`` and drops the counter rather than stall the thread
+    dispatching Relay events. Two processes writing one SQLite file back to back
+    with no pause blow that budget whenever the host is busy, so without this the
+    cross-process tests below assert the budget — a property of the machine —
+    instead of the transactionality they are named for. Retrying keeps the
+    assertions on what the store owes: increments that are neither lost nor torn.
+    """
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            return record()
+        except sqlite3.OperationalError as error:
+            if "database is locked" not in str(error) or time.monotonic() > deadline:
+                raise
+            time.sleep(0.01)
+
+
 def _record_model_calls_in_process(
     database_path: str,
     outbox_directory: str,
@@ -155,7 +177,9 @@ def _record_model_calls_in_process(
         start_barrier.wait()
     store = SharedMetricsStore(Path(database_path), Path(outbox_directory))
     for _ in range(count):
-        store.record_model_call(_dimensions(), _resource())
+        _wait_out_a_contended_writer(
+            lambda: store.record_model_call(_dimensions(), _resource())
+        )
 
 
 def _record_client_active_in_process(
@@ -165,7 +189,7 @@ def _record_client_active_in_process(
 ) -> None:
     store = SharedMetricsStore(Path(database_path), Path(outbox_directory))
     start_barrier.wait()
-    store.record_client_active(_resource())
+    _wait_out_a_contended_writer(lambda: store.record_client_active(_resource()))
 
 
 def test_model_call_counter_survives_restart_and_exports_only_new_deltas(tmp_path):
@@ -1375,7 +1399,7 @@ def test_concurrent_package_builders_commit_one_delta(tmp_path):
     def export() -> list[Path]:
         worker_store = SharedMetricsStore(database_path, outbox_directory)
         ready.wait(timeout=5)
-        return worker_store.create_and_export_package()
+        return _wait_out_a_contended_writer(worker_store.create_and_export_package)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(export) for _ in range(2)]
@@ -1404,7 +1428,7 @@ def test_concurrent_due_exports_create_one_daily_package(tmp_path):
     def export() -> None:
         worker_store = SharedMetricsStore(database_path, outbox_directory)
         ready.wait(timeout=5)
-        worker_store.create_and_export_package_if_due()
+        _wait_out_a_contended_writer(worker_store.create_and_export_package_if_due)
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         futures = [executor.submit(export) for _ in range(8)]
@@ -1428,7 +1452,9 @@ def test_concurrent_model_call_updates_are_transactional(tmp_path):
     def record_calls(count: int) -> None:
         store = SharedMetricsStore(database_path, outbox_directory)
         for _ in range(count):
-            store.record_model_call(_dimensions(), _resource())
+            _wait_out_a_contended_writer(
+                lambda: store.record_model_call(_dimensions(), _resource())
+            )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(record_calls, 10) for _ in range(2)]
