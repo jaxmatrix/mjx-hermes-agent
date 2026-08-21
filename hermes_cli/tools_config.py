@@ -4191,7 +4191,14 @@ def _configure_imagegen_model_for_plugin(plugin_name: str, config: dict) -> None
     # so it is the one that reflects what generation will really use.
     current_model = scoped_model or cur_cfg.get("model") or default_model
     if current_model not in catalog and not accepts_custom:
-        current_model = default_model
+        # Closed-set backend: an id it cannot serve must never reach the rows.
+        # The catalog default itself may have drifted out of the catalog, so
+        # fall through to a real entry rather than a synthesized custom row.
+        current_model = (
+            default_model
+            if default_model in catalog
+            else next(iter(catalog), None)
+        )
 
     if current_model and current_model not in catalog:
         # A hand-entered id lives outside the catalog. Keep it on the list so
