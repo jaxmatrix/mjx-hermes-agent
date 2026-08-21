@@ -9,7 +9,7 @@ import { Tip } from '@/components/ui/tooltip'
 import { getLogs } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { splitPlatformStatusKey } from '@/lib/gateway-platforms'
-import { ChevronRight, LayoutDashboard, RefreshCw } from '@/lib/icons'
+import { ChevronRight, LayoutDashboard, Power } from '@/lib/icons'
 import { LOG_NOISE_RE, trimLogLine } from '@/lib/log-format'
 import type { RuntimeReadinessResult } from '@/lib/runtime-readiness'
 import { cn } from '@/lib/utils'
@@ -177,17 +177,6 @@ export function GatewayMenuPanel({
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
-          <Tip label={t.commandCenter.restartGateway}>
-            <Button
-              aria-label={t.commandCenter.restartGateway}
-              className="text-muted-foreground hover:text-foreground"
-              onClick={restart}
-              size="icon-xs"
-              variant="ghost"
-            >
-              <RefreshCw />
-            </Button>
-          </Tip>
           <Tip label={copy.openSystem}>
             <Button
               aria-label={copy.openSystem}
@@ -197,6 +186,22 @@ export function GatewayMenuPanel({
               variant="ghost"
             >
               <LayoutDashboard />
+            </Button>
+          </Tip>
+          {/* Restart is the heavy, disruptive action: keep it visually distinct
+              (power icon, destructive hover) and separated from the benign
+              open-system button so it can't be hit by mistake. It used to sit
+              first in the row, one 24px hop from a button people press casually. */}
+          <span aria-hidden className="mx-1 h-4 w-px bg-border/70" />
+          <Tip label={t.commandCenter.restartGateway}>
+            <Button
+              aria-label={t.commandCenter.restartGateway}
+              className="text-muted-foreground hover:text-destructive"
+              onClick={restart}
+              size="icon-xs"
+              variant="ghost"
+            >
+              <Power />
             </Button>
           </Tip>
         </div>

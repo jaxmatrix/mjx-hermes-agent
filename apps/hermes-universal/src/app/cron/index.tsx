@@ -109,7 +109,7 @@ const DEFAULT_DELIVER = 'local'
  * jobs reads as if pausing deleted them, which is exactly the trap 444's helper
  * documents.
  */
-const $hideDisabledCronJobs = persistentAtom('hermes.cron.hideDisabled', false, Codecs.bool)
+export const $hideDisabledCronJobs = persistentAtom('hermes.cron.hideDisabled', false, Codecs.bool)
 
 // What "disabled" means to the list filter. `paused` is included: the backend
 // stores a pause as enabled=false, so both words describe one thing the user
@@ -704,7 +704,9 @@ export function CronView({
                 />
               ))}
               {visibleJobs.length === 0 && (
-                <p className="px-2 py-4 text-center text-xs text-muted-foreground">{c.emptyTitleSearch}</p>
+                <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+                  {query.trim() ? c.emptyTitleSearch : c.emptyTitleNew}
+                </p>
               )}
               <PanelAddButton label={c.newCron} onClick={() => setEditor({ mode: 'create' })} />
             </PanelList>
@@ -719,8 +721,17 @@ export function CronView({
                 onTrigger={() => void handleTrigger(selectedJob)}
                 triggering={triggeringJobKeys.has(`${selectedJob.profile ?? ''}:${selectedJob.id}`)}
               />
-            ) : (
+            ) : query.trim() ? (
+              // A search with no selected job: search-flavoured copy is right.
               <PanelEmpty description={c.emptyDescSearch} icon="search" />
+            ) : (
+              // No selection and no search — "Try a broader search query" here
+              // just confused people staring at an empty panel with zero jobs.
+              <PanelEmpty
+                description={c.emptyDescNew}
+                icon="watch"
+                title={jobs.length === 0 ? c.emptyTitleNew : undefined}
+              />
             )}
           </PanelBody>
         </>
