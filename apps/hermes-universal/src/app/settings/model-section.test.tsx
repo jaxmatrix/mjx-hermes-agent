@@ -330,3 +330,83 @@ describe('ModelSettings MoA preset editor', () => {
     }
   })
 })
+
+/**
+ * The profile-default reasoning control.
+ *
+ * Two defects met in this one Select. Its option list was a hand-typed copy of
+ * the ladder, and the copy in `settings/constants` had already drifted (no
+ * `max`, no `ultra`) — the API server was widened to accept both precisely so
+ * GUI clients stopped being second-class citizens of the ladder. And "off" was
+ * offered for every model, including routes the provider catalog marks
+ * reasoning-MANDATORY, which answer 400 to a disable: desktop hides its
+ * Thinking toggle there (`d15cd18fa1`), and here the equivalent is dropping the
+ * `none` entry.
+ */
+describe('ModelSettings reasoning default', () => {
+  const withCaps = (canDisable?: boolean) => ({
+    providers: [
+      {
+        authenticated: true,
+        capabilities: {
+          'hermes-4': {
+            fast: false,
+            reasoning: true,
+            ...(canDisable === undefined ? {} : { can_disable_reasoning: canDisable })
+          }
+        },
+        models: ['hermes-4'],
+        name: 'Nous',
+        slug: 'nous'
+      }
+    ]
+  })
+
+  const openEffortSelect = async () => {
+    const trigger = (await screen.findAllByRole('combobox')).at(-1)!
+    fireEvent.keyDown(trigger, { key: 'Enter' })
+
+    return screen.findAllByRole('option')
+  }
+
+  beforeEach(() => {
+    getGlobalModelInfo.mockResolvedValue({ model: 'hermes-4', provider: 'nous' })
+  })
+
+  it('offers the whole canonical ladder, max and ultra included', async () => {
+    getGlobalModelOptions.mockResolvedValue(withCaps())
+    await renderModelSettings()
+
+    const labels = (await openEffortSelect()).map(option => option.textContent)
+
+    expect(labels).toContain('Max')
+    expect(labels).toContain('Ultra')
+    expect(labels).toContain('Extra High')
+  })
+
+  it('offers off when the catalog says nothing about disabling', async () => {
+    getGlobalModelOptions.mockResolvedValue(withCaps())
+    await renderModelSettings()
+
+    expect((await openEffortSelect()).map(option => option.textContent)).toContain('Off')
+  })
+
+  it('offers off when the catalog says the route allows it', async () => {
+    getGlobalModelOptions.mockResolvedValue(withCaps(true))
+    await renderModelSettings()
+
+    expect((await openEffortSelect()).map(option => option.textContent)).toContain('Off')
+  })
+
+  it('drops off for a route that rejects a reasoning disable', async () => {
+    getGlobalModelOptions.mockResolvedValue(withCaps(false))
+    await renderModelSettings()
+
+    const labels = (await openEffortSelect()).map(option => option.textContent)
+
+    expect(labels).not.toContain('Off')
+    // The scale itself is untouched — the model still reasons, it just cannot
+    // be asked to stop.
+    expect(labels).toContain('Max')
+  })
+})
