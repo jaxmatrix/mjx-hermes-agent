@@ -742,7 +742,12 @@ export const ja = defineLocale({
       backgroundModeTitle: 'バックグラウンドで実行を続ける',
       backgroundModeDesc:
         'ウィンドウを閉じても終了せず、Hermes をしまうだけになります。実行中の応答はそのまま続きます。再表示や終了はトレイアイコンから行えます。',
-      backgroundModeFailed: 'Hermes をバックグラウンドで実行し続けられませんでした'
+      backgroundModeFailed: 'Hermes をバックグラウンドで実行し続けられませんでした',
+      attachmentSizeTitle: '添付 / プレビューの最大サイズ',
+      attachmentSizeDesc:
+        'Hermes が添付やプレビューのためにメモリへ読み込むローカルファイルの上限（MB）。既定は 16 です。ファイル全体が base64 でバッファされるため、大きくしすぎるとスマートフォンでは添付中にアプリが強制終了されることがあります。',
+      attachmentSizeUnit: 'MB',
+      attachmentSizeLabel: '添付 / プレビューの最大サイズ（MB）'
     },
     credentials: {
       pasteKey: 'キーを貼り付け',
@@ -2006,6 +2011,7 @@ export const ja = defineLocale({
     attachLabel: '添付',
     attachFailed: label => `${label} を添付できませんでした`,
     attachNoRef: 'ゲートウェイはこのファイルを保存しませんでした。',
+    attachTooLarge: maxMb => `${maxMb} MB の上限を超えています。設定 → チャットで引き上げられます。`,
     files: 'ファイル…',
     folder: 'フォルダー…',
     back: '戻る',

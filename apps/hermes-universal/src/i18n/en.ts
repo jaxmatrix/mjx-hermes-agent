@@ -660,7 +660,12 @@ export const en: Translations = {
       backgroundModeTitle: 'Keep running in the background',
       backgroundModeDesc:
         'Closing the window puts Hermes away instead of quitting it, so a running turn keeps streaming. Use the tray icon to bring it back or to quit.',
-      backgroundModeFailed: "Couldn't keep Hermes running in the background"
+      backgroundModeFailed: "Couldn't keep Hermes running in the background",
+      attachmentSizeTitle: 'Max attachment / preview size',
+      attachmentSizeDesc:
+        'How big a local file Hermes will read into memory to attach or preview, in MB. Default is 16. The whole file is base64-buffered, so setting this high can make a phone kill the app mid-attach.',
+      attachmentSizeUnit: 'MB',
+      attachmentSizeLabel: 'Max attachment / preview size in megabytes'
     },
     credentials: {
       pasteKey: 'Paste key',
@@ -2181,6 +2186,7 @@ export const en: Translations = {
     attachLabel: 'Attach',
     attachFailed: label => `Could not attach ${label}`,
     attachNoRef: 'The gateway staged nothing for this file.',
+    attachTooLarge: maxMb => `Bigger than the ${maxMb} MB limit. Raise it in Settings → Chat.`,
     files: 'Files…',
     folder: 'Folder…',
     back: 'Back',

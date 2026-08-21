@@ -14,6 +14,7 @@ mod appearance;
 mod artifact;
 mod background;
 mod cloud;
+mod data_url_read_max;
 mod find_in_page;
 mod keep_awake;
 mod link_title;
@@ -44,6 +45,7 @@ use background::{get_background_mode, quit_app, set_background_mode, BackgroundS
 use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
 };
+use data_url_read_max::{read_capped_file_base64, set_data_url_read_max, DataUrlReadMaxState};
 use find_in_page::{find_in_page, stop_find_in_page};
 use keep_awake::{set_keep_awake, KeepAwakeState};
 use link_title::fetch_link_title;
@@ -182,6 +184,7 @@ pub fn run() {
         // The one system-sleep inhibitor. It releases on drop, so quitting frees
         // the machine even if the webview never turned the preference back off.
         .manage(KeepAwakeState::default())
+        .manage(DataUrlReadMaxState::default())
         .manage(VoiceState::default())
         .manage(UpdateState::default())
         // Live SSH sessions. Unlike desktop's on-disk control socket, nothing
@@ -292,6 +295,8 @@ pub fn run() {
             reveal_in_file_manager,
             set_window_translucency,
             set_keep_awake,
+            set_data_url_read_max,
+            read_capped_file_base64,
             get_app_flag,
             set_app_flag,
             marketplace_search,

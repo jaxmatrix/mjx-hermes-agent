@@ -558,6 +558,11 @@ export interface Translations {
       /** Shown when the machine has no system tray, so hiding the window would
        *  leave a process with nothing to reach it by — the switch flips back off. */
       backgroundModeFailed: string
+      /** Settings ▸ Chat: cap on local files read into memory as data URLs. */
+      attachmentSizeTitle: string
+      attachmentSizeDesc: string
+      attachmentSizeUnit: string
+      attachmentSizeLabel: string
     }
     credentials: {
       pasteKey: string
@@ -1853,6 +1858,9 @@ export interface Translations {
     attachLabel: string
     attachFailed: (label: string) => string
     attachNoRef: string
+    /** Refusal for a file over the Settings ▸ Chat cap — it MUST name the limit,
+     *  because raising it is the fix and nothing else in the UI says the number. */
+    attachTooLarge: (maxMb: number) => string
     files: string
     folder: string
     back: string

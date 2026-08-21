@@ -721,7 +721,12 @@ export const zhHant = defineLocale({
       keepAwakeFailed: '無法讓本機保持喚醒',
       backgroundModeTitle: '在背景繼續執行',
       backgroundModeDesc: '關閉視窗只會收起 Hermes 而不結束，進行中的回覆會繼續輸出。可透過系統匣圖示重新顯示或結束。',
-      backgroundModeFailed: '無法讓 Hermes 在背景繼續執行'
+      backgroundModeFailed: '無法讓 Hermes 在背景繼續執行',
+      attachmentSizeTitle: '附件 / 預覽大小上限',
+      attachmentSizeDesc:
+        'Hermes 為附加或預覽而讀入記憶體的本機檔案大小上限（MB）。預設為 16。整個檔案都會以 base64 緩衝，設定過大可能導致手機在附加過程中終止應用程式。',
+      attachmentSizeUnit: 'MB',
+      attachmentSizeLabel: '附件 / 預覽大小上限（MB）'
     },
     credentials: {
       pasteKey: '貼上金鑰',
@@ -1942,6 +1947,7 @@ export const zhHant = defineLocale({
     attachLabel: '附加',
     attachFailed: label => `無法附加 ${label}`,
     attachNoRef: '閘道未暫存此檔案。',
+    attachTooLarge: maxMb => `超過 ${maxMb} MB 的上限。可在「設定 → 聊天」中調高。`,
     files: '檔案…',
     folder: '資料夾…',
     back: '返回',

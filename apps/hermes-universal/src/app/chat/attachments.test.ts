@@ -13,10 +13,16 @@ import {
   stageAttachmentFromPath
 } from './attachments'
 
-const { openDialog, readFileBytes } = vi.hoisted(() => ({ openDialog: vi.fn(), readFileBytes: vi.fn() }))
+const { openDialog, readCapped } = vi.hoisted(() => ({ openDialog: vi.fn(), readCapped: vi.fn() }))
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: openDialog }))
-vi.mock('@tauri-apps/plugin-fs', () => ({ readFile: readFileBytes }))
+// The capped reader is the Rust seam (`read_capped_file_base64`); the cap itself
+// is pinned by store/data-url-read-max.test.ts. Here it stands in for the disk.
+vi.mock('@/store/data-url-read-max', () => ({
+  $dataUrlReadMaxMb: { get: () => 16 },
+  dataUrlReadMaxBytes: (maxMb: number) => maxMb * 1024 * 1024,
+  readCappedFileBase64: readCapped
+}))
 vi.mock('@/store/chat', () => ({ ensureSession: vi.fn() }))
 vi.mock('@/store/gateway', () => ({ requestGateway: vi.fn() }))
 vi.mock('@/store/notifications', () => ({ notifyError: vi.fn() }))
@@ -120,15 +126,43 @@ describe('staging failures are reported', () => {
   beforeEach(() => {
     vi.mocked(notifyError).mockReset()
     vi.mocked(ensureSession).mockResolvedValue({ id: 'live-1', storedId: 'stored-1' } as never)
-    readFileBytes.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]))
+    readCapped.mockReset().mockResolvedValue('AQID')
     vi.mocked(requestGateway).mockReset()
   })
 
   it('raises a notification when the file cannot be read', async () => {
-    readFileBytes.mockRejectedValueOnce(new Error('permission denied'))
+    readCapped.mockRejectedValueOnce(new Error('permission denied'))
 
     await expect(stageAttachmentFromPath('/work/secret.bin')).resolves.toBeNull()
     expect(notifyError).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('secret.bin'))
+  })
+
+  // The cap is enforced in Rust, so from here a refusal is just a rejection —
+  // what matters is that it never reaches `file.attach`. Staging an oversized
+  // file anyway is the failure this whole change exists to prevent: on Android
+  // the base64 of it is what kills the process.
+  it('never sends a file the capped reader refused', async () => {
+    readCapped.mockRejectedValueOnce(new Error('Bigger than the 16 MB limit. Raise it in Settings → Chat.'))
+
+    await expect(stageAttachmentFromPath('/work/huge.png')).resolves.toBeNull()
+    expect(requestGateway).not.toHaveBeenCalled()
+    expect(notifyError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('16 MB') }),
+      expect.stringContaining('huge.png')
+    )
+  })
+
+  // Regression for the shape swap: the reader now hands back BASE64, not bytes.
+  // A stray `btoa` over it would double-encode and the gateway would stage
+  // garbage that still looked like a successful attach.
+  it('wraps the reader base64 in a data URL exactly once', async () => {
+    readCapped.mockResolvedValueOnce('AQID')
+    vi.mocked(requestGateway).mockResolvedValue({ ref_text: '@file:blob.png' } as never)
+
+    await stageAttachmentFromPath('/work/blob.png')
+
+    const [, params] = vi.mocked(requestGateway).mock.calls[0] as [string, Record<string, unknown>]
+    expect(params.data_url).toBe('data:image/png;base64,AQID')
   })
 
   it('raises a notification when the gateway answers without a ref', async () => {
@@ -185,6 +219,33 @@ describe('staging bytes that never had a path', () => {
 
     const [, params] = vi.mocked(requestGateway).mock.calls[0] as [string, Record<string, unknown>]
     expect(String(params.name)).toMatch(/^pasted-image-\d+\.jpg$/)
+  })
+
+  // A pasted blob has no path for Rust to open, so this half of the cap is the
+  // webview's. Base64 still expands it by a third on the way to a gateway frame,
+  // and a 400 MB screenshot buffer is as fatal on a phone as a 400 MB file.
+  it('refuses a pasted blob over the cap, naming the limit', async () => {
+    const huge = new Blob(['x'], { type: 'image/png' })
+    Object.defineProperty(huge, 'size', { value: 17 * 1024 * 1024 })
+
+    await expect(stageAttachmentFromBlob(huge, 'huge.png')).resolves.toBeNull()
+    expect(requestGateway).not.toHaveBeenCalled()
+    expect(notifyError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('16') }),
+      expect.stringContaining('huge.png')
+    )
+  })
+
+  // The disagreeing neighbour of the case above: one MB under the same cap has
+  // to still attach, or the guard would read as green while blocking everything.
+  it('stages a pasted blob just under the cap', async () => {
+    vi.mocked(requestGateway).mockResolvedValue({ ref_text: '@image:ok.png' } as never)
+
+    const nearly = new Blob(['x'], { type: 'image/png' })
+    Object.defineProperty(nearly, 'size', { value: 15 * 1024 * 1024 })
+
+    await expect(stageAttachmentFromBlob(nearly, 'ok.png')).resolves.toEqual({ name: 'ok.png', ref: '@image:ok.png' })
+    expect(notifyError).not.toHaveBeenCalled()
   })
 
   it('reports a gateway that stages nothing, instead of dropping the paste silently', async () => {

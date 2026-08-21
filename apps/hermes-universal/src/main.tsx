@@ -58,6 +58,7 @@ import { restoreSessionCookies } from './lib/session-persist'
 import { installObservability } from './observability/install'
 import { initBackgroundMode } from './store/background-mode'
 import { resumePortalSignIn } from './store/cloud'
+import { initDataUrlReadMax } from './store/data-url-read-max'
 import { autoRestoreConnection } from './store/gateway-restore'
 import { initKeepAwake } from './store/keep-awake'
 import { initTray } from './store/tray'
@@ -88,6 +89,12 @@ void resumePortalSignIn()
 // Rust and dies with the process, so a relaunch has to re-arm it — otherwise the
 // toggle reads "on" while the machine is free to sleep. No-op off desktop.
 initKeepAwake()
+
+// Same shape, same reason: the attachment size cap is persisted in the webview
+// but ENFORCED in Rust, whose copy is a plain atomic that boots at the default.
+// Without this a device configured down to 2 MB would spend the whole session
+// letting 16 MB through — the one number the guard exists to get right.
+initDataUrlReadMax()
 
 // Background mode (MJXHRM-436). Three pieces, all at boot:
 //
