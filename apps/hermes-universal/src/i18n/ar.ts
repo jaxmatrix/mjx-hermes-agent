@@ -263,6 +263,10 @@ export const ar = defineLocale({
     noResults: 'لا توجد لغة مطابقة'
   },
   settings: {
+    profileScope: {
+      appliesTo: 'يُطبّق على',
+      editsProfile: profile => `تُطبّق تغييرات هذه الصفحة على الملف الشخصي «${profile}».`
+    },
     closeSettings: 'إغلاق الإعدادات',
     exportConfig: 'تصدير الإعدادات',
     importConfig: 'استيراد الإعدادات',

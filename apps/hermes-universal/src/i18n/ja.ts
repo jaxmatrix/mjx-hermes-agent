@@ -237,6 +237,10 @@ export const ja = defineLocale({
   },
 
   settings: {
+    profileScope: {
+      appliesTo: '適用先',
+      editsProfile: profile => `このページでの変更は「${profile}」プロファイルに適用されます。`
+    },
     closeSettings: '設定を閉じる',
     exportConfig: '設定を書き出す',
     importConfig: '設定を読み込む',

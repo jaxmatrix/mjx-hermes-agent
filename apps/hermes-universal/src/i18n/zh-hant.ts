@@ -229,6 +229,10 @@ export const zhHant = defineLocale({
   },
 
   settings: {
+    profileScope: {
+      appliesTo: '套用於',
+      editsProfile: profile => `本頁的變更將套用於「${profile}」設定檔。`
+    },
     closeSettings: '關閉設定',
     exportConfig: '匯出設定',
     importConfig: '匯入設定',

@@ -11,9 +11,11 @@ import { getHermesConfigSchema, saveHermesConfig } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { reconcileApprovalModeForProfile } from '@/store/approval-mode'
+import { useStore } from '@/store/atom'
 import { notifyError } from '@/store/notifications'
-import { $activeGatewayProfile } from '@/store/profile'
+import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import { repoDiscoveryPolicyFromConfig, repoDiscoveryPolicySignature, scanAndRecordRepos } from '@/store/projects'
+import { $settingsScopeOverride } from '@/store/settings-scope'
 import type { ConfigFieldSchema, HermesConfigRecord } from '@/types/hermes'
 
 import { ComboboxInput } from './combobox-input'
@@ -22,8 +24,9 @@ import { FallbackModelsField } from './fallback-models-field'
 import { fieldCopyForSchemaKey } from './field-copy'
 import { enumOptionsFor, getNested, prettyName, sectionFieldEntries, setNested } from './helpers'
 import { EmptyState, ListRow, SettingsContent, SettingsSkeleton } from './primitives'
+import { SettingsProfileScope } from './profile-scope'
 import { SearchableSelect } from './searchable-select'
-import { setHermesConfigCache, useHermesConfigRecord } from './use-config-record'
+import { hermesConfigCacheWriter, useHermesConfigRecord } from './use-config-record'
 import { useDeepLinkHighlight } from './use-deep-link-highlight'
 
 // Shared by the row wrapper and the deep-link lookup so a palette jump can
@@ -44,11 +47,14 @@ const fieldElementId = (key: string) => `setting-field-${key}`
  * NOT this cache's), or every save of an unrelated section would slam the bar to
  * the normalizer's fallback.
  */
-function reconcileSavedApprovalMode(config: HermesConfigRecord): void {
+function reconcileSavedApprovalMode(config: HermesConfigRecord, scopeProfile: null | string): void {
   const saved = getNested(config, 'approvals.mode')
 
   if (typeof saved === 'string' && saved.trim()) {
-    reconcileApprovalModeForProfile($activeGatewayProfile.get(), saved)
+    // The bar reports the profile the APP is operating as; a save aimed at
+    // another profile (the "Applies to" scope) must reconcile that one's cache
+    // entry instead, or the bar would claim the other profile's mode.
+    reconcileApprovalModeForProfile(scopeProfile ?? $activeGatewayProfile.get(), saved)
   }
 }
 
@@ -261,15 +267,17 @@ export function ConfigField({
 // and a debounced (550ms) autosave that mirrors into the shared cache. Adapted
 // from desktop ConfigSettings (draft/seed/autosave replicated exactly so a save
 // never drops fields — saveHermesConfig REPLACES the whole record).
-export function ConfigSection({
-  sectionId,
-  fieldFilter,
-  renderExtra,
-  renderDescriptionExtra,
-  resolveEnumOptions,
-  resolveOptionLabels,
-  headerSlot
-}: {
+export function ConfigSection(props: ConfigSectionProps) {
+  // Shared "Applies to" scope (null → the app's active profile). Remount the
+  // inner section per scope so every draft/seed/autosave ref resets wholesale
+  // when the target profile changes — the same guarantee useOnProfileSwitch
+  // gives for app-wide switches, without hand-clearing each piece.
+  const scopeProfile = useStore($settingsScopeOverride)
+
+  return <ScopedConfigSection {...props} key={scopeProfile ?? '__active__'} scopeProfile={scopeProfile} />
+}
+
+interface ConfigSectionProps {
   sectionId: string
   // Optional per-key visibility filter (voice hides inactive-provider fields).
   fieldFilter?: (key: string, config: HermesConfigRecord) => boolean
@@ -284,18 +292,39 @@ export function ConfigSection({
   resolveOptionLabels?: (key: string) => Record<string, string> | undefined
   // Optional custom block rendered above the schema fields (model picker).
   headerSlot?: ReactNode
-}) {
+}
+
+function ScopedConfigSection({
+  sectionId,
+  fieldFilter,
+  renderExtra,
+  renderDescriptionExtra,
+  resolveEnumOptions,
+  resolveOptionLabels,
+  headerSlot,
+  scopeProfile
+}: ConfigSectionProps & { scopeProfile: null | string }) {
   const { t } = useI18n()
   const c = t.settings.config
 
   const [config, setConfig] = useState<HermesConfigRecord | null>(null)
-  const { data: loadedConfig, isError: configLoadFailed, refetch: refetchConfig } = useHermesConfigRecord()
+  const { data: loadedConfig, isError: configLoadFailed, refetch: refetchConfig } = useHermesConfigRecord(scopeProfile)
+  // Writes land on the same cache key the query above reads (base key when
+  // following the active profile, suffixed under a scope override).
+  const writeConfigCache = useMemo(() => hermesConfigCacheWriter(scopeProfile), [scopeProfile])
 
   const {
     data: schemaResponse,
     isError: schemaFailed,
     refetch: refetchSchema
-  } = useQuery({ queryKey: ['hermes-config-schema'], queryFn: getHermesConfigSchema, staleTime: 5 * 60 * 1000 })
+  } = useQuery({
+    // Base key when following the active profile (matches every pre-existing
+    // consumer); suffixed only for an explicit scope override.
+    queryKey:
+      scopeProfile == null ? ['hermes-config-schema'] : ['hermes-config-schema', normalizeProfileKey(scopeProfile)],
+    queryFn: () => getHermesConfigSchema(scopeProfile ?? undefined),
+    staleTime: 5 * 60 * 1000
+  })
 
   const schema = schemaResponse?.fields ?? null
   const saveVersionRef = useRef(0)
@@ -341,16 +370,21 @@ export function ConfigSection({
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          await saveHermesConfig(config)
-          setHermesConfigCache(config)
-          reconcileSavedApprovalMode(config)
+          await saveHermesConfig(config, scopeProfile ?? undefined)
+          writeConfigCache(config)
+          reconcileSavedApprovalMode(config, scopeProfile)
 
           if (saveVersionRef.current === v) {
-            const discoverySignature = repoDiscoveryPolicySignature(repoDiscoveryPolicyFromConfig(config))
+            // The repo-discovery scan crawls THIS client's filesystem under the
+            // ACTIVE profile's workspace policy; skip it when the page is
+            // editing another profile's config.
+            if (scopeProfile == null) {
+              const discoverySignature = repoDiscoveryPolicySignature(repoDiscoveryPolicyFromConfig(config))
 
-            if (savedDiscoverySignatureRef.current !== discoverySignature) {
-              savedDiscoverySignatureRef.current = discoverySignature
-              await scanAndRecordRepos(true)
+              if (savedDiscoverySignatureRef.current !== discoverySignature) {
+                savedDiscoverySignatureRef.current = discoverySignature
+                await scanAndRecordRepos(true)
+              }
             }
           }
         } catch (err) {
@@ -388,6 +422,7 @@ export function ConfigSection({
     if ((configLoadFailed && !config) || (schemaFailed && !schema)) {
       return (
         <SettingsContent>
+          <SettingsProfileScope className="mb-5" />
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <span className="text-sm text-muted-foreground">{c.failedLoad}</span>
             <Button
@@ -417,6 +452,7 @@ export function ConfigSection({
 
   return (
     <SettingsContent>
+      <SettingsProfileScope className="mb-5" />
       {headerSlot && <div className="pt-1">{headerSlot}</div>}
       {visibleFields.length === 0 ? (
         headerSlot ? null : (

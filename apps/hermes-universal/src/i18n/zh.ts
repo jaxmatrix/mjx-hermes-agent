@@ -329,6 +329,10 @@ export const zh: Translations = {
   },
 
   settings: {
+    profileScope: {
+      appliesTo: '应用于',
+      editsProfile: profile => `本页的更改将应用于“${profile}”配置档案。`
+    },
     closeSettings: '关闭设置',
     exportConfig: '导出配置',
     importConfig: '导入配置',

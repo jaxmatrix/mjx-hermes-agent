@@ -304,6 +304,10 @@ export interface Translations {
   }
 
   settings: {
+    profileScope: {
+      appliesTo: string
+      editsProfile: (profile: string) => string
+    }
     closeSettings: string
     exportConfig: string
     importConfig: string

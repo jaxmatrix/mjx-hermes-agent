@@ -16,8 +16,13 @@ const updateMessagingPlatform = vi.fn()
 const openExternalLink = vi.fn()
 
 vi.mock('@/hermes', () => ({
-  getMessagingPlatforms: () => getMessagingPlatforms(),
-  updateMessagingPlatform: (id: string, body: unknown) => updateMessagingPlatform(id, body)
+  getMessagingPlatforms: (profile?: null | string) => getMessagingPlatforms(profile),
+  updateMessagingPlatform: (id: string, body: unknown, profile?: null | string) =>
+    updateMessagingPlatform(id, body, profile),
+  // Pulled in transitively by the "Applies to" scope (settings-scope ->
+  // store/profile -> store/profiles).
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  setApiRequestProfile: vi.fn()
 }))
 
 vi.mock('@/lib/external-link', () => ({

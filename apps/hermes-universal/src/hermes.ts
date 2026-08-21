@@ -227,8 +227,17 @@ export function apiRequestProfile(): null | string {
   return _apiProfile
 }
 
-function profileScoped(): { profile?: string } {
-  return _apiProfile ? { profile: _apiProfile } : {}
+/** The `profile` a profile-scoped REST call rides with.
+ *
+ *  `override` is the settings "Applies to" scope (store/settings-scope): a
+ *  concrete profile the page is editing INSTEAD of the app-wide active one.
+ *  `null`/`undefined` means "no override" and falls back to `_apiProfile`, so
+ *  every pre-existing call site stays byte-identical on the wire and
+ *  single-profile users never send the key at all. */
+function profileScoped(override?: null | string): { profile?: string } {
+  const target = (override ?? _apiProfile ?? '').trim()
+
+  return target ? { profile: target } : {}
 }
 
 // ── Plugin doors ─────────────────────────────────────────────────────────────
@@ -516,9 +525,9 @@ export function renameSession(
   })
 }
 
-export function getGlobalModelInfo(): Promise<ModelInfoResponse> {
+export function getGlobalModelInfo(profile?: null | string): Promise<ModelInfoResponse> {
   return api<ModelInfoResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/model/info',
     timeoutMs: STARTUP_REQUEST_TIMEOUT_MS
   })
@@ -576,9 +585,9 @@ export function getHermesConfig(): Promise<HermesConfig> {
   })
 }
 
-export function getHermesConfigRecord(): Promise<HermesConfigRecord> {
+export function getHermesConfigRecord(profile?: null | string): Promise<HermesConfigRecord> {
   return api<HermesConfigRecord>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/config'
   })
 }
@@ -591,16 +600,16 @@ export function getHermesConfigDefaults(): Promise<HermesConfigRecord> {
   })
 }
 
-export function getHermesConfigSchema(): Promise<ConfigSchemaResponse> {
+export function getHermesConfigSchema(profile?: null | string): Promise<ConfigSchemaResponse> {
   return api<ConfigSchemaResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/config/schema'
   })
 }
 
-export function saveHermesConfig(config: HermesConfigRecord): Promise<{ ok: boolean }> {
+export function saveHermesConfig(config: HermesConfigRecord, profile?: null | string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/config',
     method: 'PUT',
     body: { config }
@@ -608,32 +617,36 @@ export function saveHermesConfig(config: HermesConfigRecord): Promise<{ ok: bool
 }
 
 // surface=declared serves the curated desktop schema; the dashboard consumes the raw plugin schema.
-export function getMemoryProviderConfig(provider: string): Promise<MemoryProviderConfig> {
+export function getMemoryProviderConfig(provider: string, profile?: null | string): Promise<MemoryProviderConfig> {
   return api<MemoryProviderConfig>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/memory/providers/${encodeURIComponent(provider)}/config?surface=declared`
   })
 }
 
-export function saveMemoryProviderConfig(provider: string, values: Record<string, string>): Promise<{ ok: boolean }> {
+export function saveMemoryProviderConfig(
+  provider: string,
+  values: Record<string, string>,
+  profile?: null | string
+): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/memory/providers/${encodeURIComponent(provider)}/config?surface=declared`,
     method: 'PUT',
     body: { values }
   })
 }
 
-export function getEnvVars(): Promise<Record<string, EnvVarInfo>> {
+export function getEnvVars(profile?: null | string): Promise<Record<string, EnvVarInfo>> {
   return api<Record<string, EnvVarInfo>>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/env'
   })
 }
 
-export function setEnvVar(key: string, value: string): Promise<{ ok: boolean }> {
+export function setEnvVar(key: string, value: string, profile?: null | string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/env',
     method: 'PUT',
     body: { key, value }
@@ -697,18 +710,18 @@ export function deleteCustomEndpoint(id: string): Promise<CustomEndpointsRespons
   })
 }
 
-export function deleteEnvVar(key: string): Promise<{ ok: boolean }> {
+export function deleteEnvVar(key: string, profile?: null | string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/env',
     method: 'DELETE',
     body: { key }
   })
 }
 
-export function revealEnvVar(key: string): Promise<{ key: string; value: string }> {
+export function revealEnvVar(key: string, profile?: null | string): Promise<{ key: string; value: string }> {
   return api<{ key: string; value: string }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/env/reveal',
     method: 'POST',
     body: { key }
@@ -765,17 +778,23 @@ export function cancelOAuthSession(sessionId: string): Promise<{ ok: boolean }> 
 
 // Memory-provider OAuth connect (provider-keyed; 404s for providers without an
 // OAuth flow). Profile-scoped: the grant lands in the active profile's config.
-export function startMemoryProviderOAuth(provider: string): Promise<MemoryProviderOAuthStatus> {
+export function startMemoryProviderOAuth(
+  provider: string,
+  profile?: null | string
+): Promise<MemoryProviderOAuthStatus> {
   return api<MemoryProviderOAuthStatus>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/memory/providers/${encodeURIComponent(provider)}/oauth/start`,
     method: 'POST'
   })
 }
 
-export function getMemoryProviderOAuthStatus(provider: string): Promise<MemoryProviderOAuthStatus> {
+export function getMemoryProviderOAuthStatus(
+  provider: string,
+  profile?: null | string
+): Promise<MemoryProviderOAuthStatus> {
   return api<MemoryProviderOAuthStatus>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/memory/providers/${encodeURIComponent(provider)}/oauth/status`
   })
 }
@@ -1022,17 +1041,24 @@ export function grantComputerUsePermissions(): Promise<ActionResponse> {
   })
 }
 
-export function getMessagingPlatforms(): Promise<MessagingPlatformsResponse> {
+// Profile-scoped: both handlers take `?profile=` and read that profile's
+// .env + gateway state (`web_server.py get_messaging_platforms`). Universal
+// used to send nothing at all, so the page showed the GATEWAY's own channel
+// credentials even while the app was operating as another profile.
+export function getMessagingPlatforms(profile?: null | string): Promise<MessagingPlatformsResponse> {
   return api<MessagingPlatformsResponse>({
+    ...profileScoped(profile),
     path: '/api/messaging/platforms'
   })
 }
 
 export function updateMessagingPlatform(
   platformId: string,
-  body: MessagingPlatformUpdate
+  body: MessagingPlatformUpdate,
+  profile?: null | string
 ): Promise<{ ok: boolean; platform: string }> {
   return api<{ ok: boolean; platform: string }>({
+    ...profileScoped(profile),
     path: `/api/messaging/platforms/${encodeURIComponent(platformId)}`,
     method: 'PUT',
     body
@@ -1262,11 +1288,14 @@ export function getUsageAnalytics(days = 30): Promise<AnalyticsResponse> {
   })
 }
 
-export function getGlobalModelOptions(opts?: {
-  refresh?: boolean
-  includeUnconfigured?: boolean
-  explicitOnly?: boolean
-}): Promise<ModelOptionsResponse> {
+export function getGlobalModelOptions(
+  opts?: {
+    refresh?: boolean
+    includeUnconfigured?: boolean
+    explicitOnly?: boolean
+  },
+  profile?: null | string
+): Promise<ModelOptionsResponse> {
   const params = new URLSearchParams()
 
   if (opts?.refresh) {
@@ -1282,7 +1311,7 @@ export function getGlobalModelOptions(opts?: {
   }
 
   return api<ModelOptionsResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: params.size > 0 ? `/api/model/options?${params.toString()}` : '/api/model/options',
     timeoutMs: STARTUP_REQUEST_TIMEOUT_MS
   })
@@ -1298,9 +1327,12 @@ export interface RecommendedDefaultModel {
 // Recommended default model for a freshly-authenticated provider. Mirrors the
 // curation `hermes model` does — for Nous it honors the free/paid tier so a
 // free user gets a free model instead of a paid default.
-export function getRecommendedDefaultModel(provider: string): Promise<RecommendedDefaultModel> {
+export function getRecommendedDefaultModel(
+  provider: string,
+  profile?: null | string
+): Promise<RecommendedDefaultModel> {
   return api<RecommendedDefaultModel>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/model/recommended-default?provider=${encodeURIComponent(provider)}`
   })
 }
@@ -1321,32 +1353,38 @@ export function setGlobalModel(
   })
 }
 
-export function getAuxiliaryModels(): Promise<AuxiliaryModelsResponse> {
+export function getAuxiliaryModels(profile?: null | string): Promise<AuxiliaryModelsResponse> {
   return api<AuxiliaryModelsResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/model/auxiliary'
   })
 }
 
-export function getMoaModels(): Promise<MoaConfigResponse> {
+export function getMoaModels(profile?: null | string): Promise<MoaConfigResponse> {
   return api<MoaConfigResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/model/moa'
   })
 }
 
-export function saveMoaModels(body: MoaConfigResponse): Promise<MoaConfigResponse & { ok: boolean }> {
+export function saveMoaModels(
+  body: MoaConfigResponse,
+  profile?: null | string
+): Promise<MoaConfigResponse & { ok: boolean }> {
   return api<MoaConfigResponse & { ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/model/moa',
     method: 'PUT',
     body
   })
 }
 
-export function setModelAssignment(body: ModelAssignmentRequest): Promise<ModelAssignmentResponse> {
+export function setModelAssignment(
+  body: ModelAssignmentRequest,
+  profile?: null | string
+): Promise<ModelAssignmentResponse> {
   return api<ModelAssignmentResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/model/set',
     method: 'POST',
     body
@@ -1405,8 +1443,12 @@ export function speakText(text: string): Promise<AudioSpeakResponse> {
   })
 }
 
-export function getElevenLabsVoices(): Promise<ElevenLabsVoicesResponse> {
+// Profile-scoped: the handler takes `?profile=` and reads that profile's
+// ElevenLabs key (`web_server.py get_elevenlabs_voices`). The voice dropdown on
+// Settings -> Voice has to list the voices of the profile it is editing.
+export function getElevenLabsVoices(profile?: null | string): Promise<ElevenLabsVoicesResponse> {
   return api<ElevenLabsVoicesResponse>({
+    ...profileScoped(profile),
     path: '/api/audio/elevenlabs/voices'
   })
 }
