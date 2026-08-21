@@ -33,6 +33,7 @@ import { span } from '@/observability'
 
 import { SessionRefLink } from './directive-content'
 import { detectEmbed, extractAlert, MarkdownAlert, RichCodeBlock, UrlEmbed } from './embeds'
+import { ResizableMarkdownTable, ResizableMarkdownTh } from './markdown-table'
 
 // Math rendering plugin (KaTeX). Configured once at module scope — the plugin
 // is stateless beyond its internal cache, so re-creating it per render would
@@ -699,29 +700,13 @@ const MARKDOWN_COMPONENTS = {
   li: ({ className, ...props }: ComponentProps<'li'>) => (
     <li className={cn('leading-(--dt-line-height)', className)} {...props} />
   ),
-  table: ({ className, ...props }: ComponentProps<'table'>) => (
-    <div className="aui-md-table my-2 max-w-full overflow-x-auto rounded-[0.375rem] border border-(--ui-stroke-tertiary)">
-      <table
-        className={cn(
-          'm-0 w-full min-w-[18rem] border-collapse text-[0.8125rem] [&_tr]:border-b [&_tr]:border-(--ui-stroke-tertiary) last:[&_tr]:border-0',
-          className
-        )}
-        {...props}
-      />
-    </div>
-  ),
+  // Resizable: the colgroup and the seam handles live in `markdown-table.tsx`,
+  // which owns the drag and the shape-keyed width record.
+  table: ResizableMarkdownTable,
   thead: ({ className, ...props }: ComponentProps<'thead'>) => (
     <thead className={cn('m-0 bg-muted/35 text-muted-foreground', className)} {...props} />
   ),
-  th: ({ className, ...props }: ComponentProps<'th'>) => (
-    <th
-      className={cn(
-        'whitespace-nowrap px-2.5 py-1.5 text-start align-middle text-[0.75rem] font-medium text-muted-foreground',
-        className
-      )}
-      {...props}
-    />
-  ),
+  th: ResizableMarkdownTh,
   td: ({ className, ...props }: ComponentProps<'td'>) => (
     <td className={cn('px-2.5 py-1.5 align-top text-[0.8125rem] leading-snug', className)} {...props} />
   ),
