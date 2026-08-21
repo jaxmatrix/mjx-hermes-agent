@@ -16982,7 +16982,11 @@ def test_slash_exec_concurrent_first_use_spawns_single_worker(monkeypatch):
             spawned.append(self)
             _time.sleep(0.05)  # widen the None-observation window
 
-        def run(self, cmd):
+        def run(self, cmd, **kwargs):
+            # slash.exec passes cwd= (the session's own working directory).
+            # A fake that rejects it turns every run into the handler's
+            # error path, which resets slash_worker to None and lets the
+            # second thread spawn again — masking the lock under test.
             return f"ran {cmd}"
 
         def close(self):
