@@ -55,9 +55,14 @@ import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
 
 import { SkillsHub } from './hub'
 import { McpTab } from './mcp-tab'
-import { $skillsSortDesc, $toolsetsSortDesc } from './store'
+import { $skillsSortDesc, $toolsetsSortDesc, HUB_PANE_ID } from './store'
 
-const SKILLS_MODES = ['skills', 'toolsets', 'mcp', 'hub'] as const
+// 'hub' is gone as a top-level tab — the hub browser is docked inside the
+// Skills tab now. Legacy `?tab=hub` links fall back to 'skills' through
+// useRouteEnumParam's unknown-value guard, so they keep working.
+const SKILLS_MODES = ['skills', 'toolsets', 'mcp'] as const
+
+const HUB_PANE_DEFAULT_PX = 320
 
 // Skills + toolsets live in the RQ cache so switching tabs/pages paints the
 // cached lists instantly (no reload flash) and mount only fires a deduped
@@ -546,24 +551,15 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
       // searching it is noise.
       searchHidden={mode === 'mcp'}
       searchHints={searchHints}
-      searchPlaceholder={
-        mode === 'skills'
-          ? t.skills.searchSkills
-          : mode === 'hub'
-            ? t.skills.hub.searchPlaceholder
-            : t.skills.searchToolsets
-      }
+      searchPlaceholder={mode === 'skills' ? t.skills.searchSkills : t.skills.searchToolsets}
       searchValue={query}
       tabs={[
         { id: 'skills', label: t.skills.tabSkills, meta: skills?.length ?? null },
         { id: 'toolsets', label: t.skills.tabToolsets, meta: toolsets ? visibleToolsetCount(toolsets) : null },
-        { id: 'mcp', label: t.skills.tabMcp },
-        { id: 'hub', label: t.skills.tabHub }
+        { id: 'mcp', label: t.skills.tabMcp }
       ]}
     >
-      {mode === 'hub' ? (
-        <SkillsHub query={query} />
-      ) : mode === 'mcp' ? (
+      {mode === 'mcp' ? (
         <McpTab gateway={gateway} />
       ) : (skillsFailed || toolsetsFailed) && (!skills || !toolsets) ? (
         <PanelEmpty
@@ -579,56 +575,82 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
       ) : !skills || !toolsets ? (
         <PageLoader label={t.skills.loading} />
       ) : mode === 'skills' ? (
-        visibleSkills.length === 0 ? (
-          capabilityEmpty('skills')
-        ) : (
-          <MasterDetail pane={skillEditorPane} split="wide">
-            <ListColumn
-              header={
-                <ListStrip
-                  left={sortButton(skillsSortDesc, () => $skillsSortDesc.set(!$skillsSortDesc.get()))}
-                  right={
-                    <ListStripMenu
-                      items={[
-                        { disabled: bulkBusy, label: t.skills.disableUnused, onSelect: () => void disableUnused() }
-                      ]}
-                      label={t.skills.tabSkills}
-                      toggle={bulkSwitch(allSkillsEnabled)}
+        // Installed skills on top, the hub browser docked underneath —
+        // discovery sits with management, so there is no separate tab to go
+        // to (and no tab switch between "what do I have" and "what can I
+        // get"). The list region keeps a floor (min-h-40) so dragging the hub
+        // up shrinks the HUB, never the list, and the empty state renders
+        // INSIDE that region: a user with no skills is exactly who needs the
+        // hub, so it must not take the browser down with it.
+        // ponytail: the docked pane is shrink-0 with a px height, so on a
+        // viewport under ~34rem tall the hub is clipped rather than shrunk;
+        // collapse or drag it. Give DetailPane a flexible body if that stops
+        // being good enough.
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="min-h-40 flex-1 overflow-hidden">
+            {visibleSkills.length === 0 ? (
+              capabilityEmpty('skills')
+            ) : (
+              <MasterDetail pane={skillEditorPane} resizeId="capabilities-split" split="wide">
+                <ListColumn
+                  header={
+                    <ListStrip
+                      left={sortButton(skillsSortDesc, () => $skillsSortDesc.set(!$skillsSortDesc.get()))}
+                      right={
+                        <ListStripMenu
+                          items={[
+                            { disabled: bulkBusy, label: t.skills.disableUnused, onSelect: () => void disableUnused() }
+                          ]}
+                          label={t.skills.tabSkills}
+                          toggle={bulkSwitch(allSkillsEnabled)}
+                        />
+                      }
                     />
                   }
-                />
-              }
-            >
-              {visibleSkills.map(skill => (
-                <CapRow
-                  active={activeSkill?.name === skill.name}
-                  busy={bulkBusy}
-                  enabled={skill.enabled}
-                  key={skill.name}
-                  meta={usageOf(skill) > 0 ? `×${compactNumber(usageOf(skill))}` : undefined}
-                  onSelect={() => setSelectedSkill(skill.name)}
-                  onToggle={enabled => void handleToggleSkill(skill, enabled)}
-                  subtitle={skillSubtitle(skill)}
-                  title={skill.name}
-                  toggleLabel={skill.name}
-                />
-              ))}
-            </ListColumn>
-            <DetailColumn footer={t.skills.changesApplyNewSessions}>
-              {activeSkill && (
-                <SkillDetail
-                  onArchive={() => setArchiveTarget(activeSkill.name)}
-                  onEdit={() => void openSkillEditor(activeSkill.name)}
-                  skill={activeSkill}
-                />
-              )}
-            </DetailColumn>
-          </MasterDetail>
-        )
+                >
+                  {visibleSkills.map(skill => (
+                    <CapRow
+                      active={activeSkill?.name === skill.name}
+                      busy={bulkBusy}
+                      enabled={skill.enabled}
+                      key={skill.name}
+                      meta={usageOf(skill) > 0 ? `×${compactNumber(usageOf(skill))}` : undefined}
+                      onSelect={() => setSelectedSkill(skill.name)}
+                      onToggle={enabled => void handleToggleSkill(skill, enabled)}
+                      subtitle={skillSubtitle(skill)}
+                      title={skill.name}
+                      toggleLabel={skill.name}
+                    />
+                  ))}
+                </ListColumn>
+                <DetailColumn footer={t.skills.changesApplyNewSessions}>
+                  {activeSkill && (
+                    <SkillDetail
+                      onArchive={() => setArchiveTarget(activeSkill.name)}
+                      onEdit={() => void openSkillEditor(activeSkill.name)}
+                      skill={activeSkill}
+                    />
+                  )}
+                </DetailColumn>
+              </MasterDetail>
+            )}
+          </div>
+          {/* The hub browser, docked: the same persisted, drag-resizable,
+              collapsible pane every other work surface uses. One search box
+              drives both halves — typing filters the installed list AND
+              searches the hub underneath it. */}
+          <DetailPane
+            defaultHeight={HUB_PANE_DEFAULT_PX}
+            id={HUB_PANE_ID}
+            title={<span className="text-[0.68rem] font-normal text-muted-foreground/60">{t.skills.tabHub}</span>}
+          >
+            <SkillsHub query={query} />
+          </DetailPane>
+        </div>
       ) : visibleToolsets.length === 0 ? (
         capabilityEmpty('tools')
       ) : (
-        <MasterDetail split="wide">
+        <MasterDetail resizeId="capabilities-split" split="wide">
           <ListColumn
             header={
               <ListStrip

@@ -22,6 +22,7 @@ const toggleToolset = vi.fn()
 const getToolsetConfig = vi.fn()
 const selectToolsetProvider = vi.fn()
 const getUsageAnalytics = vi.fn()
+const getSkillHubSources = vi.fn()
 
 // Partial mock: keep the real module (SkillsView pulls in @/store/profile,
 // whose import-time subscription calls setApiRequestProfile) and stub only the
@@ -34,7 +35,8 @@ vi.mock('@/hermes', async importOriginal => ({
   toggleToolset: (name: string, enabled: boolean) => toggleToolset(name, enabled),
   getToolsetConfig: (name: string) => getToolsetConfig(name),
   selectToolsetProvider: (toolset: string, provider: string) => selectToolsetProvider(toolset, provider),
-  getUsageAnalytics: (days: number) => getUsageAnalytics(days)
+  getUsageAnalytics: (days: number) => getUsageAnalytics(days),
+  getSkillHubSources: () => getSkillHubSources()
 }))
 
 // Notifications hit nanostores/timers we don't care about here.
@@ -56,14 +58,14 @@ function toolset(overrides: Record<string, unknown> = {}) {
   }
 }
 
-async function renderSkills() {
+async function renderSkills(route = '/skills?tab=toolsets') {
   const { SkillsView } = await import('./index')
   let result: ReturnType<typeof render>
   await act(async () => {
     result = render(
       // SkillsView reads skills/toolsets via useQuery, so it needs a provider.
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/skills?tab=toolsets']}>
+        <MemoryRouter initialEntries={[route]}>
           <SkillsView />
         </MemoryRouter>
       </QueryClientProvider>
@@ -79,6 +81,7 @@ beforeEach(() => {
   toggleToolset.mockResolvedValue({ ok: true, name: 'web', enabled: false })
   getToolsetConfig.mockResolvedValue({ has_category: true, active_provider: null, providers: [] })
   getUsageAnalytics.mockResolvedValue({ tools: [] })
+  getSkillHubSources.mockResolvedValue({ sources: [], featured: [], installed: {} })
 })
 
 afterEach(() => {
@@ -122,5 +125,49 @@ describe('SkillsView toolset management', () => {
 
     await screen.findByRole('switch', { name: 'Toggle Web Search toolset' })
     await waitFor(() => expect(getToolsetConfig).toHaveBeenCalledWith('web'))
+  })
+})
+
+describe('SkillsView hub browser', () => {
+  // The fixture disagrees with the layout on purpose: ZERO installed skills is
+  // the state the old code replaced the whole pane with an empty panel in, and
+  // it is exactly the user who needs the hub. The hub has to outlive it.
+  it('docks the hub browser in the Skills tab even with nothing installed', async () => {
+    getSkills.mockResolvedValue([])
+
+    await renderSkills('/skills?tab=skills')
+
+    // 'Connected hubs:' is rendered by the hub browser and by nothing else.
+    expect(await screen.findByText('Connected hubs:')).toBeTruthy()
+  })
+
+  it('drops the standalone Browse Hub tab', async () => {
+    getSkills.mockResolvedValue([])
+
+    await renderSkills('/skills?tab=skills')
+
+    await screen.findByText('Connected hubs:')
+    // The label survives as the docked pane's title (a span); what must be
+    // gone is the TAB, which is the only button that ever carried it.
+    expect(screen.queryAllByRole('button', { name: 'Browse Hub' })).toHaveLength(0)
+  })
+
+  it('keeps the hub out of the Tools tab', async () => {
+    getSkills.mockResolvedValue([])
+
+    await renderSkills('/skills?tab=toolsets')
+
+    await screen.findByRole('switch', { name: 'Toggle Web Search toolset' })
+    expect(screen.queryByText('Connected hubs:')).toBeNull()
+  })
+
+  it('routes a legacy ?tab=hub link to the Skills tab', async () => {
+    getSkills.mockResolvedValue([])
+
+    await renderSkills('/skills?tab=hub')
+
+    // Falls back to 'skills' (useRouteEnumParam drops unknown values), which
+    // is where the hub now lives — the link keeps working.
+    expect(await screen.findByText('Connected hubs:')).toBeTruthy()
   })
 })

@@ -21,6 +21,7 @@ import { SECTIONS } from '@/app/settings/constants'
 import type { SettingsSearchEntry } from '@/app/settings/settings-search'
 import { settingsSearchTargetRoute } from '@/app/settings/settings-search'
 import { useSettingsSearchCatalog } from '@/app/settings/use-settings-search'
+import { HUB_PANE_ID } from '@/app/skills/store'
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { HighlightMatches } from '@/components/ui/highlight-matches'
 import { KbdCombo } from '@/components/ui/kbd'
@@ -73,6 +74,7 @@ import {
 import { findInPageSupported, openFindBar } from '@/store/find-in-page'
 import { $bindings, bindingsFor } from '@/store/keybinds'
 import { $dismissedAutoProjectIds, $terminalOpen, setTerminalOpen } from '@/store/layout'
+import { $paneHeightOverride, setPaneHeightOverride } from '@/store/panes'
 import { openPetGenerate } from '@/store/pet-generate'
 import { $projectTree, goToProject, openFolderAsProject, requestStartWorkSession } from '@/store/projects'
 import { runGatewayRestart } from '@/store/system-status'
@@ -839,7 +841,16 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
           id: 'cap-hub',
           keywords: ['hub', 'install', 'browse', 'marketplace', 'capabilities'],
           label: `${capLabel}: ${t.skills.tabHub}`,
-          run: go(`${SKILLS_ROUTE}?tab=hub`)
+          // The hub browser is a docked pane inside the Skills tab, not a tab
+          // of its own any more. Un-collapse it on the way in: a persisted
+          // collapse would otherwise land "Browse hub" on a 36px header.
+          run: () => {
+            if (($paneHeightOverride(HUB_PANE_ID).get() ?? 1) <= 0) {
+              setPaneHeightOverride(HUB_PANE_ID, undefined)
+            }
+
+            openAppRoute(`${SKILLS_ROUTE}?tab=skills`)
+          }
         }
       ]
     })
