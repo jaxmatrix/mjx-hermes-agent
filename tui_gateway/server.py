@@ -6253,6 +6253,26 @@ def _on_tool_progress(
             payload["summary"] = str(_kwargs["summary"])
         if _kwargs.get("duration_seconds") is not None:
             payload["duration_seconds"] = float(_kwargs["duration_seconds"])
+        # Per-branch spend. ``delegate_tool`` has put this on the completion
+        # kwargs since the cost rollup landed, and both GUI clients read
+        # ``payload.cost_usd`` and sum it into the Agents overlay header — but
+        # this builder is an allow-list, so the key was dropped here and every
+        # tree reported $0.00 forever (MJXHRM-459).
+        if _kwargs.get("cost_usd") is not None:
+            try:
+                payload["cost_usd"] = float(_kwargs["cost_usd"])
+            except (TypeError, ValueError):
+                pass
+        # Two more facts the parent MODEL's tool result has carried for a while
+        # and the event stream never did, so no UI could show them:
+        # ``truncated`` (the child hit its iteration budget and its "completed"
+        # summary is partial) and the ``worktree`` finalize report (path,
+        # branch, commits, dirty, pruned) for a child run under
+        # ``delegation.worktree_isolation``. Same argument as ``missed_steer``.
+        if _kwargs.get("truncated") is not None:
+            payload["truncated"] = bool(_kwargs["truncated"])
+        if isinstance(_kwargs.get("worktree"), dict):
+            payload["worktree"] = dict(_kwargs["worktree"])
         # A steer this child ACCEPTED and then never got to deliver. The parent
         # model learns it from its delegate tool result; this payload is the
         # only channel a UI has, so without it the user who steered was told
