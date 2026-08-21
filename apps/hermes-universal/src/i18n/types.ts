@@ -1692,6 +1692,10 @@ export interface Translations {
       orderCost: string
       orderManual: string
       show: string
+      density: string
+      densityCompact: string
+      densityComfortable: string
+      densityDetailed: string
       metaUpdated: string
       metaTokens: string
       metaCost: string
@@ -1796,6 +1800,8 @@ export interface Translations {
       unpin: string
       copyId: string
       openInTile: string
+      messageCount: (count: number) => string
+      toolCallCount: (count: number) => string
       openInTerminal: string
       openInTerminalFailed: string
       openInBubble: string
