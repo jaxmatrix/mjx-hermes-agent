@@ -97,7 +97,10 @@ describe('Advanced → keep computer awake', () => {
     renderAdvanced()
 
     // The page still renders — wait for it before asserting the row is missing.
-    await screen.findByText('Nothing to configure')
+    // NOT the empty state: since MJXHRM-443 added FALLBACK_FIELD_SCHEMA, Advanced
+    // renders `timeouts.tools.sequential_call` even against an empty schema, so
+    // "Nothing to configure" never appears and this anchor waited out its timeout.
+    await screen.findByPlaceholderText('Not set')
     expect(screen.queryByRole('switch', { name: 'Keep computer awake' })).not.toBeInTheDocument()
   })
 })

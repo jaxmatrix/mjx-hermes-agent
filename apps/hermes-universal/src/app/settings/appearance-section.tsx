@@ -37,6 +37,7 @@ import type { DesktopTheme } from '@/themes/types'
 import { $marketplaceInstalls, isUserTheme, removeUserTheme } from '@/themes/user-themes'
 
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
+import { settingRowElementId } from './settings-search'
 import { TerminalFontSetting } from './terminal-font-setting'
 
 const MODE_OPTIONS = [
@@ -305,7 +306,12 @@ export function AppearanceSection() {
 
         <div className="mt-2">
           {/* Language */}
-          <ListRow action={<LanguageSwitcher />} description={t.language.description} title={t.language.label} />
+          <ListRow
+            action={<LanguageSwitcher />}
+            description={t.language.description}
+            id={settingRowElementId('appearance.language')}
+            title={t.language.label}
+          />
 
           {/* Theme */}
           <ListRow
@@ -384,6 +390,7 @@ export function AppearanceSection() {
               </>
             }
             description={a.themeDesc}
+            id={settingRowElementId('appearance.theme')}
             title={
               <div className="flex items-center justify-between gap-3">
                 <span>{a.themeTitle}</span>
@@ -413,6 +420,7 @@ export function AppearanceSection() {
               />
             }
             description={a.uiScaleDesc(zoomPercent)}
+            id={settingRowElementId('appearance.ui-scale')}
             title={a.uiScaleTitle}
           />
 
@@ -441,6 +449,7 @@ export function AppearanceSection() {
                 </div>
               }
               description={a.translucencyDesc}
+              id={settingRowElementId('appearance.translucency')}
               title={a.translucencyTitle}
             />
           )}
@@ -463,6 +472,7 @@ export function AppearanceSection() {
               />
             }
             description={a.toolViewDesc}
+            id={settingRowElementId('appearance.tool-view')}
             title={a.toolViewTitle}
           />
 
@@ -482,6 +492,7 @@ export function AppearanceSection() {
               />
             }
             description={a.backdropDesc}
+            id={settingRowElementId('appearance.backdrop')}
             title={a.backdropTitle}
           />
 
@@ -503,6 +514,7 @@ export function AppearanceSection() {
               />
             }
             description={a.introSplashDesc}
+            id={settingRowElementId('appearance.intro-splash')}
             title={a.introSplashTitle}
           />
 
@@ -524,6 +536,7 @@ export function AppearanceSection() {
               />
             }
             description={a.reactionsDesc}
+            id={settingRowElementId('appearance.reactions')}
             title={a.reactionsTitle}
           />
 
@@ -554,6 +567,7 @@ export function AppearanceSection() {
               </div>
             }
             description={a.embedsDesc}
+            id={settingRowElementId('appearance.embeds')}
             title={a.embedsTitle}
           />
 
@@ -578,6 +592,7 @@ export function AppearanceSection() {
               </div>
             }
             description={a.resizeRateDesc}
+            id={settingRowElementId('appearance.resize-rate')}
             title={a.resizeRateTitle}
           />
 
@@ -594,6 +609,7 @@ export function AppearanceSection() {
               />
             }
             description={a.resizeCalmDesc}
+            id={settingRowElementId('appearance.resize-calm')}
             title={a.resizeCalmTitle}
           />
         </div>
