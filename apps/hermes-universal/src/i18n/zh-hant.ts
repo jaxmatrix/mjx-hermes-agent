@@ -385,6 +385,8 @@ export const zhHant = defineLocale({
       toolViewDesc: '產品模式會隱藏原始工具 payload；技術模式會顯示完整輸入/輸出。',
       backdropTitle: '對話背景圖',
       backdropDesc: '對話後方那張淡淡的雕像圖。',
+      introSplashTitle: '開場畫面',
+      introSplashDesc: '新建的空白對話中顯示的字標與標語。',
       reactionsTitle: '訊息回應',
       reactionsDesc: 'iMessage 風格的表情回應 — 你可以對訊息做出回應，Hermes 也能回應你的訊息。',
       uiScaleTitle: '介面縮放',

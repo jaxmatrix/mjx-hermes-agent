@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $backdrop, setBackdrop } from '@/store/backdrop'
 import { $embedAllowed, $embedMode, clearEmbedAllowed, type EmbedMode, setEmbedMode } from '@/store/embed-consent'
+import { $introSplash, setIntroSplash } from '@/store/intro-splash'
 import { installFromMarketplace, type MarketplaceSearchItem, searchMarketplace } from '@/store/marketplace'
 import { $reactionsEnabled, setReactionsEnabled } from '@/store/reactions-enabled'
 import { $toolViewMode, setToolViewMode, type ToolViewMode } from '@/store/tool-view'
@@ -251,6 +252,7 @@ export function AppearanceSection() {
   const { availableThemes, mode, resolvedMode, setMode, setTheme, themeName } = useTheme()
   const toolViewMode = useStore($toolViewMode)
   const backdrop = useStore($backdrop)
+  const introSplash = useStore($introSplash)
   const reactionsEnabled = useStore($reactionsEnabled)
   const zoomPercent = useStore($zoomPercent)
   const embedMode = useStore($embedMode)
@@ -481,6 +483,27 @@ export function AppearanceSection() {
             }
             description={a.backdropDesc}
             title={a.backdropTitle}
+          />
+
+          {/* Intro splash — the wordmark + tagline on an empty chat. The toggle
+              outranks every other clause of `shouldShowIntro`: off is off, in
+              every window and every tile. */}
+          <ListRow
+            action={
+              <SegmentedControl
+                onChange={id => {
+                  triggerHaptic('selection')
+                  setIntroSplash(id === 'on')
+                }}
+                options={[
+                  { id: 'off', label: t.common.off },
+                  { id: 'on', label: t.common.on }
+                ]}
+                value={introSplash ? 'on' : 'off'}
+              />
+            }
+            description={a.introSplashDesc}
+            title={a.introSplashTitle}
           />
 
           {/* Message reactions — opt-in. Off by default: it adds an affordance

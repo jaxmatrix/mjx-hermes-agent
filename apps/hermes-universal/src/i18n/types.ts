@@ -421,6 +421,8 @@ export interface Translations {
       toolViewDesc: string
       backdropTitle: string
       backdropDesc: string
+      introSplashTitle: string
+      introSplashDesc: string
       reactionsTitle: string
       reactionsDesc: string
       uiScaleTitle: string

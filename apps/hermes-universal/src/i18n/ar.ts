@@ -410,6 +410,8 @@ export const ar = defineLocale({
       translucencyDesc: 'إظهار سطح المكتب من خلال النافذة بالكامل. متاح على macOS وWindows فقط.',
       backdropTitle: 'خلفية النافذة',
       backdropDesc: 'اختيار مقدار مزج خلفية سطح المكتب مع سطح Hermes.',
+      introSplashTitle: 'شاشة البداية',
+      introSplashDesc: 'الشعار النصي والشعار التعريفي الظاهران في محادثة جديدة فارغة.',
       reactionsTitle: 'تفاعلات الرسائل',
       reactionsDesc: 'تفاعلات إيموجي بأسلوب iMessage — تفاعل مع الرسائل، ويمكن لـ Hermes التفاعل مع رسائلك.',
       embedsTitle: 'التضمينات المضمّنة',
