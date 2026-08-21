@@ -28,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
   type AutomationBlueprint,
@@ -82,6 +83,9 @@ import {
   cronDeliveryOptions,
   cronDeliveryTargetLabel,
   cronEditorUpdates,
+  cronExternalContextFrom,
+  cronJobContinuity,
+  cronJobFireError,
   jobIsScriptOnly,
   normalizeCronDeliverValue,
   parseCronDeliveryTargets,
@@ -506,6 +510,9 @@ export function CronView({
         schedule: values.schedule,
         name: values.name || undefined,
         deliver: values.deliver || DEFAULT_DELIVER,
+        // A create has no stored refs to preserve, so the toggle is the whole
+        // list. Omitted entirely when off, to keep the payload what it was.
+        ...(values.continuity ? { context_from: ['self'] } : {}),
         ...(values.model.trim() ? { model: values.model.trim(), provider: values.provider.trim() || undefined } : {})
       })
 
@@ -514,7 +521,12 @@ export function CronView({
     } else if (editor.mode === 'edit') {
       const scriptOnlyJob = jobIsScriptOnly(editor.job)
 
-      const updated = await updateCronJob(editor.job.id, cronEditorUpdates(values, { scriptOnlyJob }))
+      const updated = await updateCronJob(
+        editor.job.id,
+        // The job's OWN external refs, so flipping the one checkbox this editor
+        // shows cannot delete a cross-job link set from the CLI or dashboard.
+        cronEditorUpdates(values, { externalContextFrom: cronExternalContextFrom(editor.job), scriptOnlyJob })
+      )
 
       updateCronJobs(rows => rows.map(row => (row.id === updated.id ? updated : row)))
       notify({ kind: 'success', title: c.updated, message: truncate(jobTitle(updated), 60) })
@@ -651,11 +663,16 @@ function CronJobListRow({
   onSelect: () => void
 }) {
   const state = jobState(job)
+  // A missed fire does not change `state` — the scheduler never started the run,
+  // so the record still reads "scheduled" and the row looked healthy. Paint the
+  // pip with the error colour so the list itself says which job to open; the
+  // detail pane carries the reason.
+  const dot = cronJobFireError(job) ? STATE_DOT.error : (STATE_DOT[state] ?? 'bg-muted-foreground')
 
   return (
     <PanelListRow
       active={active}
-      dotClassName={STATE_DOT[state] ?? 'bg-muted-foreground'}
+      dotClassName={dot}
       menuItems={menuItems}
       menuLabel={menuLabel}
       onSelect={onSelect}
@@ -684,6 +701,7 @@ function CronJobDetail({
   const isPaused = state === 'paused'
   const deliver = jobDeliver(job)
   const deliveryError = asText(job.last_delivery_error).trim()
+  const fireError = cronJobFireError(job)
   const prompt = jobPrompt(job)
   const modelOverride = jobModel(job)
 
@@ -719,6 +737,22 @@ function CronJobDetail({
           <div className="flex items-start gap-1.5 rounded bg-destructive/10 p-2 text-[0.7rem] text-destructive">
             <AlertTriangle className="mt-px size-3 shrink-0" />
             <span className="min-w-0 break-words">{job.last_error}</span>
+          </div>
+        ) : null}
+
+        {/* A MISSED fire is neither of the other two: the scheduler never got
+            to start the run, so no execution row exists and last_status /
+            last_error only ever describe runs that began (cron/jobs.py
+            `stamp_fire_error`). This is the "runs fine when I trigger it, never
+            fires on its own" shape, and without this block the job looked
+            perfectly healthy while silently never running. */}
+        {fireError ? (
+          <div className="flex items-start gap-1.5 rounded bg-destructive/10 p-2 text-[0.7rem] text-destructive">
+            <AlertTriangle className="mt-px size-3 shrink-0" />
+            <span className="min-w-0 break-words">
+              {c.missedFire}
+              {fireError.at ? ` (${formatTime(fireError.at)})` : ''}: {fireError.detail}
+            </span>
           </div>
         ) : null}
 
@@ -881,6 +915,7 @@ function CronEditorDialog({
   const [schedule, setSchedule] = useState('')
   const [schedulePreset, setSchedulePreset] = useState('daily')
   const [deliver, setDeliver] = useState(DEFAULT_DELIVER)
+  const [continuity, setContinuity] = useState(false)
   // Per-job model override, encoded as `${providerSlug}:${model}` (split on the
   // first ':' when saving). MODEL_DEFAULT_VALUE = follow the global default.
   const [modelChoice, setModelChoice] = useState(MODEL_DEFAULT_VALUE)
@@ -928,6 +963,7 @@ function CronEditorDialog({
     setSchedule(initial ? jobScheduleExpr(initial) : (SCHEDULE_OPTIONS[0].expr ?? ''))
     setSchedulePreset(initial ? scheduleOptionForExpr(jobScheduleExpr(initial)).value : 'daily')
     setDeliver(initial ? jobDeliver(initial) : DEFAULT_DELIVER)
+    setContinuity(initial ? cronJobContinuity(initial) : false)
     setModelChoice(initial && jobModel(initial) ? `${jobProvider(initial)}:${jobModel(initial)}` : MODEL_DEFAULT_VALUE)
     setSlotValues({})
     setTemplateChoice(CUSTOM_TEMPLATE)
@@ -1005,6 +1041,7 @@ function CronEditorDialog({
 
     try {
       await onSave({
+        continuity,
         deliver,
         model: overrideModel,
         name: name.trim(),
@@ -1163,6 +1200,20 @@ function CronEditorDialog({
               </Field>
             </div>
 
+            {/* Continuity is stored as the reserved 'self' entry in context_from,
+                not as a field of its own — see cronContextFromPayload. A switch,
+                because it is one durable property of the job rather than a
+                choice among options. */}
+            <div className="flex items-start justify-between gap-3 rounded-md border border-input px-3 py-2.5">
+              <div className="grid gap-0.5">
+                <label className="text-xs font-medium text-foreground" htmlFor="cron-continuity">
+                  {c.continuityLabel}
+                </label>
+                <FieldHint>{c.continuityHint}</FieldHint>
+              </div>
+              <Switch checked={continuity} id="cron-continuity" onCheckedChange={setContinuity} />
+            </div>
+
             {!scriptOnlyJob && (
               <Field htmlFor="cron-model" label={c.modelLabel} optional optionalLabel={c.optional}>
                 <Select onValueChange={setModelChoice} value={modelChoice}>
@@ -1306,6 +1357,8 @@ function FieldHint({ children }: { children: React.ReactNode }) {
 type EditorState = { mode: 'closed' } | { mode: 'create' } | { job: CronJob; mode: 'edit' }
 
 interface EditorValues {
+  /** Feed the job its own previous output into the next run. */
+  continuity: boolean
   deliver: string
   /** Per-job model override ('' = follow the global default). */
   model: string

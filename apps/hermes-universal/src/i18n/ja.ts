@@ -1660,6 +1660,9 @@ export const ja = defineLocale({
     monthlyOnDayAt: (dayOfMonth, time) => `毎月 ${dayOfMonth} 日 ${time} に`,
     topOfHour: '毎時 0 分',
     everyHourAt: minute => `毎時 :${minute} に`,
+    continuityLabel: '前回の実行を引き継ぐ',
+    continuityHint: 'このジョブに前回の出力を渡し、毎回ゼロから始めるのではなく前回の続きから実行します。',
+    missedFire: 'スケジュールされた実行を逃しました',
     newCron: '新しい Cron',
     emptyDescNew:
       'Cron 式でプロンプトを実行するスケジュールを設定します。Hermes が実行して、選択した宛先に結果を送信します。',

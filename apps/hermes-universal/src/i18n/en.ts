@@ -1826,6 +1826,10 @@ export const en: Translations = {
     monthlyOnDayAt: (dayOfMonth, time) => `Monthly on day ${dayOfMonth} at ${time}`,
     topOfHour: 'At the top of every hour',
     everyHourAt: minute => `Every hour at :${minute}`,
+    continuityLabel: 'Build on the last run',
+    continuityHint:
+      'Feed this job its own previous output, so each run continues from the last instead of starting cold.',
+    missedFire: 'Missed scheduled fire',
     newCron: 'New cron',
     emptyDescNew:
       'Schedule a prompt to run on a cron expression. Hermes will run it and deliver results to the destination you pick.',

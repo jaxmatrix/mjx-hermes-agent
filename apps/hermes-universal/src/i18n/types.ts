@@ -1535,6 +1535,11 @@ export interface Translations {
     monthlyOnDayAt: (dayOfMonth: string, time: string) => string
     topOfHour: string
     everyHourAt: (minute: string) => string
+    /** Continuity toggle — stored as the reserved 'self' ref in context_from. */
+    continuityLabel: string
+    continuityHint: string
+    /** The scheduler never started a due run (last_fire_error). */
+    missedFire: string
     newCron: string
     emptyDescNew: string
     emptyDescSearch: string
