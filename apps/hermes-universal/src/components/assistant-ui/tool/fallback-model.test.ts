@@ -622,7 +622,7 @@ describe('multimodal tool results', () => {
   it('falls back to the text blocks when no summary was provided', () => {
     const { text_summary: _dropped, ...noSummary } = envelope()
 
-    expect(multimodalResult(noSummary).text).toBe('Screenshot of the desktop, 1512x982, 41 elements.')
+    expect(multimodalResult(noSummary)?.text).toBe('Screenshot of the desktop, 1512x982, 41 elements.')
   })
 
   it('leaves an ordinary record alone', () => {
