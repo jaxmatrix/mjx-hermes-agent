@@ -74,3 +74,24 @@ describe('isUrlServer — what the background sweep is allowed to probe', () => 
     expect(isUrlServer({})).toBe(false)
   })
 })
+
+describe('startMcpHealthChecker window gate', () => {
+  // App() mounts in EVERY window this app opens, so an ungated start would give
+  // the fleet one sweeper per window: several processes probing the same
+  // servers on the same cadence, and several copies of the same nudge.
+  it('refuses to arm in a satellite/tile window', async () => {
+    vi.resetModules()
+    vi.doMock('@/store/windows', () => ({ isActivityWindow: () => false, isSecondaryWindow: () => true }))
+
+    const gatewaySubscribe = vi.fn(() => () => {})
+    vi.doMock('@/store/gateway', () => ({ $gatewayState: { get: () => 'open', subscribe: gatewaySubscribe } }))
+
+    const satellite = await import('./mcp-health')
+    satellite.startMcpHealthChecker()
+
+    // Arming is what subscribes to gateway state; no subscription, no sweeps.
+    expect(gatewaySubscribe).not.toHaveBeenCalled()
+    vi.doUnmock('@/store/windows')
+    vi.doUnmock('@/store/gateway')
+  })
+})

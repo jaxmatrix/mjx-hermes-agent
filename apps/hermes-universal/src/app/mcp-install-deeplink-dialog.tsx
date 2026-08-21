@@ -1,6 +1,5 @@
 import { useStore } from '@nanostores/react'
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -21,6 +20,7 @@ import { $mcpInstallRequest } from '@/store/mcp-deeplink-install'
 import { notify } from '@/store/notifications'
 
 import { setHermesConfigCache } from './hooks/use-config-record'
+import { mcpServerRoute } from './routes'
 
 /**
  * Explicit-confirm gate for `hermes://mcp/install` deep links. The payload is
@@ -39,7 +39,6 @@ import { setHermesConfigCache } from './hooks/use-config-record'
 export function McpInstallDeepLinkDialog() {
   const { t } = useI18n()
   const m = t.settings.mcp
-  const navigate = useNavigate()
   const request = useStore($mcpInstallRequest)
 
   const [name, setName] = useState('')
@@ -121,7 +120,9 @@ export function McpInstallDeepLinkDialog() {
       setHermesConfigCache(previous => (previous ? { ...previous, mcp_servers: nextServers } : previous))
       notify({ kind: 'success', title: m.savedTitle, message: m.savedMessage(trimmedName) })
       $mcpInstallRequest.set(null)
-      navigate(`/skills?tab=mcp&server=${encodeURIComponent(trimmedName)}`)
+      // Hash navigation, not useNavigate: this dialog is mounted by App() in
+      // every window, including roots that render no Router.
+      window.location.hash = `#${mcpServerRoute(trimmedName)}`
     } catch (err) {
       setError(err instanceof Error ? err.message : m.saveFailed)
     } finally {

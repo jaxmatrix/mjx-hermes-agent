@@ -12,6 +12,7 @@
  * the other just learned.
  */
 
+import { mcpServerRoute } from '@/app/routes'
 import { getHermesConfigRecord, type McpTestResult, testMcpServer } from '@/hermes'
 import { translateNow } from '@/i18n'
 import { classifyProbe, freshProbe, probeCache, probeKey } from '@/lib/mcp-probe-cache'
@@ -59,7 +60,7 @@ let offProfile: (() => void) | null = null
 // scrolls to and focuses the server so its ServerConfig pane (with the
 // Authenticate button) is one click away.
 function openMcpServerPage(name: string): void {
-  window.location.hash = `#/skills?tab=mcp&server=${encodeURIComponent(name)}`
+  window.location.hash = `#${mcpServerRoute(name)}`
 }
 
 function recordResult(profileKey: string, name: string, status: McpHealthStatus): void {
