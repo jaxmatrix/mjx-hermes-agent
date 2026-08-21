@@ -5490,42 +5490,51 @@ _inject_profile_env_vars()
 # An optional ``optional_env`` block surfaces non-required vars the same way
 # (e.g. allowlist, home channel).
 
-_platform_plugin_env_vars_injected = False
+_plugin_env_vars_injected = False
 
 
-def _inject_platform_plugin_env_vars() -> None:
-    """Populate OPTIONAL_ENV_VARS from bundled platform plugin manifests.
+def manifest_env_is_secret(name: str, meta: Optional[Dict[str, Any]] = None) -> bool:
+    """Whether a plugin.yaml env declaration is a password field.
 
+    Explicit ``password``/``secret`` wins; otherwise anything named *TOKEN,
+    *SECRET, *KEY, *PASSWORD or *JSON is treated as a secret.
+    """
+    meta = meta or {}
+    if meta.get("password") is False:
+        return False
+    if meta.get("password") or meta.get("secret"):
+        return True
+    return name.upper().endswith(("_TOKEN", "_SECRET", "_KEY", "_PASSWORD", "_JSON"))
+
+
+def _inject_plugin_env_vars() -> None:
+    """Populate OPTIONAL_ENV_VARS from bundled plugin manifests.
+
+    Every ``plugins/<category>/<name>/plugin.yaml`` that declares
+    ``requires_env``/``optional_env`` surfaces those vars in the setup wizard
+    and the Keys page — platform plugins as ``messaging``, the rest as ``tool``.
     Called once at module load time. Idempotent — repeated calls are no-ops.
     Failures are swallowed so a malformed plugin.yaml can't break CLI import.
     """
-    global _platform_plugin_env_vars_injected
-    if _platform_plugin_env_vars_injected:
+    global _plugin_env_vars_injected
+    if _plugin_env_vars_injected:
         return
-    _platform_plugin_env_vars_injected = True
+    _plugin_env_vars_injected = True
     try:
-        import yaml  # type: ignore
-
         # Resolve the bundled plugins dir from this file's location so the
         # injector works regardless of CWD.
-        repo_root = Path(__file__).resolve().parents[1]
-        platforms_dir = repo_root / "plugins" / "platforms"
-        if not platforms_dir.is_dir():
+        plugins_root = Path(__file__).resolve().parents[1] / "plugins"
+        if not plugins_root.is_dir():
             return
-        for child in platforms_dir.iterdir():
-            if not child.is_dir():
-                continue
-            manifest_path = child / "plugin.yaml"
-            if not manifest_path.exists():
-                manifest_path = child / "plugin.yml"
-            if not manifest_path.exists():
-                continue
+        for manifest_path in sorted(plugins_root.glob("*/*/plugin.y*ml")):
+            child = manifest_path.parent
             try:
                 with open(manifest_path, "r", encoding="utf-8") as f:
                     manifest = fast_safe_load(f) or {}
             except Exception:
                 continue
             label = manifest.get("label") or manifest.get("name") or child.name
+            default_category = "messaging" if child.parent.name == "platforms" else "tool"
             # Merge required + optional env var declarations.
             entries = list(manifest.get("requires_env") or [])
             entries.extend(manifest.get("optional_env") or [])
@@ -5540,15 +5549,6 @@ def _inject_platform_plugin_env_vars() -> None:
                     continue
                 if name in OPTIONAL_ENV_VARS:
                     continue  # hardcoded entry wins (back-compat)
-                # Heuristic: anything named *TOKEN, *SECRET, *KEY, *PASSWORD
-                # is a password field unless explicitly overridden.
-                name_upper = name.upper()
-                is_secret = bool(meta.get("password") or meta.get("secret"))
-                if not is_secret and not meta.get("password") is False:
-                    is_secret = any(
-                        name_upper.endswith(suf)
-                        for suf in ("_TOKEN", "_SECRET", "_KEY", "_PASSWORD", "_JSON")
-                    )
                 OPTIONAL_ENV_VARS[name] = {
                     "description": (
                         meta.get("description")
@@ -5556,12 +5556,12 @@ def _inject_platform_plugin_env_vars() -> None:
                     ),
                     "prompt": meta.get("prompt") or name,
                     "url": meta.get("url") or None,
-                    "password": is_secret,
-                    "category": meta.get("category") or "messaging",
+                    "password": manifest_env_is_secret(name, meta),
+                    "category": meta.get("category") or default_category,
                 }
     except Exception:
         pass
 
 
-# Eagerly inject so that platform plugin env vars show up in the setup wizard.
-_inject_platform_plugin_env_vars()
+# Eagerly inject so that plugin env vars show up in the setup wizard.
+_inject_plugin_env_vars()
