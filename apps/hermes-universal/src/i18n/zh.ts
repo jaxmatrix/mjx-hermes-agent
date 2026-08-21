@@ -1488,7 +1488,16 @@ export const zh: Translations = {
     steerFailed: '无法连接网关',
     steerGone: '该子代理已不在运行',
     steerNotOwned: '该子代理属于其他会话 — 请在那里引导',
-    steerMissed: (text: string) => `引导未送达 — 该子代理先结束了：${text}`
+    steerMissed: (text: string) => `引导未送达 — 该子代理先结束了：${text}`,
+    stop: '停止',
+    stopRequested: '正在停止 — 仍会返回其部分结果',
+    truncatedNotice: '步数已用尽 — 此摘要并不完整',
+    worktree: '工作树',
+    worktreeCommits: (count: number) => `${count} 次提交`,
+    worktreeDirty: '有未提交的改动',
+    worktreeKept: '已保留以供查看',
+    worktreePruned: '已删除 — 其中没有成果',
+    worktreeUnknown: '状态未知 — 请先查看，不要直接断定没有成果'
   },
 
   commandCenter: {

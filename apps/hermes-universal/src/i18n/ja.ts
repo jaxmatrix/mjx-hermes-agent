@@ -1206,7 +1206,16 @@ export const ja = defineLocale({
     steerFailed: 'ゲートウェイに接続できませんでした',
     steerGone: 'このサブエージェントはもう実行されていません',
     steerNotOwned: 'このサブエージェントは別のチャットのものです — そちらから誘導してください',
-    steerMissed: (text: string) => `誘導は届きませんでした — サブエージェントが先に終了しました: ${text}`
+    steerMissed: (text: string) => `誘導は届きませんでした — サブエージェントが先に終了しました: ${text}`,
+    stop: '停止',
+    stopRequested: '停止中 — 途中までの結果は返ります',
+    truncatedNotice: 'ステップ上限に達しました — この要約は途中までです',
+    worktree: 'ワークツリー',
+    worktreeCommits: (count: number) => `${count} 件のコミット`,
+    worktreeDirty: '未コミットの変更あり',
+    worktreeKept: 'レビュー用に保持',
+    worktreePruned: '削除済み — 成果物はありませんでした',
+    worktreeUnknown: '状態不明 — 成果なしと判断する前に確認してください'
   },
 
   commandCenter: {

@@ -210,6 +210,32 @@ export function steerSubagent(params: {
   })
 }
 
+export interface SubagentInterruptResult {
+  /** `false` = the gateway could not resolve that id: the child already
+   *  exited, or it belongs to a delegation this gateway does not own. NOT an
+   *  RPC error — the backend answers 200 either way, exactly like
+   *  `subagent.steer`'s `rejected`. */
+  found: boolean
+  subagent_id: string
+}
+
+/**
+ * End a live delegated child early — the stop-side mirror of `steerSubagent`.
+ *
+ * The child's partial result still comes back as its normal completion, so
+ * this is "wrap up now", not "discard". `delegate_task(action="stop")` is the
+ * MODEL's route to the same `interrupt_subagent()`; `subagent.interrupt` is the
+ * one a client can call, and it had no caller in either GUI — the Agents
+ * overlay could redirect a runaway child but never end one (MJXHRM-459).
+ *
+ * Unlike `subagent.steer` the gateway performs no ownership check here, so the
+ * caller must pass the id of a child it is actually showing (`sessionOfSubagent`
+ * is what proves the row belongs to a session this client owns).
+ */
+export function interruptSubagent(params: { subagentId: string }): Promise<SubagentInterruptResult> {
+  return requestGateway<SubagentInterruptResult>('subagent.interrupt', { subagent_id: params.subagentId })
+}
+
 // --- wake.start / wake.stop / wake.status / wake.pause / wake.resume -------
 
 /**

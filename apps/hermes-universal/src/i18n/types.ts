@@ -1186,6 +1186,15 @@ export interface Translations {
     steerGone: string
     steerNotOwned: string
     steerMissed: (text: string) => string
+    stop: string
+    stopRequested: string
+    truncatedNotice: string
+    worktree: string
+    worktreeCommits: (count: number) => string
+    worktreeDirty: string
+    worktreeKept: string
+    worktreePruned: string
+    worktreeUnknown: string
   }
 
   commandCenter: {

@@ -977,7 +977,16 @@ export const ar = defineLocale({
     ageHours: hours => `قبل ${hours} س`,
     durationSeconds: seconds => `${seconds} ث`,
     durationMinutes: (minutes, seconds) => `${minutes} د ${seconds} ث`,
-    tokens: value => `${value} رمز`
+    tokens: value => `${value} رمز`,
+    stop: 'إيقاف',
+    stopRequested: 'جارٍ الإيقاف — ستعود نتيجته الجزئية على أي حال',
+    truncatedNotice: 'نفدت الخطوات — هذا الملخّص جزئي',
+    worktree: 'شجرة العمل',
+    worktreeCommits: (count: number) => `${count} إيداع`,
+    worktreeDirty: 'تغييرات غير مودعة',
+    worktreeKept: 'محفوظة للمراجعة',
+    worktreePruned: 'أُزيلت — لم تحتوِ على أي عمل',
+    worktreeUnknown: 'الحالة غير معروفة — افحصها قبل افتراض عدم وجود عمل'
   },
   commandCenter: {
     close: 'إغلاق',

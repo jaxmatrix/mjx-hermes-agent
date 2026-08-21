@@ -16,9 +16,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SubagentSteerResult } from '@/lib/gateway-rpc'
 
-const { steerSubagent } = vi.hoisted(() => ({ steerSubagent: vi.fn() }))
+const { interruptSubagent, steerSubagent } = vi.hoisted(() => ({
+  interruptSubagent: vi.fn(),
+  steerSubagent: vi.fn()
+}))
 
-vi.mock('@/lib/gateway-rpc', () => ({ steerSubagent }))
+vi.mock('@/lib/gateway-rpc', () => ({ interruptSubagent, steerSubagent }))
 
 import { I18nProvider } from '@/i18n'
 import { en } from '@/i18n/en'
@@ -62,6 +65,7 @@ beforeEach(() => {
   Element.prototype.animate ??= (() => ({ cancel: () => {}, finish: () => {} })) as never
   $subagentsBySession.set({})
   steerSubagent.mockReset()
+  interruptSubagent.mockReset()
 })
 
 describe('agents overlay · steer', () => {
@@ -138,5 +142,117 @@ describe('agents overlay · steer', () => {
     expect(screen.queryByText(/steer never landed/i)).toBeNull()
     // ...and a settled row offers no steer control at all.
     expect(screen.queryByRole('button', { name: en.agents.steer })).toBeNull()
+  })
+})
+
+/**
+ * STOP — the other half of the control the overlay never had.
+ *
+ * `subagent.interrupt` answers 200 with `found: false` when the id resolves to
+ * nothing (the child already exited, or it belongs to a delegation this gateway
+ * does not own), exactly the way steer answers `rejected`. Reporting only the
+ * happy path would make the button look like it worked every single time.
+ */
+describe('agents overlay · stop', () => {
+  it('ends the child the row is showing', async () => {
+    interruptSubagent.mockResolvedValue({ found: true, subagent_id: 'sub-1' })
+    // Two live children, so "the id the row shows" is a real choice and not the
+    // only id on screen. `startedAt` pins the render order the tree sorts by.
+    renderAgents([row({ id: 'sub-1', startedAt: 1 }), row({ goal: 'other work', id: 'sub-2', startedAt: 2 })])
+
+    fireEvent.click(screen.getAllByRole('button', { name: en.agents.stop })[0]!)
+
+    await waitFor(() => expect(interruptSubagent).toHaveBeenCalledWith({ subagentId: 'sub-1' }))
+    expect(await screen.findByText(en.agents.stopRequested)).toBeTruthy()
+  })
+
+  it('says so when there was nothing left to stop', async () => {
+    interruptSubagent.mockResolvedValue({ found: false, subagent_id: 'sub-1' })
+    renderAgents([row()])
+
+    fireEvent.click(screen.getByRole('button', { name: en.agents.stop }))
+
+    expect(await screen.findByText(en.agents.steerGone)).toBeTruthy()
+    expect(screen.queryByText(en.agents.stopRequested)).toBeNull()
+  })
+
+  it('separates a transport failure from a miss', async () => {
+    interruptSubagent.mockRejectedValue(new Error('socket down'))
+    renderAgents([row()])
+
+    fireEvent.click(screen.getByRole('button', { name: en.agents.stop }))
+
+    expect(await screen.findByText(en.agents.steerFailed)).toBeTruthy()
+  })
+
+  it('offers no stop for a settled row', () => {
+    renderAgents([row({ status: 'completed' })])
+
+    expect(screen.queryByRole('button', { name: en.agents.stop })).toBeNull()
+  })
+})
+
+/**
+ * Truncation and worktree state — facts the parent MODEL's tool result has
+ * carried for a while and the event stream never did (MJXHRM-459).
+ */
+describe('agents overlay · truncation and worktree', () => {
+  it('marks a child that ran out of steps, even though it says completed', () => {
+    renderAgents([row({ status: 'completed', truncated: true })])
+
+    expect(screen.getByText(en.agents.truncatedNotice)).toBeTruthy()
+  })
+
+  it('says nothing about truncation for a child that finished its work', () => {
+    renderAgents([row({ status: 'completed', truncated: false })])
+
+    expect(screen.queryByText(en.agents.truncatedNotice)).toBeNull()
+  })
+
+  it('names the isolated checkout and what it holds', () => {
+    renderAgents([
+      row({
+        status: 'completed',
+        worktree: { branch: 'hermes/sub-1', commits: 3, dirty: true, path: '/tmp/wt/sub-1', pruned: false }
+      })
+    ])
+
+    expect(screen.getByText('/tmp/wt/sub-1')).toBeTruthy()
+    expect(screen.getByText(new RegExp(en.agents.worktreeCommits(3)))).toBeTruthy()
+    expect(screen.getByText(new RegExp(en.agents.worktreeDirty))).toBeTruthy()
+  })
+
+  it('reports a pruned checkout as gone rather than as empty work', () => {
+    renderAgents([
+      row({
+        status: 'completed',
+        worktree: { branch: 'hermes/sub-1', commits: 0, dirty: false, path: '/tmp/wt/sub-1', pruned: true }
+      })
+    ])
+
+    expect(screen.getByText(en.agents.worktreePruned)).toBeTruthy()
+    expect(screen.queryByText(new RegExp(en.agents.worktreeCommits(0)))).toBeNull()
+  })
+
+  // The payload's `commits: 0` / `dirty: false` are DEFAULTS when the git
+  // probes failed, so printing "0 commits" from them states the one conclusion
+  // the gateway's own note warns against.
+  it('refuses to report an unmeasured checkout as having no commits', () => {
+    renderAgents([
+      row({
+        status: 'completed',
+        worktree: {
+          branch: 'hermes/sub-1',
+          commits: 0,
+          dirty: false,
+          inspectionFailed: true,
+          path: '/tmp/wt/sub-1',
+          pruned: false
+        }
+      })
+    ])
+
+    expect(screen.getByText(en.agents.worktreeUnknown)).toBeTruthy()
+    expect(screen.queryByText(new RegExp(en.agents.worktreeCommits(0)))).toBeNull()
   })
 })

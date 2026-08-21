@@ -213,3 +213,75 @@ describe('subagents reducer', () => {
     })
   })
 })
+
+/**
+ * Truncation + worktree state off `subagent.complete` (MJXHRM-459).
+ *
+ * Both were on the parent MODEL's tool-result entry long before they were on
+ * the event, and the event stream is all a client gets.
+ */
+describe('subagents truncation + worktree', () => {
+  const SESSION = 'runtime-1'
+
+  beforeEach(() => {
+    $subagentsBySession.set({})
+  })
+
+  const complete = (payload: Record<string, unknown>) => {
+    upsertSubagent(SESSION, { subagent_id: 'a', goal: 'work', status: 'running' }, true, 'subagent.start')
+    upsertSubagent(SESSION, { subagent_id: 'a', status: 'completed', ...payload }, false, 'subagent.complete')
+
+    return $subagentsBySession.get()[SESSION]![0]!
+  }
+
+  it('keeps the truncation flag off a completed child', () => {
+    expect(complete({ truncated: true }).truncated).toBe(true)
+  })
+
+  it('records an explicit false rather than leaving it unknown', () => {
+    expect(complete({ truncated: false }).truncated).toBe(false)
+  })
+
+  it('leaves it undefined when the gateway is too old to say', () => {
+    expect(complete({}).truncated).toBeUndefined()
+  })
+
+  it('normalises the worktree finalize report', () => {
+    expect(
+      complete({
+        worktree: {
+          branch: 'hermes/a',
+          commits: 2,
+          dirty: true,
+          inspection_failed: false,
+          path: '/tmp/wt/a',
+          pruned: false
+        }
+      }).worktree
+    ).toEqual({
+      branch: 'hermes/a',
+      commits: 2,
+      dirty: true,
+      inspectionFailed: undefined,
+      note: undefined,
+      path: '/tmp/wt/a',
+      pruned: false
+    })
+  })
+
+  it('carries the unproven-inspection flag rather than flattening it to a clean tree', () => {
+    const worktree = complete({
+      worktree: { branch: 'hermes/a', inspection_failed: true, note: 'rev-list exit 128', path: '/tmp/wt/a' }
+    }).worktree
+
+    expect(worktree?.inspectionFailed).toBe(true)
+    expect(worktree?.note).toBe('rev-list exit 128')
+    // Defaults, NOT measurements — the flag above is what says so.
+    expect(worktree?.commits).toBe(0)
+  })
+
+  it('ignores a worktree that names neither a path nor a branch', () => {
+    expect(complete({ worktree: { commits: 0, dirty: false, pruned: true } }).worktree).toBeUndefined()
+    expect(complete({ worktree: 'not-a-report' }).worktree).toBeUndefined()
+  })
+})

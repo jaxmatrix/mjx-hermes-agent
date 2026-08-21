@@ -1330,7 +1330,16 @@ export const en: Translations = {
     steerFailed: 'Could not reach the gateway',
     steerGone: 'That subagent is no longer running',
     steerNotOwned: 'That subagent belongs to another chat — steer it from there',
-    steerMissed: (text: string) => `Steer never landed — this subagent finished first: ${text}`
+    steerMissed: (text: string) => `Steer never landed — this subagent finished first: ${text}`,
+    stop: 'Stop',
+    stopRequested: 'Stopping — its partial result still comes back',
+    truncatedNotice: 'Ran out of steps — this summary is partial',
+    worktree: 'Worktree',
+    worktreeCommits: (count: number) => `${count} commits`,
+    worktreeDirty: 'uncommitted changes',
+    worktreeKept: 'kept for review',
+    worktreePruned: 'removed — it held no work',
+    worktreeUnknown: 'state unknown — inspect it before assuming no work'
   },
 
   commandCenter: {

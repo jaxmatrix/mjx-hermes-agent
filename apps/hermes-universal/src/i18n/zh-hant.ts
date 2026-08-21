@@ -1166,7 +1166,16 @@ export const zhHant = defineLocale({
     steerFailed: '無法連線至閘道',
     steerGone: '該子代理已不在執行',
     steerNotOwned: '該子代理屬於其他對話 — 請在那裡引導',
-    steerMissed: (text: string) => `引導未送達 — 該子代理先結束了：${text}`
+    steerMissed: (text: string) => `引導未送達 — 該子代理先結束了：${text}`,
+    stop: '停止',
+    stopRequested: '正在停止 — 仍會回傳其部分結果',
+    truncatedNotice: '步數已用盡 — 此摘要並不完整',
+    worktree: '工作樹',
+    worktreeCommits: (count: number) => `${count} 次提交`,
+    worktreeDirty: '有未提交的變更',
+    worktreeKept: '已保留以供查看',
+    worktreePruned: '已刪除 — 其中沒有成果',
+    worktreeUnknown: '狀態未知 — 請先查看，不要逕自斷定沒有成果'
   },
 
   commandCenter: {
