@@ -138,6 +138,18 @@ _UPDATE_CHECK_CACHE_SECONDS = 6 * 3600
 # (e.g. nix-built hermes — no local git history to count against).
 UPDATE_AVAILABLE_NO_COUNT = -1
 
+# Opt-out for embedded callers that must not pay a network round-trip.
+#
+# Since the ``version`` subcommand was folded into ``--version``, the version
+# report ends with a synchronous update check (``print_fast_version_info``).
+# That turned ``hermes --version`` — the cheapest "is this binary alive?"
+# smoke test, and used as exactly that by every install probe we own — into a
+# ``git ls-remote``/``git fetch`` per invocation: ~10s with no reachable
+# network, once per candidate binary. Probes set this so the smoke test stays
+# a smoke test; the human-facing banner, TUI and dashboard paths leave it
+# unset and keep their update status.
+SKIP_UPDATE_CHECK_ENV = "HERMES_SKIP_UPDATE_CHECK"
+
 _UPSTREAM_REPO_URL = "https://github.com/NousResearch/hermes-agent.git"
 _OFFICIAL_REPO_CANONICAL = "github.com/nousresearch/hermes-agent"
 
@@ -392,7 +404,21 @@ def check_for_updates() -> Optional[int]:
     Returns the number of commits behind, ``UPDATE_AVAILABLE_NO_COUNT`` (-1)
     if behind but the count is unknown, ``0`` if up-to-date, or ``None`` if
     the check failed or doesn't apply. Cached for 6 hours.
+
+    ``HERMES_SKIP_UPDATE_CHECK`` short-circuits to ``None`` (= "unknown",
+    the same answer every failure path gives) before any subprocess or
+    socket. This is the single chokepoint every surface routes through —
+    ``--version``, the Rich banner, the TUI prefetch and the dashboard's
+    ``/api/hermes/update/check`` — so one guard covers them all.
     """
+    # Local import: this module is on the TUI gateway's critical startup path
+    # and deliberately keeps its module-level import weight down (see the
+    # header note); ``utils`` pulls yaml.
+    from utils import env_var_enabled
+
+    if env_var_enabled(SKIP_UPDATE_CHECK_ENV):
+        return None
+
     hermes_home = get_hermes_home()
     cache_file = hermes_home / ".update_check"
     embedded_rev = os.environ.get("HERMES_REVISION") or None
