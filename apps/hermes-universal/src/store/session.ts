@@ -620,6 +620,34 @@ export function sessionPinId(session: SessionInfo): string {
   return session._lineage_root_id ?? session.id
 }
 
+/**
+ * Is this row carrying the durable "keep" flag?
+ *
+ * Asked before a DESTRUCTIVE action, which is why it is not the same question
+ * the pin toggles ask (`$pinnedSessionIds.includes(sessionPinId(row))`, five
+ * sites). Those render a toggle out of the local set alone; this one has to be
+ * right about a row the local set may never have seen, so it unions both
+ * channels:
+ *
+ *  - `session.pinned` is the backend's `sessions.pinned` column, flipped for
+ *    the WHOLE compression lineage by `set_session_pinned`, so any row of a
+ *    chain reports it. It is the only channel that survives a surface which
+ *    fetches its own rows instead of reading `$sessions` — Settings → Archived
+ *    is exactly that, and archived rows never enter `$sessions` at all, so its
+ *    ids are absent from the pinned cache `session-pin-sync` reconciles.
+ *  - `$pinnedSessionIds` covers the reverse hole: a pin this app holds that the
+ *    backend has not been told about yet (mirror in flight, or a gateway
+ *    predating the column, where `pinned` is `undefined`). It is keyed on the
+ *    LINEAGE ROOT, so it must be looked up through `sessionPinId` and not the
+ *    row id — a row surfaced after a compaction carries the live tip.
+ *
+ * Either channel saying "pinned" means a delete would destroy something the
+ * user asked to keep, which is what the caller needs to warn about.
+ */
+export function isSessionPinned(session: SessionInfo): boolean {
+  return session.pinned === true || $pinnedSessionIds.get().includes(sessionPinId(session))
+}
+
 /** True when a stored/lineage id resolves to this session — it matches either
  *  the live id or the stable lineage root (see sessionPinId). Verbatim from
  *  desktop store/session.ts. */

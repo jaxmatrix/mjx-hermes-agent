@@ -918,6 +918,8 @@ export interface Translations {
       messages: (count: number) => string
       restored: string
       deleteConfirm: (title: string) => string
+      /** Extra line in the permanent-delete dialog when the row is pinned. */
+      deletePinnedWarning: string
       defaultDirTitle: string
       defaultDirDesc: string
       defaultDirUpdated: string

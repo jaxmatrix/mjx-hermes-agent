@@ -21,7 +21,7 @@ import { $defaultProjectDir, setDefaultProjectDir } from '@/store/default-projec
 import { useDisplayPath } from '@/store/display-home'
 import { notify, notifyError } from '@/store/notifications'
 import { pickProjectFolder } from '@/store/projects'
-import { refreshSessions } from '@/store/session'
+import { isSessionPinned, refreshSessions } from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 
 import { EmptyState, ListRow, SectionHeading, SettingsContent, SettingsSkeleton } from './primitives'
@@ -264,6 +264,15 @@ export function ArchivedSection() {
             <DialogTitle>{s.deletePermanently}</DialogTitle>
             <DialogDescription>{confirm ? s.deleteConfirm(sessionTitle(confirm)) : ''}</DialogDescription>
           </DialogHeader>
+          {/* A pin is a durable "keep" flag — the backend's bulk prune/archive
+              sweeps spare pinned rows on purpose. This dialog is the one place
+              in universal that deletes a session behind a confirm, so it is the
+              one place that can say the keep flag is about to be overridden. */}
+          {confirm && isSessionPinned(confirm) ? (
+            <p className="text-[length:var(--conversation-caption-font-size)] text-destructive">
+              {s.deletePinnedWarning}
+            </p>
+          ) : null}
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="ghost">{t.common.cancel}</Button>

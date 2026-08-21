@@ -11687,7 +11687,11 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
         """Return the count of empty, non-active, non-archived sessions.
 
         "Empty" = ``message_count = 0`` AND the session has ended
-        (``ended_at IS NOT NULL``) AND is not archived. The ``ended_at``
+        (``ended_at IS NOT NULL``) AND is not archived AND is not pinned.
+        Pinning is a durable "keep" flag, so it exempts a row from this
+        sweep for the same reason it exempts one from bulk prune/archive
+        (see :meth:`_prune_filter_where`) — otherwise "Delete empty"
+        silently destroyed a conversation the user had asked to keep. The ``ended_at``
         guard matches the safety contract used by :meth:`prune_sessions`:
         only ended sessions are candidates for bulk deletion, so a freshly
         spawned session whose first message hasn't landed yet — or one
@@ -11704,7 +11708,8 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
                 "SELECT COUNT(*) FROM sessions "
                 "WHERE message_count = 0 "
                 "AND ended_at IS NOT NULL "
-                "AND archived = 0"
+                "AND archived = 0 "
+                "AND COALESCE(pinned, 0) = 0"
             )
             return cursor.fetchone()[0]
 
@@ -11717,8 +11722,9 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
         Mirrors :meth:`prune_sessions`' transactional shape:
 
         * Selects candidate IDs first (``message_count = 0`` AND
-          ``ended_at IS NOT NULL`` AND ``archived = 0``) so we never
-          touch a live session or one the user deliberately archived.
+          ``ended_at IS NOT NULL`` AND ``archived = 0`` AND not pinned)
+          so we never touch a live session, one the user deliberately
+          archived, or one carrying the durable "keep" flag.
         * Orphans any child whose parent is in the kill list — children
           of an empty parent are kept and re-parented to ``NULL`` rather
           than cascade-deleted, matching ``delete_session`` /
@@ -11744,7 +11750,8 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
                 "SELECT id FROM sessions "
                 "WHERE message_count = 0 "
                 "AND ended_at IS NOT NULL "
-                "AND archived = 0"
+                "AND archived = 0 "
+                "AND COALESCE(pinned, 0) = 0"
             )
             session_ids = {row["id"] for row in cursor.fetchall()}
 

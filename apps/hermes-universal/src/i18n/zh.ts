@@ -1212,6 +1212,7 @@ export const zh: Translations = {
       messages: count => `${count} 条消息`,
       restored: '已恢复',
       deleteConfirm: title => `永久删除“${title}”？此操作无法撤销。`,
+      deletePinnedWarning: '此对话已置顶。置顶表示保留，批量清理会跳过它，但在此处删除是永久性的。',
       defaultDirTitle: '默认项目目录',
       defaultDirDesc: '新会话默认从此文件夹开始，除非你选择其他目录。留空则使用你的 home 目录。',
       defaultDirUpdated: '默认项目目录已更新',
