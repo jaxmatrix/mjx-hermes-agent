@@ -22,6 +22,14 @@ export function normalizeProfileKey(name: string | null | undefined): string {
   return value || 'default'
 }
 
+// Presentation-only label: the display_name from profile.yaml when set (e.g. a
+// renamed default profile), else the canonical name. Never used for comparison
+// or routing — canonical `name` remains the identity everywhere. Verbatim from
+// desktop store/profile.ts (a1682376ca).
+export function profileLabel(profile: Pick<ProfileInfo, 'display_name' | 'name'>): string {
+  return (profile.display_name ?? '').trim() || profile.name
+}
+
 // Desktop's `$activeGatewayProfile` is an atom<string> that names the profile the
 // live backend is scoped to ('default' = root). Universal's `$activeProfile` is a
 // nullable persisted atom (null = primary), so we derive the normalized key.

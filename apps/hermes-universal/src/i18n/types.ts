@@ -1466,6 +1466,9 @@ export interface Translations {
     createAction: string
     renameTitle: string
     renameDescPrefix: string
+    displayNameTitle: string
+    displayNameDesc: string
+    displayNameLabel: string
     renameDescSuffix: string
     newNameLabel: string
     renaming: string
