@@ -1,11 +1,11 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useEffect } from 'react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setAccentOverride } from './accent-override'
 import { __resetBackendSkinSync, ingestBackendSkin } from './backend-sync'
 import { hexToOklch, hueDelta } from './color'
-import { ThemeProvider, useTheme } from './context'
+import { $mode, ThemeProvider, useTheme } from './context'
 import { nousTheme } from './presets'
 import { BUILTIN_THEME_LIST } from './presets'
 import { retintTheme } from './retint'
@@ -372,5 +372,58 @@ describe('--ui-success follows the accent', () => {
     root().removeAttribute('style')
 
     expect(Math.abs(hueDelta(EMERALD_HUE, successHue('github')))).toBeLessThan(6)
+  })
+})
+
+// bd853747bb on desktop: a fresh profile follows the OS. Defaulting to `light`
+// meant someone whose desktop is dark got a white window on first launch and
+// had to go find the setting. Universal has always defaulted to `system`, so
+// this is the regression guard for a default that would flip silently.
+describe('a fresh profile follows the OS', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    root().className = ''
+    root().removeAttribute('style')
+  })
+
+  afterEach(() => {
+    cleanup()
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
+
+  const pretendOsIs = (scheme: 'dark' | 'light') => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: (query: string) => ({
+        addEventListener: () => {},
+        matches: query.includes('prefers-color-scheme: dark') && scheme === 'dark',
+        removeEventListener: () => {}
+      })
+    })
+  }
+
+  it('starts on `system` rather than a fixed appearance', async () => {
+    // A fresh module against empty storage — the persisted atom has already been
+    // written by the cases above, so only a new instance sees the real default.
+    vi.resetModules()
+
+    const fresh = await import('./context')
+
+    expect(fresh.$mode.get()).toBe('system')
+  })
+
+  it.each(['dark', 'light'] as const)('paints %s when the OS says so', scheme => {
+    pretendOsIs(scheme)
+    act(() => $mode.set('system'))
+
+    act(() => {
+      render(
+        <ThemeProvider>
+          <div />
+        </ThemeProvider>
+      )
+    })
+
+    expect(root().classList.contains('dark')).toBe(scheme === 'dark')
   })
 })
