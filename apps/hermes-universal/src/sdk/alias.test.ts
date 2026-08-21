@@ -65,6 +65,33 @@ describe('@hermes/plugin-sdk', () => {
     expect(viaAlias.icons.Plug).toBeTruthy()
   })
 
+  // MJXHRM-477 → MJXHRM-455. The accent picker plugin lives on desktop and can
+  // only be delivered here once the plugin host grows an in-tree door (455);
+  // this is the surface it will import when it arrives, pinned now so the
+  // exports can't quietly rot in the meantime. The names are exactly desktop's
+  // `plugins/accent/{plugin,picker}.tsx` import lists.
+  it('carries the theme surface the accent picker needs', () => {
+    for (const name of [
+      '$accentOverride',
+      'setAccentOverride',
+      'contrastRatio',
+      'hexToOklch',
+      'maxChroma',
+      'oklchToHex',
+      'oklchToSrgb255',
+      'retintTheme',
+      'themeHue',
+      'useTheme'
+    ] as const) {
+      expect(viaAlias[name], name).toBeTruthy()
+    }
+
+    // Not just present — the same module instance the app paints from, or the
+    // plugin would drive a second, invisible atom.
+    expect(viaAlias.$accentOverride).toBe(viaPath.$accentOverride)
+    expect(viaAlias.$accentOverride.get()).toBeNull()
+  })
+
   it('reports the live viewport rect', () => {
     const viewport = viaAlias.host.state.viewport.get()
 

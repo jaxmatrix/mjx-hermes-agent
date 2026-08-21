@@ -21,9 +21,11 @@ import { Codecs, persistentAtom } from '@/lib/persisted'
 import { atom } from '@/store/atom'
 import { useStore } from '@/store/atom'
 
+import { $accentOverride } from './accent-override'
 import { $backendThemes, $pendingSkinApply } from './backend-sync'
-import { hexToRgb, mix, readableOn } from './color'
+import { harmonize, hexToRgb, mix, readableOn } from './color'
 import { BUILTIN_THEME_LIST, DEFAULT_SKIN_NAME, DEFAULT_TYPOGRAPHY, nousTheme } from './presets'
+import { retintTheme } from './retint'
 import type { DesktopTheme, DesktopThemeColors } from './types'
 import { $userThemes, listAllThemes, resolveTheme } from './user-themes'
 
@@ -184,6 +186,11 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark') {
     '--theme-secondary': c.secondary,
     '--theme-accent-soft': c.accent,
     '--theme-midground': midground,
+    // Semantic success, bent toward the accent so it settles into the palette
+    // instead of clashing with it. A green accent barely moves it (see
+    // `harmonize`); a blue one turns the sidebar's finished dots teal rather
+    // than leaving eight emerald spots fighting the theme.
+    '--ui-success': harmonize('#10b981', midground, 0.25),
     '--theme-warm': c.primary,
     '--theme-background-seed': c.background,
     '--theme-sidebar-seed': c.sidebarBackground ?? c.background,
@@ -298,10 +305,21 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     [paintedName, paintedMode, userThemes, backendThemes, registryVersion]
   )
 
-  // What actually gets painted (matches the `.dark` class applyTheme toggles).
-  const renderedMode = useMemo(() => renderedModeFor(activeTheme.colors, paintedMode), [activeTheme, paintedMode])
+  // Accent retint. `null` — the state the app boots in, and the only one it is
+  // ever in unless a plugin moves it — returns the theme untouched, and
+  // retintTheme is an identity when the seed already matches, so this costs
+  // nothing until it is actually used. Never persisted: see accent-override.ts.
+  const accentOverride = useStore($accentOverride)
 
-  useEffect(() => applyTheme(activeTheme, paintedMode), [activeTheme, paintedMode])
+  const paintedTheme = useMemo(
+    () => (accentOverride === null ? activeTheme : retintTheme(activeTheme, accentOverride)),
+    [activeTheme, accentOverride]
+  )
+
+  // What actually gets painted (matches the `.dark` class applyTheme toggles).
+  const renderedMode = useMemo(() => renderedModeFor(paintedTheme.colors, paintedMode), [paintedTheme, paintedMode])
+
+  useEffect(() => applyTheme(paintedTheme, paintedMode), [paintedTheme, paintedMode])
 
   // Committing drops the preview: leaving it up would keep painting the row the
   // highlight happens to be on rather than the one that was just chosen.
@@ -329,7 +347,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<ThemeContextValue>(
     () => ({
-      theme: activeTheme,
+      theme: paintedTheme,
       themeName,
       mode,
       resolvedMode,
@@ -340,7 +358,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       previewTheme,
       clearThemePreview
     }),
-    [activeTheme, themeName, mode, resolvedMode, renderedMode, availableThemes, setTheme, setMode]
+    [paintedTheme, themeName, mode, resolvedMode, renderedMode, availableThemes, setTheme, setMode]
   )
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
