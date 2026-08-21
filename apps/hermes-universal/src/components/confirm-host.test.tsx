@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { $confirmRequest, type ConfirmAnswer, confirm, settleConfirm } from '@/store/confirm'
+import { $confirmRequest, confirm, type ConfirmAnswer, settleConfirm } from '@/store/confirm'
 
 import { ConfirmHost } from './confirm-host'
 

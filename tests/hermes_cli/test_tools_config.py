@@ -760,25 +760,75 @@ class TestImagegenModelPicker:
         assert isinstance(config["image_gen"], dict)
         assert config["image_gen"]["model"] == "fal-ai/flux-2/klein/9b"
 
-    def test_plugin_picker_falls_back_when_default_is_missing_from_catalog(self):
-        """A stale cross-provider model must not become an unindexable row."""
+    def _run_plugin_picker(self, *, accepts_custom, idx, catalog, default_model):
+        """Drive _configure_imagegen_model_for_plugin over a stale stored id."""
         from hermes_cli.tools_config import _configure_imagegen_model_for_plugin
 
-        catalog = {
-            "openai/gpt-5.4-image-2": {"strengths": "quality"},
-            "google/gemini-3-pro-image": {"strengths": "fallback"},
-        }
         config = {"image_gen": {"model": "gpt-image-2-medium"}}
         with (
             patch(
                 "hermes_cli.tools_config._plugin_image_gen_catalog",
-                return_value=(catalog, "also-missing"),
+                return_value=(catalog, default_model),
             ),
-            patch("hermes_cli.tools_config._prompt_choice", return_value=0),
+            patch(
+                "hermes_cli.tools_config.image_gen_accepts_custom_model",
+                return_value=accepts_custom,
+            ),
+            patch("hermes_cli.tools_config._prompt_choice", return_value=idx),
         ):
             _configure_imagegen_model_for_plugin("openrouter", config)
+        return config
+
+    def test_plugin_picker_falls_back_when_default_is_missing_from_catalog(self):
+        """A closed-set backend cannot be left holding an id it can't serve.
+
+        The stored model belongs to another provider (shared config key) and
+        the catalog default has drifted out of the catalog too — the picker
+        must land on a real catalog row rather than index the catalog with a
+        key it doesn't contain.
+        """
+        catalog = {
+            "openai/gpt-5.4-image-2": {"strengths": "quality"},
+            "google/gemini-3-pro-image": {"strengths": "fallback"},
+        }
+        config = self._run_plugin_picker(
+            accepts_custom=False,
+            idx=0,
+            catalog=catalog,
+            default_model="also-missing",
+        )
 
         assert config["image_gen"]["model"] == "openai/gpt-5.4-image-2"
+        assert config["image_gen"]["openrouter"]["model"] == "openai/gpt-5.4-image-2"
+
+    def test_plugin_picker_keeps_an_off_catalog_id_on_a_custom_backend(self):
+        """A custom-capable backend keeps a hand-entered id visibly selected.
+
+        OpenRouter routes ids outside our shipped catalog, so rewriting the
+        stored one to the default would silently discard the user's choice.
+        It stays as row 0 — and the catalog rows below it stay index-aligned,
+        which is what the missing-catalog-key crash used to break.
+        """
+        catalog = {
+            "openai/gpt-5.4-image-2": {"strengths": "quality"},
+            "google/gemini-3-pro-image": {"strengths": "fallback"},
+        }
+        kept = self._run_plugin_picker(
+            accepts_custom=True,
+            idx=0,
+            catalog=catalog,
+            default_model="also-missing",
+        )
+        assert kept["image_gen"]["model"] == "gpt-image-2-medium"
+
+        moved = self._run_plugin_picker(
+            accepts_custom=True,
+            idx=1,
+            catalog=catalog,
+            default_model="also-missing",
+        )
+        assert moved["image_gen"]["model"] == "openai/gpt-5.4-image-2"
+        assert moved["image_gen"]["openrouter"]["model"] == "openai/gpt-5.4-image-2"
 
 
 
