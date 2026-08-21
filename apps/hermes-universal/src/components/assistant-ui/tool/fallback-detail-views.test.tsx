@@ -214,6 +214,34 @@ describe('spillover reference', () => {
     expect(screen.queryByText(/use the read_file tool/i)).toBeNull()
   })
 
+  // A spilled result whose kept preview is empty has NOTHING else expandable:
+  // no detail, no diff, no image. Without the reference in the row's
+  // expandable gate the caret never appears, and the only pointer to the file
+  // that holds the output is unreachable.
+  it('still opens a row whose only content is the reference', () => {
+    renderRow(
+      {
+        args: { path: '/tmp/huge.bin' },
+        result: [
+          '<persisted-output>',
+          'This tool result was too large (2,097,152 characters, 2.0 MB).',
+          'Full output saved to: /tmp/spill/call-1.txt',
+          '',
+          'Preview (first 0 chars):',
+          '</persisted-output>'
+        ].join('\n'),
+        toolName: 'read_file'
+      },
+      false
+    )
+
+    expect(screen.queryByText('/tmp/spill/call-1.txt')).toBeNull()
+
+    fireEvent.click(headerButton())
+
+    expect(screen.getByText('/tmp/spill/call-1.txt')).toBeTruthy()
+  })
+
   it('offers nothing to open for an ordinary result', () => {
     renderRow({ args: { command: 'echo hi' }, result: { output: 'hi' }, toolName: 'terminal' })
 
