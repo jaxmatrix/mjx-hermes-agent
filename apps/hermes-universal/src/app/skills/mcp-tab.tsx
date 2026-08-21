@@ -41,12 +41,13 @@ import {
 import { type Translations, useI18n } from '@/i18n'
 import { openExternalLink } from '@/lib/external-link'
 import { completeMcpDesktopOAuth } from '@/lib/mcp-dashboard-oauth'
+import { NEEDS_AUTH_RE, PROBE_TTL_MS, probeCache, probeKey, serverFingerprint } from '@/lib/mcp-probe-cache'
+import { getServers, isServerShape, type McpServers, normalizeEntry } from '@/lib/mcp-servers'
 import { countEnabledTools, isToolEnabled, toggleToolInServer } from '@/lib/mcp-tool-filter'
 import { cn } from '@/lib/utils'
 import { notify, notifyError } from '@/store/notifications'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import { $activeSessionId } from '@/store/session'
-import type { HermesConfigRecord } from '@/types/hermes'
 
 import { setHermesConfigCache, useHermesConfigRecord } from '../hooks/use-config-record'
 import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
@@ -54,8 +55,6 @@ import { DetailPane, ICON_BUTTON, MASTER_DETAIL_WIDE_COLS } from '../master-deta
 import { PanelAddButton, PanelEmpty } from '../overlays/panel'
 import { prettyName } from '../settings/helpers'
 import { useDeepLinkHighlight } from '../settings/use-deep-link-highlight'
-
-type McpServers = Record<string, Record<string, unknown>>
 
 // The editor always speaks the ecosystem's mcp.json document format — names
 // are the JSON keys, transport is inferred from `command` vs `url` — so any
@@ -65,21 +64,6 @@ const STARTER_ENTRY = { command: 'npx', args: ['-y', '@modelcontextprotocol/serv
 
 const pretty = (value: unknown) => JSON.stringify(value, null, 2)
 const wrapDoc = (entries: McpServers) => pretty({ mcpServers: entries })
-
-const isServerShape = (value: Record<string, unknown>) =>
-  typeof value.command === 'string' || typeof value.url === 'string'
-
-// Cursor/Claude write `type`; Hermes reads `transport`. Normalize on the way
-// in so pasted configs behave identically under the CLI/TUI loader.
-function normalizeEntry(entry: Record<string, unknown>): Record<string, unknown> {
-  if (typeof entry.type === 'string' && entry.transport === undefined) {
-    const { type, ...rest } = entry
-
-    return { ...rest, transport: type }
-  }
-
-  return entry
-}
 
 /** Accepts `{"mcpServers": {...}}` (ecosystem), a bare name→config map, or throws. */
 function parseServersDoc(raw: string): McpServers {
@@ -103,37 +87,13 @@ function parseServersDoc(raw: string): McpServers {
   return Object.fromEntries(Object.entries(map).map(([name, entry]) => [name, normalizeEntry(entry)]))
 }
 
-function getServers(config: HermesConfigRecord | null): McpServers {
-  const raw = config?.mcp_servers
-
-  return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as McpServers) : {}
-}
-
 // The runtime gate is `enabled: false` — the same flag `hermes mcp` and the
 // agent's MCP loader read.
 const serverEnabled = (server: Record<string, unknown>) => server.enabled !== false
 
-const NEEDS_AUTH_RE = /\b(401|unauthorized|forbidden|invalid[_ ]?token|authentication|oauth)\b/i
-
 // Shared cache for the Nous-approved catalog — feeds both description enrichment
 // and the Catalog install view; invalidated after an install.
 const MCP_CATALOG_KEY = ['mcp-catalog'] as const
-
-// Probe results outlive the component: each probe is a REAL connect/disconnect
-// (stdio servers get spawned!), so re-entering the page must not re-probe the
-// fleet. Manual refresh / auth / toggle-on bypass the cache.
-const PROBE_TTL_MS = 5 * 60_000
-const probeCache = new Map<string, { at: number; result: McpTestResult }>()
-
-// A probe is only valid for one (profile, exact-config) pair. Keying the cache
-// by a fingerprint of the connection-relevant fields — plus the active profile
-// — means a same-name edit (url/command/env change) or a same-named server in
-// another profile MISSES the cache instead of showing a stale probe.
-const serverFingerprint = (server: Record<string, unknown>): string =>
-  JSON.stringify([server.url, server.command, server.args, server.env, server.headers, server.transport, server.auth])
-
-const probeKey = (name: string, server: Record<string, unknown> | undefined): string =>
-  `${normalizeProfileKey($activeGatewayProfile.get())}::${name}::${serverFingerprint(server ?? {})}`
 
 type Probe = McpTestResult | 'probing'
 
@@ -347,6 +307,10 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
   const m = t.settings.mcp
   const activeSessionId = useStore($activeSessionId)
 
+  // The profile this tab configures. Keys the probe cache and the catalog
+  // query so a switch never paints another profile's servers or probes.
+  const scopeProfileKey = normalizeProfileKey(useStore($activeGatewayProfile))
+
   // Shared config cache (see use-config-record): revisiting the tab paints the
   // cached record instantly; mutations write through `setConfig` and stay
   // visible to the other settings surfaces.
@@ -422,7 +386,7 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
   // Key by active profile — installed/enabled badges are per-profile, so sharing
   // one cache across profiles would flash the previous profile's state on switch.
   const catalogQuery = useQuery({
-    queryKey: [...MCP_CATALOG_KEY, normalizeProfileKey(useStore($activeGatewayProfile))],
+    queryKey: [...MCP_CATALOG_KEY, scopeProfileKey],
     queryFn: getMcpCatalog,
     staleTime: 5 * 60_000
   })
@@ -548,7 +512,7 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
 
   const runProbe = async (serverName: string) => {
     const epoch = profileEpoch.current
-    const key = probeKey(serverName, servers[serverName])
+    const key = probeKey(serverName, servers[serverName], scopeProfileKey)
     setProbes(current => ({ ...current, [serverName]: 'probing' }))
 
     try {
@@ -599,7 +563,7 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
       // Cache under the POST-auth fingerprint (auth: oauth) on success — that's
       // the config the mount effect will read back, so it hits this entry.
       const probedConfig = result.ok ? { ...servers[serverName], auth: 'oauth' } : servers[serverName]
-      probeCache.set(probeKey(serverName, probedConfig), { at: Date.now(), result })
+      probeCache.set(probeKey(serverName, probedConfig, scopeProfileKey), { at: Date.now(), result })
 
       if (result.ok) {
         // The endpoint persisted `auth: oauth` — mirror it locally.
@@ -650,7 +614,7 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
         continue
       }
 
-      const cached = probeCache.get(probeKey(serverName, server))
+      const cached = probeCache.get(probeKey(serverName, server, scopeProfileKey))
 
       if (cached && Date.now() - cached.at < PROBE_TTL_MS) {
         setProbes(current => ({ ...current, [serverName]: cached.result }))
