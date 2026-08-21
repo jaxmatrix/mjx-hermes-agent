@@ -393,6 +393,58 @@ def test_remote_scan_failure_merges_instead_of_replacing_cache(tmp_path, monkeyp
     assert seed in joined
 
 
+def test_remote_scan_defaults_empty_roots_to_the_home_directory(tmp_path, monkeypatch):
+    """An EMPTY root list means "the user's home", not "scan nothing".
+
+    ``repo_scan_roots`` ships empty (hermes_cli/config_defaults.py), and every
+    other crawl in the product reads an empty list as the home-directory scan:
+    desktop's Electron `git-repo-scan.ts`, hermes-universal's Rust `repo_scan`,
+    and the fork's now-deleted ``GET /api/git/scan-repos``. Walking nothing here
+    would make ``scan: true`` a silent no-op on the SHIPPED DEFAULT config — the
+    unpopulated sidebar of #81723 — for every remote client, which since
+    MJXHRM-474 is all of them.
+    """
+    from hermes_cli import projects_db as pdb
+
+    home = tmp_path / "home"
+    repo = home / "work" / "in-home-repo"
+    repo.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    with pdb.connect_closing() as conn:
+        server._scan_discovered_repos_remote(
+            conn, {"enabled": True, "roots": [], "exclude_paths": []}
+        )
+        found = [r["root"] for r in pdb.list_discovered_repos(conn)]
+
+    assert str(repo) in found
+
+
+def test_repo_discovery_policy_normalizes_both_shapes_and_junk():
+    """The sink must read the flat config keys and the nested client shape alike.
+
+    ``projects.record_repos`` compares the policy a client posts back
+    (``{enabled, roots, exclude_paths}``) against the gateway's own config
+    (``repo_scan_*``) by policy KEY, so the two spellings have to normalize to
+    the same value or every client write is rejected as stale. Junk types fall
+    back to the shipped defaults rather than propagating into a cache key.
+    """
+    flat = server._repo_discovery_policy(
+        {"repo_scan_enabled": False, "repo_scan_roots": [" ~/code ", ""], "repo_scan_exclude_paths": []}
+    )
+    nested = server._repo_discovery_policy(
+        {"enabled": False, "roots": ["~/code"], "exclude_paths": []}
+    )
+
+    assert flat == nested == {"enabled": False, "roots": ["~/code"], "exclude_paths": []}
+
+    assert server._repo_discovery_policy(
+        {"repo_scan_enabled": "yes", "repo_scan_roots": "nope", "repo_scan_exclude_paths": None}
+    ) == {"enabled": True, "roots": [], "exclude_paths": []}
+
+
 def test_remote_scan_missing_root_does_not_wipe_cache(tmp_path):
     """A configured discovery root missing on disk must NOT wipe the cache.
 

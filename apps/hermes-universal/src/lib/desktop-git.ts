@@ -8,10 +8,9 @@ import type {
   HermesReviewScope,
   HermesReviewShipInfo
 } from '@/global'
-import { apiRequestProfile } from '@/hermes'
 import { api } from '@/lib/api'
 import { listRepoPullRequests } from '@/lib/gateway-rest'
-import { localRepoScanSupported, scanLocalGitRepos, type ScannedRepo } from '@/store/repo-scan'
+import { scanLocalGitRepos } from '@/store/repo-scan'
 
 // Ported from apps/desktop/src/lib/desktop-git.ts — specifically its `remoteGit`
 // branch. Desktop runs git through Electron when it owns the filesystem, and
@@ -139,30 +138,17 @@ const remoteGit: GitBridge = {
     createPr: repoPath => gitPost('review/create-pr', { path: repoPath })
   },
 
-  // Repo discovery is a disk crawl, not a git command, so it has two backing
-  // implementations of the same walk — the rule is to crawl where the repos
-  // actually are:
-  //
-  //   • backend spawned locally → the Rust walk over THIS machine's filesystem
-  //     (store/repo-scan.ts → src-tauri/src/repo_scan.rs), no round-trip.
-  //   • everything else (remote/cloud gateway; mobile, which has no crawlable
-  //     disk at all) → `GET /api/git/scan-repos`, the identical walk running on
-  //     the gateway, where the sessions and the repos live.
-  //
-  // The endpoint takes NO roots from us: it reads the gateway's own
-  // `desktop.repo_scan_*` policy, so a client cannot aim a server-side walk at a
-  // path the operator never configured. `roots`/`options` therefore describe the
-  // local crawl only. We pass the active profile so the crawl reads the same
-  // profile's config that the caller derived its policy from.
-  scanRepos: async (roots, options) =>
-    localRepoScanSupported()
-      ? await scanLocalGitRepos(roots, options ?? {})
-      : (
-          await api<{ repos: ScannedRepo[] }>({
-            path: '/api/git/scan-repos',
-            profile: apiRequestProfile()
-          })
-        ).repos
+  // Repo discovery is a disk crawl, not a git command, and this is the LOCAL
+  // half only: the Rust walk over THIS machine's filesystem (store/repo-scan.ts
+  // → src-tauri/src/repo_scan.rs), meaningful only when the backend was spawned
+  // here. When the client's disk is not the gateway's (remote/cloud gateway, or
+  // mobile, which has no crawlable disk at all) the crawl is not a git-bridge
+  // call at all — `store/projects.ts` asks the gateway to walk its own policy
+  // roots over `projects.discover_repos {scan: true}` and never reaches this
+  // facade. Callers must gate on `localRepoScanSupported()`; that RPC replaced
+  // the fork's `GET /api/git/scan-repos`, which was a second server-side walk of
+  // the same policy (MJXHRM-474).
+  scanRepos: (roots, options) => scanLocalGitRepos(roots, options ?? {})
 }
 
 export function desktopGit(): GitBridge | undefined {
