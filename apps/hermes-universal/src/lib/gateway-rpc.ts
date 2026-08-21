@@ -943,10 +943,16 @@ export function findSessionByTitle(params: {
 
 // --- projects.discover_repos -----------------------------------------------
 
+/** One row of `projects.discover_repos` — the gateway's `_discover_repos_payload`
+ *  shape (tui_gateway/server.py), NOT the `{path, name, branch}` guess this
+ *  interface shipped with in MJXHRM-444: nothing consumed it, so the mismatch
+ *  typechecked. `sessions`/`last_active` are 0 for a repo the disk scan found
+ *  that has never hosted a Hermes session — the whole point of the scan. */
 export interface DiscoveredRepo {
-  path: string
-  name?: string
-  branch?: null | string
+  root: string
+  label: string
+  sessions: number
+  last_active: number
   [key: string]: unknown
 }
 

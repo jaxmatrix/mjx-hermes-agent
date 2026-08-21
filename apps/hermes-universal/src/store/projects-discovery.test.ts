@@ -2,8 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as GatewayModule from '@/store/gateway'
 
-const { getHermesConfig, requestGateway, scanRepos, setApiRequestProfile } = vi.hoisted(() => ({
+const { getHermesConfig, localRepoScanSupported, requestGateway, scanRepos, setApiRequestProfile } = vi.hoisted(() => ({
   getHermesConfig: vi.fn(async () => ({}) as unknown),
+  // The client's own disk speaks for the gateway only when the backend was
+  // spawned here; that is the switch between the two discovery paths.
+  localRepoScanSupported: vi.fn(() => true),
   requestGateway: vi.fn(async (_method: string, _params?: unknown) => ({ active_id: null, projects: [] })),
   scanRepos: vi.fn(async () => [{ label: 'app', root: '/home/dev/app' }]),
   // store/projects → store/session → store/profile → store/profiles, which syncs
@@ -12,12 +15,15 @@ const { getHermesConfig, requestGateway, scanRepos, setApiRequestProfile } = vi.
 }))
 
 vi.mock('@/lib/desktop-git', () => ({ desktopGit: vi.fn(() => ({ scanRepos })) }))
+vi.mock('@/store/repo-scan', () => ({ localRepoScanSupported, scanLocalGitRepos: vi.fn() }))
 vi.mock('@/hermes', () => ({ getHermesConfig, setApiRequestProfile }))
 // Partial mock: store/connection subscribes to `$gatewayState` at import time.
 vi.mock('@/store/gateway', async importOriginal => ({
   ...(await importOriginal<typeof GatewayModule>()),
   requestGateway
 }))
+
+import { $connection } from '@/store/connection'
 
 import {
   $reposScanning,
@@ -31,8 +37,10 @@ const recordCalls = () => requestGateway.mock.calls.filter(([method]) => method 
 beforeEach(() => {
   scanRepos.mockClear()
   requestGateway.mockClear()
+  requestGateway.mockResolvedValue({ active_id: null, projects: [] })
   getHermesConfig.mockReset()
   getHermesConfig.mockResolvedValue({})
+  localRepoScanSupported.mockReturnValue(true)
   $reposScanning.set(false)
 })
 
@@ -136,5 +144,102 @@ describe('scanAndRecordRepos', () => {
     await scanAndRecordRepos()
 
     expect(scanRepos).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * When the client's disk is NOT the gateway's — a remote/cloud gateway, or
+ * mobile, which has no crawlable disk — discovery is the gateway walking its own
+ * `desktop.repo_scan_*` roots (`projects.discover_repos {scan: true}`). This
+ * replaced the fork's `GET /api/git/scan-repos`, a second server-side walk of
+ * that same policy (MJXHRM-474).
+ *
+ * The fixtures deliberately return repos the client could not have produced: a
+ * remote gateway's repos live on ITS filesystem, and `sessions: 0` is the whole
+ * point — a repo the disk scan found that has never hosted a Hermes session.
+ */
+describe('scanAndRecordRepos against a gateway that owns the disk', () => {
+  const discoverCalls = () => requestGateway.mock.calls.filter(([method]) => method === 'projects.discover_repos')
+
+  // The "already scanned" memo is module state that outlives one test, and a
+  // reconnect is what clears it — so each case starts on its own connection.
+  let connections = 0
+
+  const freshConnection = () =>
+    $connection.set({ baseUrl: `https://g${++connections}.example`, mode: 'remote' } as never)
+
+  beforeEach(() => {
+    freshConnection()
+    localRepoScanSupported.mockReturnValue(false)
+    requestGateway.mockImplementation(async (method: string) =>
+      method === 'projects.discover_repos'
+        ? {
+            discovery_policy: { enabled: true },
+            repos: [{ label: 'srv', last_active: 0, root: '/srv/srv', sessions: 0 }]
+          }
+        : { active_id: null, projects: [] }
+    )
+  })
+
+  it('asks the gateway to scan its own roots instead of crawling or recording', async () => {
+    await scanAndRecordRepos(true)
+
+    expect(discoverCalls()).toEqual([['projects.discover_repos', { scan: true }]])
+    // Nothing local to crawl...
+    expect(scanRepos).not.toHaveBeenCalled()
+    // ...and nothing to record: the RPC wrote the gateway's own cache, so
+    // posting its merged answer back would overwrite that cache with
+    // session-derived repos.
+    expect(recordCalls()).toHaveLength(0)
+    // The tree is re-read so the newly cached repos actually reach the sidebar.
+    expect(requestGateway.mock.calls.some(([method]) => method === 'projects.tree')).toBe(true)
+    expect($reposScanning.get()).toBe(false)
+  })
+
+  it('keeps the sidebar list when the backend answers without a repo list', async () => {
+    // A backend too old to know `scan` returns something that is not the
+    // discovery shape. Refreshing the tree on that would blank the sidebar back
+    // to the silent, unpopulated state the scan exists to fix.
+    requestGateway.mockImplementation(async (method: string) =>
+      method === 'projects.discover_repos' ? { accepted: false } : { active_id: null, projects: [] }
+    )
+
+    await scanAndRecordRepos(true)
+
+    expect(requestGateway.mock.calls.some(([method]) => method === 'projects.tree')).toBe(false)
+    expect($reposScanning.get()).toBe(false)
+  })
+
+  it('stays retryable after a rejected scan and does not memo the failure', async () => {
+    requestGateway.mockRejectedValueOnce(new Error('gateway dropped'))
+
+    await scanAndRecordRepos(true)
+
+    expect($reposScanning.get()).toBe(false)
+
+    await scanAndRecordRepos()
+
+    expect(discoverCalls()).toHaveLength(2)
+  })
+
+  it('scans once per connection unless forced, and again after a reconnect', async () => {
+    // The gateway reads its own policy and never tells us before scanning, so
+    // the memo is one sentinel per connection rather than a policy signature.
+    await scanAndRecordRepos()
+    await scanAndRecordRepos()
+
+    expect(discoverCalls()).toHaveLength(1)
+
+    await scanAndRecordRepos(true)
+
+    expect(discoverCalls()).toHaveLength(2)
+
+    // A different gateway has a different disk and a different cache, so the
+    // memo must not carry across the reconnect.
+    freshConnection()
+
+    await scanAndRecordRepos()
+
+    expect(discoverCalls()).toHaveLength(3)
   })
 })

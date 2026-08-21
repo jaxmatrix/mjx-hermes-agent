@@ -2,14 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as GatewayModule from '@/store/gateway'
 
-const { getHermesConfig, requestGateway, scanRepos, setApiRequestProfile } = vi.hoisted(() => ({
+const { getHermesConfig, localRepoScanSupported, requestGateway, scanRepos, setApiRequestProfile } = vi.hoisted(() => ({
   getHermesConfig: vi.fn(async () => ({}) as unknown),
+  localRepoScanSupported: vi.fn(() => true),
   requestGateway: vi.fn(async (_method: string, _params?: unknown) => ({ active_id: null, projects: [] })),
   scanRepos: vi.fn(async () => [{ label: 'app', root: '/home/dev/app' }]),
   setApiRequestProfile: vi.fn()
 }))
 
 vi.mock('@/lib/desktop-git', () => ({ desktopGit: vi.fn(() => ({ scanRepos })) }))
+vi.mock('@/store/repo-scan', () => ({ localRepoScanSupported, scanLocalGitRepos: vi.fn() }))
 vi.mock('@/hermes', () => ({ getHermesConfig, setApiRequestProfile }))
 vi.mock('@/store/gateway', async importOriginal => ({
   ...(await importOriginal<typeof GatewayModule>()),
@@ -36,9 +38,11 @@ const paramsFor = (method: string) =>
 
 beforeEach(() => {
   requestGateway.mockClear()
+  requestGateway.mockReset()
   requestGateway.mockResolvedValue({ active_id: null, projects: [] })
   getHermesConfig.mockReset()
   getHermesConfig.mockResolvedValue({})
+  localRepoScanSupported.mockReturnValue(true)
 })
 
 /**
@@ -85,6 +89,22 @@ describe('projects.* carry the focused profile', () => {
     // The payload the handler needs must survive the stamping.
     expect(paramsFor('projects.add_folder')).toMatchObject({ id: 'p1', path: '/w/extra' })
     expect(paramsFor('projects.record_repos')).toMatchObject({ repos: [{ label: 'app', root: '/home/dev/app' }] })
+  })
+
+  it('stamps the profile on the gateway-side scan the remote clients use', async () => {
+    // The one discovery call a remote/cloud gateway or a phone makes. Unstamped
+    // it would scan into — and cache into — the LAUNCH profile's projects.db,
+    // while the `projects.tree` read that follows it reads the focused one.
+    localRepoScanSupported.mockReturnValue(false)
+    requestGateway.mockImplementation(async (method: string) =>
+      method === 'projects.discover_repos'
+        ? { discovery_policy: { enabled: true }, repos: [] }
+        : { active_id: null, projects: [] }
+    )
+
+    await scanAndRecordRepos(true)
+
+    expect(paramsFor('projects.discover_repos')).toEqual({ profile: 'research', scan: true })
   })
 
   // The default profile is the gateway's own: omitting the key (rather than

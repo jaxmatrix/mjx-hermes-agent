@@ -11,7 +11,7 @@ import {
   writeDesktopFileText
 } from '@/lib/desktop-fs'
 import { desktopGit } from '@/lib/desktop-git'
-import { isMissingRpcMethod, moveSessionWorkspace } from '@/lib/gateway-rpc'
+import { discoverRepos, isMissingRpcMethod, moveSessionWorkspace } from '@/lib/gateway-rpc'
 import { isUnderPath } from '@/lib/path-compare'
 import { revealPathInFileManager } from '@/lib/reveal-path'
 import { reuseUnchanged } from '@/lib/structural-share'
@@ -23,6 +23,7 @@ import { setSidebarAgentsGrouped, type SidebarGrouping } from '@/store/layout'
 import { notify, notifyError } from '@/store/notifications'
 import { $activeProfile } from '@/store/profiles'
 import { $projectScope, $projectTree, ALL_PROJECTS } from '@/store/project-scope'
+import { localRepoScanSupported } from '@/store/repo-scan'
 import { knownSessionProfile, newSession, pruneSessionTombstones, refreshSessions, setSessions } from '@/store/session'
 import type { ProjectInfo, ProjectsPayload } from '@/types/hermes'
 
@@ -754,12 +755,21 @@ export async function copyPath(path: null | string): Promise<void> {
 // caches them (`projects.record_repos`) and merges them with session-derived
 // repos, so a repo shows up in Projects before it has ever hosted a session.
 //
-// `scanRepos` (`lib/desktop-git.ts`) crawls wherever the repos actually live:
-// the Tauri host's disk via Rust when the backend was spawned locally, otherwise
-// the gateway's own disk via `GET /api/git/scan-repos`. That remote crawl takes
-// no roots from us and uses the gateway's configured policy — the same
-// `desktop.repo_scan_*` block resolved below, since this config IS that
-// gateway's.
+// The crawl runs wherever the repos actually live, and the two cases are NOT
+// the same call (MJXHRM-474):
+//
+//   • backend spawned locally → the Rust walk over THIS machine's disk
+//     (`scanRepos` → `store/repo-scan.ts` → `src-tauri/src/repo_scan.rs`), whose
+//     result we hand to `projects.record_repos`. No round-trip, and it is the
+//     only discovery that still works against a backend too old to scan itself.
+//   • everything else (remote/cloud gateway; mobile, which has no crawlable disk
+//     at all) → `projects.discover_repos {scan: true}`, which makes the GATEWAY
+//     walk its own `desktop.repo_scan_*` roots and write its own cache. There is
+//     nothing to record afterwards — its response is the merged list, and posting
+//     that back would overwrite the scan cache with session-derived repos.
+//
+// The fork's `GET /api/git/scan-repos` was a second server-side walk of that
+// same policy and is gone; the RPC is the one implementation.
 //
 // Desktop keys the throttle state per gateway (it can hold several); universal
 // has exactly one connection at a time, so module-level state plus a reset on
@@ -815,6 +825,67 @@ $connection.subscribe(() => {
   $reposScanning.set(false)
 })
 
+// The gateway reads its OWN policy and never tells us before scanning, so there
+// is no client-side policy signature to memo a remote scan on. One sentinel per
+// connection stands in: the `$connection` subscriber above clears it alongside
+// the local signatures, and `force` (the settings page after a policy edit, the
+// throttled window-refocus handler) bypasses it exactly as it does locally.
+const GATEWAY_SCAN_SIGNATURE = '\0gateway-scan'
+
+/**
+ * Ask the gateway to walk its own discovery roots (`projects.discover_repos`
+ * with `scan: true`), then re-read the tree so the newly-cached repos fold in.
+ *
+ * This is the whole discovery path whenever the client's disk is not the
+ * gateway's — a remote/cloud gateway, or mobile, which has no crawlable disk.
+ */
+async function scanReposOnGateway(force: boolean): Promise<void> {
+  if (!force && (completedSignature === GATEWAY_SCAN_SIGNATURE || runningSignature === GATEWAY_SCAN_SIGNATURE)) {
+    return
+  }
+
+  const generation = ++scanGeneration
+  const stale = () => scanGeneration !== generation
+
+  runningSignature = GATEWAY_SCAN_SIGNATURE
+  $reposScanning.set(true)
+
+  try {
+    // One profile source: the same `projectScoped()` every other `projects.*`
+    // call here uses, so a scan can never publish into a different profile's
+    // projects.db than the tree read that follows it.
+    const discovered = await discoverRepos({ ...projectScoped(), scan: true })
+
+    // A resolved response must be the discovery shape. Anything else — an
+    // error-shaped body, or a backend too old to know `scan` and returning no
+    // repo list — means the scan did not happen, so bail out WITHOUT refreshing:
+    // keep the sidebar's last known list instead of blanking it, and leave the
+    // memo unset so the next attempt retries.
+    if (!Array.isArray(discovered?.repos)) {
+      markRpcFailure(new Error('projects.discover_repos returned no repo list'))
+
+      return
+    }
+
+    if (stale()) {
+      return
+    }
+
+    completedSignature = GATEWAY_SCAN_SIGNATURE
+    await refreshProjectTree()
+  } catch (err) {
+    // Surface a missing `projects.*` backend rather than swallowing it; a silent
+    // return is exactly the "sidebar goes quiet" symptom `scan: true` fixes.
+    markRpcFailure(err)
+  } finally {
+    runningSignature = undefined
+
+    if (!stale()) {
+      $reposScanning.set(false)
+    }
+  }
+}
+
 /**
  * Crawl the configured roots and record what we find, unless the same policy
  * already ran (pass `force` after the user edits the policy, or on refocus).
@@ -823,6 +894,12 @@ $connection.subscribe(() => {
  * drop its cached repos, so turning discovery off actually removes them.
  */
 export async function scanAndRecordRepos(force = false): Promise<void> {
+  if (!localRepoScanSupported()) {
+    await scanReposOnGateway(force)
+
+    return
+  }
+
   const scan = desktopGit()?.scanRepos
 
   if (!scan) {
