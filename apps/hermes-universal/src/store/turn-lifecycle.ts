@@ -37,6 +37,7 @@ import { appendLiveSessionProjection } from '@/lib/session-history'
 import { applyResumedApproval } from '@/store/approvals'
 import { applyResumedClarify } from '@/store/clarify'
 import { $gatewayState, requestGateway } from '@/store/gateway'
+import { applyResumedMcpSetup } from '@/store/mcp-setup'
 import {
   $sessionStates,
   addSessionKeyHooks,
@@ -660,6 +661,7 @@ export const resumedTurnIsLive = (resumed: SessionResumeResponse): boolean =>
  */
 export function adoptResumedTurn(key: string, resumed: SessionResumeResponse): TurnReconciliation {
   applyResumedClarify(key, resumed)
+  applyResumedMcpSetup(key, resumed)
   applyResumedApproval(key, resumed)
 
   return applyTurnReconciliation(key, planTurnReconciliation(getInflightTurn(key), remoteTurnSnapshot(resumed)))
@@ -821,6 +823,7 @@ export async function reconcileSessionTurn(key: string): Promise<TurnReconciliat
     // concluded about the turn — and the replay is an upsert, so a card that
     // survived the disconnect stays one card.
     applyResumedClarify(live, resumed)
+    applyResumedMcpSetup(live, resumed)
     applyResumedApproval(live, resumed)
 
     return plan

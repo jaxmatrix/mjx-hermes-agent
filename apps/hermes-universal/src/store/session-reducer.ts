@@ -339,7 +339,12 @@ export function reduceSessionState(
       // `clarify.request` and otherwise cleared only by `message.complete` —
       // kept the sidebar's attention dot lit, and its running arc suppressed,
       // for the whole rest of a turn the user had already unblocked.
-      return payload.name === 'clarify' && settled.needsInput ? { ...settled, needsInput: false } : settled
+      // `setup_mcp` for the identical reason — its request is the other prompt
+      // that mounts a synthetic row here, and `_block` holds the run loop so the
+      // agent cannot be parked on two at once.
+      return (payload.name === 'clarify' || payload.name === 'setup_mcp') && settled.needsInput
+        ? { ...settled, needsInput: false }
+        : settled
     }
 
     case 'message.complete':
@@ -467,6 +472,46 @@ export function reduceSessionState(
       // nothing settles.
       return {
         ...applyToolEvent(state, { args: { choices, question }, name: 'clarify', tool_id: requestId }, 'running'),
+        needsInput: true
+      }
+    }
+
+    /**
+     * The setup card's synthetic row, on the same contract as `clarify.request`
+     * above: `tool.start` and `mcp.setup.request` describe ONE tool call under
+     * two different ids (the model's `tool_call_id` and the gateway's
+     * `request_id`), so the row is upserted under `request_id` and correlated
+     * with the other by its `server` arg (`lib/chat-tool-parts`). Without a row
+     * the card has nothing to render in, and a reattach that missed `tool.start`
+     * would show "needs input" with nowhere to answer it — for ten minutes.
+     *
+     * Also replayed out of the stream by `store/mcp-setup.ts`'s
+     * `applyResumedMcpSetup`, through this same case, so a cold-opened parked
+     * session rebuilds an identical row.
+     */
+    case 'mcp.setup.request': {
+      // Trimmed to agree with `readMcpSetupRequest` exactly — a row whose
+      // request the router refused is a card with nowhere to answer.
+      const requestId = coerceText(payload.request_id).trim()
+      const server = coerceText(payload.server).trim()
+
+      // Both halves must agree with `readMcpSetupRequest`, which the router
+      // writes the prompt store with: a row without a request, or a request
+      // without a row, is the "needs input, nowhere to answer it" state.
+      if (!requestId || !server) {
+        return { ...state, needsInput: true }
+      }
+
+      return {
+        ...applyToolEvent(
+          state,
+          {
+            args: { action: coerceText(payload.action) || 'install', reason: coerceText(payload.reason), server },
+            name: 'setup_mcp',
+            tool_id: requestId
+          },
+          'running'
+        ),
         needsInput: true
       }
     }

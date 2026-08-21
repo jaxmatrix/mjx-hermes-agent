@@ -37,6 +37,7 @@ import { triggerHaptic } from '@/lib/haptics'
 import { queryClient } from '@/lib/query-client'
 import { invalidateSlashCompletions } from '@/lib/slash-completion-cache'
 import { type DeltaChannel, flushDeltas, queueDelta, setStreamBatchSink } from '@/lib/stream-batch'
+import { prettyName } from '@/lib/text'
 import { stopSpeaking } from '@/lib/tts'
 import { type AgentNoticePayload, clearAgentNotice, nativeNoticeInput, showAgentNotice } from '@/store/agent-notices'
 import { reconcileApprovalModeForProfile } from '@/store/approval-mode'
@@ -55,6 +56,7 @@ import {
   type PetChangeMeta,
   setChangeEventsAvailable
 } from '@/store/live-sync'
+import { readMcpSetupRequest } from '@/store/mcp-setup'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notify } from '@/store/notifications'
 import { applyBridgeLayoutPreset, revealBridgePane } from '@/store/pane-focus'
@@ -63,13 +65,16 @@ import { $activeGatewayProfile } from '@/store/profile'
 import {
   clearAllPrompts,
   clearSessionClarify,
+  clearSessionMcpSetup,
   clearSessionSecret,
   clearSessionSudo,
   sessionAwaitingInput,
+  sessionMcpSetupRequest,
   sessionSecretRequest,
   sessionSudoRequest,
   setSessionApproval,
   setSessionClarify,
+  setSessionMcpSetup,
   setSessionSecret,
   setSessionSudo
 } from '@/store/prompts'
@@ -141,7 +146,18 @@ const CHANGE_EVENT_NOTIFIERS: Record<string, (() => void) | undefined> = {
 }
 
 /** Blocking prompts: never dropped, because the agent is parked waiting. */
-const BLOCKING_PROMPT_TYPES = new Set(['approval.request', 'clarify.request', 'secret.request', 'sudo.request'])
+const BLOCKING_PROMPT_TYPES = new Set([
+  'approval.request',
+  'clarify.request',
+  // `setup_mcp` parks the run loop for TEN minutes (`_block(..., timeout=600)`),
+  // the longest of any bridge. It belongs in this set for the same reason the
+  // other four do: without it the fail-closed guard below drops the frame for a
+  // session this client has no slice for — a background turn, a cold reattach —
+  // and the agent waits out the whole budget with nothing on screen to answer.
+  'mcp.setup.request',
+  'secret.request',
+  'sudo.request'
+])
 
 /** The batched streaming channels, by event type. */
 const DELTA_CHANNELS: Record<string, DeltaChannel | undefined> = {
@@ -441,6 +457,27 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       break
     }
 
+    // Shape-gated like `clarify.request` above: the payload is
+    // `{server, action, reason, request_id}` (`_block("mcp.setup.request", …)`),
+    // and a frame missing either identifier is unrenderable rather than
+    // half-renderable — see `readMcpSetupRequest`.
+    case 'mcp.setup.request': {
+      const request = readMcpSetupRequest(payload)
+
+      if (request) {
+        setSessionMcpSetup(key, request)
+        dispatchNativeNotification({
+          kind: 'input',
+          title: translateNow('notifications.native.inputTitle'),
+          body: request.reason || prettyName(request.server),
+          sessionId: key
+        })
+        void triggerHaptic('warning')
+      }
+
+      break
+    }
+
     case 'sudo.request':
       setSessionSudo(key, {
         requestId: coerceText(payload.request_id),
@@ -489,6 +526,24 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
       if (requestId && sessionSudoRequest(key).get()?.requestId === requestId) {
         clearSessionSudo(key)
+      }
+
+      break
+    }
+
+    // Unlike `clarify.expire` (deliberately unhandled — see above), this one IS
+    // consumed. The reasoning that keeps a clarify panel alive on its spinner
+    // does not transfer: a clarify's late answer still routes somewhere useful
+    // (the composer drafts it as a follow-up), whereas an expired setup card can
+    // only offer to install a server the agent has already given up waiting for,
+    // and every button on it would run a real install against a tool that has
+    // already returned `unanswered`. Ten minutes is also long enough that the
+    // `tool.complete` clear below can be a long way off on a slow reconnect.
+    case 'mcp.setup.expire': {
+      const requestId = coerceText(payload.request_id)
+
+      if (requestId && sessionMcpSetupRequest(key).get()?.requestId === requestId) {
+        clearSessionMcpSetup(key)
       }
 
       break
@@ -627,6 +682,16 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       // its own result, so nothing on screen still needs the request.
       if (payload.name === 'clarify') {
         clearSessionClarify(key)
+      }
+
+      // Same terminal-event reasoning for the setup card: the tool returning is
+      // the one signal shared by answered, timed out and interrupted. Only the
+      // answered path clears the request itself, so without this an interrupted
+      // turn leaves a phantom card that `$activeSessionAwaitingInput` keeps
+      // calling "parked on the user" — which is what makes Esc refuse to
+      // interrupt for the rest of the turn.
+      if (payload.name === 'setup_mcp') {
+        clearSessionMcpSetup(key)
       }
 
       // A file-mutating tool just finished — nudge the git-mirroring surfaces
@@ -801,12 +866,16 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
     case 'clarify.request':
 
+    case 'mcp.setup.request':
+
     case 'secret.request':
 
     case 'sudo.request':
       setPetActivity({ awaitingInput: true }) // pet: waiting pose (blocked on user)
 
       break
+
+    case 'mcp.setup.expire':
 
     case 'secret.expire':
 

@@ -79,8 +79,13 @@ function collectToolMatchValues(query: string, context: string, preview: string)
  * live clarify card — same question, same choices, its own global key handler,
  * answering a request the first card also owns. Desktop added the same key for
  * the same reason (upstream `d21165c2f0`).
+ *
+ * `server` is `setup_mcp`'s, for the identical reason and with a worse failure:
+ * a duplicated consent card is two Install buttons for one blocking request, and
+ * the second one's approve answers a `request_id` the first already resolved —
+ * an install the user consented to once, run twice.
  */
-const TOOL_QUERY_ARG_KEYS = ['search_term', 'query', 'question'] as const
+const TOOL_QUERY_ARG_KEYS = ['search_term', 'query', 'question', 'server'] as const
 
 /**
  * The batch-clarify counterpart of the `question` correlation key.

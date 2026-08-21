@@ -25,6 +25,7 @@ export type GatewayEventName =
   | 'tool.complete'
   | 'tool.generating'
   | 'clarify.request'
+  | 'mcp.setup.request'
   | 'approval.request'
   | 'sudo.request'
   | 'secret.request'
