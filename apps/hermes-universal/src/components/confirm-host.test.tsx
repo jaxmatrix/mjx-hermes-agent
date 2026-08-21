@@ -81,11 +81,17 @@ describe('confirm()', () => {
       const { dialog, pending, read } = await ask()
 
       await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
-      // Aim Enter at CANCEL specifically: the dialog-level handler has to win
-      // over a focused button's own activation, which is what preventDefault in
-      // ConfirmDialog's onKeyDown is for. If it did not, this would answer false.
-      fireEvent.keyDown(button(LABELS.cancelLabel), { key: 'Enter' })
 
+      // Aim Enter at CANCEL: the dialog-level handler has to win over the
+      // focused button's own activation. jsdom does not synthesise the
+      // browser's Enter-to-click, so assert on the mechanism that stops it —
+      // fireEvent returns false exactly when preventDefault was called. Drop
+      // the preventDefault from ConfirmDialog and this line goes red; asserting
+      // only on the resolved value does not, because in jsdom Cancel never
+      // fired in the first place.
+      const notCancelled = fireEvent.keyDown(button(LABELS.cancelLabel), { key: 'Enter' })
+
+      expect(notCancelled).toBe(false)
       await pending
       expect(read()).toBe(true)
     })
