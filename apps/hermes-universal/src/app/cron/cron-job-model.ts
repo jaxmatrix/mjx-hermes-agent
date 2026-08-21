@@ -209,6 +209,39 @@ export function cronJobFireError(job: Pick<CronJob, 'last_fire_error'>): { at: s
   return detail ? { at: asText(stamp.at).trim(), detail } : null
 }
 
+/**
+ * The run-count cap, read for display: "3 of 5" or "runs forever".
+ *
+ * `repeat` is a PAIR on the stored record ({times, completed}) — not the digit
+ * string `cron.manage` accepts — and `times: null` means forever. Read-only
+ * here: the REST create route this app uses has no `repeat` field at all (only
+ * cron.manage and a raw update dict carry one), so offering an editor for it
+ * would be offering a control that silently does nothing on create.
+ */
+export function cronRepeatSummary(
+  job: Pick<CronJob, 'repeat'>,
+  forever: string,
+  of: (completed: number, times: number) => string
+): string {
+  const repeat = job.repeat
+
+  if (!repeat || typeof repeat !== 'object') {
+    return ''
+  }
+
+  const times = typeof repeat.times === 'number' ? repeat.times : null
+  const completed = typeof repeat.completed === 'number' ? repeat.completed : 0
+
+  // Nothing to say about a job with no cap that has never run — that is simply
+  // every ordinary recurring job, and a "runs forever" row on all of them is
+  // noise. A cap, or progress against one, is what is worth reading.
+  if (times === null) {
+    return completed > 0 ? forever : ''
+  }
+
+  return of(completed, times)
+}
+
 /** Build the API update payload, preserving an empty prompt on script-only jobs. */
 export function cronEditorUpdates(
   values: CronEditorSaveValues,

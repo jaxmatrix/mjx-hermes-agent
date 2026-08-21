@@ -1826,6 +1826,12 @@ export const en: Translations = {
     monthlyOnDayAt: (dayOfMonth, time) => `Monthly on day ${dayOfMonth} at ${time}`,
     topOfHour: 'At the top of every hour',
     everyHourAt: minute => `Every hour at :${minute}`,
+    hidePaused: 'Hide paused',
+    showPaused: 'Show paused',
+    repeatLabel: 'Runs',
+    repeatForever: 'Repeats indefinitely',
+    repeatOf: (completed, times) => `${completed} of ${times}`,
+    triggering: 'Running…',
     continuityLabel: 'Build on the last run',
     continuityHint:
       'Feed this job its own previous output, so each run continues from the last instead of starting cold.',

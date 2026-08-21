@@ -87,7 +87,7 @@ describe('cron actions carry the job’s profile', () => {
   it('pauses against the store the job lives in', async () => {
     renderCron(foreignJob)
 
-    await detailAction(/Pause/i)
+    await detailAction(/^Pause$/)
 
     await waitFor(() => expect(hermes.pauseCronJob).toHaveBeenCalledWith('j1', 'work'))
   })

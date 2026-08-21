@@ -11,6 +11,7 @@ import {
   cronExternalContextFrom,
   cronJobContinuity,
   cronJobFireError,
+  cronRepeatSummary,
   jobIsScriptOnly,
   normalizeCronDeliverValue,
   parseCronContextFrom,
@@ -413,5 +414,31 @@ describe('cronEditorUpdates continuity', () => {
   // stored 'self' in place and the toggle silently springs back.
   it('clears the ref explicitly when continuity is off', () => {
     expect(cronEditorUpdates({ ...values, continuity: false }, { scriptOnlyJob: false }).context_from).toBeNull()
+  })
+})
+
+describe('cronRepeatSummary', () => {
+  const of = (completed: number, times: number) => `${completed} of ${times}`
+
+  it('reads progress against a run-count cap', () => {
+    expect(cronRepeatSummary({ repeat: { completed: 3, times: 5 } }, 'forever', of)).toBe('3 of 5')
+  })
+
+  it('counts a cap not yet started', () => {
+    expect(cronRepeatSummary({ repeat: { completed: 0, times: 5 } }, 'forever', of)).toBe('0 of 5')
+  })
+
+  // times: null is the ordinary recurring job — saying "runs forever" on every
+  // one of them is noise, so it only speaks once the job has actually run.
+  it('says nothing about an uncapped job that has never run', () => {
+    expect(cronRepeatSummary({ repeat: { completed: 0, times: null } }, 'forever', of)).toBe('')
+  })
+
+  it('reports an uncapped job that has run', () => {
+    expect(cronRepeatSummary({ repeat: { completed: 4, times: null } }, 'forever', of)).toBe('forever')
+  })
+
+  it('says nothing about a record with no repeat at all', () => {
+    expect(cronRepeatSummary({ repeat: null }, 'forever', of)).toBe('')
   })
 })

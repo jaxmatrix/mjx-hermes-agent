@@ -48,8 +48,10 @@ import {
   updateCronJob
 } from '@/hermes'
 import { type Translations, useI18n } from '@/i18n'
+import { createCronTriggerController, type CronTriggerController } from '@/lib/cron-trigger-controller'
 import { AlertTriangle } from '@/lib/icons'
 import { requestModelOptions } from '@/lib/model-options'
+import { Codecs, persistentAtom } from '@/lib/persisted'
 import { asText } from '@/lib/text'
 import { $cronJobs, setCronJobs, updateCronJobs } from '@/store/cron'
 import { $changeEventsAvailable, $cronChangeTick, livePollIntervalMs } from '@/store/live-sync'
@@ -86,6 +88,7 @@ import {
   cronExternalContextFrom,
   cronJobContinuity,
   cronJobFireError,
+  cronRepeatSummary,
   jobIsScriptOnly,
   normalizeCronDeliverValue,
   parseCronDeliveryTargets,
@@ -95,6 +98,24 @@ import {
 import { jobState, jobTitle, STATE_DOT } from './job-state'
 
 const DEFAULT_DELIVER = 'local'
+
+/**
+ * Hide paused/disabled jobs in the list.
+ *
+ * This is the `include_disabled` filter, applied CLIENT-side: the REST listing
+ * always asks the backend for everything (`web_server._list_cron_jobs_sync`
+ * passes include_disabled=True unconditionally), unlike the `cron.manage` RPC
+ * which defaults it false. Default OFF — a management surface that hides paused
+ * jobs reads as if pausing deleted them, which is exactly the trap 444's helper
+ * documents.
+ */
+const $hideDisabledCronJobs = persistentAtom('hermes.cron.hideDisabled', false, Codecs.bool)
+
+// What "disabled" means to the list filter. `paused` is included: the backend
+// stores a pause as enabled=false, so both words describe one thing the user
+// switched off, and a filter that hid only one of them would be a filter that
+// appeared not to work.
+const DISABLED_STATES = new Set(['disabled', 'paused'])
 
 // "Start from" sentinel: the manual editor rather than a blueprint. Any other
 // value is a blueprint key.
@@ -384,6 +405,34 @@ export function CronView({
 
   const [editor, setEditor] = useState<EditorState>({ mode: 'closed' })
   const [pendingDelete, setPendingDelete] = useState<CronJob | null>(null)
+  const [triggeringJobKeys, setTriggeringJobKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const triggerControllerRef = useRef<CronTriggerController | null>(null)
+
+  useEffect(() => {
+    const controller = createCronTriggerController((key, running) => {
+      if (triggerControllerRef.current !== controller) {
+        return
+      }
+
+      setTriggeringJobKeys(current => {
+        const next = new Set(current)
+
+        if (running) {
+          next.add(key)
+        } else {
+          next.delete(key)
+        }
+
+        return next
+      })
+    })
+
+    triggerControllerRef.current = controller
+
+    return () => {
+      triggerControllerRef.current = null
+    }
+  }, [])
 
   // Jobs live per-profile on disk and the list endpoint aggregates 'all' by
   // default — scope the fetch to the sidebar's profile scope so this overlay
@@ -432,9 +481,15 @@ export function CronView({
     navigate(CRON_ROUTE, { replace: true })
   }, [focusJobId, jobs, loading, navigate])
 
+  const hideDisabled = useStore($hideDisabledCronJobs)
+
   const visibleJobs = useMemo(
-    () => jobs.filter(job => matchesQuery(job, query.trim())).sort((a, b) => jobTitle(a).localeCompare(jobTitle(b))),
-    [jobs, query]
+    () =>
+      jobs
+        .filter(job => matchesQuery(job, query.trim()))
+        .filter(job => !hideDisabled || !DISABLED_STATES.has(jobState(job)))
+        .sort((a, b) => jobTitle(a).localeCompare(jobTitle(b))),
+    [hideDisabled, jobs, query]
   )
 
   // Detail always reflects a concrete job: the explicitly selected one, else the
@@ -479,12 +534,46 @@ export function CronView({
     }
   }
 
+  /**
+   * Run a job now.
+   *
+   * Through the shared trigger controller (vendored from apps/shared, which the
+   * web dashboard and desktop both use) rather than the plain busy flag:
+   *
+   *  - it announces BEFORE the request leaves, so a trigger whose run takes a
+   *    while is not a click that appears to do nothing;
+   *  - it coalesces per JOB, keyed `profile:id`, so a double-click cannot fire
+   *    two runs while the first is in the air, and two profiles' same-named jobs
+   *    are still two jobs. `busyJobId` is one id for the whole surface, which is
+   *    a different guard for a different purpose (it disables the row's other
+   *    actions) and is kept.
+   *
+   * It is an INTERACTION guard only. At-most-once execution stays the backend's
+   * durable cron claim; a renderer-local Set is not an execution lock.
+   */
   async function handleTrigger(job: CronJob) {
+    const controller = triggerControllerRef.current
+
+    if (!controller) {
+      return
+    }
+
+    const key = `${job.profile ?? ''}:${job.id}`
+
     setBusyJobId(job.id)
 
     try {
-      const updated = await triggerCronJob(job.id, job.profile)
-      updateCronJobs(rows => rows.map(row => (row.id === job.id ? updated : row)))
+      const run = await controller.run(
+        key,
+        () => triggerCronJob(job.id, job.profile),
+        () => notify({ kind: 'info', title: c.triggerNow, message: truncate(jobTitle(job), 60) })
+      )
+
+      if (!run.started || !run.value) {
+        return
+      }
+
+      updateCronJobs(rows => rows.map(row => (row.id === job.id ? run.value! : row)))
       notify({ kind: 'success', title: c.triggered, message: truncate(jobTitle(job), 60) })
     } catch (err) {
       notifyError(err, c.failedTrigger)
@@ -575,7 +664,20 @@ export function CronView({
         />
       ) : (
         <>
-          <PanelHeader subtitle={c.count(totalCount)} title={c.title} />
+          <PanelHeader
+            actions={
+              <Button
+                aria-pressed={hideDisabled}
+                onClick={() => $hideDisabledCronJobs.set(!hideDisabled)}
+                size="sm"
+                variant={hideDisabled ? 'secondary' : 'ghost'}
+              >
+                {hideDisabled ? c.showPaused : c.hidePaused}
+              </Button>
+            }
+            subtitle={c.count(totalCount)}
+            title={c.title}
+          />
           <PanelBody>
             <PanelList
               onSearchChange={setQuery}
@@ -615,6 +717,7 @@ export function CronView({
                 onOpenSession={onOpenSession}
                 onPauseResume={() => void handlePauseResume(selectedJob)}
                 onTrigger={() => void handleTrigger(selectedJob)}
+                triggering={triggeringJobKeys.has(`${selectedJob.profile ?? ''}:${selectedJob.id}`)}
               />
             ) : (
               <PanelEmpty description={c.emptyDescSearch} icon="search" />
@@ -697,7 +800,8 @@ function CronJobDetail({
   job,
   onOpenSession,
   onPauseResume,
-  onTrigger
+  onTrigger,
+  triggering
 }: {
   busy: boolean
   c: Translations['cron']
@@ -705,12 +809,15 @@ function CronJobDetail({
   onOpenSession?: (sessionId: string) => void
   onPauseResume: () => void
   onTrigger: () => void
+  /** A trigger for THIS job is in flight (the shared controller's state). */
+  triggering: boolean
 }) {
   const state = jobState(job)
   const isPaused = state === 'paused'
   const deliver = jobDeliver(job)
   const deliveryError = asText(job.last_delivery_error).trim()
   const fireError = cronJobFireError(job)
+  const repeat = cronRepeatSummary(job, c.repeatForever, c.repeatOf)
   const prompt = jobPrompt(job)
   const modelOverride = jobModel(job)
 
@@ -726,8 +833,8 @@ function CronJobDetail({
             <PanelAction disabled={busy} icon={isPaused ? 'play' : 'debug-pause'} onClick={onPauseResume}>
               {isPaused ? c.resumeTitle : c.pauseTitle}
             </PanelAction>
-            <PanelAction disabled={busy} icon="zap" onClick={onTrigger}>
-              {c.triggerNow}
+            <PanelAction disabled={busy || triggering} icon="zap" onClick={onTrigger}>
+              {triggering ? c.triggering : c.triggerNow}
             </PanelAction>
           </div>
         </div>
@@ -738,6 +845,7 @@ function CronJobDetail({
             { label: c.last.replace(/:$/, ''), value: formatTime(job.last_run_at) },
             { label: c.next.replace(/:$/, ''), value: formatTime(job.next_run_at) },
             { label: c.deliverLabel, value: cronDeliverSummary(deliver, c.deliveryLabels) },
+            ...(repeat ? [{ label: c.repeatLabel, value: repeat }] : []),
             ...(modelOverride ? [{ label: c.modelLabel, value: modelOverride }] : [])
           ]}
         />
