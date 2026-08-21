@@ -15,7 +15,13 @@ const open = (isDefault: boolean, currentName = 'default') => {
 
   render(
     <I18nProvider>
-      <RenameProfileDialog currentName={currentName} isDefault={isDefault} onClose={vi.fn()} onRenamed={onRenamed} open />
+      <RenameProfileDialog
+        currentName={currentName}
+        isDefault={isDefault}
+        onClose={vi.fn()}
+        onRenamed={onRenamed}
+        open
+      />
     </I18nProvider>
   )
 

@@ -1401,6 +1401,33 @@ export interface Translations {
   }
 
   profiles: {
+    editor: {
+      title: string
+      loading: string
+      loadFailed: string
+      descriptionLabel: string
+      descriptionPlaceholder: string
+      toolsetsLabel: string
+      toolsetsUnpinned: string
+      mcpLabel: string
+      noneInstalled: string
+      save: string
+      saved: string
+      savedPartial: string
+      saveFailed: string
+      avatarUpload: string
+      avatarReplace: string
+      avatarRemove: string
+      avatarHint: string
+      avatarSaved: string
+      avatarFailed: string
+      avatarRejected: string
+      avatarTooLarge: string
+      working: string
+      shareSignIn: string
+      shareSignInHint: string
+      noCredentials: string
+    }
     close: string
     nameHint: string
     title: string

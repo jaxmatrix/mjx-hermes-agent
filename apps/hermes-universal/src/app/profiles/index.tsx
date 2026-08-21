@@ -16,8 +16,10 @@ import {
 } from '@/components/ui/dialog'
 import { SanitizedInput } from '@/components/ui/sanitized-input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { createProfile, deleteProfile, getProfileSoul, type ProfileInfo, updateProfileSoul } from '@/hermes'
+import { Switch } from '@/components/ui/switch'
+import { deleteProfile, getProfileSoul, type ProfileInfo, updateProfileSoul } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { createProfileRpc, listProfilesRich, type ProfileRosterRow } from '@/lib/gateway-rpc'
 import { AlertTriangle, Save } from '@/lib/icons'
 import { profileColorSoft, resolveProfileColor } from '@/lib/profile-color'
 import { isValidProfileName } from '@/lib/profile-name'
@@ -46,6 +48,7 @@ import {
   PanelSectionLabel
 } from '../overlays/panel'
 
+import { ProfileEditor } from './profile-editor'
 import { RenameProfileDialog } from './rename-profile-dialog'
 
 interface ProfilesViewProps {
@@ -58,6 +61,12 @@ export function ProfilesView({ onClose, variant }: ProfilesViewProps) {
   const { t } = useI18n()
   const p = t.profiles
   const [profiles, setProfiles] = useState<null | ProfileInfo[]>(null)
+  // `profiles.list` (MJXHRM-444's listProfilesRich) folds each profile's running
+  // worker and newest conversation into the roster read. A profile whose worker
+  // is running counts as ACTIVE even with no recent human chat — reading only
+  // the session list paints a busy agent as idle. Keyed by canonical name;
+  // best-effort, so a gateway without the RPC just shows no activity.
+  const [activity, setActivity] = useState<Record<string, ProfileRosterRow>>({})
   const [selectedName, setSelectedName] = useState<null | string>(null)
   const [query, setQuery] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
@@ -69,6 +78,10 @@ export function ProfilesView({ onClose, variant }: ProfilesViewProps) {
   const [exporting, setExporting] = useState<null | string>(null)
 
   const refresh = useCallback(async () => {
+    void listProfilesRich({ includeSessions: true })
+      .then(rich => setActivity(Object.fromEntries(rich.profiles.map(row => [row.name, row]))))
+      .catch(() => undefined)
+
     try {
       const list = await refreshProfiles()
       setProfiles(list)
@@ -137,15 +150,29 @@ export function ProfilesView({ onClose, variant }: ProfilesViewProps) {
   }, [refresh])
 
   const handleCreate = useCallback(
-    async (name: string, cloneFrom: null | string) => {
+    async (name: string, cloneFrom: null | string, shareAuth: boolean) => {
       const trimmed = name.trim()
 
       if (!isValidProfileName(trimmed)) {
         throw new Error(p.nameHint)
       }
 
-      await createProfile({ name: trimmed, clone_from: cloneFrom })
-      notify({ kind: 'success', title: p.created, message: trimmed })
+      // The RPC twin of POST /api/profiles, and the only one that can mirror
+      // credentials or share the sign-in — REST creates a profile with a
+      // comment-only .env whose first message fails with no provider.
+      const created = await createProfileRpc({
+        name: trimmed,
+        ...(cloneFrom ? { cloneFrom } : {}),
+        shareAuth
+      })
+
+      const usable = created.mirrored || shareAuth
+
+      notify({
+        kind: usable ? 'success' : 'warning',
+        title: p.created,
+        message: usable ? trimmed : p.editor.noCredentials
+      })
       setSelectedName(trimmed)
       await refresh()
     },
@@ -200,6 +227,7 @@ export function ProfilesView({ onClose, variant }: ProfilesViewProps) {
               {visibleProfiles.map(profile => (
                 <ProfileRow
                   active={selected?.name === profile.name}
+                  activity={activity[profile.name]}
                   key={profile.name}
                   menuItems={[
                     // Export is offered for the default profile too — it is
@@ -235,7 +263,7 @@ export function ProfilesView({ onClose, variant }: ProfilesViewProps) {
             </PanelList>
 
             {selected ? (
-              <ProfileDetail key={selected.name} profile={selected} />
+              <ProfileDetail activity={activity[selected.name]} key={selected.name} profile={selected} />
             ) : (
               <PanelEmpty description={p.selectPrompt} icon="account" />
             )}
@@ -261,7 +289,7 @@ export function ProfilesView({ onClose, variant }: ProfilesViewProps) {
 
       <CreateProfileDialog
         onClose={() => setCreateOpen(false)}
-        onCreate={async (name, cloneFrom) => handleCreate(name, cloneFrom)}
+        onCreate={async (name, cloneFrom, shareAuth) => handleCreate(name, cloneFrom, shareAuth)}
         open={createOpen}
         profiles={profiles ?? []}
       />
@@ -298,15 +326,18 @@ export function ProfilesView({ onClose, variant }: ProfilesViewProps) {
 
 function ProfileRow({
   active,
+  activity,
   menuItems,
   onSelect,
   profile
 }: {
   active: boolean
+  activity?: ProfileRosterRow
   menuItems?: PanelMenuItem[]
   onSelect: () => void
   profile: ProfileInfo
 }) {
+  const { t } = useI18n()
   const colors = useStore($profileColors)
 
   return (
@@ -321,6 +352,12 @@ function ProfileRow({
       }
       menuItems={menuItems}
       menuLabel={profileLabel(profile)}
+      meta={
+        // A running worker is the "this agent is busy right now" signal the
+        // session list alone cannot give: a profile grinding through a kanban
+        // job has no recent HUMAN chat and would otherwise read as idle.
+        activity?.worker_session ? <span className="text-primary">{t.profiles.editor.working}</span> : undefined
+      }
       onSelect={onSelect}
       rowKey={profile.name}
       title={profileLabel(profile)}
@@ -355,7 +392,7 @@ function ProfileGlyph({ color, isDefault, name }: { color: null | string; isDefa
   )
 }
 
-function ProfileDetail({ profile }: { profile: ProfileInfo }) {
+function ProfileDetail({ activity, profile }: { activity?: ProfileRosterRow; profile: ProfileInfo }) {
   const { t } = useI18n()
   const p = t.profiles
   // A profile lives under the GATEWAY's HERMES_HOME, so `~` here is the gateway
@@ -392,10 +429,23 @@ function ProfileDetail({ profile }: { profile: ProfileInfo }) {
                 <span className="text-muted-foreground/55">{p.notSet}</span>
               )
             },
-            { label: p.skillsLabel, value: profile.skill_count }
+            { label: p.skillsLabel, value: profile.skill_count },
+            // What this agent is actually on. The ROOT title, not the live
+            // tip's: a tip is retitled as the conversation is compressed, so
+            // the root is the name the work was given.
+            ...(activity?.worker_session || activity?.preferred_session
+              ? [
+                  {
+                    label: p.editor.working,
+                    value: activity.preferred_session?.root_title || activity.worker_session?.title || p.notSet
+                  }
+                ]
+              : [])
           ]}
         />
       </header>
+
+      <ProfileEditor profileName={profile.name} />
 
       <SoulEditor profileName={profile.name} />
     </PanelDetail>
@@ -505,7 +555,7 @@ function CreateProfileDialog({
   profiles
 }: {
   onClose: () => void
-  onCreate: (name: string, cloneFrom: null | string) => Promise<void>
+  onCreate: (name: string, cloneFrom: null | string, shareAuth: boolean) => Promise<void>
   open: boolean
   profiles: ProfileInfo[]
 }) {
@@ -513,6 +563,7 @@ function CreateProfileDialog({
   const p = t.profiles
   const [name, setName] = useState('')
   const [cloneFrom, setCloneFrom] = useState<null | string>('default')
+  const [shareAuth, setShareAuth] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<null | string>(null)
 
@@ -523,6 +574,7 @@ function CreateProfileDialog({
 
     setName('')
     setCloneFrom('default')
+    setShareAuth(true)
     setError(null)
     setSaving(false)
   }, [open])
@@ -543,7 +595,7 @@ function CreateProfileDialog({
     setError(null)
 
     try {
-      await onCreate(trimmed, cloneFrom)
+      await onCreate(trimmed, cloneFrom, shareAuth)
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : p.failedCreate)
@@ -600,6 +652,14 @@ function CreateProfileDialog({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">{p.cloneFromDesc}</p>
+          </div>
+
+          <div className="grid gap-1.5">
+            <label className="flex items-center gap-2 text-xs font-medium">
+              <Switch checked={shareAuth} onCheckedChange={setShareAuth} size="xs" />
+              {p.editor.shareSignIn}
+            </label>
+            <p className="text-xs text-muted-foreground">{p.editor.shareSignInHint}</p>
           </div>
 
           {error && (

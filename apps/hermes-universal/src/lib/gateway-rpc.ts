@@ -718,6 +718,13 @@ export interface ProfileCreateResult {
  * headlessly is born with no provider and there is no interactive `hermes
  * setup` in this flow to recover it. Pass `false` only for a deliberately
  * isolated profile.
+ *
+ * `shareAuth` (MJXHRM-450, fixing forward on MJXHRM-444, which typed the rest
+ * of this method) SKIPS the `auth.json` COPY so the new profile reads OAuth
+ * state through the global-root fallback instead. Copying FORKS token state:
+ * with single-use refresh tokens the first refresh on either side invalidates
+ * the other, which is how a freshly cloned agent signs its parent out. Static
+ * `.env` keys still copy either way — they have no refresh semantics.
  */
 export function createProfileRpc(params: {
   cloneAll?: boolean
@@ -728,6 +735,7 @@ export function createProfileRpc(params: {
   name: string
   noSkills?: boolean
   provider?: string
+  shareAuth?: boolean
   soul?: string
 }): Promise<ProfileCreateResult> {
   return requestGateway<ProfileCreateResult>('profiles.create', {
@@ -739,7 +747,8 @@ export function createProfileRpc(params: {
     ...(params.soul ? { soul: params.soul } : {}),
     ...(params.model ? { model: params.model } : {}),
     ...(params.provider ? { provider: params.provider } : {}),
-    ...(params.mirrorCredentials === undefined ? {} : { mirror_credentials: params.mirrorCredentials })
+    ...(params.mirrorCredentials === undefined ? {} : { mirror_credentials: params.mirrorCredentials }),
+    ...(params.shareAuth === undefined ? {} : { share_auth: params.shareAuth })
   })
 }
 
