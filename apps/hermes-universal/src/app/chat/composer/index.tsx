@@ -10,6 +10,7 @@ import { chatMessageText } from '@/lib/chat-messages'
 import { sanitizeComposerInput } from '@/lib/composer-input-sanitize'
 import { DATA_IMAGE_URL_RE } from '@/lib/embedded-images'
 import { triggerHaptic } from '@/lib/haptics'
+import { isImeCommitEnter, reconcileCompositionFlag } from '@/lib/ime-composition'
 import { IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { sessionCompacting } from '@/store/compaction'
@@ -161,6 +162,9 @@ export function ChatBar({
   // engine writes it — an explicit shared handle, not a back-reference.
   const queueEditRef = useRef<QueueEditState | null>(null)
   const composingRef = useRef(false) // true during IME composition (CJK input)
+  // Whether this engine has been observed stamping `isComposing` during a
+  // composition — see lib/ime-composition.ts.
+  const imeFlagTrustedRef = useRef(false)
 
   const { availableThemes, themeName } = useTheme()
   const at = useAtCompletions({ gateway: gateway ?? null, sessionId: sessionId ?? null, cwd: cwd ?? null })
@@ -492,12 +496,26 @@ export function ChatBar({
   }
 
   const handleEditorKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    // Self-heal a composition flag wedged by a missed `compositionend`, before
+    // the guard below reads it. Engine-adaptive on purpose — see
+    // lib/ime-composition.ts for why universal cannot copy desktop's
+    // unconditional heal onto WebKitGTK.
+    reconcileCompositionFlag(composingRef, imeFlagTrustedRef, event.nativeEvent.isComposing)
+
     // IME composition: Enter confirms composed text, not a message submission.
     // We check both composingRef (set by compositionstart/compositionend, robust
     // across browsers) and nativeEvent.isComposing (Chromium fallback).  Without
     // this guard, pressing Enter to finalise a Korean/Japanese/Chinese IME
     // preedit fires submitDraft() and splits the message mid-word.
     if (composingRef.current || event.nativeEvent.isComposing) {
+      return
+    }
+
+    // The macOS Chinese IME (and some third-party Windows IMEs) emit Enter with
+    // the legacy keyCode 229 (VK_PROCESSKEY) after `compositionend` has already
+    // fired, so the guard above has nothing left to catch it with. Letting it
+    // through sends before the committed text is fully in the DOM.
+    if (isImeCommitEnter(event)) {
       return
     }
 
@@ -935,7 +953,16 @@ export function ChatBar({
         data-placeholder={placeholder}
         data-slot={RICH_INPUT_SLOT}
         onBeforeInput={handleEditorBeforeInput}
-        onBlur={() => window.setTimeout(closeTrigger, 80)}
+        onBlur={() => {
+          // A composition never survives focus loss — the engine commits the
+          // preedit and fires `compositionend` — but when that event is missed
+          // the wedged flag would keep blocking Enter (and the Send button's
+          // submit guard) indefinitely. Clearing here needs no trust in
+          // `isComposing`: by the time blur runs, nothing is composing in this
+          // editor whatever the engine reports.
+          composingRef.current = false
+          window.setTimeout(closeTrigger, 80)
+        }}
         onCompositionEnd={event => {
           composingRef.current = false
 
