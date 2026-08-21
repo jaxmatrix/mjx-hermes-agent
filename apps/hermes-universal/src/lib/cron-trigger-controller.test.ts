@@ -1,18 +1,10 @@
-/**
- * The controller is the only thing standing between "user double-taps Trigger
- * now" and two live fires of the same cron job from one surface. Every case
- * here seeds a controller that is NOT running the key, so the assertion can
- * only pass if `run` itself flipped the guard.
- */
-
 import { describe, expect, it, vi } from 'vitest'
 
 import { createCronTriggerController } from './cron-trigger-controller'
 
-/** A promise plus the handles to settle it — lets a test hold `run` open. */
 function deferred<T>() {
   let resolve!: (value: T) => void
-  let reject!: (reason: unknown) => void
+  let reject!: (error: unknown) => void
 
   const promise = new Promise<T>((res, rej) => {
     resolve = res
@@ -23,95 +15,119 @@ function deferred<T>() {
 }
 
 describe('createCronTriggerController', () => {
-  it('refuses a second run of the same key while the first is in flight', async () => {
-    const controller = createCronTriggerController()
-    const gate = deferred<string>()
-    const action = vi.fn(() => gate.promise)
+  it('announces immediately and coalesces the same job while it is running', async () => {
+    const request = deferred<string>()
+    const order: string[] = []
 
-    // Disagreeing fixture: nothing is running yet, so a broken guard would let
-    // BOTH calls through and this would read started:true twice.
-    expect(controller.isRunning('job-1')).toBe(false)
+    const action = vi.fn(() => {
+      order.push('action')
 
-    const first = controller.run('job-1', action)
-    const second = await controller.run('job-1', action)
+      return request.promise
+    })
 
-    expect(second).toEqual({ started: false, value: null })
-    // The rejected call must never have reached the action at all — a guard
-    // that only discarded the RESULT would still have fired the job twice.
+    const onStarted = vi.fn(() => order.push('started'))
+    const onRunningChange = vi.fn()
+    const controller = createCronTriggerController(onRunningChange)
+
+    const first = controller.run('profile-a:job-1', action, onStarted)
+    const duplicate = await controller.run('profile-a:job-1', action, onStarted)
+
     expect(action).toHaveBeenCalledTimes(1)
-
-    gate.resolve('fired')
-    expect(await first).toEqual({ started: true, value: 'fired' })
-  })
-
-  it('reports isRunning true only while the action is in flight', async () => {
-    const controller = createCronTriggerController()
-    const gate = deferred<null>()
-
-    const inFlight = controller.run('job-1', () => gate.promise)
-
-    expect(controller.isRunning('job-1')).toBe(true)
-
-    gate.resolve(null)
-    await inFlight
-
-    expect(controller.isRunning('job-1')).toBe(false)
-  })
-
-  it('runs different keys concurrently', async () => {
-    const controller = createCronTriggerController()
-    const gate = deferred<string>()
-
-    const first = controller.run('job-1', () => gate.promise)
-    const second = await controller.run('job-2', async () => 'b')
-
-    expect(second).toEqual({ started: true, value: 'b' })
-
-    gate.resolve('a')
-    expect(await first).toEqual({ started: true, value: 'a' })
-  })
-
-  it('releases the key when the action throws, and rethrows', async () => {
-    const controller = createCronTriggerController()
-    const boom = new Error('gateway unreachable')
-
-    await expect(controller.run('job-1', () => Promise.reject(boom))).rejects.toBe(boom)
-
-    // A `finally`-less release would leave the key latched forever, so the row's
-    // Trigger button would be dead until remount — the failure mode this guards.
-    expect(controller.isRunning('job-1')).toBe(false)
-    expect(await controller.run('job-1', async () => 'retried')).toEqual({ started: true, value: 'retried' })
-  })
-
-  it('publishes running true then false, and calls onStarted once', async () => {
-    const changes: [string, boolean][] = []
-    const controller = createCronTriggerController((key, running) => changes.push([key, running]))
-    const onStarted = vi.fn()
-
-    await controller.run('job-1', async () => 'ok', onStarted)
-
-    expect(changes).toEqual([
-      ['job-1', true],
-      ['job-1', false]
-    ])
     expect(onStarted).toHaveBeenCalledTimes(1)
+    // The feedback fires BEFORE the request leaves — that ordering is the whole
+    // point of `onStarted`, and asserting only the call count would pass on a
+    // controller that announced after the round trip.
+    expect(order).toEqual(['started', 'action'])
+    expect(onRunningChange).toHaveBeenNthCalledWith(1, 'profile-a:job-1', true)
+    expect(duplicate).toEqual({ started: false, value: null })
+
+    request.resolve('done')
+    await expect(first).resolves.toEqual({ started: true, value: 'done' })
+    expect(onRunningChange).toHaveBeenLastCalledWith('profile-a:job-1', false)
   })
 
-  it('does not publish or call onStarted for a refused run', async () => {
-    const changes: [string, boolean][] = []
-    const controller = createCronTriggerController((key, running) => changes.push([key, running]))
-    const gate = deferred<null>()
-    const onStarted = vi.fn()
+  it('releases the job after failure so a retry can start', async () => {
+    const request = deferred<void>()
+    const controller = createCronTriggerController()
 
-    const first = controller.run('job-1', () => gate.promise)
-    await controller.run('job-1', async () => null, onStarted)
+    const failed = controller.run('job-1', () => request.promise)
 
-    // The refused call must be silent: a second `true` here would flip the row's
-    // pending spinner on for a fire that never happened.
-    expect(changes).toEqual([['job-1', true]])
-    expect(onStarted).not.toHaveBeenCalled()
+    request.reject(new Error('failed'))
 
-    gate.resolve(null)
-    await first
+    await expect(failed).rejects.toThrow('failed')
+    await expect(controller.run('job-1', async () => 'retried')).resolves.toEqual({
+      started: true,
+      value: 'retried'
+    })
+  })
+
+  it('releases the job when the immediate feedback callback fails', async () => {
+    const controller = createCronTriggerController()
+
+    await expect(
+      controller.run(
+        'job-1',
+        async () => 'not-called',
+        () => {
+          throw new Error('toast failed')
+        }
+      )
+    ).rejects.toThrow('toast failed')
+
+    await expect(controller.run('job-1', async () => 'retried')).resolves.toEqual({
+      started: true,
+      value: 'retried'
+    })
+  })
+
+  it('allows the same job id in different profiles to run concurrently', async () => {
+    const defaultRequest = deferred<string>()
+    const workRequest = deferred<string>()
+    const defaultAction = vi.fn(() => defaultRequest.promise)
+    const workAction = vi.fn(() => workRequest.promise)
+    const controller = createCronTriggerController()
+
+    const defaultRun = controller.run('default:job-1', defaultAction)
+    const workRun = controller.run('work:job-1', workAction)
+
+    // The guard key is `profile:jobId`, so the SAME job id under two profiles is
+    // two jobs. Keying on the bare id would coalesce these into one.
+    expect(defaultAction).toHaveBeenCalledTimes(1)
+    expect(workAction).toHaveBeenCalledTimes(1)
+
+    defaultRequest.resolve('default')
+    workRequest.resolve('work')
+
+    await expect(defaultRun).resolves.toEqual({ started: true, value: 'default' })
+    await expect(workRun).resolves.toEqual({ started: true, value: 'work' })
+  })
+
+  it('releases the job when the running-state callback fails', async () => {
+    const controller = createCronTriggerController((_key, running) => {
+      if (running) {
+        throw new Error('state callback failed')
+      }
+    })
+
+    await expect(controller.run('job-1', async () => 'not-called')).rejects.toThrow('state callback failed')
+    expect(controller.isRunning('job-1')).toBe(false)
+  })
+
+  it('releases the job before the stopped-state callback runs', async () => {
+    const action = vi.fn(async () => 'done')
+
+    const controller = createCronTriggerController((_key, running) => {
+      if (!running) {
+        throw new Error('stopped callback failed')
+      }
+    })
+
+    await expect(controller.run('job-1', action)).rejects.toThrow('stopped callback failed')
+    expect(controller.isRunning('job-1')).toBe(false)
+
+    // A throwing teardown must not wedge the key: the second run has to reach
+    // the action again, which only holds because the `finally` deletes first.
+    await expect(controller.run('job-1', action)).rejects.toThrow('stopped callback failed')
+    expect(action).toHaveBeenCalledTimes(2)
   })
 })
