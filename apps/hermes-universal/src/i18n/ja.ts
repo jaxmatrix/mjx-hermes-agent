@@ -276,6 +276,12 @@ export const ja = defineLocale({
         noMatches: '一致するプラグインはありません。',
         toggleFailed: (name: string) => `${name} を切り替えられませんでした`,
         updateBackendToManage: 'ここからオン・オフを切り替えるには Hermes バックエンドを更新してください。',
+        required: '必須',
+        keySet: '設定済み',
+        keepCurrent: '空欄のままにすると現在の値を保持します',
+        saveKey: '保存',
+        keySaved: (name: string) => `${name} を保存しました`,
+        keyFailed: (name: string) => `${name} を保存できませんでした`,
         sources: { bundled: '内蔵', entrypoint: 'pip', git: 'git', project: 'プロジェクト', user: 'ユーザー' }
       }
     },

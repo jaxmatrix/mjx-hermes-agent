@@ -383,6 +383,12 @@ export const en: Translations = {
         noMatches: 'No plugins match your search.',
         toggleFailed: (name: string) => `Could not toggle ${name}`,
         updateBackendToManage: 'Update the Hermes backend to turn this one on or off from here.',
+        required: 'required',
+        keySet: 'set',
+        keepCurrent: 'Leave blank to keep the current value',
+        saveKey: 'Save',
+        keySaved: (name: string) => `${name} saved`,
+        keyFailed: (name: string) => `Could not save ${name}`,
         sources: { bundled: 'bundled', entrypoint: 'pip', git: 'git', project: 'project', user: 'user' }
       }
     },

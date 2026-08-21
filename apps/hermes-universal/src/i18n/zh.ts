@@ -371,6 +371,12 @@ export const zh: Translations = {
         noMatches: '没有匹配的插件。',
         toggleFailed: (name: string) => `无法切换 ${name}`,
         updateBackendToManage: '请更新 Hermes 后端，才能在这里开启或关闭该插件。',
+        required: '必填',
+        keySet: '已设置',
+        keepCurrent: '留空以保留当前值',
+        saveKey: '保存',
+        keySaved: (name: string) => `已保存 ${name}`,
+        keyFailed: (name: string) => `无法保存 ${name}`,
         sources: { bundled: '内置', entrypoint: 'pip', git: 'git', project: '项目', user: '用户' }
       }
     },

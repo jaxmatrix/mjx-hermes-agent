@@ -271,6 +271,12 @@ export const zhHant = defineLocale({
         noMatches: '沒有符合的外掛。',
         toggleFailed: (name: string) => `無法切換 ${name}`,
         updateBackendToManage: '請更新 Hermes 後端，才能在這裡開啟或關閉此外掛。',
+        required: '必填',
+        keySet: '已設定',
+        keepCurrent: '留空以保留目前的值',
+        saveKey: '儲存',
+        keySaved: (name: string) => `已儲存 ${name}`,
+        keyFailed: (name: string) => `無法儲存 ${name}`,
         sources: { bundled: '內建', entrypoint: 'pip', git: 'git', project: '專案', user: '使用者' }
       }
     },

@@ -290,6 +290,14 @@ export const ar = defineLocale({
         bundled: 'مضمّنة',
         disk: 'على القرص',
         runtime: 'وقت التشغيل'
+      },
+      agent: {
+        required: 'مطلوب',
+        keySet: 'مضبوط',
+        keepCurrent: 'اتركه فارغًا للإبقاء على القيمة الحالية',
+        saveKey: 'حفظ',
+        keySaved: (name: string) => `تم حفظ ${name}`,
+        keyFailed: (name: string) => `تعذّر حفظ ${name}`
       }
     },
     notifications: {

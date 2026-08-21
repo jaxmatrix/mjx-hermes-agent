@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
+import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tip } from '@/components/ui/tooltip'
 import { $restDoorEnabled, type PluginDisk, resolvePluginDisk } from '@/contrib/plugin-disk'
 import { $pluginRecords, type PluginRecord, setPluginEnabled } from '@/contrib/plugins-store'
 import { discoverRuntimePlugins } from '@/contrib/runtime-loader'
+import { setEnvVar } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { Package, Plug } from '@/lib/icons'
@@ -18,6 +20,7 @@ import {
   $agentPlugins,
   $agentPluginsError,
   $agentPluginsStatus,
+  type AgentPluginEnvField,
   type AgentPluginRow,
   type GatewayRequest,
   loadAgentPlugins,
@@ -27,7 +30,7 @@ import { useStore } from '@/store/atom'
 import { $connection } from '@/store/connection'
 import { $gatewayState, requestGateway } from '@/store/gateway'
 import { modeIsRemoteLike } from '@/store/gateway-config'
-import { notifyError } from '@/store/notifications'
+import { notify, notifyError } from '@/store/notifications'
 
 import {
   EmptyState,
@@ -93,6 +96,78 @@ async function revealAgentPluginsDir(request: GatewayRequest, failTitle: string)
   }
 }
 
+/**
+ * The env vars a backend plugin's manifest declares — in practice its API keys —
+ * editable right under the plugin instead of by var name on the Keys page.
+ * Writes go through the same /api/env door Settings ▸ Keys uses; `is_set` is the
+ * backend's word, so a save refetches the list rather than guessing.
+ */
+function AgentPluginEnvFields({ row }: { row: AgentPluginRow }) {
+  const { t } = useI18n()
+  const p = t.settings.plugins.agent
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState<null | string>(null)
+
+  const save = async (field: AgentPluginEnvField) => {
+    const value = (drafts[field.name] ?? '').trim()
+
+    if (!value) {
+      return
+    }
+
+    setSaving(field.name)
+
+    try {
+      await setEnvVar(field.name, value)
+      setDrafts(prev => ({ ...prev, [field.name]: '' }))
+      notify({ message: p.keySaved(field.name) })
+      void loadAgentPlugins(requestGateway)
+    } catch (err) {
+      notifyError(err, p.keyFailed(field.name))
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  return (
+    <div className="mt-2 flex flex-col gap-3">
+      {(row.env ?? []).map(field => (
+        <div className="flex flex-col gap-1" key={field.name}>
+          <span className="flex items-center gap-2 font-mono text-[0.68rem] text-(--ui-text-tertiary)">
+            {field.name}
+            {field.required && <Pill tone="primary">{p.required}</Pill>}
+            {field.is_set && <Pill>{p.keySet}</Pill>}
+          </span>
+          {field.description && (
+            <span className="text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
+              {field.description}
+            </span>
+          )}
+          <div className="flex items-center gap-2">
+            <Input
+              aria-label={field.name}
+              className="font-mono"
+              onChange={event => setDrafts(prev => ({ ...prev, [field.name]: event.target.value }))}
+              placeholder={field.is_set ? p.keepCurrent : ''}
+              spellCheck={false}
+              type={field.password ? 'password' : 'text'}
+              value={drafts[field.name] ?? ''}
+            />
+            <Button
+              disabled={!(drafts[field.name] ?? '').trim() || saving === field.name}
+              onClick={() => void save(field)}
+              size="sm"
+              variant="outline"
+            >
+              {p.saveKey}
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** One backend plugin: name + source pills, description, and its enable switch. */
 function AgentPluginRowView({ row }: { row: AgentPluginRow }) {
   const { t } = useI18n()
@@ -120,6 +195,7 @@ function AgentPluginRowView({ row }: { row: AgentPluginRow }) {
           }}
         />
       }
+      below={row.env?.length ? <AgentPluginEnvFields row={row} /> : undefined}
       // Desktop puts the read-only reason in a tooltip. Universal renders this
       // page on touch surfaces too (mobile, the Android activity screen), where
       // a hover tooltip never appears and a disabled switch would look broken
