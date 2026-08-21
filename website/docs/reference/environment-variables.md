@@ -182,6 +182,11 @@ For native Anthropic auth, Hermes prefers Claude Code's own credential files whe
 | `RETAINDB_BASE_URL` | Base URL for self-hosted RetainDB instances (default: `https://api.retaindb.com`) |
 | `OPENVIKING_API_KEY` | OpenViking API key (leave blank for local dev mode) |
 | `OPENVIKING_ENDPOINT` | OpenViking server URL (default: `http://127.0.0.1:1933`) |
+| `OPENVIKING_AGENT` | Hermes' peer ID in OpenViking (default: `hermes`) |
+| `OPENVIKING_ACCOUNT` / `OPENVIKING_USER` | Local/trusted-mode identity overrides (leave unset with a user API key) |
+| `OPENVIKING_CLI_CONFIG_FILE` | `ovcli.conf` profile Hermes links (default: `~/.openviking/ovcli.conf`) |
+| `OPENVIKING_SERVER_COMMAND` | Command used to autostart a local server (default: `openviking-server`; point at a source checkout to run a branch) |
+| `OPENVIKING_RECALL_*`, `OPENVIKING_PROFILE_TOKEN_BUDGET` | Recall tuning — see the [OpenViking configuration table](/docs/user-guide/features/memory-providers#openviking) |
 | `BRV_API_KEY` | ByteRover API key (optional, for cloud sync — local-first by default) ([app.byterover.dev](https://app.byterover.dev)) |
 | `SUPERMEMORY_API_KEY` | Semantic long-term memory with profile recall and session ingest ([supermemory.ai](https://supermemory.ai)) |
 | `DAYTONA_API_KEY` | Daytona cloud sandboxes ([daytona.io](https://daytona.io/)) |

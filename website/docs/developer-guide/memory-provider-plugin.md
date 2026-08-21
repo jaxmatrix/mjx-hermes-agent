@@ -115,8 +115,43 @@ def get_config_schema(self):
 Fields with `secret: True` and `env_var` go to `.env`. Non-secret fields are passed to `save_config()`.
 
 :::tip Minimal vs Full Schema
-Every field in `get_config_schema()` is prompted during `hermes memory setup`. Providers with many options should keep the schema minimal — only include fields the user **must** configure (API key, required credentials). Document optional settings in a config file reference (e.g. `$HERMES_HOME/myprovider.json`) rather than prompting for them all during setup. This keeps the setup wizard fast while still supporting advanced configuration. See the Supermemory provider for an example — it only prompts for the API key; all other options live in `supermemory.json`.
+Every field in `get_config_schema()` is prompted during `hermes memory setup` — unless the provider implements `post_setup()`, which replaces the prompt loop entirely (OpenViking does this and leaves its tuning knobs to `config.yaml`). Providers with many options should keep the schema minimal — only include fields the user **must** configure (API key, required credentials). Document optional settings in a config file reference (e.g. `$HERMES_HOME/myprovider.json`) rather than prompting for them all during setup. This keeps the setup wizard fast while still supporting advanced configuration. See the Supermemory provider for an example — it only prompts for the API key; all other options live in `supermemory.json`.
 :::
+
+## Declared Config Surface (`config_schema.py`)
+
+The desktop and universal apps do not call `get_config_schema()`. They render a
+`ProviderConfigSchema` declared in a `config_schema.py` next to your
+`__init__.py`, served by `GET/PUT /api/memory/providers/<name>/config?surface=declared`.
+Without that file the apps show an empty panel for your provider.
+
+```python
+from plugins.memory.config_schema import (
+    KIND_SECRET, KIND_TEXT, STORAGE_CONFIG_YAML, ProviderConfigSchema, ProviderField,
+)
+
+CONFIG_SCHEMA = ProviderConfigSchema(
+    name="myprovider",
+    label="My Provider",
+    storage=STORAGE_CONFIG_YAML,   # fields live in config.yaml under memory.myprovider
+    fields=(
+        ProviderField(key="api_key", label="API key", kind=KIND_SECRET,
+                      env_key="MY_API_KEY", inline=True),
+        ProviderField(key="region", label="Region", kind=KIND_TEXT, default="us-east",
+                      env_fallbacks=("MY_REGION",), inline=True),
+    ),
+)
+```
+
+The file may import only from `plugins.memory.config_schema` (it is loaded into the
+web server, which must not import your runtime). `storage` picks where
+non-secret fields are written: `STORAGE_CONFIG_YAML` (`memory.<name>` in
+`config.yaml`; a save also clears the field's `env_fallbacks` so the saved value
+is the one in effect), `STORAGE_FLAT_JSON` (`$HERMES_HOME/<name>/config.json`),
+or the Honcho-specific host block. Secrets always go to `.env` under `env_key`.
+`inline=True` fields appear in the compact panel; the rest in the full-config
+modal, bucketed by `group`. See `plugins/memory/openviking/config_schema.py` and
+`plugins/memory/hindsight/config_schema.py`.
 
 ## Save Config
 

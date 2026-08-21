@@ -319,9 +319,50 @@ OPENVIKING_ENDPOINT=http://127.0.0.1:1933
 ```
 
 OpenViking server settings live in `ov.conf` (`--config`,
-`OPENVIKING_CONFIG_FILE`, or `~/.openviking/ov.conf`). Client connection values
-live in `ovcli.conf` (`OPENVIKING_CLI_CONFIG_FILE` or
-`~/.openviking/ovcli.conf`).
+`OPENVIKING_CONFIG_FILE`, or `~/.openviking/ov.conf`) — those are read by the
+server, not by Hermes. Client connection values live in `ovcli.conf`
+(`OPENVIKING_CLI_CONFIG_FILE` or `~/.openviking/ovcli.conf`).
+
+**Configuration** (`memory.openviking.*` in `config.yaml`, or the env var; env
+wins, then a linked `ovcli.conf`, then `config.yaml`). The desktop and
+universal apps edit the same keys from *Settings → Memory*.
+
+| Key | Env var | Default | Description |
+|-----|---------|---------|-------------|
+| `endpoint` | `OPENVIKING_ENDPOINT` | `http://127.0.0.1:1933` | Server URL |
+| — | `OPENVIKING_API_KEY` | — | API key (secret; `.env` only). Required for any non-local server |
+| `agent` | `OPENVIKING_AGENT` | `hermes` | Hermes' peer ID for peer-scoped memories |
+| `account`, `user` | `OPENVIKING_ACCOUNT`, `OPENVIKING_USER` | — | Local/trusted-mode identity overrides; leave blank with a user API key |
+| `use_ovcli_config` | — | `false` | Read endpoint + credentials from an `ovcli.conf` profile |
+| `ovcli_config_path` | `OPENVIKING_CLI_CONFIG_FILE` | `~/.openviking/ovcli.conf` | Which profile file to link |
+| `server_command` | `OPENVIKING_SERVER_COMMAND` | `openviking-server` | Command Hermes runs to autostart a local server (see below) |
+| `recall_limit` | `OPENVIKING_RECALL_LIMIT` | `6` | Max memories injected by automatic recall (1–100) |
+| `recall_score_threshold` | `OPENVIKING_RECALL_SCORE_THRESHOLD` | `0.15` | Minimum relevance score (0–1) |
+| `recall_max_injected_chars` | `OPENVIKING_RECALL_MAX_INJECTED_CHARS` | `4000` | Max total characters injected per recall |
+| `profile_token_budget` | `OPENVIKING_PROFILE_TOKEN_BUDGET` | `6000` | Max session-start memory tokens |
+| `recall_timeout_seconds` | `OPENVIKING_RECALL_TIMEOUT_SECONDS` | `4.0` | Total timeout per recall pass |
+| `recall_request_timeout_seconds` | `OPENVIKING_RECALL_REQUEST_TIMEOUT_SECONDS` | `3.0` | Per-request timeout inside a pass |
+| `recall_full_read_limit` | `OPENVIKING_RECALL_FULL_READ_LIMIT` | `2` | Max full (L2) reads per recall |
+| `recall_prefer_abstract` | `OPENVIKING_RECALL_PREFER_ABSTRACT` | `false` | Inject abstracts instead of full reads |
+| `recall_resources` | `OPENVIKING_RECALL_RESOURCES` | `false` | Let recall return ingested resources too |
+
+`hermes memory setup` only asks for the connection values; set the recall
+knobs with `hermes config set memory.openviking.recall_limit 8` or from the
+app's memory settings.
+
+**Running a local checkout.** When the endpoint is local and nothing answers
+on it, Hermes starts the server itself using `server_command` and appends
+`--host`/`--port`. Point the command at a source checkout to run a branch:
+
+```bash
+cd ~/src/OpenViking && uv sync --all-extras && uv pip install -e .   # needs cargo + maturin
+hermes config set memory.openviking.server_command \
+  "uv run --project $HOME/src/OpenViking openviking-server --config $HOME/.openviking/ov.conf"
+```
+
+Or build the checkout's `Dockerfile` and keep `endpoint` pointed at the
+container — Hermes does not care how the server was started, only that
+`/health` answers.
 
 **Key features:**
 - Tiered context loading: L0 (~100 tokens) → L1 (~2k) → L2 (full)
