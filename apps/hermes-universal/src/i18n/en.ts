@@ -196,6 +196,7 @@ export const en: Translations = {
     swapSidebarSidesTitle: 'Swap the sessions and file browser sides',
     hideRightSidebar: 'Hide right sidebar',
     showRightSidebar: 'Show right sidebar',
+    unreadSessions: count => (count === 1 ? '1 unread session' : `${count} unread sessions`),
     muteHaptics: 'Mute haptics',
     unmuteHaptics: 'Unmute haptics',
     openSettings: 'Open settings',

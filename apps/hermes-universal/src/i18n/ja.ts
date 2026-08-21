@@ -210,6 +210,7 @@ export const ja = defineLocale({
     swapSidebarSidesTitle: 'セッションとファイルブラウザーの位置を入れ替える',
     hideRightSidebar: '右サイドバーを非表示',
     showRightSidebar: '右サイドバーを表示',
+    unreadSessions: count => (count === 1 ? '未読セッション 1 件' : `未読セッション ${count} 件`),
     muteHaptics: '触覚フィードバックをオフ',
     unmuteHaptics: '触覚フィードバックをオン',
     openSettings: '設定を開く',

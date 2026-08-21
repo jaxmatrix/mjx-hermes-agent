@@ -202,6 +202,7 @@ export const zhHant = defineLocale({
     swapSidebarSidesTitle: '交換工作階段欄和檔案瀏覽器的位置',
     hideRightSidebar: '隱藏右側邊欄',
     showRightSidebar: '顯示右側邊欄',
+    unreadSessions: count => (count === 1 ? '1 個未讀工作階段' : `${count} 個未讀工作階段`),
     muteHaptics: '靜音觸感回饋',
     unmuteHaptics: '開啟觸感回饋',
     openSettings: '開啟設定',
