@@ -841,7 +841,12 @@ export const zh: Translations = {
       keepAwakeFailed: '无法让本机保持唤醒',
       backgroundModeTitle: '在后台继续运行',
       backgroundModeDesc: '关闭窗口只会收起 Hermes 而不退出，正在进行的回复会继续输出。可通过托盘图标重新显示或退出。',
-      backgroundModeFailed: '无法让 Hermes 在后台继续运行'
+      backgroundModeFailed: '无法让 Hermes 在后台继续运行',
+      attachmentSizeTitle: '附件 / 预览大小上限',
+      attachmentSizeDesc:
+        'Hermes 为附加或预览而读入内存的本地文件大小上限（MB）。默认为 16。整个文件都会被 base64 缓冲，设置过大可能导致手机在附加过程中终止应用。',
+      attachmentSizeUnit: 'MB',
+      attachmentSizeLabel: '附件 / 预览大小上限（MB）'
     },
     credentials: {
       pasteKey: '粘贴密钥',
@@ -2332,6 +2337,7 @@ export const zh: Translations = {
     attachLabel: '附加',
     attachFailed: label => `无法附加 ${label}`,
     attachNoRef: '网关未暂存此文件。',
+    attachTooLarge: maxMb => `超过 ${maxMb} MB 的上限。可在“设置 → 聊天”中调高。`,
     files: '文件…',
     folder: '文件夹…',
     back: '返回',

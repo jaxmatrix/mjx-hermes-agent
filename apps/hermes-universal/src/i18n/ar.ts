@@ -641,7 +641,12 @@ export const ar = defineLocale({
       backgroundModeTitle: 'الاستمرار في العمل بالخلفية',
       backgroundModeDesc:
         'إغلاق النافذة يخفي Hermes بدلاً من إنهائه، فتستمر الجلسة الجارية في البث. استخدم أيقونة شريط النظام لإظهاره أو لإنهائه.',
-      backgroundModeFailed: 'تعذّر إبقاء Hermes يعمل في الخلفية'
+      backgroundModeFailed: 'تعذّر إبقاء Hermes يعمل في الخلفية',
+      attachmentSizeTitle: 'الحد الأقصى لحجم المرفق / المعاينة',
+      attachmentSizeDesc:
+        'أقصى حجم لملف محلي يقرأه Hermes في الذاكرة للإرفاق أو المعاينة، بالميغابايت. القيمة الافتراضية 16. يُخزَّن الملف كاملاً بترميز base64، لذا قد تؤدي القيم الكبيرة إلى إنهاء التطبيق على الهاتف أثناء الإرفاق.',
+      attachmentSizeUnit: 'ميغابايت',
+      attachmentSizeLabel: 'الحد الأقصى لحجم المرفق / المعاينة بالميغابايت'
     },
     credentials: {
       pasteKey: 'لصق المفتاح',
@@ -1779,6 +1784,7 @@ export const ar = defineLocale({
     themeTryPre: 'جرّب ',
     themeTryPost: '.',
     attachLabel: 'إرفاق',
+    attachTooLarge: maxMb => `أكبر من الحد الأقصى ${maxMb} ميغابايت. يمكن رفعه من الإعدادات ← المحادثة.`,
     files: 'ملفات',
     folder: 'مجلد',
     images: 'صور',
