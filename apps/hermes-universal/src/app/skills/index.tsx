@@ -12,6 +12,7 @@ import { CountSkeleton } from '@/components/ui/skeleton'
 import {
   editLearningNode,
   getLearningNode,
+  getSkillContent,
   getSkills,
   getToolsets,
   getUsageAnalytics,
@@ -650,6 +651,7 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
                     <SkillDetail
                       onArchive={() => setArchiveTarget(activeSkill.name)}
                       onEdit={() => void openSkillEditor(activeSkill.name)}
+                      profile={scopeOverride}
                       skill={activeSkill}
                     />
                   )}
@@ -767,11 +769,76 @@ function DetailHeader({
   )
 }
 
-function SkillDetail({ onArchive, onEdit, skill }: { onArchive: () => void; onEdit: () => void; skill: SkillInfo }) {
+// Frontmatter parse for display: the YAML block between the leading `---`
+// fences, flattened to top-level `key: value` rows (nested blocks render as
+// their raw indented text). Display-only — never fed back to the backend.
+export function parseFrontmatter(content: string): { body: string; meta: [string, string][] } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(content)
+
+  if (!match) {
+    return { body: content, meta: [] }
+  }
+
+  const meta: [string, string][] = []
+  let currentKey: null | string = null
+  let block: string[] = []
+
+  const flush = () => {
+    if (currentKey !== null) {
+      meta.push([currentKey, block.join('\n').trim()])
+    }
+
+    currentKey = null
+    block = []
+  }
+
+  for (const line of match[1].split(/\r?\n/)) {
+    const kv = /^(\w[\w-]*):\s?(.*)$/.exec(line)
+
+    if (kv) {
+      flush()
+      currentKey = kv[1]
+      block = kv[2] ? [kv[2]] : []
+    } else if (currentKey !== null) {
+      block.push(line.replace(/^ {2}/, ''))
+    }
+  }
+
+  flush()
+
+  return { body: content.slice(match[0].length), meta }
+}
+
+function SkillDetail({
+  onArchive,
+  onEdit,
+  profile,
+  skill
+}: {
+  onArchive: () => void
+  onEdit: () => void
+  /** Capabilities scope — the same skill name is a different file per profile. */
+  profile?: null | string
+  skill: SkillInfo
+}) {
   const { t } = useI18n()
   // Only learned/local skills are the user's to rewrite or archive — bundled
   // and hub skills are managed by their sources.
   const editable = skill.provenance === 'agent'
+
+  // The FULL skill — frontmatter metadata + the whole SKILL.md body — for any
+  // provenance. The row list only carries name/description, so without this the
+  // pane could never answer "what does this skill actually do".
+  const contentQuery = useQuery({
+    queryKey: ['skill-content', skill.name, profile ?? ''],
+    queryFn: () => getSkillContent(skill.name, profile),
+    staleTime: 60_000
+  })
+
+  const parsed = useMemo(
+    () => (contentQuery.data ? parseFrontmatter(contentQuery.data.content) : null),
+    [contentQuery.data]
+  )
 
   return (
     <>
@@ -799,6 +866,26 @@ function SkillDetail({ onArchive, onEdit, skill }: { onArchive: () => void; onEd
           </Button>
         </div>
       )}
+      {parsed && parsed.meta.length > 0 && (
+        <div className="grid gap-1 rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) p-3">
+          {parsed.meta.map(([key, value]) => (
+            <div className="flex gap-2 text-[0.68rem] leading-4" key={key}>
+              <span className="w-24 shrink-0 font-medium text-(--ui-text-tertiary)">{key}</span>
+              <span className="min-w-0 whitespace-pre-wrap break-words text-(--ui-text-secondary)">{value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {contentQuery.isLoading ? (
+        <CountSkeleton />
+      ) : parsed ? (
+        <pre
+          className="overflow-auto whitespace-pre-wrap wrap-break-word rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) p-3 font-mono text-[0.68rem] leading-relaxed"
+          data-selectable-text="true"
+        >
+          {parsed.body.trim() || t.skills.noDescription}
+        </pre>
+      ) : null}
     </>
   )
 }

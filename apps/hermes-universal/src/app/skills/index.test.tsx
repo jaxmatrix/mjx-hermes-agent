@@ -26,6 +26,7 @@ const getUsageAnalytics = vi.fn()
 const getSkillHubSources = vi.fn()
 const installSkillFromHub = vi.fn()
 const getActionStatus = vi.fn()
+const getSkillContent = vi.fn()
 
 // Partial mock: keep the real module (SkillsView pulls in @/store/profile,
 // whose import-time subscription calls setApiRequestProfile) and stub only the
@@ -41,7 +42,8 @@ vi.mock('@/hermes', async importOriginal => ({
   getUsageAnalytics: (days: number) => getUsageAnalytics(days),
   getSkillHubSources: (profile?: null | string) => getSkillHubSources(profile),
   installSkillFromHub: (identifier: string, profile?: null | string) => installSkillFromHub(identifier, profile),
-  getActionStatus: (name: string, tail?: number) => getActionStatus(name, tail)
+  getActionStatus: (name: string, tail?: number) => getActionStatus(name, tail),
+  getSkillContent: (name: string, profile?: null | string) => getSkillContent(name, profile)
 }))
 
 // Notifications hit nanostores/timers we don't care about here.
@@ -90,6 +92,7 @@ beforeEach(() => {
   installSkillFromHub.mockResolvedValue({ name: 'skill-install-1' })
   getActionStatus.mockResolvedValue({ name: 'skill-install-1', running: false, exit_code: 0, lines: [] })
   toggleSkill.mockResolvedValue({ ok: true, name: 'pdf', enabled: false })
+  getSkillContent.mockResolvedValue({ name: 'pdf', path: '/skills/pdf/SKILL.md', content: '' })
 })
 
 afterEach(() => {
@@ -230,5 +233,61 @@ describe('SkillsView profile scope', () => {
     await scoped()
 
     await waitFor(() => expect(getSkillHubSources).toHaveBeenCalledWith('research'))
+  })
+})
+
+describe('SkillsView full-skill detail', () => {
+  const SKILL_MD = ['---', 'name: pdf', 'allowed-tools: read, write', '---', '', '# Splitting PDFs', 'Step one.'].join(
+    '\n'
+  )
+
+  it('renders the whole SKILL.md, not just the row description', async () => {
+    getSkills.mockResolvedValue([{ name: 'pdf', description: 'pdf things', category: 'docs', enabled: true }])
+    getSkillContent.mockResolvedValue({ name: 'pdf', path: '/skills/pdf/SKILL.md', content: SKILL_MD })
+
+    await renderSkills('/skills?tab=skills')
+
+    // Body text lives only in the file — the list row never carried it.
+    expect(await screen.findByText(/Splitting PDFs/)).toBeTruthy()
+    // …and the frontmatter renders as metadata rows, not as part of the body.
+    expect(screen.getByText('allowed-tools')).toBeTruthy()
+  })
+
+  it('reads the file from the scoped profile', async () => {
+    $settingsScopeOverride.set('research')
+    getSkills.mockResolvedValue([{ name: 'pdf', description: 'pdf things', category: 'docs', enabled: true }])
+
+    await renderSkills('/skills?tab=skills')
+
+    await waitFor(() => expect(getSkillContent).toHaveBeenCalledWith('pdf', 'research'))
+  })
+})
+
+describe('parseFrontmatter', () => {
+  it('splits the fenced block from the body', async () => {
+    const { parseFrontmatter } = await import('./index')
+    const parsed = parseFrontmatter('---\nname: pdf\n---\nbody text\n')
+
+    expect(parsed.meta).toEqual([['name', 'pdf']])
+    expect(parsed.body).toBe('body text\n')
+  })
+
+  it('leaves a file with no frontmatter whole', async () => {
+    const { parseFrontmatter } = await import('./index')
+    const parsed = parseFrontmatter('# Just a heading\n---\nnot frontmatter\n')
+
+    expect(parsed.meta).toEqual([])
+    expect(parsed.body).toBe('# Just a heading\n---\nnot frontmatter\n')
+  })
+
+  it('keeps a multi-line value with its key and survives CRLF', async () => {
+    const { parseFrontmatter } = await import('./index')
+    const parsed = parseFrontmatter('---\r\ndescription: one\r\n  two\r\nname: pdf\r\n---\r\nbody\r\n')
+
+    expect(parsed.meta).toEqual([
+      ['description', 'one\ntwo'],
+      ['name', 'pdf']
+    ])
+    expect(parsed.body).toBe('body\r\n')
   })
 })
