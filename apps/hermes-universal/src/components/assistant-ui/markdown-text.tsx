@@ -12,6 +12,7 @@ import { ArtifactCard } from '@/components/assistant-ui/artifact-card'
 import { ExpandableBlock } from '@/components/chat/expandable-block'
 import { chunkByLines, SyntaxHighlighter } from '@/components/chat/shiki-highlighter'
 import { ZoomableImage } from '@/components/chat/zoomable-image'
+import { ErrorBoundary } from '@/components/error-boundary'
 import { detectArtifact } from '@/lib/artifact-detect'
 import { normalizeExternalUrl, openExternalLink, PrettyLink } from '@/lib/external-link'
 import { createMemoizedMathPlugin, KATEX_HTML_TAG } from '@/lib/katex-memo'
@@ -726,18 +727,39 @@ function MarkdownTextSurface({ containerClassName, containerProps, defer }: Mark
   }
 
   return (
-    <StreamdownTextPrimitive
-      components={MARKDOWN_COMPONENTS}
-      containerClassName={cn(MARKDOWN_CONTAINER_CLASS_NAME, containerClassName)}
-      containerProps={containerProps}
-      defer={defer}
-      lineNumbers={false}
-      mode="streaming"
-      parseIncompleteMarkdown={false}
-      parseMarkdownIntoBlocksFn={parseMarkdownIntoBlocksCached}
-      plugins={MARKDOWN_PLUGINS}
-      preprocess={preprocessWithTailRepair}
-    />
+    // Last line of defence for the whole markdown surface — assistant answers,
+    // reasoning, tool output and user bubbles all render through here.
+    //
+    // The pipeline is recursive in several places we do not own (parse5 →
+    // `hast-util-from-parse5` on raw HTML, `mdast-util-to-hast` on nested block
+    // structure), so pathological content can throw `RangeError: Maximum call
+    // stack size exceeded` from inside Streamdown's render. Without a boundary
+    // here that throw unwinds to the app's root boundary and blanks the entire
+    // workspace — on every reload, because the offending message is replayed
+    // from the session each time, so Retry lands on the same content and fails
+    // the same way. The app is bricked, not glitching.
+    //
+    // Degrading to HugeTextFallback keeps the text readable and the rest of the
+    // transcript alive. The error stays latched for this surface: content that
+    // overflowed the stack will overflow again, and remounting per token during
+    // streaming would cost far more than plain rendering saves.
+    <ErrorBoundary
+      fallback={() => <HugeTextFallback containerClassName={containerClassName} text={text} />}
+      label="markdown-render"
+    >
+      <StreamdownTextPrimitive
+        components={MARKDOWN_COMPONENTS}
+        containerClassName={cn(MARKDOWN_CONTAINER_CLASS_NAME, containerClassName)}
+        containerProps={containerProps}
+        defer={defer}
+        lineNumbers={false}
+        mode="streaming"
+        parseIncompleteMarkdown={false}
+        parseMarkdownIntoBlocksFn={parseMarkdownIntoBlocksCached}
+        plugins={MARKDOWN_PLUGINS}
+        preprocess={preprocessWithTailRepair}
+      />
+    </ErrorBoundary>
   )
 }
 
