@@ -19,6 +19,7 @@
 
 import { atom, computed } from 'nanostores'
 
+import { isTileDetached } from '@/components/pane-shell/tile/detach'
 import { findGroup, findGroupOfPane, type LayoutNode } from '@/components/pane-shell/tree/model'
 import {
   $activeTreeGroup,
@@ -1055,6 +1056,13 @@ export function reuseBlankDraftTile(storedSessionId: string): boolean {
  * the nearest chat tab in main's own strip, scanning right first and then left
  * (the tab that fills the slot, then its neighbour). Null when main is the only
  * chat in its zone — the caller then drops main to a fresh draft.
+ *
+ * Scoped to main's OWN group, which is what keeps floating placements out of it:
+ * a floating pane is rendered outside the tree's tab strips and is never in this
+ * group. DETACHED tiles need an explicit skip instead — detach deliberately KEEPS
+ * the tile's slot in the tree (that is what makes reattach well-defined), so a
+ * detached chat is a tab here while another native window is the thing actually
+ * showing it. Promoting one would close it out from under that window.
  */
 export function nextSessionTileForWorkspace(): null | string {
   const tree = $layoutTree.get()
@@ -1071,6 +1079,10 @@ export function nextSessionTileForWorkspace(): null | string {
 
   for (const paneId of ordered) {
     const storedSessionId = storedIdFromTilePane(paneId)
+
+    if (isTileDetached(paneId)) {
+      continue
+    }
 
     if (storedSessionId && tiles.some(t => t.storedSessionId === storedSessionId)) {
       return storedSessionId

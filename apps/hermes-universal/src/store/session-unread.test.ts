@@ -28,7 +28,7 @@ vi.mock('@/store/gateway', async () => {
 
 import type { SessionInfo } from '@/types/hermes'
 
-import { $activeGatewayProfile } from './profile'
+import { $activeProfile } from './profiles'
 import { $activeStoredSessionId, $messagingSessions, $sessions, $unreadFinishedSessionIds } from './session'
 import {
   $sessionSeenCounts,
@@ -50,7 +50,7 @@ beforeEach(() => {
   $sessionSeenCounts.set({})
   $unreadFinishedMarkers.set({})
   $activeStoredSessionId.set(null)
-  $activeGatewayProfile.set(null)
+  $activeProfile.set(null)
 })
 
 afterEach(() => {
@@ -63,7 +63,7 @@ describe('markSessionUnreadFinished', () => {
     // The trap: the gateway is on `work` while the finished row belongs to
     // `personal`. An unscoped write would let `work`'s bucket paint (or later
     // silence) a row it does not own.
-    $activeGatewayProfile.set('work')
+    $activeProfile.set('work')
     $sessions.set([row('s1', { profile: 'personal' })])
 
     markSessionUnreadFinished('s1')
@@ -80,7 +80,7 @@ describe('markSessionUnreadFinished', () => {
   })
 
   it('falls back to the live gateway’s profile when no row is loaded', () => {
-    $activeGatewayProfile.set('work')
+    $activeProfile.set('work')
 
     markSessionUnreadFinished('not-listed')
 
