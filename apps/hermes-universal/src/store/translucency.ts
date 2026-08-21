@@ -28,10 +28,45 @@ export async function applyTranslucency(intensity: number): Promise<void> {
   }
 }
 
+// The intensity slider fires an update per tick of the drag, and each one was
+// an IPC wake into Rust. `window-vibrancy` (and the platform APIs under it)
+// animates the material over ~150ms, so re-issuing the call per tick restarts
+// that animation before it can ever settle — the drag is janky AND the frost
+// levels look identical, because they never finish. Coalesce onto a trailing
+// timer: the persisted value still moves per tick (nothing reads it until a
+// cold start), only the native call waits for the hand to pause.
+const TRANSLUCENCY_APPLY_DEBOUNCE_MS = 120
+
+let applyTimer: null | number = null
+
+function flushTranslucency(): void {
+  applyTimer = null
+  void applyTranslucency($translucency.get())
+}
+
 export function setTranslucency(intensity: number): void {
   const clamped = Math.min(100, Math.max(0, Math.round(intensity)))
+
   $translucency.set(clamped)
-  void applyTranslucency(clamped)
+
+  if (applyTimer !== null) {
+    clearTimeout(applyTimer)
+  }
+
+  applyTimer = setTimeout(flushTranslucency, TRANSLUCENCY_APPLY_DEBOUNCE_MS) as unknown as number
+}
+
+/** Apply a pending change now. The window closing mid-drag must not leave the
+ *  native surface on the value the hand passed through 100ms ago. */
+export function flushPendingTranslucency(): void {
+  if (applyTimer !== null) {
+    clearTimeout(applyTimer)
+    flushTranslucency()
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushPendingTranslucency)
 }
 
 /** Apply the persisted translucency once at startup. */

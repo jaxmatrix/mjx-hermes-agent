@@ -311,6 +311,15 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // An active IME composition owns the keyboard. Windows Chinese IMEs
+      // (Microsoft Pinyin, Sogou) use Ctrl+, as their punctuation-mode toggle,
+      // so without this guard that keystroke ALSO matched `nav.settings` and
+      // navigated away mid-word, unmounting the composer with an unsent draft
+      // in it. Before capture mode, which would otherwise bind a preedit key.
+      if (event.isComposing) {
+        return
+      }
+
       // Capture mode: the next real key becomes the binding. Swallow everything
       // so e.g. ⌘K rebinds instead of opening the palette.
       const capturing = $capture.get()

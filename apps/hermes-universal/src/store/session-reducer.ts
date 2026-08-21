@@ -25,6 +25,7 @@ import {
   type ChatMessage,
   coerceText,
   patchActive,
+  sealOpenToolParts,
   withActiveAssistant
 } from '@/lib/chat-messages'
 import { coerceThinkingText } from '@/lib/chat-runtime'
@@ -350,7 +351,13 @@ export function reduceSessionState(
         needsInput: false,
         // `text` is the turn's final_response; `rendered` is its ANSI/markdown
         // render (desktop reads the same pair).
-        messages: applyCompletion(state.messages, (coerceText(payload.text) || coerceText(payload.rendered)).trim())
+        //
+        // `sealOpenToolParts` last: a `tool.complete` lost to a degraded socket
+        // leaves its row spinning forever, and the turn is provably done here —
+        // nothing can still be running — so an open part is a lost event.
+        messages: sealOpenToolParts(
+          applyCompletion(state.messages, (coerceText(payload.text) || coerceText(payload.rendered)).trim())
+        )
       }
 
     /**

@@ -44,7 +44,7 @@ vi.mock('./session-row-state', async importOriginal => {
   }
 })
 
-// The Archived view fetches its own page. Stub the FETCH only — `$archivedSessions`
+// The Archived view fetches its own page. Stub the FETCH only — `$archivedSessionsFetched`
 // stays the real atom, so a case can seed it and assert the pool actually swaps.
 vi.mock('@/store/sidebar-archive', async importOriginal => {
   const actual = await importOriginal<typeof SidebarArchive>()
@@ -70,7 +70,7 @@ import {
 import { $showAllProfiles } from '@/store/profile'
 import { $projectScope, $projectTree, ALL_PROJECTS } from '@/store/projects'
 import { $activeStoredSessionId, $searchLoading, $sessions, $unreadFinishedSessionIds } from '@/store/session'
-import { $archivedSessions } from '@/store/sidebar-archive'
+import { $archivedSessionsFetched } from '@/store/sidebar-archive'
 
 import { SidebarScrollBody } from './sidebar-content'
 
@@ -110,7 +110,7 @@ const renderedTitles = () => screen.queryAllByText(/^(Alpha|Beta|Gamma|Archived)
 
 afterEach(() => {
   $sessions.set([])
-  $archivedSessions.set([])
+  $archivedSessionsFetched.set([])
   $pinnedSessionIds.set([])
   $sidebarAgentsGrouped.set(false)
   $projectTree.set([])
@@ -222,7 +222,7 @@ describe('sidebar ordering', () => {
 describe('sidebar archived view', () => {
   it('swaps the recents pool for the archived set', async () => {
     $sessions.set([row('a', 'Alpha chat', { started: 300 })])
-    $archivedSessions.set([row('z', 'Archived chat', { started: 50 })])
+    $archivedSessionsFetched.set([row('z', 'Archived chat', { started: 50 })])
 
     await mountSidebar()
 

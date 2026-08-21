@@ -38,6 +38,7 @@ vi.mock('@/store/session', async () => {
   return {
     $activeStoredSessionId: atom<null | string>(null),
     $messagingSessions: atom<unknown[]>([]),
+    $removedSessionIds: atom<ReadonlySet<string>>(new Set()),
     $sessions: atom<unknown[]>([]),
     $sessionSearch: atom<unknown[]>([]),
     $sessionsLoading: atom(false),

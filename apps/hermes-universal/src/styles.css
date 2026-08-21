@@ -576,6 +576,18 @@
     --dt-input-inset: inset 0 1px 1px color-mix(in srgb, #000 10%, transparent);
     --dt-ring: var(--ui-stroke-primary);
     --dt-midground: var(--theme-midground);
+    /* Scrollbars carry no theme colour: the accent-tinted thumb read as a
+       coloured element in the corner of every list. Same lightness as the
+       midground so each theme still gets a thumb that sits right against its
+       own surfaces — chroma 0 is the only thing removed.
+
+       Universal is WebKitGTK, not Chromium, and relative colour syntax
+       (`oklch(from …)`) is used nowhere else in this file — so the plain
+       midground is the declared value and the desaturation is applied only
+       where the engine advertises support. Without the guard an unsupported
+       `oklch(from …)` would make every `color-mix()` below invalid at
+       computed-value time and the thumbs would disappear entirely. */
+    --dt-scrollbar-thumb: var(--dt-midground);
     --dt-composer-ring: var(--ui-base);
     --dt-destructive: #cf2d56;
     --dt-destructive-foreground: #ffffff;
@@ -1541,7 +1553,7 @@ html.is-mobile [data-slot='composer-root'] {
    webview is too old for `scrollbar-width`, and that's the tradeoff we took. */
 html {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--dt-midground) 18%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--dt-scrollbar-thumb) 18%, transparent) transparent;
 }
 
 /* ==========================================================================
@@ -2300,7 +2312,7 @@ body.guest-pointer-lock iframe {
   .scrollbar-dt,
   .scrollbar-dt *:not(.scrollbar-overlay) {
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--dt-midground) 18%, transparent) transparent;
+    scrollbar-color: color-mix(in srgb, var(--dt-scrollbar-thumb) 18%, transparent) transparent;
   }
 
   .scrollbar-dt::-webkit-scrollbar,
@@ -2318,7 +2330,7 @@ body.guest-pointer-lock iframe {
 
   .scrollbar-dt::-webkit-scrollbar-thumb,
   .scrollbar-dt *:not(.scrollbar-overlay)::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--dt-midground) 18%, transparent);
+    background: color-mix(in srgb, var(--dt-scrollbar-thumb) 18%, transparent);
     border-radius: 9999rem;
     border: 0.125rem solid transparent;
     background-clip: padding-box;
@@ -2326,7 +2338,7 @@ body.guest-pointer-lock iframe {
 
   .scrollbar-dt::-webkit-scrollbar-thumb:hover,
   .scrollbar-dt *:not(.scrollbar-overlay)::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--dt-midground) 40%, transparent);
+    background: color-mix(in srgb, var(--dt-scrollbar-thumb) 40%, transparent);
     background-clip: padding-box;
   }
 
@@ -2341,7 +2353,7 @@ body.guest-pointer-lock iframe {
      container so its (and only its) internal scrollbar is themed. */
   .dt-portal-scrollbar {
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--dt-midground) 28%, transparent) transparent;
+    scrollbar-color: color-mix(in srgb, var(--dt-scrollbar-thumb) 28%, transparent) transparent;
   }
 
   .dt-portal-scrollbar::-webkit-scrollbar {
@@ -2355,14 +2367,14 @@ body.guest-pointer-lock iframe {
   }
 
   .dt-portal-scrollbar::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--dt-midground) 28%, transparent);
+    background: color-mix(in srgb, var(--dt-scrollbar-thumb) 28%, transparent);
     border-radius: 9999rem;
     border: 0.0625rem solid transparent;
     background-clip: padding-box;
   }
 
   .dt-portal-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--dt-midground) 50%, transparent);
+    background: color-mix(in srgb, var(--dt-scrollbar-thumb) 50%, transparent);
     background-clip: padding-box;
   }
 
@@ -3191,3 +3203,12 @@ html[data-hud] [data-hud-card] {
 
 /* A codicon/chevron is a glyph, not text: the direction-bearing ones are
    flipped per-component where the meaning is known, never wholesale here. */
+
+/* Relative colour syntax is the desaturation itself; guarded because WebKitGTK
+   builds older than the feature would otherwise invalidate every scrollbar
+   `color-mix()` above and leave the thumbs unpainted. */
+@supports (color: oklch(from white l 0 h)) {
+  :root {
+    --dt-scrollbar-thumb: oklch(from var(--dt-midground) l 0 h);
+  }
+}

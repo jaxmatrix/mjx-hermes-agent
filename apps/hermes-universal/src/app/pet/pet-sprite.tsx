@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 
+import { createBudgetedLoop } from '@/lib/budgeted-loop'
 import { useStore } from '@/store/atom'
 import { $petInfo, $petState, type PetInfo, type PetState } from '@/store/pet'
 
@@ -196,7 +197,6 @@ export function PetSprite({
     const img = new Image()
     img.src = `data:${info.mime ?? 'image/webp'};base64,${info.spritesheetBase64}`
 
-    let raf = 0
     let frame = 0
     let last = performance.now()
     let activeRow = -1
@@ -226,17 +226,29 @@ export function PetSprite({
       ctx.clearRect(0, 0, drawW, drawH)
 
       if (img.complete && img.naturalWidth > 0) {
-        ctx.imageSmoothingEnabled = false
+        // Smooth (bicubic) upscale: petdex sheets are 192x208 illustration
+        // frames, not pixel art — nearest-neighbour made a zoomed pet blocky.
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'high'
         ctx.drawImage(img, frame * frameW, index * frameH, frameW, frameH, 0, 0, drawW, drawH)
       }
-
-      raf = requestAnimationFrame(draw)
     }
 
-    raf = requestAnimationFrame(draw)
+    // Through the budgeted loop rather than a bare self-rescheduling rAF: this
+    // was the one animation loop in universal that ran flat out forever, with
+    // no visibility check at all, so a minimized window kept painting the pet.
+    //
+    // `pauseWhenUnfocused: false` on purpose — the pet keeps roaming while the
+    // window is merely unfocused (`use-pet-roam.ts` pauses on
+    // `visibilitychange` only), and a sprite frozen under a still-moving pet
+    // reads as a bug. Hidden is the case that matters and both halves agree on
+    // it. The fps cap is well above the sheet's own cadence (`loopMs / count`,
+    // typically 5-10fps), so it costs nothing visually and bounds the worst
+    // case on a high-refresh display.
+    const loop = createBudgetedLoop(draw, { fps: 30, pauseWhenUnfocused: false })
 
     return () => {
-      cancelAnimationFrame(raf)
+      loop.dispose()
       unsubState()
     }
   }, [
