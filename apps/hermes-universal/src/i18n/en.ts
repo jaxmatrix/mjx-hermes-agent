@@ -175,6 +175,18 @@ export const en: Translations = {
       `Software rendering active — remote display detected (${reason}). GPU acceleration is disabled to prevent flickering.`
   },
 
+  resourcePressure: {
+    diskCritical: "Your agent's disk is almost full. New messages, memories, and settings may fail to save.",
+    diskElevated: "Your agent's disk is filling up. Consider clearing old sessions or expanding its storage.",
+    diskFree: mb => ` (${mb} MB free)`,
+    dismiss: 'Dismiss warning',
+    memoryCritical:
+      'Your agent is almost out of memory and may restart. Consider closing idle sessions or upgrading its memory.',
+    memoryElevated: 'Your agent is running low on memory.',
+    oomRestart:
+      'Your agent restarted unexpectedly, most likely because it ran out of memory. Long sessions and many concurrent tasks increase memory use.'
+  },
+
   titlebar: {
     hideSidebar: 'Hide sidebar',
     showSidebar: 'Show sidebar',

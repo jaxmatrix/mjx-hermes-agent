@@ -183,6 +183,16 @@ export const zhHant = defineLocale({
     message: reason => `軟體繪圖已啟用 — 偵測到遠端顯示（${reason}）。為防止畫面閃爍，已停用 GPU 加速。`
   },
 
+  resourcePressure: {
+    diskCritical: '你的智能體磁碟快滿了。新的訊息、記憶與設定可能儲存失敗。',
+    diskElevated: '你的智能體磁碟正在填滿。建議清理舊工作階段或擴充儲存空間。',
+    diskFree: mb => `（剩餘 ${mb} MB）`,
+    dismiss: '關閉警告',
+    memoryCritical: '你的智能體記憶體即將耗盡，可能會重新啟動。建議關閉閒置的工作階段或增加記憶體。',
+    memoryElevated: '你的智能體記憶體不足。',
+    oomRestart: '你的智能體意外重新啟動，最可能的原因是記憶體耗盡。長時間的工作階段與大量並行任務會增加記憶體用量。'
+  },
+
   titlebar: {
     hideSidebar: '隱藏側邊欄',
     showSidebar: '顯示側邊欄',

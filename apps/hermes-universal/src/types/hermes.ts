@@ -1092,6 +1092,54 @@ export interface ConfigFloorWarning {
   support_floor_version: number
 }
 
+/** The `pressure` enum both resource blocks of `GET /api/status` carry.
+ *  The BACKEND classifies (`gateway/memory_status.py::classify_pressure`,
+ *  `gateway/disk_status.py::classify_disk_pressure`) — a client that re-derived
+ *  a level from the raw MB would disagree with the dashboard and with the NAS
+ *  sweep the moment a threshold moved. `unknown` is "we could not read it", NOT
+ *  "it is fine": every consumer must treat it as absence of evidence. */
+export type ResourcePressure = 'critical' | 'elevated' | 'ok' | 'unknown'
+
+/**
+ * `GET /api/status` → `memory` (`gateway/memory_status.py::collect_memory_status`).
+ *
+ * Distilled from the gateway's 30s loop heartbeat plus the lifecycle sentinel.
+ * `pressure` falls back to `unknown` when the heartbeat is stale (>150s) even
+ * though the MB numbers are still reported — a dead gateway's final gasp must
+ * not render a live "critical" banner forever.
+ *
+ * `boot_id` is the CURRENT gateway life's `started_at`. It changes on every
+ * boot, which is what makes banner dismissal safe to key on: acknowledging one
+ * suspected-OOM restart must not mute the NEXT one, and the hourly-restart loop
+ * is exactly the case that matters.
+ */
+export interface MemoryStatus {
+  boot_id?: null | string
+  gateway_rss_mb?: null | number
+  last_boot_suspected_oom?: boolean
+  last_boot_unclean?: boolean
+  pressure: ResourcePressure
+  sampled_at?: null | string
+  swap_used_mb?: null | number
+  system_available_mb?: null | number
+  system_total_mb?: null | number
+}
+
+/**
+ * `GET /api/status` → `disk` (`gateway/disk_status.py::collect_disk_status`).
+ *
+ * One live `statvfs` on HERMES_HOME's filesystem, so there is no staleness
+ * dimension and no `sampled_at`. Advisory like `memory`: deliberately NOT
+ * folded into `components`/`overall` by the backend, because disk pressure is
+ * banner material, not a liveness verdict.
+ */
+export interface DiskStatus {
+  free_mb?: null | number
+  pressure: ResourcePressure
+  total_mb?: null | number
+  used_percent?: null | number
+}
+
 /**
  * `GET /api/status`.
  *
@@ -1107,6 +1155,10 @@ export interface StatusResponse {
   config_floor_warning?: ConfigFloorWarning | null
   config_path?: string
   config_version: number
+  /** Resource-pressure rollup (NS-656). Absent on a gateway that predates it,
+   *  and degraded to `{pressure: 'unknown'}` when the probe throws — so every
+   *  reader must tolerate both. */
+  disk?: DiskStatus | null
   env_path?: string
   gateway_exit_reason: string | null
   gateway_health_url?: string | null
@@ -1117,6 +1169,8 @@ export interface StatusResponse {
   gateway_updated_at: string | null
   hermes_home?: string
   latest_config_version: number
+  /** See `disk` — same lineage, same "absent or unknown" tolerance. */
+  memory?: MemoryStatus | null
   release_date: string
   version: string
 }

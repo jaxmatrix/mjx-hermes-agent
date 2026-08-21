@@ -56,6 +56,7 @@ import {
   setChangeEventsAvailable
 } from '@/store/live-sync'
 import { dispatchNativeNotification } from '@/store/native-notifications'
+import { notify } from '@/store/notifications'
 import { flashPetActivity, setPetActivity } from '@/store/pet'
 import { $activeGatewayProfile } from '@/store/profile'
 import {
@@ -540,6 +541,51 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       void refreshSessionUsage(key)
 
       break
+    /**
+     * `status.update` is TWO things on one event name, and only one of them is
+     * transient narration.
+     *
+     * `_status_update` (`tui_gateway/server.py`) tags the frame with the kind
+     * its producer used. `status` / `lifecycle` / `compacting` / `goal` are the
+     * agent talking about what it is doing right now — the reducer folds those
+     * into `statusLine`, the chat renders them while busy, and each one
+     * overwrites the last. That is correct for narration and WRONG for the one
+     * kind that is not narration.
+     *
+     * `warn` is `AIAgent._emit_warning` (`run_agent.py`) — the channel for
+     * "the main turn can continue but the user needs to know something
+     * important failed", and it is DEDUPED at the source precisely because the
+     * backend expects each one to be seen once and remembered. The whole family
+     * arrives here: the mid-turn uncompressed-context overflow guardrail when
+     * compression is disabled ("use /compact or enable compression",
+     * `_warn_uncompressed_context_overflow`), compression blocked by cooldown
+     * or anti-thrashing, a compression timeout or commit overrun, an auxiliary
+     * task failure, and the session turn-lease timeout — the one message that
+     * explains why a submitted turn was never processed.
+     *
+     * Every one of them was folded into `statusLine` and gone by the next
+     * frame, so the actionable half of each ("run /compact", "send it again")
+     * was unreachable. Raise them as sticky warning toasts instead: `warning`
+     * has no auto-dismiss duration (`store/notifications.ts`), so the user
+     * dismisses it, not a timer.
+     *
+     * NOT under the `isActive` gate below: a background session warning that it
+     * is about to stop answering is exactly the one the user cannot see for
+     * themselves. Keyed per session so a newer warning for the same session
+     * replaces the older one in place instead of stacking — the backend's dedup
+     * means a fresh frame is a fresh problem.
+     */
+    case 'status.update': {
+      if (coerceText(payload.kind) === 'warn') {
+        const text = coerceText(payload.text).trim()
+
+        if (text) {
+          notify({ id: `agent-warn:${key}`, kind: 'warning', message: text })
+        }
+      }
+
+      break
+    }
 
     case 'error':
       clearAllPrompts(key)
