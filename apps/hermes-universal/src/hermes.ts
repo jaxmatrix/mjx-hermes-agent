@@ -899,6 +899,29 @@ export function getMcpOAuthFlow(flowId: string): Promise<McpOAuthFlow> {
   })
 }
 
+/**
+ * Abandon a running MCP OAuth flow (MJXHRM-444). Lives beside its GET twin
+ * rather than in lib/gateway-rest.ts, which would put the two halves of one
+ * route in different files.
+ *
+ * The backend marks the flow errored with "Cancelled by user", so the poller
+ * lands on `status: 'error'` instead of hanging. Without this, a user who
+ * closes the dialog leaves the flow — and its loopback redirect listener —
+ * alive until it is garbage-collected, and a later `authMcpServer` for the same
+ * server races it.
+ *
+ * Idempotent by design: an unknown or already-collected id answers
+ * `{ok: true, status: 'expired'}`, NOT a 404, so a cleanup path can call this
+ * unconditionally without first checking whether the flow still exists.
+ */
+export function cancelMcpOAuthFlow(flowId: string): Promise<{ ok: boolean; status: string }> {
+  return api<{ ok: boolean; status: string }>({
+    ...profileScoped(),
+    path: `/api/mcp/oauth/flows/${encodeURIComponent(flowId)}`,
+    method: 'DELETE'
+  })
+}
+
 export function getToolsets(): Promise<ToolsetInfo[]> {
   return api<ToolsetInfo[]>({
     ...profileScoped(),
