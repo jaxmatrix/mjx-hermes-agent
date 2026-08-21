@@ -762,8 +762,56 @@ function toolPreviewTarget(toolName: string, args: Record<string, unknown>, resu
   return ''
 }
 
+/**
+ * Unwrap the multimodal tool-result envelope.
+ *
+ * A computer-use screenshot and a native-vision image load do not return a
+ * string or a flat record — they return
+ * `{_multimodal: true, content: [{type:'text'}, {type:'image_url', image_url:{url}}],
+ * text_summary, meta}` (`tools/computer_use/tool.py`,
+ * `tools/vision_tools.py`), and the gateway forwards it verbatim as
+ * `tool.complete`'s `result`.
+ *
+ * Nothing here knew that shape. `toolImageUrl` reads FLAT top-level strings, so
+ * the data URI three levels down was invisible and the screenshot never
+ * rendered; and the generic detail summarizer had the whole envelope to
+ * describe, base64 payload included. Both are the same missing unwrap.
+ *
+ * `meta.image_url` is deliberately not a fallback: it is the ORIGINAL source
+ * URL, truncated to 200 chars — provenance, not pixels.
+ */
+export function multimodalResult(record: Record<string, unknown>): undefined | { imageUrl: string; text: string } {
+  if (record._multimodal !== true || !Array.isArray(record.content)) {
+    return undefined
+  }
+
+  let imageUrl = ''
+  const texts: string[] = []
+
+  for (const block of record.content) {
+    const part = block && typeof block === 'object' ? (block as Record<string, unknown>) : undefined
+
+    if (!part) {
+      continue
+    }
+
+    if (!imageUrl && part.type === 'image_url') {
+      const nested = part.image_url
+
+      if (nested && typeof nested === 'object') {
+        imageUrl = firstStringField(nested as Record<string, unknown>, ['url'])
+      }
+    } else if (part.type === 'text' && typeof part.text === 'string') {
+      texts.push(part.text.trim())
+    }
+  }
+
+  return { imageUrl, text: firstStringField(record, ['text_summary']) || texts.filter(Boolean).join('\n\n') }
+}
+
 function toolImageUrl(args: Record<string, unknown>, result: Record<string, unknown>): string {
   const candidate =
+    multimodalResult(result)?.imageUrl ||
     firstStringField(result, ['image_url', 'url', 'path', 'image_path']) ||
     firstStringField(args, ['image_url', 'url', 'path'])
 
@@ -1127,6 +1175,15 @@ function toolDetailText(
   argsRecord: Record<string, unknown>,
   resultRecord: Record<string, unknown>
 ): string {
+  // The image itself is rendered by `toolImageUrl`; what belongs in the detail
+  // is the summary that came with it, never the envelope — describing that
+  // generically means describing a megabyte of base64.
+  const multimodal = multimodalResult(resultRecord)
+
+  if (multimodal) {
+    return multimodal.text
+  }
+
   if (part.toolName === 'browser_snapshot') {
     const snapshot = firstStringField(resultRecord, ['snapshot'])
 

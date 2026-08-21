@@ -8,6 +8,7 @@ import {
   countDiffLineStats,
   inlineDiffFromResult,
   MAX_TOOL_RENDER_CHARS,
+  multimodalResult,
   prettyJson,
   spilloverReference,
   type ToolPart
@@ -569,5 +570,63 @@ describe('buildToolView spillover', () => {
     expect(view.spilloverPath).toBeUndefined()
     expect(view.spilloverSizeLabel).toBeUndefined()
     expect(view.detail).toContain('plain output')
+  })
+})
+
+/**
+ * The multimodal tool-result envelope — a computer-use screenshot, or a native
+ * vision image load. The gateway forwards it verbatim, and nothing here knew
+ * the shape: the data URI sits three levels down, so the screenshot never
+ * rendered, and the generic detail summarizer had a megabyte of base64 to
+ * describe.
+ */
+describe('multimodal tool results', () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgo='
+
+  const envelope = (extra: Record<string, unknown> = {}) => ({
+    _multimodal: true,
+    content: [
+      { text: 'Screenshot of the desktop, 1512x982, 41 elements.', type: 'text' },
+      { image_url: { url: PNG }, type: 'image_url' }
+    ],
+    meta: { elements: 41, image_url: 'https://example.test/original-source-url', mode: 'screenshot' },
+    text_summary: 'Screenshot of the desktop, 1512x982, 41 elements.',
+    ...extra
+  })
+
+  it('finds the image the envelope nests three levels down', () => {
+    expect(multimodalResult(envelope())?.imageUrl).toBe(PNG)
+  })
+
+  it('renders that screenshot in the row', () => {
+    expect(buildToolView(part({ result: envelope(), toolName: 'computer_use' }), '').imageUrl).toBe(PNG)
+  })
+
+  it('shows the summary as the detail, not the envelope', () => {
+    const view = buildToolView(part({ result: envelope(), toolName: 'computer_use' }), '')
+
+    expect(view.detail).toBe('Screenshot of the desktop, 1512x982, 41 elements.')
+    expect(view.detail).not.toContain('base64')
+    expect(view.detail).not.toContain('_multimodal')
+  })
+
+  // `meta.image_url` is the ORIGINAL source URL truncated to 200 chars —
+  // provenance, not pixels. Falling back to it would point the <img> at a page.
+  it('never falls back to the provenance url in meta', () => {
+    const withoutImage = envelope({ content: [{ text: 'no image came back', type: 'text' }] })
+
+    expect(multimodalResult(withoutImage)?.imageUrl).toBe('')
+    expect(buildToolView(part({ result: withoutImage, toolName: 'computer_use' }), '').imageUrl).toBe('')
+  })
+
+  it('falls back to the text blocks when no summary was provided', () => {
+    const { text_summary: _dropped, ...noSummary } = envelope()
+
+    expect(multimodalResult(noSummary).text).toBe('Screenshot of the desktop, 1512x982, 41 elements.')
+  })
+
+  it('leaves an ordinary record alone', () => {
+    expect(multimodalResult({ content: [{ image_url: { url: PNG }, type: 'image_url' }] })).toBeUndefined()
+    expect(multimodalResult({ _multimodal: true })).toBeUndefined()
   })
 })
