@@ -1,8 +1,10 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { __resetBackendSkinSync, ingestBackendSkin } from './backend-sync'
 import { ThemeProvider, useTheme } from './context'
+import { BUILTIN_THEME_LIST } from './presets'
 
 function Harness() {
   const { themeName, resolvedMode, setMode, setTheme } = useTheme()
@@ -162,5 +164,81 @@ describe('ThemeProvider ← backend skin sync', () => {
       ingestBackendSkin({ name: 'forest', colors: { background: '#001100', ui_text: '#66ff66' } }, { apply: false })
     )
     expect(cssVar('--theme-foreground')).toBe('#ff9f0a')
+  })
+})
+
+// Painting each family in each appearance, and reading what actually landed on
+// :root. The source-level guard (presets.test.ts) proves the palettes are
+// literals; this proves the PAINT is complete — a family that resolves fewer
+// vars than the default skin leaves whatever the previous theme wrote in place,
+// which is how a half-applied theme ships looking almost right.
+function Painter({ mode, name }: { mode: 'dark' | 'light'; name: string }) {
+  const { setMode, setTheme } = useTheme()
+
+  useEffect(() => {
+    setTheme(name)
+    setMode(mode)
+  }, [mode, name, setMode, setTheme])
+
+  return null
+}
+
+/** Every custom property currently set inline on :root, name → value. */
+function paintedVars(): Record<string, string> {
+  const style = root().style
+  const out: Record<string, string> = {}
+
+  for (let i = 0; i < style.length; i += 1) {
+    const name = style.item(i)
+
+    if (name.startsWith('--')) {
+      out[name] = style.getPropertyValue(name)
+    }
+  }
+
+  return out
+}
+
+describe('every builtin family paints a complete theme, in both appearances', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    root().className = ''
+    root().removeAttribute('style')
+  })
+  afterEach(cleanup)
+
+  const paint = (name: string, mode: 'dark' | 'light') => {
+    render(
+      <ThemeProvider>
+        <Painter mode={mode} name={name} />
+      </ThemeProvider>
+    )
+
+    return paintedVars()
+  }
+
+  const cases = BUILTIN_THEME_LIST.flatMap(theme =>
+    (['light', 'dark'] as const).map(mode => ({ mode, name: theme.name }))
+  )
+
+  it.each(cases)('$name/$mode paints under its own name, every var a literal', ({ mode, name }) => {
+    const vars = paint(name, mode)
+
+    // A family registered under a key that doesn't match its own `name` paints
+    // the DEFAULT skin instead — silently, and looking almost right.
+    expect(root().dataset.hermesTheme).toBe(name)
+
+    for (const [key, value] of Object.entries(vars)) {
+      // An unresolved slot paints '' and leaves the PREVIOUS theme's value in
+      // force, which is the half-applied-theme failure.
+      expect(value, key).not.toBe('')
+
+      // Fonts and the numeric mix knobs are not colours; everything else is a
+      // seed and must be something WebKitGTK resolves without `color-mix()` or
+      // `oklch(from …)` relative-colour syntax.
+      if (!key.startsWith('--dt-font') && !key.startsWith('--theme-mix') && !key.startsWith('--noise')) {
+        expect(value, key).not.toMatch(/color-mix\(|oklch\(from|light-dark\(/)
+      }
+    }
   })
 })

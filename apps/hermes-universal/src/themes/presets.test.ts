@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { BUILTIN_THEME_LIST, DEFAULT_TYPOGRAPHY, EMOJI_FALLBACK } from './presets'
+import { hexToOklch } from './color'
+import { BUILTIN_THEME_LIST, BUILTIN_THEMES, DEFAULT_TYPOGRAPHY, EMOJI_FALLBACK } from './presets'
+import type { DesktopThemeColors } from './types'
 
 // #40364: none of the UI text/mono fonts carry emoji glyphs, so every font
 // stack must end with a color-emoji fallback or emoji render as tofu on
@@ -73,4 +75,66 @@ describe('theme typography resolves off Chromium', () => {
   ])('%s terminates in a real generic family', (_label, stack, generic) => {
     expect(stack).toMatch(generic)
   })
+})
+
+// The four families that landed with the OKLCH layer are converter output, and
+// the OKLCH layer only reads plain hex. Two things break at once if a palette
+// carries a CSS *function* instead of a literal (which is how `nous` used to
+// build its accent surfaces):
+//
+//   1. `hexToOklch` returns null for it, so `retintTheme` silently half-applies
+//      — the seed slots move and the mixed surfaces don't.
+//   2. WebKitGTK (and the Android WebView) do not resolve every colour function
+//      Chromium does, so the value can paint as nothing at all.
+//
+// So: every colour slot of every builtin, in both appearances, is a literal the
+// engine can read. This is the "resolves every var, both modes" guard — every
+// var `applyTheme` writes comes from one of these slots.
+describe('builtin palettes are literals the colour engine can read', () => {
+  const cases = BUILTIN_THEME_LIST.flatMap(theme =>
+    (
+      [
+        { appearance: 'light', colors: theme.colors },
+        { appearance: 'dark', colors: theme.darkColors }
+      ] as const
+    )
+      .filter(entry => entry.colors !== undefined)
+      .map(entry => ({ appearance: entry.appearance, colors: entry.colors as DesktopThemeColors, name: theme.name }))
+  )
+
+  it.each(cases)('$name/$appearance is every slot as #rrggbb', ({ colors }) => {
+    for (const [slot, value] of Object.entries(colors)) {
+      expect(value, slot).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(hexToOklch(value as string), slot).not.toBeNull()
+    }
+  })
+
+  // Not a count for its own sake: the ten are what the palette, the theme
+  // picker and `/skin` all enumerate, and a family that fails to register is
+  // invisible rather than broken.
+  it('registers all ten families under unique names', () => {
+    expect(BUILTIN_THEME_LIST.map(theme => theme.name).sort()).toEqual([
+      'catppuccin',
+      'cyberpunk',
+      'ember',
+      'everforest',
+      'github',
+      'midnight',
+      'mono',
+      'nous',
+      'slate',
+      'solarized'
+    ])
+  })
+
+  // The five palette-bearing families are converted from two-appearance VS Code
+  // themes and must carry both, or "GitHub dark" is a synthesised guess rather
+  // than upstream's actual dark palette. The five older skins deliberately ship
+  // one palette and let the engine synthesise the other side.
+  it.each(['nous', 'github', 'catppuccin', 'everforest', 'solarized'])(
+    '%s ships upstream\u2019s own dark palette',
+    name => {
+      expect(BUILTIN_THEMES[name].darkColors).toBeDefined()
+    }
+  )
 })
