@@ -369,6 +369,11 @@ class SessionPrune(BaseModel):
     min_tool_calls: Optional[int] = None
     max_tool_calls: Optional[int] = None
     include_archived: bool = False
+    # Pin is a durable "keep" flag: bulk prune spares pinned rows unless the
+    # caller opts in, exactly like `hermes sessions prune --include-pinned`.
+    # Defaults False so a client that predates the flag keeps the safe
+    # behaviour (round-3 QA SES-01 was data loss).
+    include_pinned: bool = False
     dry_run: bool = False
 
 
