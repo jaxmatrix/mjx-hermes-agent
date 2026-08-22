@@ -1191,6 +1191,10 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
           HUD_SURFACE,
           'z-(--z-over-modal-content) w-[min(34rem,calc(100vw-2rem))] overflow-hidden duration-150 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-2 data-[state=open]:zoom-in-95'
         )}
+        // Durable tour handle (see lib/tour). The palette is portalled, so it
+        // is only in the DOM while open — which is exactly right: a tour step
+        // for it has to open it first.
+        data-tour="command-palette"
         // The close animation finishing is what retires this whole subtree — the
         // CSS owns the duration, not a hardcoded timer. Guarded on the content
         // itself (descendants animate too) and on the closed state, so an OPEN

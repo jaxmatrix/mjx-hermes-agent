@@ -116,6 +116,9 @@ export function StatusbarControls({ className, leftItems = [], items = [], ...pr
             className
           )}
           data-slot="statusbar"
+          // Durable tour handle (see lib/tour) — `data-slot` is a styling hook
+          // and free to change; this one is a contract with the agent.
+          data-tour="statusbar"
           {...props}
         >
           {/* `overflow-x-clip` (not `overflow-x-auto`) so a wide status item — for
