@@ -10,9 +10,11 @@ import { $connection } from '@/store/connection'
 // It walks THIS machine's disk, so it is only meaningful when the gateway was
 // spawned locally — a remote/cloud gateway owns a different filesystem, and
 // mobile has no crawlable one (the Rust command returns `unsupported_platform`
-// there). Those cases take the gateway-side crawl instead
-// (`GET /api/git/scan-repos` → `hermes_cli/web_repo_scan.py`); `lib/desktop-git.ts`
-// picks between the two on `localRepoScanSupported()`.
+// there). Those cases ask the gateway to walk its own policy roots instead,
+// over `projects.discover_repos {scan: true}` (MJXHRM-474, which retired the
+// fork's `GET /api/git/scan-repos`). `store/projects.ts` picks between the two
+// on `localRepoScanSupported()`, and only the local branch records anything:
+// the RPC writes the gateway's discovery cache itself.
 
 export interface ScannedRepo {
   root: string

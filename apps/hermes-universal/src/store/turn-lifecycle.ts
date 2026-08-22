@@ -34,8 +34,10 @@ import type { GatewayEvent } from '@/gateway'
 import type { ChatMessage } from '@/lib/chat-messages'
 import { isLiveTailRow, reconcileLiveTail } from '@/lib/live-tail'
 import { appendLiveSessionProjection } from '@/lib/session-history'
+import { applyResumedApproval } from '@/store/approvals'
 import { applyResumedClarify } from '@/store/clarify'
 import { $gatewayState, requestGateway } from '@/store/gateway'
+import { applyResumedMcpSetup } from '@/store/mcp-setup'
 import {
   $sessionStates,
   addSessionKeyHooks,
@@ -659,6 +661,8 @@ export const resumedTurnIsLive = (resumed: SessionResumeResponse): boolean =>
  */
 export function adoptResumedTurn(key: string, resumed: SessionResumeResponse): TurnReconciliation {
   applyResumedClarify(key, resumed)
+  applyResumedMcpSetup(key, resumed)
+  applyResumedApproval(key, resumed)
 
   return applyTurnReconciliation(key, planTurnReconciliation(getInflightTurn(key), remoteTurnSnapshot(resumed)))
 }
@@ -769,10 +773,19 @@ export async function reconcileSessionTurn(key: string): Promise<TurnReconciliat
   reconciling.add(key)
 
   try {
+    // No `source`, deliberately (MJXHRM-472). The gateway uses this field as the
+    // session's PLATFORM (`_resolve_agent_platform` → `_load_enabled_toolsets`),
+    // and the only platform that unlocks the `desktop_ui` toolset — read_terminal,
+    // close_terminal, focus_pane, apply_layout, drive_preview, tour, read_preview,
+    // read_window_below, react_to_message — is the literal string "desktop"
+    // (`_gui_surface_toolsets`). The string "universal" appears nowhere in the
+    // backend, so passing it here rebuilt every cold-resumed session with all nine
+    // stripped and the agent's platform hint mis-tagged, while the SAME chat
+    // created through `session.create` (which sends no source) had them all.
+    // Omitting it lets the backend resolve the platform the same way for both.
     const resumed = await requestGateway<SessionResumeResponse>('session.resume', {
       session_id: storedId,
-      omit_messages: true,
-      source: 'universal'
+      omit_messages: true
     })
 
     // A gateway that RESTARTED (a supervised local backend, a redeployed remote)
@@ -810,6 +823,8 @@ export async function reconcileSessionTurn(key: string): Promise<TurnReconciliat
     // concluded about the turn — and the replay is an upsert, so a card that
     // survived the disconnect stays one card.
     applyResumedClarify(live, resumed)
+    applyResumedMcpSetup(live, resumed)
+    applyResumedApproval(live, resumed)
 
     return plan
   } catch {

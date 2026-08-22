@@ -33,6 +33,7 @@ import {
   Archive,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { formatSessionPruneResult } from "@/lib/session-prune";
 import { shouldRefreshSessions } from "@/lib/session-refresh";
 import {
   importSummary,
@@ -866,6 +867,9 @@ export default function SessionsPage() {
   const [stats, setStats] = useState<SessionStoreStats | null>(null);
   const [pruneOpen, setPruneOpen] = useState(false);
   const [pruneDays, setPruneDays] = useState("90");
+  // Pinning is a durable keep flag, so the gateway spares pinned rows by
+  // default; this is the explicit opt-out of that protection.
+  const [prunePinned, setPrunePinned] = useState(false);
   const [pruning, setPruning] = useState(false);
   const [importingSessions, setImportingSessions] = useState(false);
   const { toast, showToast } = useToast();
@@ -1498,11 +1502,8 @@ export default function SessionsPage() {
     }
     setPruning(true);
     try {
-      const resp = await api.pruneSessions(days);
-      showToast(
-        `Pruned ${resp.removed} session${resp.removed === 1 ? "" : "s"}`,
-        "success",
-      );
+      const resp = await api.pruneSessions(days, undefined, undefined, prunePinned);
+      showToast(formatSessionPruneResult(resp), "success");
       setPruneOpen(false);
       loadSessions(0);
       setPage(0);
@@ -1512,7 +1513,7 @@ export default function SessionsPage() {
     } finally {
       setPruning(false);
     }
-  }, [pruneDays, showToast, loadSessions, loadStats]);
+  }, [pruneDays, prunePinned, showToast, loadSessions, loadStats]);
 
   const pendingSession = sessionDelete.pendingId
     ? sessions.find((s) => s.id === sessionDelete.pendingId)
@@ -1636,7 +1637,8 @@ export default function SessionsPage() {
             <DialogTitle>Prune old sessions</DialogTitle>
             <DialogDescription>
               Permanently remove archived sessions whose last activity is older
-              than the given number of days. Active sessions are never pruned.
+              than the given number of days. Active sessions are never pruned,
+              and pinned sessions are kept unless you tick the box below.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">
@@ -1658,6 +1660,15 @@ export default function SessionsPage() {
               disabled={pruning}
             />
           </div>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={prunePinned}
+              onChange={(e) => setPrunePinned(e.target.checked)}
+              disabled={pruning}
+            />
+            Also prune pinned sessions
+          </label>
           <DialogFooter>
             <Button
               outlined

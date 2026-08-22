@@ -188,6 +188,13 @@ export function routeSessionId(pathname: string): string | null {
   return id && !id.includes('/') ? decodeURIComponent(id) : null
 }
 
+/** The Capabilities MCP tab, scrolled to and focused on one server — the
+ *  destination of both the health-check nudge and a confirmed
+ *  `hermes://mcp/install` (MJXHRM-454). `useDeepLinkHighlight` reads `server`. */
+export function mcpServerRoute(name: string): string {
+  return `${SKILLS_ROUTE}?tab=mcp&server=${encodeURIComponent(name)}`
+}
+
 export function sessionRoute(sessionId: string): string {
   return `${SESSION_ROUTE_PREFIX}${encodeURIComponent(sessionId)}`
 }

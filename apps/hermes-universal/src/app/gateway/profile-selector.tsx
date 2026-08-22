@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useStore } from '@/store/atom'
+import { profileLabel } from '@/store/profile'
 import { announceProfileChatScope } from '@/store/profile-chat-scope'
 import { $activeProfile, $profiles, refreshProfiles, setActiveProfile } from '@/store/profiles'
 
@@ -45,7 +46,7 @@ export function ProfileSelector() {
         <SelectItem value={OWN}>Default (primary)</SelectItem>
         {profiles.map(p => (
           <SelectItem key={p.name} value={p.name}>
-            {p.name}
+            {profileLabel(p)}
           </SelectItem>
         ))}
       </SelectContent>

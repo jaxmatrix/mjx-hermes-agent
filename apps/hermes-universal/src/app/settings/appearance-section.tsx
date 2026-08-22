@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $backdrop, setBackdrop } from '@/store/backdrop'
 import { $embedAllowed, $embedMode, clearEmbedAllowed, type EmbedMode, setEmbedMode } from '@/store/embed-consent'
+import { $introSplash, setIntroSplash } from '@/store/intro-splash'
 import { installFromMarketplace, type MarketplaceSearchItem, searchMarketplace } from '@/store/marketplace'
 import { $reactionsEnabled, setReactionsEnabled } from '@/store/reactions-enabled'
 import { $toolViewMode, setToolViewMode, type ToolViewMode } from '@/store/tool-view'
@@ -36,6 +37,7 @@ import type { DesktopTheme } from '@/themes/types'
 import { $marketplaceInstalls, isUserTheme, removeUserTheme } from '@/themes/user-themes'
 
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
+import { settingRowElementId } from './settings-search'
 import { TerminalFontSetting } from './terminal-font-setting'
 
 const MODE_OPTIONS = [
@@ -251,6 +253,7 @@ export function AppearanceSection() {
   const { availableThemes, mode, resolvedMode, setMode, setTheme, themeName } = useTheme()
   const toolViewMode = useStore($toolViewMode)
   const backdrop = useStore($backdrop)
+  const introSplash = useStore($introSplash)
   const reactionsEnabled = useStore($reactionsEnabled)
   const zoomPercent = useStore($zoomPercent)
   const embedMode = useStore($embedMode)
@@ -303,7 +306,12 @@ export function AppearanceSection() {
 
         <div className="mt-2">
           {/* Language */}
-          <ListRow action={<LanguageSwitcher />} description={t.language.description} title={t.language.label} />
+          <ListRow
+            action={<LanguageSwitcher />}
+            description={t.language.description}
+            id={settingRowElementId('appearance.language')}
+            title={t.language.label}
+          />
 
           {/* Theme */}
           <ListRow
@@ -382,6 +390,7 @@ export function AppearanceSection() {
               </>
             }
             description={a.themeDesc}
+            id={settingRowElementId('appearance.theme')}
             title={
               <div className="flex items-center justify-between gap-3">
                 <span>{a.themeTitle}</span>
@@ -411,6 +420,7 @@ export function AppearanceSection() {
               />
             }
             description={a.uiScaleDesc(zoomPercent)}
+            id={settingRowElementId('appearance.ui-scale')}
             title={a.uiScaleTitle}
           />
 
@@ -439,6 +449,7 @@ export function AppearanceSection() {
                 </div>
               }
               description={a.translucencyDesc}
+              id={settingRowElementId('appearance.translucency')}
               title={a.translucencyTitle}
             />
           )}
@@ -461,6 +472,7 @@ export function AppearanceSection() {
               />
             }
             description={a.toolViewDesc}
+            id={settingRowElementId('appearance.tool-view')}
             title={a.toolViewTitle}
           />
 
@@ -480,7 +492,30 @@ export function AppearanceSection() {
               />
             }
             description={a.backdropDesc}
+            id={settingRowElementId('appearance.backdrop')}
             title={a.backdropTitle}
+          />
+
+          {/* Intro splash — the wordmark + tagline on an empty chat. The toggle
+              outranks every other clause of `shouldShowIntro`: off is off, in
+              every window and every tile. */}
+          <ListRow
+            action={
+              <SegmentedControl
+                onChange={id => {
+                  triggerHaptic('selection')
+                  setIntroSplash(id === 'on')
+                }}
+                options={[
+                  { id: 'off', label: t.common.off },
+                  { id: 'on', label: t.common.on }
+                ]}
+                value={introSplash ? 'on' : 'off'}
+              />
+            }
+            description={a.introSplashDesc}
+            id={settingRowElementId('appearance.intro-splash')}
+            title={a.introSplashTitle}
           />
 
           {/* Message reactions — opt-in. Off by default: it adds an affordance
@@ -501,6 +536,7 @@ export function AppearanceSection() {
               />
             }
             description={a.reactionsDesc}
+            id={settingRowElementId('appearance.reactions')}
             title={a.reactionsTitle}
           />
 
@@ -531,6 +567,7 @@ export function AppearanceSection() {
               </div>
             }
             description={a.embedsDesc}
+            id={settingRowElementId('appearance.embeds')}
             title={a.embedsTitle}
           />
 
@@ -555,6 +592,7 @@ export function AppearanceSection() {
               </div>
             }
             description={a.resizeRateDesc}
+            id={settingRowElementId('appearance.resize-rate')}
             title={a.resizeRateTitle}
           />
 
@@ -571,6 +609,7 @@ export function AppearanceSection() {
               />
             }
             description={a.resizeCalmDesc}
+            id={settingRowElementId('appearance.resize-calm')}
             title={a.resizeCalmTitle}
           />
         </div>

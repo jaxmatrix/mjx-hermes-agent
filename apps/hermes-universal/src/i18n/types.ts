@@ -25,6 +25,7 @@ export type ToolTitleKey =
   | 'read_file'
   | 'search_files'
   | 'session_search_recall'
+  | 'setup_mcp'
   | 'terminal'
   | 'todo'
   | 'vision_analyze'
@@ -209,6 +210,14 @@ export interface Translations {
       backgroundFailedTitle: string
       creditsTitle: string
     }
+    mcp: {
+      needsAuthTitle: string
+      needsAuthMessage: (name: string) => string
+      errorTitle: string
+      errorMessage: (name: string) => string
+      signIn: string
+      view: string
+    }
   }
 
   billingBlock: {
@@ -224,6 +233,16 @@ export interface Translations {
     message: (reason: string) => string
   }
 
+  resourcePressure: {
+    diskCritical: string
+    diskElevated: string
+    diskFree: (mb: number) => string
+    dismiss: string
+    memoryCritical: string
+    memoryElevated: string
+    oomRestart: string
+  }
+
   titlebar: {
     hideSidebar: string
     showSidebar: string
@@ -233,6 +252,7 @@ export interface Translations {
     swapSidebarSidesTitle: string
     hideRightSidebar: string
     showRightSidebar: string
+    unreadSessions: (count: number) => string
     muteHaptics: string
     unmuteHaptics: string
     openSettings: string
@@ -294,6 +314,10 @@ export interface Translations {
   }
 
   settings: {
+    profileScope: {
+      appliesTo: string
+      editsProfile: (profile: string) => string
+    }
     closeSettings: string
     exportConfig: string
     importConfig: string
@@ -411,6 +435,8 @@ export interface Translations {
       toolViewDesc: string
       backdropTitle: string
       backdropDesc: string
+      introSplashTitle: string
+      introSplashDesc: string
       reactionsTitle: string
       reactionsDesc: string
       uiScaleTitle: string
@@ -548,6 +574,11 @@ export interface Translations {
       /** Shown when the machine has no system tray, so hiding the window would
        *  leave a process with nothing to reach it by — the switch flips back off. */
       backgroundModeFailed: string
+      /** Settings ▸ Chat: cap on local files read into memory as data URLs. */
+      attachmentSizeTitle: string
+      attachmentSizeDesc: string
+      attachmentSizeUnit: string
+      attachmentSizeLabel: string
     }
     credentials: {
       pasteKey: string
@@ -624,12 +655,12 @@ export interface Translations {
       sshErrAuth: string
       sshErrHostKey: string
       sshErrNotInstalled: string
-    /** Offer to install Hermes on the remote host after a failed connect. */
-    sshInstallTitle: (host: string) => string
-    sshInstallBody: string
-    sshInstallCancel: string
-    sshInstallDoneTitle: string
-    sshInstallDoneBody: string
+      /** Offer to install Hermes on the remote host after a failed connect. */
+      sshInstallTitle: (host: string) => string
+      sshInstallBody: string
+      sshInstallCancel: string
+      sshInstallDoneTitle: string
+      sshInstallDoneBody: string
       sshErrPlatform: string
       sshErrTimeout: string
       sshErrUpdateRequired: string
@@ -797,6 +828,26 @@ export interface Translations {
       enableTool: (tool: string) => string
       disableTool: (tool: string) => string
       noOutput: string
+      importButton: string
+      importPlaceholder: string
+      importNoMatch: string
+      importConfirm: string
+      importConfirmMany: (count: number) => string
+      deepLinkTitle: string
+      deepLinkDescription: string
+      deepLinkStdioWarning: string
+      deepLinkConfirm: string
+      deepLinkNameInvalid: string
+      deepLinkNameConflict: (name: string) => string
+      deepLinkErrorTitle: string
+      deepLinkErrorName: string
+      deepLinkErrorConfig: string
+      deepLinkErrorShape: string
+      deepLinkErrorUrl: string
+      deepLinkErrorTooLarge: string
+      costTokens: (tokens: string) => string
+      usage30d: (uses: string) => string
+      unusedPill: string
     }
     model: {
       loading: string
@@ -903,6 +954,8 @@ export interface Translations {
       messages: (count: number) => string
       restored: string
       deleteConfirm: (title: string) => string
+      /** Extra line in the permanent-delete dialog when the row is pinned. */
+      deletePinnedWarning: string
       defaultDirTitle: string
       defaultDirDesc: string
       defaultDirUpdated: string
@@ -981,6 +1034,15 @@ export interface Translations {
   }
 
   skills: {
+    project: {
+      disabled: string
+      quarantinedCount: (count: number) => string
+      title: string
+      trust: string
+      trustedCount: (count: number) => string
+      untrust: string
+      untrustedCount: (count: number) => string
+    }
     tabSkills: string
     tabToolsets: string
     tabMcp: string
@@ -1084,6 +1146,10 @@ export interface Translations {
       policyBlock: string
       findings: (count: number) => string
       noFindings: string
+      advisory: string
+      advisoryPassed: string
+      advisoryFlagged: (count: number) => string
+      advisoryIncomplete: (count: number) => string
       installStarted: (name: string) => string
       uninstallStarted: (name: string) => string
       updateStarted: string
@@ -1162,6 +1228,16 @@ export interface Translations {
     steerGone: string
     steerNotOwned: string
     steerMissed: (text: string) => string
+    stop: string
+    stopRequested: string
+    budgetWrapup: string
+    truncatedNotice: string
+    worktree: string
+    worktreeCommits: (count: number) => string
+    worktreeDirty: string
+    worktreeKept: string
+    worktreePruned: string
+    worktreeUnknown: string
   }
 
   commandCenter: {
@@ -1239,6 +1315,9 @@ export interface Translations {
     }
     commands: string
     settingsFields: string
+    settingsPreferences: string
+    settingsSearchPlaceholder: string
+    settingsSearchPill: string
     mcpServers: string
     archivedChats: string
     sections: Record<'maintenance' | 'sessions' | 'system' | 'usage', string>
@@ -1378,6 +1457,33 @@ export interface Translations {
   }
 
   profiles: {
+    editor: {
+      title: string
+      loading: string
+      loadFailed: string
+      descriptionLabel: string
+      descriptionPlaceholder: string
+      toolsetsLabel: string
+      toolsetsUnpinned: string
+      mcpLabel: string
+      noneInstalled: string
+      save: string
+      saved: string
+      savedPartial: string
+      saveFailed: string
+      avatarUpload: string
+      avatarReplace: string
+      avatarRemove: string
+      avatarHint: string
+      avatarSaved: string
+      avatarFailed: string
+      avatarRejected: string
+      avatarTooLarge: string
+      working: string
+      shareSignIn: string
+      shareSignInHint: string
+      noCredentials: string
+    }
     close: string
     nameHint: string
     title: string
@@ -1447,6 +1553,9 @@ export interface Translations {
     createAction: string
     renameTitle: string
     renameDescPrefix: string
+    displayNameTitle: string
+    displayNameDesc: string
+    displayNameLabel: string
     renameDescSuffix: string
     newNameLabel: string
     renaming: string
@@ -1482,6 +1591,20 @@ export interface Translations {
     monthlyOnDayAt: (dayOfMonth: string, time: string) => string
     topOfHour: string
     everyHourAt: (minute: string) => string
+    /** The client-side include_disabled filter. */
+    hidePaused: string
+    showPaused: string
+    /** Run-count cap ({times, completed} on the record). */
+    repeatLabel: string
+    repeatForever: string
+    repeatOf: (completed: number, times: number) => string
+    /** A trigger for this job is in flight. */
+    triggering: string
+    /** Continuity toggle — stored as the reserved 'self' ref in context_from. */
+    continuityLabel: string
+    continuityHint: string
+    /** The scheduler never started a due run (last_fire_error). */
+    missedFire: string
     newCron: string
     emptyDescNew: string
     emptyDescSearch: string
@@ -1624,6 +1747,10 @@ export interface Translations {
       orderCost: string
       orderManual: string
       show: string
+      density: string
+      densityCompact: string
+      densityComfortable: string
+      densityDetailed: string
       metaUpdated: string
       metaTokens: string
       metaCost: string
@@ -1728,6 +1855,10 @@ export interface Translations {
       unpin: string
       copyId: string
       openInTile: string
+      messageCount: (count: number) => string
+      toolCallCount: (count: number) => string
+      openInTerminal: string
+      openInTerminalFailed: string
       openInBubble: string
       export: string
       branchFrom: string
@@ -1758,6 +1889,15 @@ export interface Translations {
   }
 
   composer: {
+    mcpSuggestions: {
+      label: (server: string) => string
+      tip: (keyword: string) => string
+      connecting: (server: string) => string
+      cancelTip: string
+      added: (server: string) => string
+      addedTip: string
+      connectFailed: (server: string) => string
+    }
     message: string
     bubbles: {
       releaseToClose: string
@@ -1843,6 +1983,9 @@ export interface Translations {
     attachLabel: string
     attachFailed: (label: string) => string
     attachNoRef: string
+    /** Refusal for a file over the Settings ▸ Chat cap — it MUST name the limit,
+     *  because raising it is the fix and nothing else in the UI says the number. */
+    attachTooLarge: (maxMb: number) => string
     files: string
     folder: string
     back: string
@@ -2510,6 +2653,27 @@ export interface Translations {
       alwaysDescription: (pattern: string) => string
       alwaysAllow: string
     }
+    mcpSetup: {
+      installTitle: (server: string) => string
+      enableTitle: (server: string) => string
+      authorizeTitle: (server: string) => string
+      installAction: string
+      enableAction: string
+      authorizeAction: string
+      decline: string
+      catalogSource: string
+      envRequired: string
+      notInCatalog: (server: string) => string
+      installed: (server: string) => string
+      enabled: (server: string) => string
+      authorized: (server: string) => string
+      declined: string
+      unanswered: string
+      failed: (server: string) => string
+      toolCount: (count: number) => string
+      sendFailed: string
+      reloadFailed: string
+    }
     clarify: {
       notReady: string
       gatewayDisconnected: string
@@ -2519,6 +2683,10 @@ export interface Translations {
       placeholder: string
       skip: string
       continueLabel: string
+      confirmAndContinueLabel: string
+      answeredBadge: string
+      questionProgress: (answered: number, total: number) => string
+      unknownQuestion: string
       skipped: string
       lateAnswer: (question: string, choice: string) => string
       lateAnswerTip: string
@@ -2548,6 +2716,10 @@ export interface Translations {
       statusRecovered: string
       statusDone: string
       memoryWriteNoted: string
+      spilloverLabel: string
+      spilloverSaved: (size: string) => string
+      spilloverSavedUnsized: string
+      spilloverOpen: string
       actions: {
         read: string
         reading: string

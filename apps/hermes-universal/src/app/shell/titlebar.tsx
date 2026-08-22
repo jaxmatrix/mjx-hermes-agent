@@ -15,6 +15,7 @@ import {
   togglePanesFlipped,
   toggleRightEdge
 } from '@/store/layout'
+import { $unreadSessionCount } from '@/store/session-dot-state'
 import { openAppRoute } from '@/store/windows'
 
 import { LayoutMenu } from './layout-menu'
@@ -37,6 +38,11 @@ export function Titlebar({ connected }: { connected: boolean }) {
   const leftEdgeOpen = useStore($leftEdgeOpen)
   const rightEdgeOpen = useStore($rightEdgeOpen)
   const hudAvailable = useCanUseHud()
+  // The badge follows the SESSIONS sidebar, not a fixed side: both edge toggles
+  // are positional, so a swap has to carry the count across with the pane.
+  const unreadCount = useStore($unreadSessionCount)
+  const unreadBadge = unreadCount > 0 ? unreadCount : undefined
+  const unreadHint = unreadBadge ? ` · ${t.titlebar.unreadSessions(unreadBadge)}` : ''
 
   return (
     <div
@@ -52,7 +58,8 @@ export function Titlebar({ connected }: { connected: boolean }) {
           <TitlebarButton
             actionId="view.toggleSidebar"
             active={leftEdgeOpen}
-            label={leftEdgeOpen ? t.titlebar.hideSidebar : t.titlebar.showSidebar}
+            badge={panesFlipped ? undefined : unreadBadge}
+            label={`${leftEdgeOpen ? t.titlebar.hideSidebar : t.titlebar.showSidebar}${panesFlipped ? '' : unreadHint}`}
             onClick={toggleLeftEdge}
           >
             <Codicon name="layout-sidebar-left" />
@@ -133,7 +140,8 @@ export function Titlebar({ connected }: { connected: boolean }) {
           <TitlebarButton
             actionId="view.toggleRightSidebar"
             active={rightEdgeOpen}
-            label={rightEdgeOpen ? t.titlebar.hideRightSidebar : t.titlebar.showRightSidebar}
+            badge={panesFlipped ? unreadBadge : undefined}
+            label={`${rightEdgeOpen ? t.titlebar.hideRightSidebar : t.titlebar.showRightSidebar}${panesFlipped ? unreadHint : ''}`}
             onClick={toggleRightEdge}
           >
             <Codicon name="layout-sidebar-right" />

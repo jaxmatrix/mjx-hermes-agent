@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
-import { clearSessionClarify, sessionClarifyRequest, setSessionClarify } from '@/store/prompts'
+import { clearSessionClarify, sessionApprovalRequest, sessionClarifyRequest, setSessionClarify } from '@/store/prompts'
 import {
   $activeSessionKey,
   $sessionStates,
@@ -374,10 +374,13 @@ describe('reconcileSessionTurn', () => {
     await Promise.all([lifecycle.reconcileSessionTurn('runtime-1'), lifecycle.reconcileSessionTurn('runtime-1')])
 
     expect(requestGateway).toHaveBeenCalledTimes(1)
+    // No `source`: it is the gateway's PLATFORM field, and anything other than
+    // "desktop" strips the whole desktop_ui toolset from the rebuilt agent
+    // (MJXHRM-472). `session.create` sends none either — the two must agree, or
+    // a cold resume silently costs the session nine tools.
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-1',
-      omit_messages: true,
-      source: 'universal'
+      omit_messages: true
     })
     // Gateway says idle → the turn we thought was live is settled, not stranded.
     expect(lifecycle.isTurnLive('runtime-1')).toBe(false)
@@ -793,6 +796,25 @@ describe('adoptResumedTurn', () => {
   it('records nothing for an idle session', () => {
     expect(adoptResumedTurn('s1', { ...base, running: false } as SessionResumeResponse)).toEqual({ action: 'noop' })
     expect(getInflightTurn('s1')).toBeNull()
+  })
+
+  /**
+   * MJXHRM-458. A parked APPROVAL is the one blocking prompt `pending_prompt`
+   * can never carry — approvals queue in `tools/approval`, they never enter
+   * `_block`'s registry — so `pending_approval` is its only replay, and this is
+   * the one place every cold-open path (main pane, tile, satellite) goes
+   * through. Without it a session resumed while blocked showed a "needs input"
+   * dot over a bar that was never rebuilt, and the command stayed blocked until
+   * its own timeout.
+   */
+  it('puts back the approval a resumed session is still blocked on', () => {
+    adoptResumedTurn('s1', {
+      ...base,
+      running: true,
+      pending_approval: { command: 'rm -rf /', request_id: 'a1' }
+    } as SessionResumeResponse)
+
+    expect(sessionApprovalRequest('s1').get()).toMatchObject({ command: 'rm -rf /', requestId: 'a1' })
   })
 
   // Two resumes in a row each return the descriptor for the SAME scheduled

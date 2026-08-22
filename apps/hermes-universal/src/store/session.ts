@@ -11,6 +11,7 @@ import {
 import { translateNow } from '@/i18n'
 import { isNotFoundError } from '@/lib/api'
 import { chatMessageText } from '@/lib/chat-messages'
+import { sessionTitle } from '@/lib/chat-runtime'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { appendLiveSessionProjection, toChatMessages } from '@/lib/session-history'
 import { stableArray } from '@/lib/stable-array'
@@ -18,6 +19,7 @@ import { readJson, writeJson } from '@/lib/storage'
 import { reuseUnchanged } from '@/lib/structural-share'
 import { atom, computed } from '@/store/atom'
 import { $busy, $clarify, $currentCwd, $messages, $sessionId, type ChatMessage, resetChat } from '@/store/chat'
+import { confirm } from '@/store/confirm'
 import { resetUnscopedStreamPin } from '@/store/event-router'
 import { requestGateway } from '@/store/gateway'
 import { $pinnedSessionIds } from '@/store/layout'
@@ -363,11 +365,48 @@ export const $searchLoading = atom(false)
 // `store/session-states.ts#handleTransition`; a view clears its id when seen.
 export const $unreadFinishedSessionIds = atom<string[]>([])
 
+/** Retire the unread marker for a conversation, under EVERY id it answers to.
+ *
+ *  Auto-compression rotates the stored id, and the two halves routinely hold
+ *  different tips: the marker is written from the live transition (the fresh
+ *  id), while the surface that clears it — a tile keyed at open time, a sidebar
+ *  row from a page fetched before the rotation — can be holding the lineage
+ *  root. Comparing on identity left those markers unclearable. */
+/**
+ * The persisted unread layer (`store/session-unread`), injected rather than
+ * imported.
+ *
+ * That module needs `$focusedStoredSessionId` from `store/session-states`, and
+ * session-states imports THIS module — so a static edge from here would close a
+ * cycle that makes `@/store/session` unusable as a module-graph entry
+ * (session-entry.test.ts). Same shape as session-states' own
+ * `setSessionTransitionHook`: the durable layer registers itself at boot, and
+ * everything here degrades to the transient-only behaviour when it has not.
+ */
+export interface UnreadPersistence {
+  /** Sidebar "Mark all as read": watermark every loaded row, retire its markers. */
+  ackAll(): void
+  /** A session left the user's world — drop its watermark and marker. */
+  forget(ids: readonly (null | string | undefined)[], profile?: null | string): void
+  /** A background turn finished: persist the marker so it survives a restart. */
+  markFinished(storedSessionId: string): void
+}
+
+let unreadPersistence: null | UnreadPersistence = null
+
+export function setUnreadPersistence(hooks: null | UnreadPersistence): void {
+  unreadPersistence = hooks
+}
+
+/** The registered durable layer, or null before boot / in a secondary window. */
+export const unreadPersistenceHooks = (): null | UnreadPersistence => unreadPersistence
+
 export function clearUnreadFinishedSession(storedSessionId: string): void {
   const cur = $unreadFinishedSessionIds.get()
+  const next = cur.filter(id => id !== storedSessionId && !sameStoredSession(id, storedSessionId))
 
-  if (cur.includes(storedSessionId)) {
-    $unreadFinishedSessionIds.set(cur.filter(id => id !== storedSessionId))
+  if (next.length !== cur.length) {
+    $unreadFinishedSessionIds.set(next)
   }
 }
 
@@ -375,6 +414,10 @@ export function clearUnreadFinishedSession(storedSessionId: string): void {
  *  filter menu's "Mark all as read". Skips the write when there is nothing to
  *  clear, so it can't churn subscribers on a repeated press. */
 export function markAllSessionsRead(): void {
+  // FLUSH the persisted layer too, or the next list refresh recomputes every dot
+  // the user just dismissed straight back out of the watermarks and markers.
+  unreadPersistence?.ackAll()
+
   if ($unreadFinishedSessionIds.get().length) {
     $unreadFinishedSessionIds.set([])
   }
@@ -618,6 +661,34 @@ $pinnedSessionIds.subscribe(() => syncPinnedSessionCache())
 /** Durable pin key: the lineage-root id survives auto-compression's id rotation. */
 export function sessionPinId(session: SessionInfo): string {
   return session._lineage_root_id ?? session.id
+}
+
+/**
+ * Is this row carrying the durable "keep" flag?
+ *
+ * Asked before a DESTRUCTIVE action, which is why it is not the same question
+ * the pin toggles ask (`$pinnedSessionIds.includes(sessionPinId(row))`, five
+ * sites). Those render a toggle out of the local set alone; this one has to be
+ * right about a row the local set may never have seen, so it unions both
+ * channels:
+ *
+ *  - `session.pinned` is the backend's `sessions.pinned` column, flipped for
+ *    the WHOLE compression lineage by `set_session_pinned`, so any row of a
+ *    chain reports it. It is the only channel that survives a surface which
+ *    fetches its own rows instead of reading `$sessions` — Settings → Archived
+ *    is exactly that, and archived rows never enter `$sessions` at all, so its
+ *    ids are absent from the pinned cache `session-pin-sync` reconciles.
+ *  - `$pinnedSessionIds` covers the reverse hole: a pin this app holds that the
+ *    backend has not been told about yet (mirror in flight, or a gateway
+ *    predating the column, where `pinned` is `undefined`). It is keyed on the
+ *    LINEAGE ROOT, so it must be looked up through `sessionPinId` and not the
+ *    row id — a row surfaced after a compaction carries the live tip.
+ *
+ * Either channel saying "pinned" means a delete would destroy something the
+ * user asked to keep, which is what the caller needs to warn about.
+ */
+export function isSessionPinned(session: SessionInfo): boolean {
+  return session.pinned === true || $pinnedSessionIds.get().includes(sessionPinId(session))
 }
 
 /** True when a stored/lineage id resolves to this session — it matches either
@@ -1819,10 +1890,40 @@ function idNamesSession(ids: readonly string[], candidate: null | string): boole
 export async function deleteSessionLocal(id: string): Promise<void> {
   const prev = $sessions.get()
   const removed = prev.find(s => sessionMatchesStoredId(s, id))
+
+  // A PINNED session is the one delete that asks (MJXHRM-479). Deleting a chat
+  // is otherwise unconfirmed here on purpose — desktop's `removeSession` is too,
+  // and the sidebar row, the tab menu, the chat title and the mobile bubble all
+  // funnel through this one function, so a blanket prompt would put a modal in
+  // front of six routine verbs. A pin is different: it is the user's own durable
+  // "keep this" flag, the flag the backend's bulk prune and archive sweeps
+  // deliberately honour. Deleting straight through it with no word is the app
+  // contradicting an instruction the user gave it, so this is the one case worth
+  // a question. Asked HERE rather than at the six call sites because five of
+  // them are menu rows with no dialog of their own — which is precisely what the
+  // imperative `confirm()` front door exists for.
+  if (removed && isSessionPinned(removed)) {
+    const ok = await confirm({
+      confirmLabel: translateNow('settings.sessions.deletePermanently'),
+      description: translateNow('settings.sessions.deletePinnedWarning'),
+      destructive: true,
+      title: translateNow('settings.sessions.deleteConfirm', sessionTitle(removed))
+    })
+
+    if (!ok) {
+      return
+    }
+  }
+
   const ids = removalIds(removed, id)
   // Read the owner BEFORE the optimistic removal — afterwards the row that
   // carries the stamp is gone and the mutation would go out unscoped.
   const owner = knownSessionProfile(id)
+
+  // The session is gone from the user's world, so its persisted watermark and
+  // marker are dead weight — and an id that comes back (an unarchive) should
+  // come back read, not carrying a marker from before it left.
+  unreadPersistence?.forget(ids, owner)
 
   // DELETING UNPINS (MJXHRM-414). Nothing else ever dropped the pin, and the
   // Pinned section falls back to `$pinnedSessionCache` once the row leaves
@@ -1876,6 +1977,8 @@ export async function archiveSessionLocal(id: string): Promise<void> {
   const archived = prev.find(s => sessionMatchesStoredId(s, id))
   const ids = removalIds(archived, id)
   const owner = knownSessionProfile(id)
+
+  unreadPersistence?.forget(ids, owner)
 
   // By ALIAS — see the same edit in `deleteSessionLocal`. `set_session_archived`
   // flips the whole compression chain on the backend, so the row is gone there

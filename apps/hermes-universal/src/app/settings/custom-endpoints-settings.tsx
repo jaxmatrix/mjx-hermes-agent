@@ -14,6 +14,7 @@ import {
 import { useI18n } from '@/i18n'
 import { Check, Globe, Loader2, Plus, Save, Trash2, Zap } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import { confirm } from '@/store/confirm'
 import { notify, notifyError } from '@/store/notifications'
 import type { CustomEndpoint, CustomEndpointUpdate } from '@/types/hermes'
 
@@ -200,7 +201,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
   }
 
   async function handleDelete(endpoint: CustomEndpoint) {
-    if (!window.confirm(copy.deleteConfirm(endpoint.name))) {
+    if (!(await confirm({ destructive: true, title: copy.deleteConfirm(endpoint.name) }))) {
       return
     }
 

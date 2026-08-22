@@ -118,10 +118,28 @@ export const ar = defineLocale({
       turnErrorTitle: 'فشلت الجولة',
       backgroundDoneTitle: 'انتهت المهمة في الخلفية',
       backgroundFailedTitle: 'فشلت المهمة في الخلفية'
+    },
+    mcp: {
+      needsAuthTitle: 'خادم MCP يحتاج إعادة مصادقة',
+      needsAuthMessage: name => `يحتاج خادم ${name} إلى إعادة المصادقة.`,
+      errorTitle: 'تعذّر الوصول إلى خادم MCP',
+      errorMessage: name => `فشل فحص سلامة خادم ${name}.`,
+      signIn: 'تسجيل الدخول',
+      view: 'عرض'
     }
   },
   remoteDisplayBanner: {
     message: reason => `العرض البرمجي نشط — تم اكتشاف شاشة بعيدة (${reason}). تم تعطيل تسريع GPU لمنع الوميض.`
+  },
+  resourcePressure: {
+    diskCritical: 'قرص وكيلك ممتلئ تقريبًا. قد يفشل حفظ الرسائل والذكريات والإعدادات الجديدة.',
+    diskElevated: 'قرص وكيلك يمتلئ. فكّر في مسح الجلسات القديمة أو توسيع مساحة التخزين.',
+    diskFree: mb => ` (${mb} ميغابايت متاحة)`,
+    dismiss: 'إخفاء التحذير',
+    memoryCritical: 'وكيلك على وشك نفاد الذاكرة وقد يُعاد تشغيله. فكّر في إغلاق الجلسات الخاملة أو زيادة الذاكرة.',
+    memoryElevated: 'ذاكرة وكيلك على وشك النفاد.',
+    oomRestart:
+      'أُعيد تشغيل وكيلك بشكل غير متوقع، على الأرجح بسبب نفاد الذاكرة. الجلسات الطويلة والمهام المتزامنة الكثيرة تزيد استهلاك الذاكرة.'
   },
   titlebar: {
     hideSidebar: 'إخفاء الشريط الجانبي',
@@ -131,6 +149,7 @@ export const ar = defineLocale({
     swapSidebarSides: 'تبديل جانبي الأشرطة',
     hideRightSidebar: 'إخفاء الشريط الأيمن',
     showRightSidebar: 'إظهار الشريط الأيمن',
+    unreadSessions: count => (count === 1 ? 'جلسة واحدة غير مقروءة' : `${count} جلسات غير مقروءة`),
     muteHaptics: 'كتم الاهتزازات',
     unmuteHaptics: 'تفعيل الاهتزازات',
     openSettings: 'فتح الإعدادات',
@@ -195,6 +214,7 @@ export const ar = defineLocale({
       'session.slot.9': 'الانتقال إلى الجلسة الأخيرة 9',
       'session.focusSearch': 'البحث في الجلسات',
       'session.togglePin': 'تثبيت / إلغاء تثبيت الجلسة الحالية',
+      'session.archive': 'أرشفة الجلسة الحالية',
       'workspace.newWorktree': 'worktree جديد',
       'workspace.openFolder': 'فتح مجلد كمشروع',
       'composer.focus': 'التركيز على المحرّر',
@@ -253,6 +273,10 @@ export const ar = defineLocale({
     noResults: 'لا توجد لغة مطابقة'
   },
   settings: {
+    profileScope: {
+      appliesTo: 'يُطبّق على',
+      editsProfile: profile => `تُطبّق تغييرات هذه الصفحة على الملف الشخصي «${profile}».`
+    },
     closeSettings: 'إغلاق الإعدادات',
     exportConfig: 'تصدير الإعدادات',
     importConfig: 'استيراد الإعدادات',
@@ -400,6 +424,8 @@ export const ar = defineLocale({
       translucencyDesc: 'إظهار سطح المكتب من خلال النافذة بالكامل. متاح على macOS وWindows فقط.',
       backdropTitle: 'خلفية النافذة',
       backdropDesc: 'اختيار مقدار مزج خلفية سطح المكتب مع سطح Hermes.',
+      introSplashTitle: 'شاشة البداية',
+      introSplashDesc: 'الشعار النصي والشعار التعريفي الظاهران في محادثة جديدة فارغة.',
       reactionsTitle: 'تفاعلات الرسائل',
       reactionsDesc: 'تفاعلات إيموجي بأسلوب iMessage — تفاعل مع الرسائل، ويمكن لـ Hermes التفاعل مع رسائلك.',
       embedsTitle: 'التضمينات المضمّنة',
@@ -631,7 +657,12 @@ export const ar = defineLocale({
       backgroundModeTitle: 'الاستمرار في العمل بالخلفية',
       backgroundModeDesc:
         'إغلاق النافذة يخفي Hermes بدلاً من إنهائه، فتستمر الجلسة الجارية في البث. استخدم أيقونة شريط النظام لإظهاره أو لإنهائه.',
-      backgroundModeFailed: 'تعذّر إبقاء Hermes يعمل في الخلفية'
+      backgroundModeFailed: 'تعذّر إبقاء Hermes يعمل في الخلفية',
+      attachmentSizeTitle: 'الحد الأقصى لحجم المرفق / المعاينة',
+      attachmentSizeDesc:
+        'أقصى حجم لملف محلي يقرأه Hermes في الذاكرة للإرفاق أو المعاينة، بالميغابايت. القيمة الافتراضية 16. يُخزَّن الملف كاملاً بترميز base64، لذا قد تؤدي القيم الكبيرة إلى إنهاء التطبيق على الهاتف أثناء الإرفاق.',
+      attachmentSizeUnit: 'ميغابايت',
+      attachmentSizeLabel: 'الحد الأقصى لحجم المرفق / المعاينة بالميغابايت'
     },
     credentials: {
       pasteKey: 'لصق المفتاح',
@@ -752,7 +783,28 @@ export const ar = defineLocale({
       name: 'الاسم',
       serverJson: 'JSON الخادم',
       remove: 'إزالة',
-      saveServer: 'حفظ الخادم'
+      saveServer: 'حفظ الخادم',
+      importButton: 'استيراد',
+      importPlaceholder: 'الصق مقتطف mcp.json أو أمر npx/docker أو سطر claude mcp add أو رابطًا أو رابط Cursor…',
+      importNoMatch: 'لم يتم التعرف على أي إعداد خادم في النص الملصق.',
+      importConfirm: 'إضافة إلى mcp.json',
+      importConfirmMany: count => `إضافة ${count} خوادم إلى mcp.json`,
+      deepLinkTitle: 'إضافة خادم MCP؟',
+      deepLinkDescription:
+        'طلب رابط إضافة خادم MCP هذا إلى Hermes. راجع الإعداد الدقيق أدناه — فهو يأتي من الرابط، لا من Hermes.',
+      deepLinkStdioWarning: 'يشغّل هذا الخادم عملية محلية على جهازك بالأمر الظاهر أدناه. تابع فقط إذا كنت تثق بمصدره.',
+      deepLinkConfirm: 'إضافة الخادم',
+      deepLinkNameInvalid: 'تستخدم الأسماء من 1 إلى 64 حرفًا أو رقمًا أو نقطة أو شرطة أو شرطة سفلية.',
+      deepLinkNameConflict: name => `يوجد خادم باسم ${name} بالفعل — اختر اسمًا مختلفًا أو ألغِ.`,
+      deepLinkErrorTitle: 'تم رفض رابط تثبيت MCP',
+      deepLinkErrorName: 'اسم الخادم في الرابط مفقود أو غير صالح.',
+      deepLinkErrorConfig: 'إعداد الرابط ليس JSON مُرمّزًا بصيغة base64 صالحة.',
+      deepLinkErrorShape: 'يجب أن يكون الإعداد كائن JSON يحتوي على حقل `url` أو `command` نصي.',
+      deepLinkErrorUrl: 'يُسمح فقط بعناوين الخوادم http:// و https://.',
+      deepLinkErrorTooLarge: 'حمولة الإعداد تتجاوز حد 32 كيلوبايت.',
+      costTokens: tokens => `~${tokens} رمز/استدعاء`,
+      usage30d: uses => `${uses} استخدام/30 يومًا`,
+      unusedPill: 'غير مستخدم'
     },
     model: {
       loading: 'جار تحميل إعدادات النموذج...',
@@ -847,6 +899,8 @@ export const ar = defineLocale({
       messages: count => `${count} ${count === 1 ? 'رسالة' : 'رسائل'}`,
       restored: 'تمت الاستعادة',
       deleteConfirm: title => `حذف "${title}" نهائياً؟ لا يمكن التراجع عن هذا.`,
+      deletePinnedWarning:
+        'هذه المحادثة مثبّتة. التثبيت يعني الاحتفاظ بها، وعمليات التنظيف الجماعية تتخطاها، لكن الحذف من هنا نهائي.',
       defaultDirTitle: 'مجلد المشروع الافتراضي',
       defaultDirDesc: 'تبدأ الجلسات الجديدة في هذا المجلد ما لم تختر غيره. اتركه غير مضبوط لاستخدام مجلدك الرئيسي.',
       defaultDirUpdated: 'تم تحديث مجلد المشروع الافتراضي، ابدأ محادثة جديدة (Ctrl/⌘+N) ليطبق التغيير',
@@ -900,6 +954,21 @@ export const ar = defineLocale({
   },
   skills: {
     tabSkills: 'المهارات',
+    hub: {
+      advisory: 'SkillEvaluator (استشاري)',
+      advisoryPassed: 'لا توجد مشكلات',
+      advisoryFlagged: count => `تم الإبلاغ عن ${count} مشكلة`,
+      advisoryIncomplete: count => `تعذّر تنفيذ ${count} من الفحوصات`
+    },
+    project: {
+      trust: 'الوثوق بهذا المستودع',
+      untrust: 'إلغاء الثقة',
+      trustedCount: count => `تم تحميل ${count} من مهارات المشروع من هذا المستودع`,
+      untrustedCount: count => `${count} من المهارات في هذا المستودع لن تُحمَّل حتى تثق به`,
+      quarantinedCount: count => `${count} محظورة بواسطة الفحص الأمني`,
+      disabled: 'اكتشاف مهارات المشروع معطَّل لهذا الملف الشخصي.',
+      title: 'مهارات المشروع'
+    },
     tabToolsets: 'مجموعات الأدوات',
     all: 'الكل',
     searchSkills: 'البحث في المهارات',
@@ -952,7 +1021,17 @@ export const ar = defineLocale({
     ageHours: hours => `قبل ${hours} س`,
     durationSeconds: seconds => `${seconds} ث`,
     durationMinutes: (minutes, seconds) => `${minutes} د ${seconds} ث`,
-    tokens: value => `${value} رمز`
+    tokens: value => `${value} رمز`,
+    stop: 'إيقاف',
+    stopRequested: 'جارٍ الإيقاف — ستعود نتيجته الجزئية على أي حال',
+    budgetWrapup: 'طُلب منه الإنهاء — نفد وقته لا عمله',
+    truncatedNotice: 'نفدت الخطوات — هذا الملخّص جزئي',
+    worktree: 'شجرة العمل',
+    worktreeCommits: (count: number) => `${count} إيداع`,
+    worktreeDirty: 'تغييرات غير مودعة',
+    worktreeKept: 'محفوظة للمراجعة',
+    worktreePruned: 'أُزيلت — لم تحتوِ على أي عمل',
+    worktreeUnknown: 'الحالة غير معروفة — افحصها قبل افتراض عدم وجود عمل'
   },
   commandCenter: {
     close: 'إغلاق',
@@ -1023,6 +1102,9 @@ export const ar = defineLocale({
       installs: count => `${count} عملية تثبيت`
     },
     settingsFields: 'حقول الإعدادات',
+    settingsPreferences: 'التفضيلات',
+    settingsSearchPlaceholder: 'ابحث في الإعدادات…',
+    settingsSearchPill: 'ابحث في الإعدادات',
     mcpServers: 'خوادم MCP',
     archivedChats: 'المحادثات المؤرشفة',
     commands: 'الأوامر',
@@ -1287,6 +1369,34 @@ export const ar = defineLocale({
     }
   },
   profiles: {
+    editor: {
+      title: 'الإعدادات',
+      loading: 'جارٍ تحميل الإعدادات...',
+      loadFailed: 'تعذّر تحميل إعدادات الملف الشخصي',
+      descriptionLabel: 'الوصف',
+      descriptionPlaceholder: 'ما الغرض من هذا الوكيل؟',
+      toolsetsLabel: 'مجموعات الأدوات',
+      toolsetsUnpinned: 'لا توجد قائمة مثبّتة لمجموعات الأدوات، لذا كلها مفعّلة. إيقاف واحدة يثبّت البقية.',
+      mcpLabel: 'خوادم MCP',
+      noneInstalled: 'لا شيء مثبّت.',
+      save: 'حفظ الإعدادات',
+      saved: 'تم حفظ إعدادات الملف الشخصي',
+      savedPartial: 'لم تُطبَّق بعض التغييرات',
+      saveFailed: 'تعذّر حفظ إعدادات الملف الشخصي',
+      avatarUpload: 'رفع صورة',
+      avatarReplace: 'استبدال الصورة',
+      avatarRemove: 'إزالة',
+      avatarHint: 'PNG أو JPEG أو WebP، بحد أقصى 2 ميغابايت. تُحفظ على البوابة، لذا تظهر على كل الأجهزة.',
+      avatarSaved: 'تم حفظ الصورة',
+      avatarFailed: 'تعذّر تحديث الصورة',
+      avatarRejected: 'صيغة صورة غير مدعومة',
+      avatarTooLarge: 'الصورة كبيرة جدًا',
+      working: 'قيد العمل',
+      shareSignIn: 'مشاركة تسجيل الدخول مع هذه البوابة',
+      shareSignInHint:
+        'يقرأ رموز OAuth من الملف الشخصي الرئيسي بدل نسخها. النسخ يفصل حالة الرمز، وأول تحديث في أي جهة يُخرج الأخرى.',
+      noCredentials: 'أُنشئ بدون بيانات اعتماد — عيّن مفتاح مزوّد قبل أول رسالة.'
+    },
     close: 'إغلاق',
     nameHint: 'اسم الملف الشخصي',
     title: 'الملفات الشخصية',
@@ -1348,6 +1458,9 @@ export const ar = defineLocale({
     creating: 'جار الإنشاء...',
     createAction: 'إنشاء ملف شخصي',
     renameTitle: 'إعادة تسمية الملف الشخصي',
+    displayNameTitle: 'سمِّ هذا الوكيل',
+    displayNameDesc: 'يحدد اسم العرض الظاهر في كل أنحاء التطبيق. يبقى معرّف الملف الشخصي الداخلي "default".',
+    displayNameLabel: 'اسم العرض',
     renameDescPrefix: 'تؤدي إعادة التسمية إلى تحديث دليل الملف الشخصي وأي سكربتات تغليف في ',
     renameDescSuffix: '.',
     newNameLabel: 'الاسم الجديد',
@@ -1420,6 +1533,15 @@ export const ar = defineLocale({
     monthlyOnDayAt: (dayOfMonth, time) => `شهريا في اليوم ${dayOfMonth} في ${time}`,
     topOfHour: 'في بداية كل ساعة',
     everyHourAt: minute => `كل ساعة عند :${minute}`,
+    hidePaused: 'إخفاء المتوقفة',
+    showPaused: 'إظهار المتوقفة',
+    repeatLabel: 'مرات التشغيل',
+    repeatForever: 'يتكرر بلا حد',
+    repeatOf: (completed, times) => `${completed} من ${times}`,
+    triggering: 'قيد التشغيل…',
+    continuityLabel: 'الاستمرار من التشغيل السابق',
+    continuityHint: 'تغذية المهمة بمخرجاتها السابقة، فيُكمل كل تشغيل ما قبله بدلًا من البدء من الصفر.',
+    missedFire: 'فات موعد التشغيل المجدول',
     newCron: 'مهمة مجدولة جديدة',
     emptyDescNew: 'أنشئ مهمة مجدولة لتشغيل Hermes تلقائيا.',
     emptyDescSearch: 'لا توجد مهام تطابق البحث.',
@@ -1565,6 +1687,10 @@ export const ar = defineLocale({
       orderCost: 'التكلفة',
       orderManual: 'يدوي',
       show: 'إظهار',
+      density: 'كثافة الصفوف',
+      densityCompact: 'مضغوط',
+      densityComfortable: 'مريح',
+      densityDetailed: 'مفصل',
       metaUpdated: 'آخر تحديث',
       metaTokens: 'الرموز',
       metaCost: 'التكلفة',
@@ -1658,6 +1784,10 @@ export const ar = defineLocale({
       pin: 'تثبيت',
       unpin: 'إلغاء التثبيت',
       copyId: 'نسخ المعرف',
+      messageCount: count => `${count} رسالة`,
+      toolCallCount: count => `${count} استدعاء أداة`,
+      openInTerminal: 'فتح في الطرفية',
+      openInTerminalFailed: 'تعذر فتح أي تطبيق طرفية هنا',
       export: 'تصدير',
       branchFrom: 'فرع',
       rename: 'إعادة تسمية',
@@ -1684,6 +1814,15 @@ export const ar = defineLocale({
     }
   },
   composer: {
+    mcpSuggestions: {
+      label: server => `إضافة ${server}`,
+      tip: keyword => `اقتُرح لأنك ذكرت «${keyword}» — انقر للاتصال`,
+      connecting: server => `جار الاتصال بـ ${server}…`,
+      cancelTip: 'انقر للإلغاء',
+      added: server => `تمت إضافة ${server}`,
+      addedTip: 'تم الاتصال — أدواته جاهزة في هذه المحادثة',
+      connectFailed: server => `تعذر الاتصال بـ ${server}`
+    },
     message: 'الرسالة',
     wakingProfile: profile => `جار إيقاظ ${profile}`,
     placeholderStarting: 'جار بدء Hermes...',
@@ -1769,6 +1908,7 @@ export const ar = defineLocale({
     themeTryPre: 'جرّب ',
     themeTryPost: '.',
     attachLabel: 'إرفاق',
+    attachTooLarge: maxMb => `أكبر من الحد الأقصى ${maxMb} ميغابايت. يمكن رفعه من الإعدادات ← المحادثة.`,
     files: 'ملفات',
     folder: 'مجلد',
     images: 'صور',
@@ -2382,6 +2522,27 @@ export const ar = defineLocale({
       alwaysDescription: pattern => `السماح دائما بالأوامر المطابقة لـ ${pattern}`,
       alwaysAllow: 'السماح دائما'
     },
+    mcpSetup: {
+      installTitle: server => `إضافة خادم ${server} عبر MCP؟`,
+      enableTitle: server => `تمكين خادم ${server} عبر MCP؟`,
+      authorizeTitle: server => `تفويض خادم ${server} عبر MCP؟`,
+      installAction: 'تثبيت',
+      enableAction: 'تمكين',
+      authorizeAction: 'تفويض',
+      decline: 'ليس الآن',
+      catalogSource: 'من الكتالوج المعتمد من Nous',
+      envRequired: 'أدخل بيانات الاعتماد المطلوبة أولاً',
+      notInCatalog: server => `«${server}» غير موجود في كتالوج MCP`,
+      installed: server => `تم تثبيت ${server}`,
+      enabled: server => `تم تمكين ${server}`,
+      authorized: server => `تم تفويض ${server}`,
+      declined: 'تم الرفض',
+      unanswered: 'بلا رد',
+      failed: server => `فشل إعداد ${server}`,
+      toolCount: count => `${count} أدوات`,
+      sendFailed: 'تعذر إرسال رد إعداد MCP',
+      reloadFailed: 'تم إعداد الخادم، لكن تعذر على هذه المحادثة إعادة تحميل أدواته'
+    },
     clarify: {
       notReady: 'غير جاهز',
       gatewayDisconnected: 'البوابة غير متصلة',
@@ -2390,7 +2551,11 @@ export const ar = defineLocale({
       other: 'غير ذلك',
       placeholder: 'اكتب إجابتك...',
       skip: 'تخطي',
-      continueLabel: 'متابعة'
+      continueLabel: 'متابعة',
+      confirmAndContinueLabel: 'تأكيد ومتابعة',
+      answeredBadge: 'تمت الإجابة',
+      questionProgress: (answered, total) => `${answered} من ${total} تمت الإجابة عليها`,
+      unknownQuestion: 'لم يعد الوكيل يطرح هذا السؤال — أجب عن الأسئلة المعروضة'
     },
     tool: {
       copyCode: 'نسخ الكود',
@@ -2414,6 +2579,10 @@ export const ar = defineLocale({
       statusRecovered: 'تم الاسترداد',
       statusDone: 'تم',
       memoryWriteNoted: 'تم تسجيل كتابة الذاكرة',
+      spilloverLabel: 'الخرج الكامل',
+      spilloverSaved: (size: string) => `أكبر من أن يُعرض هنا (${size}) — حُفظ في ملف`,
+      spilloverSavedUnsized: 'أكبر من أن يُعرض هنا — حُفظ في ملف',
+      spilloverOpen: 'فتح',
       actions: {
         read: 'قراءة',
         reading: 'جار القراءة',
@@ -2523,6 +2692,11 @@ export const ar = defineLocale({
           done: 'تم البحث في سجل الجلسة',
           pending: 'جار البحث في سجل الجلسة',
           pendingAction: 'جار البحث'
+        },
+        setup_mcp: {
+          done: 'تم إعداد خادم MCP',
+          pending: 'جار إعداد خادم MCP',
+          pendingAction: 'جار الإعداد'
         },
         terminal: {
           done: 'تم تشغيل الأمر',

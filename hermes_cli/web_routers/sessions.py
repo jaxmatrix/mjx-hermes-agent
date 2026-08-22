@@ -287,6 +287,17 @@ async def search_sessions(
                     row = db.get_session_rich_row(sid)
                 except Exception:
                     row = None
+                # A hidden session is one a surface manages and keeps out of the
+                # shared list (session.set_hidden — bot chats, canonical
+                # per-profile chats). Every *listing* route honours that through
+                # list_sessions_rich's include_hidden=False default; search did
+                # not, so a query that matched a hidden chat's message text put
+                # the row straight back into the sidebar it was hidden from.
+                # Drop it here, where the row is already in hand — filtering
+                # client-side is impossible, since the search payload carries no
+                # hidden flag.
+                if row and row.get("hidden"):
+                    return
                 if row:
                     payload.update(
                         {
@@ -504,6 +515,9 @@ async def delete_empty_sessions_endpoint(profile: Optional[str] = None):
       agent isn't yanked mid-handshake.
     * Archived sessions are skipped — the user explicitly chose to
       keep those rows.
+    * Pinned sessions are skipped — the pin IS the "keep this" flag,
+      and there is no opt-in here because this endpoint takes no
+      filters to narrow the blast radius.
     * Children of deleted parents are orphaned, not cascade-deleted.
 
     Like the single-session ``DELETE /api/sessions/{id}`` endpoint
@@ -609,6 +623,7 @@ async def get_session_messages(
     limit: Optional[int] = Query(None, ge=0),
     offset: int = Query(0, ge=0),
     order: Optional[str] = Query(None),
+    include_compacted: bool = Query(False),
 ):
     if order not in (None, "oldest", "latest"):
         raise HTTPException(
@@ -636,6 +651,7 @@ async def get_session_messages(
                 limit=_limit,
                 offset=offset,
                 latest=latest_page,
+                include_compacted=include_compacted,
             )
         finally:
             db.close()
@@ -694,11 +710,13 @@ async def delete_session_endpoint(session_id: str, profile: Optional[str] = None
 
 @manage_router.patch("/api/sessions/{session_id}")
 async def rename_session_endpoint(session_id: str, body: SessionRename):
-    """Update a session: rename, archive, and/or pin it.
+    """Update a session: rename, archive, pin, and/or mark read/unread.
 
     ``title`` renames (empty/null clears the title); ``archived`` soft-hides or
     restores the session; ``pinned`` sets the durable keep flag (exempts the
-    session from the auto-archive sweep). Any field may be omitted. ``profile``
+    session from the auto-archive sweep); ``unread`` toggles the read-state
+    watermark (True = explicitly unread, False = read up to now — see
+    ``SessionDB.set_session_read``). Any field may be omitted. ``profile``
     targets another profile's session.
     """
     db = _open_session_db_for_profile(body.profile, read_only=False)
@@ -706,10 +724,15 @@ async def rename_session_endpoint(session_id: str, body: SessionRename):
         sid = db.resolve_session_id(session_id)
         if not sid:
             raise HTTPException(status_code=404, detail="Session not found")
-        if body.title is None and body.archived is None and body.pinned is None:
+        if (
+            body.title is None
+            and body.archived is None
+            and body.pinned is None
+            and body.unread is None
+        ):
             raise HTTPException(
                 status_code=400,
-                detail="Nothing to update; provide 'title', 'archived', and/or 'pinned'.",
+                detail="Nothing to update; provide 'title', 'archived', 'pinned', and/or 'unread'.",
             )
         if body.title is not None:
             try:
@@ -721,11 +744,15 @@ async def rename_session_endpoint(session_id: str, body: SessionRename):
             db.set_session_archived(sid, body.archived)
         if body.pinned is not None:
             db.set_session_pinned(sid, body.pinned)
+        if body.unread is not None:
+            db.set_session_read(sid, read=not body.unread)
         result = {"ok": True, "title": db.get_session_title(sid) or ""}
         if body.archived is not None:
             result["archived"] = bool(body.archived)
         if body.pinned is not None:
             result["pinned"] = bool(body.pinned)
+        if body.unread is not None:
+            result["unread"] = bool(body.unread)
         return result
     finally:
         db.close()
@@ -795,5 +822,11 @@ async def export_session_endpoint(session_id: str, profile: Optional[str] = None
 
 @manage_router.post("/api/sessions/prune")
 async def prune_sessions_endpoint(body: SessionPrune):
-    """Delete ended sessions matching filters without blocking the event loop."""
+    """Delete ended sessions matching filters without blocking the event loop.
+
+    Pinned rows are spared unless ``include_pinned`` is set — pin is a
+    durable "keep" flag. Either way the response carries
+    ``skipped_pinned``, the number of matching rows the pin saved, so a
+    client can say so instead of reporting a mysteriously low count.
+    """
     return await asyncio.to_thread(_prune_sessions, body)

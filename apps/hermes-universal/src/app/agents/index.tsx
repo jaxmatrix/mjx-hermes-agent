@@ -8,7 +8,7 @@ import { FadeText } from '@/components/ui/fade-text'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
 import { type Translations, useI18n } from '@/i18n'
 import { compactNumber } from '@/lib/format'
-import { steerSubagent, type SubagentSteerReason } from '@/lib/gateway-rpc'
+import { interruptSubagent, steerSubagent, type SubagentSteerReason } from '@/lib/gateway-rpc'
 import { AlertCircle, CheckCircle2 } from '@/lib/icons'
 import { useEnterAnimation } from '@/lib/use-enter-animation'
 import { cn } from '@/lib/utils'
@@ -19,7 +19,8 @@ import {
   sessionOfSubagent,
   type SubagentNode,
   type SubagentStatus,
-  type SubagentStreamEntry
+  type SubagentStreamEntry,
+  type SubagentWorktree
 } from '@/store/subagents'
 
 import type { OverlayVariant } from '../overlays/overlay-view'
@@ -122,6 +123,28 @@ const fmtDuration = (seconds: number | undefined, a: Translations['agents']) => 
 
 const fmtTokens = (value: number | undefined, a: Translations['agents']) =>
   value ? a.tokens(compactNumber(value)) : ''
+
+/**
+ * What the isolated checkout holds, in one line.
+ *
+ * An inspection that failed short-circuits everything else: `commits: 0` /
+ * `dirty: false` are then the payload's DEFAULTS, not measurements, and
+ * printing "no commits" from them is exactly the "the child did nothing"
+ * conclusion the gateway's own `note` warns against.
+ */
+const worktreeState = (worktree: SubagentWorktree, a: Translations['agents']): string => {
+  if (worktree.inspectionFailed) {
+    return a.worktreeUnknown
+  }
+
+  if (worktree.pruned) {
+    return a.worktreePruned
+  }
+
+  return [a.worktreeCommits(worktree.commits), worktree.dirty ? a.worktreeDirty : '', a.worktreeKept]
+    .filter(Boolean)
+    .join(' · ')
+}
 
 // Distinct contract from coarseElapsed: rounds to the second (this ticks live),
 // and hours are unbounded ("25h", never "1d"). Kept local on purpose.
@@ -334,13 +357,34 @@ const steerRefusal = (reason: SubagentSteerReason | undefined, copy: Translation
  * text produces `missedSteer` on its row (see `SubagentRow`), which is the only
  * retraction of the promise this control makes.
  */
-function SteerControl({ node }: { node: SubagentNode }) {
+function RowControls({ node }: { node: SubagentNode }) {
   const { t } = useI18n()
   const a = t.agents
   const [open, setOpen] = useState(false)
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [outcome, setOutcome] = useState<null | { kind: 'error' | 'ok'; message: string }>(null)
+
+  /**
+   * End the child now. `found: false` is the same class of answer as steer's
+   * `rejected` — a 200 that means "there was nothing to stop" — so it has to be
+   * reported, not swallowed, or the button looks like it worked every time.
+   */
+  const stop = async () => {
+    setSending(true)
+
+    try {
+      const result = await interruptSubagent({ subagentId: node.id })
+      setOutcome({
+        kind: result.found ? 'ok' : 'error',
+        message: result.found ? a.stopRequested : a.steerGone
+      })
+    } catch {
+      setOutcome({ kind: 'error', message: a.steerFailed })
+    } finally {
+      setSending(false)
+    }
+  }
 
   const submit = async () => {
     const trimmed = text.trim()
@@ -409,16 +453,29 @@ function SteerControl({ node }: { node: SubagentNode }) {
           </button>
         </div>
       ) : (
-        <button
-          className="w-fit rounded-md text-[0.66rem] text-muted-foreground/70 hover:text-foreground"
-          onClick={() => {
-            setOutcome(null)
-            setOpen(true)
-          }}
-          type="button"
-        >
-          {a.steer}
-        </button>
+        <div className="flex min-w-0 items-center gap-3">
+          <button
+            className="w-fit rounded-md text-[0.66rem] text-muted-foreground/70 hover:text-foreground"
+            onClick={() => {
+              setOutcome(null)
+              setOpen(true)
+            }}
+            type="button"
+          >
+            {a.steer}
+          </button>
+          <button
+            className="w-fit rounded-md text-[0.66rem] text-muted-foreground/70 hover:text-destructive disabled:opacity-50"
+            disabled={sending}
+            onClick={() => {
+              setOutcome(null)
+              void stop()
+            }}
+            type="button"
+          >
+            {a.stop}
+          </button>
+        </div>
       )}
 
       {outcome ? (
@@ -523,7 +580,49 @@ function SubagentRow({ node, depth = 0, nowMs }: { node: SubagentNode; depth?: n
         </div>
       ) : null}
 
-      {running ? <SteerControl node={node} /> : null}
+      {running ? <RowControls node={node} /> : null}
+
+      {/* A child that ran out of steps still says `completed` and still returns
+          a summary, so the status glyph alone reads as success. The gateway now
+          names the difference on `subagent.complete` (MJXHRM-459). */}
+      {node.budgetWrapup ? (
+        <p
+          className="ps-6 text-[0.62rem] leading-[0.95rem] text-(--ui-yellow)"
+          data-selectable-text="true"
+          role="status"
+        >
+          {t.agents.budgetWrapup}
+        </p>
+      ) : null}
+
+      {node.truncated ? (
+        <p
+          className="ps-6 text-[0.62rem] leading-[0.95rem] text-(--ui-yellow)"
+          data-selectable-text="true"
+          role="status"
+        >
+          {t.agents.truncatedNotice}
+        </p>
+      ) : null}
+
+      {/* Where an isolated child's work actually is. `pruned` means the
+          checkout is gone because it held nothing; anything with commits or a
+          dirty tree is kept for the user to review or merge, and an inspection
+          that FAILED must not be read as "no work" — hence the third line
+          rather than a zero. */}
+      {node.worktree ? (
+        <div className="grid min-w-0 gap-0.5 ps-6" data-selectable-text="true">
+          <p className="text-[0.58rem] font-medium uppercase tracking-wider text-muted-foreground/60">
+            {t.agents.worktree}
+          </p>
+          <p className="wrap-break-word font-mono text-[0.67rem] leading-relaxed text-muted-foreground/80">
+            {node.worktree.path || node.worktree.branch}
+          </p>
+          <p className="text-[0.62rem] leading-[0.95rem] text-muted-foreground/70">
+            {worktreeState(node.worktree, t.agents)}
+          </p>
+        </div>
+      ) : null}
 
       {/* The other half of the steer contract: "queued" was never a delivery
           receipt, and this row is where the promise is withdrawn. The gateway

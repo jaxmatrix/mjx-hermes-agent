@@ -1,5 +1,6 @@
 import { atom, computed, type ReadableAtom } from 'nanostores'
 
+import type { ClarifyQuestion } from '@/store/clarify'
 import { $activeSessionKey, addSessionKeyHooks } from '@/store/session-state-types'
 
 // The blocking-prompt request shapes. They live HERE, not in store/chat.ts,
@@ -11,6 +12,11 @@ export interface ApprovalRequest {
   command: string
   description: string
   allowPermanent: boolean
+  // Which queued approval this is. `approval.respond` without it resolves the
+  // OLDEST entry (`resolve_gateway_approval`), so a session holding two
+  // different commands answered the wrong one. Optional: a legacy gateway
+  // omits it, and FIFO is still the right fallback there.
+  requestId?: string
   // Gateway-restricted choice set (e.g. a tirith warning drops `always`), and the
   // smart-deny flag that implies `['once', 'deny']`. Both optional — the backend
   // omits them on a plain approval. Mirrors desktop's ApprovalRequest.
@@ -24,6 +30,18 @@ export interface ClarifyRequest {
   // question. The inline ClarifyTool reads BOTH fields from here — `tool.start`
   // ships no args, so the event payload is the only source for the panel.
   choices: string[] | null
+  // `multi_select` on the wire: the tool parses a JSON array back, so the card
+  // may offer more than one pick. Optional because the gateway emits the key
+  // only when it is true (`_clarify_block`) — absent IS single-select.
+  multiSelect?: boolean
+  // Batch clarify (2–5 independent questions, `tools/clarify_tool.py`): the
+  // payload carries `questions[]` and NO top-level `question`, so these are
+  // present INSTEAD of `question`/`choices` rather than alongside them.
+  questions?: ClarifyQuestion[]
+  // Answers the gateway has already locked, qid → answer. Only a reconnect
+  // replay sets this (`_pending_clarify_request_payload`); a live batch starts
+  // with nothing locked.
+  lockedAnswers?: Record<string, string>
 }
 // Sudo is a password-entry flow (not an allow/deny choice).
 export interface SudoRequest {
@@ -35,6 +53,31 @@ export interface SecretRequest {
   envVar: string
   prompt: string
 }
+/**
+ * The agent's `setup_mcp` tool asking to add / enable / authorize an MCP
+ * server (`mcp.setup.request`, `tools/setup_mcp_tool.py`).
+ *
+ * A blocking prompt like the four above — `_block(..., timeout=600)` parks the
+ * whole run loop for TEN MINUTES, the longest budget of any bridge, because the
+ * flow can include typing an API key or a browser OAuth round-trip. Unanswered
+ * is not declined: the tool returns `{"status": "unanswered"}` and tells the
+ * model not to retry, so every teardown path has to answer.
+ *
+ * No `sessionId` field (desktop's `store/mcp-setup.ts` carries one): the map is
+ * already keyed by session key, and that key is what survives a cold resume's
+ * runtime-id rotation via the rekey hook below.
+ */
+export interface McpSetupRequest {
+  requestId: string
+  /** Catalog name (install) or the `mcp_servers` config name (enable/authorize). */
+  server: string
+  action: McpSetupAction
+  /** The agent's one-line "why this helps right now"; '' when it gave none. */
+  reason: string
+}
+
+/** `_ACTIONS` in `tools/setup_mcp_tool.py` — the closed set the card renders. */
+export type McpSetupAction = 'authorize' | 'enable' | 'install'
 
 // ---------------------------------------------------------------------------
 // Per-session blocking prompts, keyed by SESSION KEY (see
@@ -113,6 +156,7 @@ const approvalStore = keyedPromptStore<ApprovalRequest>()
 const clarifyStore = keyedPromptStore<ClarifyRequest>()
 const sudoStore = keyedPromptStore<SudoRequest>()
 const secretStore = keyedPromptStore<SecretRequest>()
+const mcpSetupStore = keyedPromptStore<McpSetupRequest>()
 
 // --- The ACTIVE session's prompts (what store/chat.ts re-exports) -----------
 
@@ -123,29 +167,33 @@ export const $approval = activePrompt(approvalStore)
 export const $clarify = activePrompt(clarifyStore)
 export const $sudo = activePrompt(sudoStore)
 export const $secret = activePrompt(secretStore)
+export const $mcpSetup = activePrompt(mcpSetupStore)
 
 // The active turn is parked waiting on the user (a clarify / approval / sudo /
-// secret prompt is open). The main composer's Esc handling reads this to avoid
-// interrupting a turn that's actually waiting for input.
+// secret / MCP-setup prompt is open). The main composer's Esc handling reads
+// this to avoid interrupting a turn that's actually waiting for input.
 export const $activeSessionAwaitingInput = computed(
-  [$clarify, $approval, $sudo, $secret],
-  (clarify, approval, sudo, secret) => Boolean(clarify || approval || sudo || secret)
+  [$clarify, $approval, $sudo, $secret, $mcpSetup],
+  (clarify, approval, sudo, secret, mcpSetup) => Boolean(clarify || approval || sudo || secret || mcpSetup)
 )
 
 export const sessionApprovalRequest = (id: string) => approvalStore.forId(id)
 export const sessionClarifyRequest = (id: string) => clarifyStore.forId(id)
 export const sessionSudoRequest = (id: string) => sudoStore.forId(id)
 export const sessionSecretRequest = (id: string) => secretStore.forId(id)
+export const sessionMcpSetupRequest = (id: string) => mcpSetupStore.forId(id)
 
 export const setSessionApproval = (id: string, req: ApprovalRequest | null) => approvalStore.set(id, req)
 export const setSessionClarify = (id: string, req: ClarifyRequest | null) => clarifyStore.set(id, req)
 export const setSessionSudo = (id: string, req: SudoRequest | null) => sudoStore.set(id, req)
 export const setSessionSecret = (id: string, req: SecretRequest | null) => secretStore.set(id, req)
+export const setSessionMcpSetup = (id: string, req: McpSetupRequest | null) => mcpSetupStore.set(id, req)
 
 export const clearSessionApproval = (id: string) => approvalStore.set(id, null)
 export const clearSessionClarify = (id: string) => clarifyStore.set(id, null)
 export const clearSessionSudo = (id: string) => sudoStore.set(id, null)
 export const clearSessionSecret = (id: string) => secretStore.set(id, null)
+export const clearSessionMcpSetup = (id: string) => mcpSetupStore.set(id, null)
 
 /** All per-session blocking prompts cleared — for one session (id) or all. */
 export function clearAllPrompts(id?: string): void {
@@ -154,6 +202,7 @@ export function clearAllPrompts(id?: string): void {
     clearSessionClarify(id)
     clearSessionSudo(id)
     clearSessionSecret(id)
+    clearSessionMcpSetup(id)
 
     return
   }
@@ -162,9 +211,10 @@ export function clearAllPrompts(id?: string): void {
   clarifyStore.clearAll()
   sudoStore.clearAll()
   secretStore.clearAll()
+  mcpSetupStore.clearAll()
 }
 
-const promptStores = [approvalStore, clarifyStore, sudoStore, secretStore]
+const promptStores = [approvalStore, clarifyStore, sudoStore, secretStore, mcpSetupStore]
 
 /**
  * Carry every blocking prompt across a session key move, and drop them when the
@@ -190,7 +240,13 @@ addSessionKeyHooks({
 /** Whether a specific (tiled) session's turn is parked on a blocking prompt. */
 export function sessionAwaitingInput(id: string): ReadableAtom<boolean> {
   return computed(
-    [approvalStore.forId(id), clarifyStore.forId(id), sudoStore.forId(id), secretStore.forId(id)],
-    (approval, clarify, sudo, secret) => Boolean(approval || clarify || sudo || secret)
+    [
+      approvalStore.forId(id),
+      clarifyStore.forId(id),
+      sudoStore.forId(id),
+      secretStore.forId(id),
+      mcpSetupStore.forId(id)
+    ],
+    (approval, clarify, sudo, secret, mcpSetup) => Boolean(approval || clarify || sudo || secret || mcpSetup)
   )
 }

@@ -14,6 +14,11 @@ vi.mock('@/hermes', () => ({
 // reaches `store/connection` through `lib/api`, and `branchStoredSession` now
 // resolves its parent through `store/session-lookup` (which reads the project
 // tree). Omitting either makes the whole suite fail to import, not one test.
+// `deleteSessionLocal` now asks before deleting a PINNED session (MJXHRM-479).
+// Nothing here renders a `<ConfirmHost />`, so an unmocked `confirm()` would
+// park a promise and every pinned-delete test would time out. Default: yes.
+vi.mock('@/store/confirm', () => ({ confirm: vi.fn(async () => true) }))
+
 vi.mock('@/store/gateway', async () => {
   const { atom } = await import('@/store/atom')
 
@@ -28,6 +33,7 @@ vi.mock('@/store/gateway', async () => {
 import { deleteSession, getSession, getSessionMessages, listAllProfileSessions, renameSession } from '@/hermes'
 import { ApiError } from '@/lib/api'
 import { $busy, $currentCwd, $messages, $sessionId } from '@/store/chat'
+import { confirm } from '@/store/confirm'
 import { requestGateway } from '@/store/gateway'
 import { $showAllProfiles } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
@@ -56,6 +62,7 @@ import {
   clearUnreadFinishedSession,
   deleteSessionLocal,
   isMessagingSource,
+  isSessionPinned,
   knownSessionProfile,
   loadMoreSessions,
   messagingSourceLabel,
@@ -1428,6 +1435,40 @@ describe('pinned rows survive the loaded window', () => {
     expect($pinnedSessionIds.get()).toEqual([])
   })
 
+  // MJXHRM-479. `deleteSessionLocal` is the one function six delete surfaces
+  // funnel through, so the "are you sure?" for a pinned chat lives here rather
+  // than in six menu rows. Unpinned deletes stay unconfirmed (desktop parity).
+  it('asks before deleting a PINNED session, and deletes nothing when told no', async () => {
+    $pinnedSessionIds.set(['stored-pin'])
+    $sessions.set([row('stored-pin', 'Pinned chat')])
+    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
+    // Seed the ANSWER against the outcome asserted: if the guard were missing,
+    // the row would be gone regardless of what confirm() said.
+    vi.mocked(confirm).mockResolvedValueOnce(false)
+
+    await deleteSessionLocal('stored-pin')
+
+    expect(confirm).toHaveBeenCalled()
+    expect(vi.mocked(confirm).mock.calls[0]?.[0]).toMatchObject({ destructive: true })
+    // Nothing moved: not the RPC, not the optimistic removal, not the pin.
+    expect(deleteSession).not.toHaveBeenCalled()
+    expect($sessions.get().map(entry => entry.id)).toEqual(['stored-pin'])
+    expect($pinnedSessionIds.get()).toEqual(['stored-pin'])
+  })
+
+  it('does NOT ask when the session is unpinned', async () => {
+    // Pin a DIFFERENT row, so "no pins at all" cannot be what makes this pass.
+    $pinnedSessionIds.set(['someone-else'])
+    $sessions.set([row('plain', 'Plain chat'), row('someone-else', 'Pinned chat')])
+    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
+
+    await deleteSessionLocal('plain')
+
+    expect(confirm).not.toHaveBeenCalled()
+    expect(deleteSession).toHaveBeenCalledWith('plain', undefined)
+    expect($sessions.get().map(entry => entry.id)).toEqual(['someone-else'])
+  })
+
   it('restores the pin when the delete RPC fails', async () => {
     $pinnedSessionIds.set(['stored-pin'])
     $sessions.set([row('stored-pin', 'Pinned chat')])
@@ -1546,5 +1587,37 @@ describe('messaging sources stay in sync with the icon table', () => {
   it('labels the new platforms rather than falling back to a capitalised id', () => {
     expect(messagingSourceLabel('photon')).toBe('Photon')
     expect(messagingSourceLabel('buzz')).toBe('Buzz')
+  })
+})
+
+// The keep-flag question asked before a DESTRUCTIVE action. It cannot be the
+// pin toggles' `$pinnedSessionIds.includes(sessionPinId(row))`: Settings →
+// Archived fetches its own rows and archived ids never enter `$sessions`, so
+// the local set is routinely empty for exactly the rows this decides about.
+describe('isSessionPinned', () => {
+  it('reads the backend keep flag off the row being acted on', () => {
+    // Fixture DISAGREES with the local set: nothing is pinned locally.
+    $pinnedSessionIds.set([])
+    expect(isSessionPinned({ id: 'a', pinned: true } as unknown as SessionInfo)).toBe(true)
+    expect(isSessionPinned({ id: 'a', pinned: false } as unknown as SessionInfo)).toBe(false)
+  })
+
+  it('keys the local set on the lineage root, not the row id', () => {
+    // The row is a post-compaction TIP and the backend never heard about the
+    // pin. Keyed on `id` this returns false and the delete goes unwarned.
+    $pinnedSessionIds.set(['root'])
+    expect(isSessionPinned({ _lineage_root_id: 'root', id: 'tip', pinned: false } as unknown as SessionInfo)).toBe(true)
+  })
+
+  it('does not fire on a pin belonging to another conversation', () => {
+    $pinnedSessionIds.set(['someone-else'])
+    expect(isSessionPinned({ _lineage_root_id: 'root', id: 'tip', pinned: false } as unknown as SessionInfo)).toBe(
+      false
+    )
+  })
+
+  it('treats a gateway that predates the column as unpinned', () => {
+    $pinnedSessionIds.set([])
+    expect(isSessionPinned({ id: 'a' } as unknown as SessionInfo)).toBe(false)
   })
 })

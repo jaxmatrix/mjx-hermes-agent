@@ -161,13 +161,10 @@ export {
   ModelMenuCloseContext,
   type ModelMenuController
 } from '@/app/shell/model-catalog-menu'
-/** The reasoning levels the app offers, and what an unset effort resolves to —
- *  so a plugin storing a thinking depth stores one the app agrees with. */
-export { DEFAULT_REASONING_EFFORT, REASONING_EFFORTS } from '@/app/shell/model-edit-submenu'
+export type { StatusbarItem } from '@/app/shell/statusbar-controls'
 
 // -- ui: the design language --------------------------------------------------
 
-export type { StatusbarItem } from '@/app/shell/statusbar-controls'
 /**
  * A layout TILE — what `ctx.registerTile(...)` takes. Prefer it over
  * `ctx.register({ area: PANES_AREA, … })`, which hands a tile's chrome and
@@ -235,10 +232,10 @@ export { Switch } from '@/components/ui/switch'
 export { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 export { Textarea } from '@/components/ui/textarea'
 export { Tip, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+export type { GatewayEventListener } from '@/contrib/events'
 
 // -- contracts ----------------------------------------------------------------
 
-export type { GatewayEventListener } from '@/contrib/events'
 export type {
   HermesPlugin,
   PluginContext,
@@ -279,21 +276,25 @@ export { triggerHaptic as haptic } from '@/lib/haptics'
 /** The app's icon set (RefreshCw, LayoutDashboard, Activity, …). */
 export * as icons from '@/lib/icons'
 export { type KeybindContribution, KEYBINDS_AREA } from '@/lib/keybinds/actions'
+export { formatModifierToken } from '@/lib/keybinds/combo'
 /** Model-id presentation, shared with the composer and the status bar:
  *  `displayModelName` for the friendly name, `modelDisplayParts` to split off a
  *  variant tag, `reasoningEffortLabel` to render a thinking depth ('high' →
  *  'High'). A plugin showing a model should never hand-roll these. */
 export { displayModelName, modelDisplayParts, reasoningEffortLabel } from '@/lib/model-status-label'
-
-export const PANES_AREA = 'panes'
 /** The app's deterministic identity color for a name (profiles, assignees,
  *  authors) + its translucent tag fill — so plugin-rendered identities read
  *  the same hue as everywhere else. */
 export { profileColor, profileColorSoft } from '@/lib/profile-color'
+
+export const PANES_AREA = 'panes'
 /** The shared client itself, for invalidation OUTSIDE React (e.g. a
  *  `ctx.socket` frame invalidating a query). Inside components keep using
  *  `useQueryClient`. */
 export { queryClient } from '@/lib/query-client'
+/** The reasoning levels the app offers, and what an unset effort resolves to —
+ *  so a plugin storing a thinking depth stores one the app agrees with. */
+export { DEFAULT_REASONING_EFFORT, REASONING_EFFORTS } from '@/lib/reasoning-effort'
 
 /** The app's own gateway-readiness evaluation (setup.status +
  *  setup.runtime_check, reconciled) — pass `host.request`. Don't hand-roll
@@ -302,7 +303,38 @@ export { evaluateRuntimeReadiness, type RuntimeReadinessResult } from '@/lib/run
 /** Canonical time formatting — every timestamp/age string in the app comes
  *  from these (localized `Intl` under the hood). Don't hand-roll "Xm ago". */
 export { coarseElapsed, fmtDateTime, fmtDayTime, relativeTime } from '@/lib/time'
+/** The transcript as a contribution area: register a named `::directive{...}`
+ *  and the model can render your component inline in assistant messages. */
+export {
+  TRANSCRIPT_DIRECTIVE_AREA,
+  type TranscriptDirectiveContribution,
+  type TranscriptDirectiveProps
+} from '@/lib/transcript-directives'
 export { cn } from '@/lib/utils'
+/** Live accent override — set a hex and the ACTIVE theme repaints with its
+ *  accent family re-seeded from it (see `retintTheme`); `null` restores the
+ *  authored palette. Deliberately not persisted: it is an authoring knob, not
+ *  a setting, so a plugin that sets it must clear it on dispose. */
+export { $accentOverride, setAccentOverride } from '@/themes/accent-override'
+/** OKLCH colour maths, for anything deriving a palette rather than hardcoding
+ *  one: perceptual conversion, the sRGB gamut boundary, WCAG contrast, and
+ *  hue-stable blending. */
+export {
+  contrastRatio,
+  hexToOklch,
+  hueDelta,
+  maxChroma,
+  mixOklab,
+  normalizeHex,
+  type Oklch,
+  oklchToHex,
+  oklchToSrgb255,
+  readableOn
+} from '@/themes/color'
+/** The painted theme, its name, and the appearance it resolved to. */
+export { useTheme } from '@/themes/context'
+export { retintTheme, themeHue } from '@/themes/retint'
+export type { DesktopTheme, DesktopThemeColors } from '@/themes/types'
 export { THEMES_AREA } from '@/themes/user-themes'
 export type { RpcEvent, StatusResponse } from '@/types/hermes'
 /** Subscribe a component to a `host.state` atom. */

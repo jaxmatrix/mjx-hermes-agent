@@ -1,15 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog'
 import { Tip } from '@/components/ui/tooltip'
 import { deleteSession, getDefaultCwd, listSessions, setSessionArchived } from '@/hermes'
 import { useI18n } from '@/i18n'
@@ -17,11 +8,12 @@ import { pathLeaf } from '@/lib/display-path'
 import { Archive, ArchiveOff, FolderOpen, Loader2, Trash } from '@/lib/icons'
 import { IS_DESKTOP } from '@/lib/platform'
 import { useStore } from '@/store/atom'
+import { confirm } from '@/store/confirm'
 import { $defaultProjectDir, setDefaultProjectDir } from '@/store/default-project-dir'
 import { useDisplayPath } from '@/store/display-home'
 import { notify, notifyError } from '@/store/notifications'
 import { pickProjectFolder } from '@/store/projects'
-import { refreshSessions } from '@/store/session'
+import { isSessionPinned, refreshSessions } from '@/store/session'
 import type { SessionInfo } from '@/types/hermes'
 
 import { EmptyState, ListRow, SectionHeading, SettingsContent, SettingsSkeleton } from './primitives'
@@ -125,7 +117,6 @@ export function ArchivedSection() {
   const [sessions, setSessions] = useState<SessionInfo[] | null>(null)
   const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState<null | string>(null)
-  const [confirm, setConfirm] = useState<SessionInfo | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -173,13 +164,28 @@ export function ArchivedSection() {
     }
   }
 
-  const remove = async (id: string) => {
-    setConfirm(null)
-    setBusy(id)
+  const remove = async (session: SessionInfo) => {
+    // A pin is a durable "keep" flag — the backend's bulk prune/archive sweeps
+    // spare pinned rows on purpose, so a delete that goes straight through one
+    // is overriding an instruction the user gave. Say so, in the same question.
+    const body = s.deleteConfirm(sessionTitle(session))
+
+    const ok = await confirm({
+      confirmLabel: s.deletePermanently,
+      description: isSessionPinned(session) ? `${body} ${s.deletePinnedWarning}` : body,
+      destructive: true,
+      title: s.deletePermanently
+    })
+
+    if (!ok) {
+      return
+    }
+
+    setBusy(session.id)
 
     try {
-      await deleteSession(id)
-      drop(id)
+      await deleteSession(session.id)
+      drop(session.id)
     } catch (err) {
       notifyError(err, s.deleteFailed)
     } finally {
@@ -238,7 +244,7 @@ export function ArchivedSection() {
                           aria-label={s.deletePermanently}
                           className="text-muted-foreground hover:text-destructive"
                           disabled={busy === session.id}
-                          onClick={() => setConfirm(session)}
+                          onClick={() => void remove(session)}
                           size="icon-sm"
                           type="button"
                           variant="ghost"
@@ -257,23 +263,6 @@ export function ArchivedSection() {
           })}
         </div>
       )}
-
-      <Dialog onOpenChange={open => !open && setConfirm(null)} open={confirm !== null}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{s.deletePermanently}</DialogTitle>
-            <DialogDescription>{confirm ? s.deleteConfirm(sessionTitle(confirm)) : ''}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="ghost">{t.common.cancel}</Button>
-            </DialogClose>
-            <Button onClick={() => confirm && void remove(confirm.id)} variant="destructive">
-              {s.deletePermanently}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </SettingsContent>
   )
 }

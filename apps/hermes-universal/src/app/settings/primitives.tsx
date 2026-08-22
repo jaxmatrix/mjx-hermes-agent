@@ -74,6 +74,7 @@ export function ListRow({
   hint,
   action,
   below,
+  id,
   wide = false,
   className
 }: {
@@ -82,13 +83,16 @@ export function ListRow({
   hint?: ReactNode
   action?: ReactNode
   below?: ReactNode
+  /** DOM id for ⌘K deep links — `settingRowElementId(...)` from settings-search.
+   *  Carrying one also opts the row into the scroll offset + flash target. */
+  id?: string
   wide?: boolean
   className?: string
 }) {
   return (
     // Container-queried (not viewport): the label/control split keys on the row's
     // own pane width, so a narrow detail column stacks instead of squishing.
-    <div className={cn('@container', className)}>
+    <div className={cn('@container', id && 'scroll-mt-6 rounded-lg', className)} id={id}>
       <div
         className={cn(
           'grid gap-3 py-3',

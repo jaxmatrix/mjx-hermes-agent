@@ -18,11 +18,14 @@ import { createContext, type ReactNode, useCallback, useContext, useEffect, useM
 import { $registryVersion } from '@/contrib/registry'
 import { matchesQuery, useMediaQuery } from '@/hooks/use-media-query'
 import { Codecs, persistentAtom } from '@/lib/persisted'
+import { atom } from '@/store/atom'
 import { useStore } from '@/store/atom'
 
+import { $accentOverride } from './accent-override'
 import { $backendThemes, $pendingSkinApply } from './backend-sync'
-import { hexToRgb, mix, readableOn } from './color'
+import { harmonize, hexToRgb, mix, readableOn } from './color'
 import { BUILTIN_THEME_LIST, DEFAULT_SKIN_NAME, DEFAULT_TYPOGRAPHY, nousTheme } from './presets'
+import { retintTheme } from './retint'
 import type { DesktopTheme, DesktopThemeColors } from './types'
 import { $userThemes, listAllThemes, resolveTheme } from './user-themes'
 
@@ -38,6 +41,24 @@ export type ThemeMode = 'light' | 'dark' | 'system'
 // component should go through `useTheme()` instead.
 export const $skin = persistentAtom<string>('hermes.skin', DEFAULT_SKIN_NAME, Codecs.text)
 export const $mode = persistentAtom<string>('hermes.mode', 'system', Codecs.text)
+
+/**
+ * A theme the app is PAINTING but has not adopted — what the ⌘K highlight
+ * shows you while you arrow through the theme list.
+ *
+ * Deliberately a plain atom next to two persistentAtoms: a preview must leave
+ * nothing behind. Nothing writes `$skin`/`$mode` until a row is actually chosen,
+ * so a palette dismissed mid-browse restores the committed look with no undo.
+ */
+export const $themePreview = atom<null | { mode: 'light' | 'dark'; name: string }>(null)
+
+export function previewTheme(name: string, mode: 'light' | 'dark'): void {
+  $themePreview.set({ mode, name })
+}
+
+export function clearThemePreview(): void {
+  $themePreview.set(null)
+}
 
 const resolveMode = (mode: ThemeMode, systemDark = matchesQuery('(prefers-color-scheme: dark)')): 'light' | 'dark' =>
   mode === 'system' ? (systemDark ? 'dark' : 'light') : mode
@@ -165,6 +186,11 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark') {
     '--theme-secondary': c.secondary,
     '--theme-accent-soft': c.accent,
     '--theme-midground': midground,
+    // Semantic success, bent toward the accent so it settles into the palette
+    // instead of clashing with it. A green accent barely moves it (see
+    // `harmonize`); a blue one turns the sidebar's finished dots teal rather
+    // than leaving eight emerald spots fighting the theme.
+    '--ui-success': harmonize('#10b981', midground, 0.25),
     '--theme-warm': c.primary,
     '--theme-background-seed': c.background,
     '--theme-sidebar-seed': c.sidebarBackground ?? c.background,
@@ -218,6 +244,9 @@ interface ThemeContextValue {
   availableThemes: Array<{ name: string; label: string; description: string }>
   setTheme: (name: string) => void
   setMode: (mode: ThemeMode) => void
+  /** Paint `name`/`mode` without adopting it (⌘K highlight preview). */
+  previewTheme: (name: string, mode: 'light' | 'dark') => void
+  clearThemePreview: () => void
 }
 
 const SKIN_LIST = BUILTIN_THEME_LIST.map(({ name, label, description }) => ({ name, label, description }))
@@ -230,7 +259,9 @@ const ThemeContext = createContext<ThemeContextValue>({
   renderedMode: 'light',
   availableThemes: SKIN_LIST,
   setTheme: () => {},
-  setMode: () => {}
+  setMode: () => {},
+  previewTheme: () => {},
+  clearThemePreview: () => {}
 })
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -258,22 +289,49 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const systemDark = useMediaQuery('(prefers-color-scheme: dark)')
   const resolvedMode = resolveMode(mode, systemDark)
 
+  // A preview overrides what is PAINTED but never what is reported: `themeName`
+  // and `mode` stay the committed choice, so the pickers keep their check on the
+  // real selection while the browse is in flight.
+  const preview = useStore($themePreview)
+  const paintedName = preview?.name ?? themeName
+  const paintedMode = preview?.mode ?? resolvedMode
+
   const activeTheme = useMemo(
-    () => deriveTheme(themeName, resolvedMode),
+    () => deriveTheme(paintedName, paintedMode),
     // deriveTheme resolves its seed through the merged registry, so the theme
     // stores are its reactivity too — an in-place palette edit of the ACTIVE
     // skin (live theme authoring) must repaint, not just a name switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [themeName, resolvedMode, userThemes, backendThemes, registryVersion]
+    [paintedName, paintedMode, userThemes, backendThemes, registryVersion]
+  )
+
+  // Accent retint. `null` — the state the app boots in, and the only one it is
+  // ever in unless a plugin moves it — returns the theme untouched, and
+  // retintTheme is an identity when the seed already matches, so this costs
+  // nothing until it is actually used. Never persisted: see accent-override.ts.
+  const accentOverride = useStore($accentOverride)
+
+  const paintedTheme = useMemo(
+    () => (accentOverride === null ? activeTheme : retintTheme(activeTheme, accentOverride)),
+    [activeTheme, accentOverride]
   )
 
   // What actually gets painted (matches the `.dark` class applyTheme toggles).
-  const renderedMode = useMemo(() => renderedModeFor(activeTheme.colors, resolvedMode), [activeTheme, resolvedMode])
+  const renderedMode = useMemo(() => renderedModeFor(paintedTheme.colors, paintedMode), [paintedTheme, paintedMode])
 
-  useEffect(() => applyTheme(activeTheme, resolvedMode), [activeTheme, resolvedMode])
+  useEffect(() => applyTheme(paintedTheme, paintedMode), [paintedTheme, paintedMode])
 
-  const setTheme = useCallback((name: string) => $skin.set(normalizeSkin(name)), [])
-  const setMode = useCallback((next: ThemeMode) => $mode.set(next), [])
+  // Committing drops the preview: leaving it up would keep painting the row the
+  // highlight happens to be on rather than the one that was just chosen.
+  const setTheme = useCallback((name: string) => {
+    clearThemePreview()
+    $skin.set(normalizeSkin(name))
+  }, [])
+
+  const setMode = useCallback((next: ThemeMode) => {
+    clearThemePreview()
+    $mode.set(next)
+  }, [])
 
   // Drain a backend-driven skin switch (Hermes authoring/activating a skin from a
   // prompt, or `/skin` on another surface). setTheme persists it, so the choice
@@ -288,8 +346,19 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [pendingSkin, setTheme])
 
   const value = useMemo<ThemeContextValue>(
-    () => ({ theme: activeTheme, themeName, mode, resolvedMode, renderedMode, availableThemes, setTheme, setMode }),
-    [activeTheme, themeName, mode, resolvedMode, renderedMode, availableThemes, setTheme, setMode]
+    () => ({
+      theme: paintedTheme,
+      themeName,
+      mode,
+      resolvedMode,
+      renderedMode,
+      availableThemes,
+      setTheme,
+      setMode,
+      previewTheme,
+      clearThemePreview
+    }),
+    [paintedTheme, themeName, mode, resolvedMode, renderedMode, availableThemes, setTheme, setMode]
   )
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>

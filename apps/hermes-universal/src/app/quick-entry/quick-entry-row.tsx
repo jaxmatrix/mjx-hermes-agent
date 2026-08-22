@@ -1,4 +1,5 @@
 import { ListRow } from '@/app/settings/primitives'
+import { settingRowElementId } from '@/app/settings/settings-search'
 import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
@@ -47,6 +48,7 @@ export function QuickEntryRow() {
         />
       }
       description={`${copy.settingsDesc} ${copy.shortcutHint}`}
+      id={settingRowElementId('advanced.quick-entry')}
       title={copy.settingsTitle}
     />
   )

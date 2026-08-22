@@ -4,8 +4,10 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { GatewayRpcError } from '@/gateway/rpc-error'
 import { I18nProvider } from '@/i18n'
 import type * as ChatStore from '@/store/chat'
+import type * as Notifications from '@/store/notifications'
 
 // The live panel asks assistant-ui whether its message is still streaming. There
 // is no runtime in a unit test, so drive it from here and leave the rest of the
@@ -29,12 +31,23 @@ vi.mock('@assistant-ui/react', async importActual => {
 vi.mock('@/store/chat', async importActual => {
   const actual = await importActual<typeof ChatStore>()
 
-  return { ...actual, respondClarify: vi.fn().mockResolvedValue('delivered') }
+  return {
+    ...actual,
+    respondClarify: vi.fn().mockResolvedValue('delivered'),
+    respondClarifyBatch: vi.fn().mockResolvedValue({ outcome: 'delivered', remaining: [] })
+  }
+})
+
+vi.mock('@/store/notifications', async importActual => {
+  const actual = await importActual<typeof Notifications>()
+
+  return { ...actual, notify: vi.fn(), notifyError: vi.fn() }
 })
 
 import { onComposerInsertRequest } from '@/app/chat/composer/focus'
 import { WIDGET_SHELL_CLASS } from '@/components/chat/widget-shell'
-import { respondClarify } from '@/store/chat'
+import { respondClarify, respondClarifyBatch } from '@/store/chat'
+import { notifyError } from '@/store/notifications'
 import { setSessionClarify } from '@/store/prompts'
 import { seedActiveSession } from '@/test-sessions'
 
@@ -47,6 +60,9 @@ afterEach(() => {
   aui.messageRunning = true
   vi.mocked(respondClarify).mockClear()
   vi.mocked(respondClarify).mockResolvedValue('delivered')
+  vi.mocked(respondClarifyBatch).mockClear()
+  vi.mocked(respondClarifyBatch).mockResolvedValue({ outcome: 'delivered', remaining: [] })
+  vi.mocked(notifyError).mockClear()
 })
 
 function renderClarify(ui: ReactNode) {
@@ -562,5 +578,256 @@ describe('ClarifyTool live gate', () => {
 
     expect(screen.queryByRole('button', { name: /eu/ })).toBeNull()
     expect(document.querySelector('[data-clarify-choices]')).toBeNull()
+  })
+})
+
+/**
+ * MJXHRM-458. The batch card. Its fixtures are shaped like the wire — a
+ * `questions[]` with no top-level `question` — because that is exactly the
+ * shape the old code could not see.
+ */
+describe('ClarifyTool batch view', () => {
+  const questions = [
+    { qid: 'q0', question: 'Pick a batch drink?', choices: ['Coffee', 'Tea'], multiSelect: false },
+    { qid: 'q1', question: 'Pick a batch time?', choices: ['Morning', 'Night'], multiSelect: false }
+  ]
+
+  const seedBatch = (extra: Record<string, unknown> = {}) =>
+    setSessionClarify('sess-1', { requestId: 'request-batch', question: '', choices: null, questions, ...extra })
+
+  const renderBatch = (id = 'clarify-batch') => renderClarify(<ClarifyTool {...clarifyProps({}, undefined, id)} />)
+
+  const confirmButton = () => screen.getByRole('button', { name: 'Confirm and continue' })
+
+  it('renders every question at once, in one card', () => {
+    seedBatch()
+    renderBatch()
+
+    expect(document.querySelectorAll('form[data-clarify-batch]')).toHaveLength(1)
+    expect(document.querySelector('form[data-clarify-batch]')?.getAttribute('data-clarify-batch')).toBe('2')
+    expect(screen.getByText('Pick a batch drink?')).toBeTruthy()
+    expect(screen.getByText('Pick a batch time?')).toBeTruthy()
+    expect(screen.getByText('0 of 2 answered')).toBeTruthy()
+  })
+
+  // The confirm sends every lock, so enabling it early completes the batch with
+  // a blank for a question the user never reached.
+  it('keeps confirm disabled until every question is answered', () => {
+    seedBatch()
+    renderBatch()
+
+    expect(confirmButton().hasAttribute('disabled')).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: /Coffee/ }))
+    expect(confirmButton().hasAttribute('disabled')).toBe(true)
+    expect(screen.getByText('1 of 2 answered')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /Night/ }))
+    expect(confirmButton().hasAttribute('disabled')).toBe(false)
+    expect(screen.getByText('2 of 2 answered')).toBeTruthy()
+  })
+
+  it('locks each answer under its own question_id on one confirm', async () => {
+    seedBatch()
+    renderBatch()
+
+    fireEvent.click(screen.getByRole('button', { name: /Tea/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Morning/ }))
+    fireEvent.click(confirmButton())
+
+    await act(async () => {
+      await vi.mocked(respondClarifyBatch).mock.results.at(-1)?.value
+    })
+
+    expect(vi.mocked(respondClarifyBatch).mock.calls[0]?.[0]).toEqual([
+      { questionId: 'q0', answer: 'Tea' },
+      { questionId: 'q1', answer: 'Morning' }
+    ])
+  })
+
+  // Skip is the batch's only exit that is not "answer everything": the gateway
+  // cancels the WHOLE request when `clarify.respond` carries no question_id,
+  // which is exactly what `respondClarify` sends.
+  it('cancels the whole batch on Skip', async () => {
+    seedBatch()
+    renderBatch()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
+    await settleRespond()
+
+    expect(vi.mocked(respondClarify).mock.calls[0]).toEqual(['', 'sess-1'])
+    expect(vi.mocked(respondClarifyBatch)).not.toHaveBeenCalled()
+  })
+
+  // A staged answer is not a locked one: the user can still change their mind
+  // right up to the confirm.
+  it('keeps a staged answer editable before confirm', () => {
+    seedBatch()
+    renderBatch()
+
+    fireEvent.click(screen.getByRole('button', { name: /Coffee/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Tea/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Morning/ }))
+    fireEvent.click(confirmButton())
+
+    expect(vi.mocked(respondClarifyBatch).mock.calls[0]?.[0]).toEqual([
+      { questionId: 'q0', answer: 'Tea' },
+      { questionId: 'q1', answer: 'Morning' }
+    ])
+  })
+
+  // The card has no per-question skip — Skip cancels the whole batch — so a
+  // textbox the user typed in and then cleared must not satisfy the confirm
+  // gate, or the agent gets a blank nobody meant to give it.
+  it('does not count a question that was touched and left blank', () => {
+    seedBatch()
+    renderBatch('clarify-batch-blank')
+
+    fireEvent.click(screen.getByRole('button', { name: /Coffee/ }))
+
+    // The SECOND question's box — the first already holds a picked choice.
+    const otherBox = within(document.querySelector('[data-clarify-question="q1"]') as HTMLElement).getByPlaceholderText(
+      'Other (type your answer)'
+    )
+
+    fireEvent.change(otherBox, { target: { value: 'later' } })
+    expect(confirmButton().hasAttribute('disabled')).toBe(false)
+
+    fireEvent.change(otherBox, { target: { value: '   ' } })
+    expect(screen.getByText('1 of 2 answered')).toBeTruthy()
+    expect(confirmButton().hasAttribute('disabled')).toBe(true)
+  })
+
+  // The reconnect half: the gateway replays what it already locked, and the
+  // card has to come back holding the user's own work — still editable.
+  it('stages the answers a reconnect replayed', () => {
+    seedBatch({ lockedAnswers: { q0: 'Coffee' } })
+    renderBatch('clarify-batch-locked')
+
+    expect(screen.getByText('1 of 2 answered')).toBeTruthy()
+    expect(screen.getAllByText('Answered')).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: /Night/ }))
+    fireEvent.click(confirmButton())
+
+    expect(vi.mocked(respondClarifyBatch).mock.calls[0]?.[0]).toEqual([
+      { questionId: 'q0', answer: 'Coffee' },
+      { questionId: 'q1', answer: 'Night' }
+    ])
+  })
+
+  it('sends a multi-select question as the JSON array the tool parses', () => {
+    setSessionClarify('sess-1', {
+      requestId: 'request-multi',
+      question: '',
+      choices: null,
+      questions: [{ qid: 'q0', question: 'Which files?', choices: ['a.ts', 'b.ts'], multiSelect: true }]
+    })
+    renderBatch('clarify-batch-multi')
+
+    fireEvent.click(screen.getByRole('button', { name: /a\.ts/ }))
+    fireEvent.click(screen.getByRole('button', { name: /b\.ts/ }))
+    fireEvent.click(confirmButton())
+
+    expect(vi.mocked(respondClarifyBatch).mock.calls[0]?.[0]).toEqual([
+      { questionId: 'q0', answer: JSON.stringify(['a.ts', 'b.ts']) }
+    ])
+  })
+
+  /**
+   * `4002` is the one failure that is not "the send broke": the gateway is
+   * alive and so is the batch, this `question_id` just is not part of it (a
+   * card left over from an earlier batch, say). Reporting it as a transport
+   * failure sends the user retrying a lock that can never be accepted.
+   */
+  it('names an unknown question_id instead of blaming the transport', async () => {
+    seedBatch()
+    renderBatch('clarify-batch-4002')
+    vi.mocked(respondClarifyBatch).mockRejectedValueOnce(new GatewayRpcError('unknown question_id', 4002))
+
+    fireEvent.click(screen.getByRole('button', { name: /Coffee/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Morning/ }))
+    fireEvent.click(confirmButton())
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(vi.mocked(notifyError).mock.calls[0]?.[1]).toBe(
+      'The agent is no longer asking that question — answer the ones still shown'
+    )
+  })
+
+  it('falls back to the generic message for any other failure', async () => {
+    seedBatch()
+    renderBatch('clarify-batch-offline')
+    vi.mocked(respondClarifyBatch).mockRejectedValueOnce(new Error('offline'))
+
+    fireEvent.click(screen.getByRole('button', { name: /Coffee/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Morning/ }))
+    fireEvent.click(confirmButton())
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(vi.mocked(notifyError).mock.calls[0]?.[1]).toBe('Could not send clarify response')
+  })
+
+  // `_batch_result` writes an empty user_response for a question the user
+  // skipped AND for one a timeout never reached. Both mean the agent went on
+  // without it, and the single-question card already calls that "Skipped".
+  it('lists every question when it settles, blanks as Skipped', () => {
+    renderClarify(
+      <ClarifyTool
+        {...clarifyProps(
+          {},
+          JSON.stringify({
+            responses: [
+              { question: 'Pick a batch drink?', user_response: 'Tea' },
+              { question: 'Pick a batch time?', user_response: '' }
+            ]
+          }),
+          'clarify-batch-settled'
+        )}
+      />
+    )
+
+    expect(screen.getByText('Pick a batch drink?')).toBeTruthy()
+    expect(screen.getByText('Tea')).toBeTruthy()
+    expect(screen.getByText('Pick a batch time?')).toBeTruthy()
+    expect(screen.getByText('Skipped')).toBeTruthy()
+  })
+})
+
+/**
+ * The recommendation label is not a field — `mark_recommended` bakes it into
+ * the first choice string. Rendering it as part of the option made the agent's
+ * hint read like part of the answer.
+ */
+describe('ClarifyTool recommended choice', () => {
+  it('sets the label apart from the option and still answers verbatim', async () => {
+    setSessionClarify('sess-1', {
+      requestId: 'rec-1',
+      question: 'Which branch?',
+      choices: ['staging (Recommended)', 'prod']
+    })
+
+    renderClarify(<ClarifyTool {...clarifyProps({}, undefined, 'clarify-recommended')} />)
+
+    const option = screen.getByRole('button', { name: /staging/ })
+
+    // The option and the label are separate nodes, not one run of text.
+    expect(within(option).getByText('(Recommended)')).toBeTruthy()
+    expect(within(option).getByText('staging', { exact: false })).toBeTruthy()
+
+    fireEvent.click(option)
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
+    await settleRespond()
+
+    // Verbatim: `strip_recommended` takes the label off server-side, and a
+    // client that stripped it here would send an answer the tool cannot map
+    // back to the choice it offered.
+    expect(vi.mocked(respondClarify).mock.calls[0]?.[0]).toBe('staging (Recommended)')
   })
 })

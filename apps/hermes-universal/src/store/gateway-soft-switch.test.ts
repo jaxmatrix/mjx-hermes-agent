@@ -38,6 +38,10 @@ vi.mock('@/store/session', async () => {
   return {
     $activeStoredSessionId: atom<null | string>(null),
     $messagingSessions: atom<unknown[]>([]),
+    // MJXHRM-462 made `store/sidebar-archive`'s `$archivedSessions` a derived
+    // atom over this one, and sidebar-archive is evaluated at module scope from
+    // this graph — so omitting it fails the whole FILE to import, not one case.
+    $removedSessionIds: atom<ReadonlySet<string>>(new Set()),
     $sessions: atom<unknown[]>([]),
     $sessionSearch: atom<unknown[]>([]),
     $sessionsLoading: atom(false),

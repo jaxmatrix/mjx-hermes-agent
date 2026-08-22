@@ -158,6 +158,14 @@ export const en: Translations = {
       backgroundDoneTitle: 'Background task finished',
       backgroundFailedTitle: 'Background task failed',
       creditsTitle: 'Credits'
+    },
+    mcp: {
+      needsAuthTitle: 'MCP server needs re-authentication',
+      needsAuthMessage: name => `${name} MCP needs re-authentication.`,
+      errorTitle: 'MCP server unreachable',
+      errorMessage: name => `${name} MCP failed its health check.`,
+      signIn: 'Sign in',
+      view: 'View'
     }
   },
 
@@ -175,6 +183,18 @@ export const en: Translations = {
       `Software rendering active — remote display detected (${reason}). GPU acceleration is disabled to prevent flickering.`
   },
 
+  resourcePressure: {
+    diskCritical: "Your agent's disk is almost full. New messages, memories, and settings may fail to save.",
+    diskElevated: "Your agent's disk is filling up. Consider clearing old sessions or expanding its storage.",
+    diskFree: mb => ` (${mb} MB free)`,
+    dismiss: 'Dismiss warning',
+    memoryCritical:
+      'Your agent is almost out of memory and may restart. Consider closing idle sessions or upgrading its memory.',
+    memoryElevated: 'Your agent is running low on memory.',
+    oomRestart:
+      'Your agent restarted unexpectedly, most likely because it ran out of memory. Long sessions and many concurrent tasks increase memory use.'
+  },
+
   titlebar: {
     hideSidebar: 'Hide sidebar',
     showSidebar: 'Show sidebar',
@@ -184,6 +204,7 @@ export const en: Translations = {
     swapSidebarSidesTitle: 'Swap the sessions and file browser sides',
     hideRightSidebar: 'Hide right sidebar',
     showRightSidebar: 'Show right sidebar',
+    unreadSessions: count => (count === 1 ? '1 unread session' : `${count} unread sessions`),
     muteHaptics: 'Mute haptics',
     unmuteHaptics: 'Unmute haptics',
     openSettings: 'Open settings',
@@ -259,6 +280,7 @@ export const en: Translations = {
       'session.slot.9': 'Switch to recent session 9',
       'session.focusSearch': 'Search sessions',
       'session.togglePin': 'Pin / unpin current session',
+      'session.archive': 'Archive current session',
       'workspace.newWorktree': 'New worktree',
       'workspace.openFolder': 'Open folder as project',
       'view.toggleHud': 'Toggle HUD window',
@@ -330,6 +352,10 @@ export const en: Translations = {
   },
 
   settings: {
+    profileScope: {
+      appliesTo: 'Applies to',
+      editsProfile: profile => `Changes on this page apply to the “${profile}” profile.`
+    },
     closeSettings: 'Close settings',
     exportConfig: 'Export config',
     importConfig: 'Import config',
@@ -500,6 +526,8 @@ export const en: Translations = {
       toolViewDesc: 'Product hides raw tool payloads; Technical shows full input/output.',
       backdropTitle: 'Chat Backdrop',
       backdropDesc: 'The faint statue image behind the conversation.',
+      introSplashTitle: 'Intro Splash',
+      introSplashDesc: 'The wordmark and tagline shown on a new, empty chat.',
       reactionsTitle: 'Message Reactions',
       reactionsDesc: 'iMessage-style emoji tapbacks — react to messages, and Hermes can react to yours.',
       uiScaleTitle: 'UI Scale',
@@ -648,7 +676,12 @@ export const en: Translations = {
       backgroundModeTitle: 'Keep running in the background',
       backgroundModeDesc:
         'Closing the window puts Hermes away instead of quitting it, so a running turn keeps streaming. Use the tray icon to bring it back or to quit.',
-      backgroundModeFailed: "Couldn't keep Hermes running in the background"
+      backgroundModeFailed: "Couldn't keep Hermes running in the background",
+      attachmentSizeTitle: 'Max attachment / preview size',
+      attachmentSizeDesc:
+        'How big a local file Hermes will read into memory to attach or preview, in MB. Default is 16. The whole file is base64-buffered, so setting this high can make a phone kill the app mid-attach.',
+      attachmentSizeUnit: 'MB',
+      attachmentSizeLabel: 'Max attachment / preview size in megabytes'
     },
     credentials: {
       pasteKey: 'Paste key',
@@ -915,7 +948,29 @@ export const en: Translations = {
       unsavedConnect: 'Unsaved — save mcp.json to connect.',
       enableTool: tool => `Enable ${tool}`,
       disableTool: tool => `Disable ${tool}`,
-      noOutput: 'No output yet.'
+      noOutput: 'No output yet.',
+      importButton: 'Import',
+      importPlaceholder: 'Paste an mcp.json snippet, npx/docker command, claude mcp add line, URL, or Cursor link…',
+      importNoMatch: 'No server config recognized in the pasted text.',
+      importConfirm: 'Add to mcp.json',
+      importConfirmMany: count => `Add ${count} servers to mcp.json`,
+      deepLinkTitle: 'Add MCP server?',
+      deepLinkDescription:
+        'A link asked to add this MCP server to Hermes. Review the exact configuration below — it comes from the link, not from Hermes.',
+      deepLinkStdioWarning:
+        'This server runs a local process on your machine with the command shown below. Only continue if you trust its source.',
+      deepLinkConfirm: 'Add server',
+      deepLinkNameInvalid: 'Names use 1-64 letters, digits, dots, dashes, or underscores.',
+      deepLinkNameConflict: name => `A server named ${name} already exists — choose a different name or cancel.`,
+      deepLinkErrorTitle: 'MCP install link rejected',
+      deepLinkErrorName: 'The link\u2019s server name is missing or invalid.',
+      deepLinkErrorConfig: 'The link\u2019s config is not valid base64-encoded JSON.',
+      deepLinkErrorShape: 'The config must be a JSON object with a string `url` or `command` field.',
+      deepLinkErrorUrl: 'Only http:// and https:// server URLs are allowed.',
+      deepLinkErrorTooLarge: 'The config payload exceeds the 32KB limit.',
+      costTokens: tokens => `~${tokens} tok/call`,
+      usage30d: uses => `${uses} uses/30d`,
+      unusedPill: 'unused'
     },
     model: {
       loading: 'Loading model configuration...',
@@ -1030,6 +1085,8 @@ export const en: Translations = {
       messages: count => `${count} ${count === 1 ? 'message' : 'messages'}`,
       restored: 'Restored',
       deleteConfirm: title => `Permanently delete "${title}"? This cannot be undone.`,
+      deletePinnedWarning:
+        'This chat is pinned. Pinning marks it as kept — bulk cleanups skip it, but deleting it here is permanent.',
       defaultDirTitle: 'Default project directory',
       defaultDirDesc:
         'New sessions start in this folder unless you pick another. Leave it unset to use your home directory.',
@@ -1187,6 +1244,15 @@ export const en: Translations = {
       noCatalog: 'No catalog entries available.',
       catalogFailed: 'Catalog failed to load'
     },
+    project: {
+      trust: 'Trust this repo',
+      untrust: 'Stop trusting',
+      trustedCount: count => `${count} project skill${count === 1 ? '' : 's'} loaded from this repo`,
+      untrustedCount: count => `${count} skill${count === 1 ? '' : 's'} in this repo are not loaded until you trust it`,
+      quarantinedCount: count => `${count} blocked by the security scan`,
+      disabled: 'Project skill discovery is off for this profile.',
+      title: 'Project skills'
+    },
     hub: {
       searchPlaceholder: 'Search the skill hub',
       search: 'Search',
@@ -1225,6 +1291,10 @@ export const en: Translations = {
       policyBlock: 'Install blocked by policy',
       findings: count => `${count} finding${count === 1 ? '' : 's'}`,
       noFindings: 'No security findings.',
+      advisory: 'SkillEvaluator (advisory)',
+      advisoryPassed: 'no issues',
+      advisoryFlagged: count => `${count} issue${count === 1 ? '' : 's'} flagged`,
+      advisoryIncomplete: count => `${count} check${count === 1 ? '' : 's'} could not run`,
       installStarted: name => `Installing ${name}...`,
       uninstallStarted: name => `Uninstalling ${name}...`,
       updateStarted: 'Updating installed skills...',
@@ -1303,7 +1373,17 @@ export const en: Translations = {
     steerFailed: 'Could not reach the gateway',
     steerGone: 'That subagent is no longer running',
     steerNotOwned: 'That subagent belongs to another chat — steer it from there',
-    steerMissed: (text: string) => `Steer never landed — this subagent finished first: ${text}`
+    steerMissed: (text: string) => `Steer never landed — this subagent finished first: ${text}`,
+    stop: 'Stop',
+    stopRequested: 'Stopping — its partial result still comes back',
+    budgetWrapup: 'Told to wrap up — it ran out of time, not of work',
+    truncatedNotice: 'Ran out of steps — this summary is partial',
+    worktree: 'Worktree',
+    worktreeCommits: (count: number) => `${count} commits`,
+    worktreeDirty: 'uncommitted changes',
+    worktreeKept: 'kept for review',
+    worktreePruned: 'removed — it held no work',
+    worktreeUnknown: 'state unknown — inspect it before assuming no work'
   },
 
   commandCenter: {
@@ -1382,6 +1462,9 @@ export const en: Translations = {
     },
     commands: 'Commands',
     settingsFields: 'Settings fields',
+    settingsPreferences: 'Preferences',
+    settingsSearchPlaceholder: 'Search settings…',
+    settingsSearchPill: 'Search settings',
     mcpServers: 'MCP servers',
     archivedChats: 'Archived chats',
     sections: { maintenance: 'Maintenance', sessions: 'Sessions', system: 'System', usage: 'Usage' },
@@ -1627,6 +1710,34 @@ export const en: Translations = {
   },
 
   profiles: {
+    editor: {
+      title: 'Configuration',
+      loading: 'Loading configuration...',
+      loadFailed: 'Failed to load the profile configuration',
+      descriptionLabel: 'Description',
+      descriptionPlaceholder: 'What is this agent for?',
+      toolsetsLabel: 'Toolsets',
+      toolsetsUnpinned: 'No toolset list is pinned, so every toolset is on. Turning one off pins the rest.',
+      mcpLabel: 'MCP servers',
+      noneInstalled: 'None installed.',
+      save: 'Save configuration',
+      saved: 'Profile configuration saved',
+      savedPartial: 'Some changes were not applied',
+      saveFailed: 'Failed to save the profile configuration',
+      avatarUpload: 'Upload avatar',
+      avatarReplace: 'Replace avatar',
+      avatarRemove: 'Remove',
+      avatarHint: 'PNG, JPEG or WebP, up to 2 MB. Stored on the gateway, so every device sees it.',
+      avatarSaved: 'Avatar saved',
+      avatarFailed: 'Failed to update the avatar',
+      avatarRejected: 'Unsupported image format',
+      avatarTooLarge: 'That image is too large',
+      working: 'Working',
+      shareSignIn: 'Share sign-in with this gateway',
+      shareSignInHint:
+        'Reads OAuth tokens from the main profile instead of copying them. A copy forks token state, and the first refresh on either side signs the other out.',
+      noCredentials: 'Created without credentials — set a provider key before the first message.'
+    },
     close: 'Close profiles',
     nameHint: 'Lowercase letters, digits, hyphens, and underscores. Must start with a letter or digit.',
     title: 'Profiles',
@@ -1695,6 +1806,9 @@ export const en: Translations = {
     creating: 'Creating...',
     createAction: 'Create profile',
     renameTitle: 'Rename profile',
+    displayNameTitle: 'Name this agent',
+    displayNameDesc: 'Sets a display name shown across the app. The internal profile ID stays "default".',
+    displayNameLabel: 'Display name',
     renameDescPrefix: 'Renaming updates the profile directory and any wrapper scripts in ',
     renameDescSuffix: '.',
     newNameLabel: 'New name',
@@ -1770,6 +1884,16 @@ export const en: Translations = {
     monthlyOnDayAt: (dayOfMonth, time) => `Monthly on day ${dayOfMonth} at ${time}`,
     topOfHour: 'At the top of every hour',
     everyHourAt: minute => `Every hour at :${minute}`,
+    hidePaused: 'Hide paused',
+    showPaused: 'Show paused',
+    repeatLabel: 'Runs',
+    repeatForever: 'Repeats indefinitely',
+    repeatOf: (completed, times) => `${completed} of ${times}`,
+    triggering: 'Running…',
+    continuityLabel: 'Build on the last run',
+    continuityHint:
+      'Feed this job its own previous output, so each run continues from the last instead of starting cold.',
+    missedFire: 'Missed scheduled fire',
     newCron: 'New cron',
     emptyDescNew:
       'Schedule a prompt to run on a cron expression. Hermes will run it and deliver results to the destination you pick.',
@@ -1915,6 +2039,10 @@ export const en: Translations = {
       orderCost: 'Cost',
       orderManual: 'Manual',
       show: 'Show',
+      density: 'Row density',
+      densityCompact: 'Compact',
+      densityComfortable: 'Comfortable',
+      densityDetailed: 'Detailed',
       metaUpdated: 'Updated',
       metaTokens: 'Tokens',
       metaCost: 'Cost',
@@ -2020,6 +2148,10 @@ export const en: Translations = {
       unpin: 'Unpin',
       copyId: 'Copy ID',
       openInTile: 'Open in tile',
+      messageCount: count => `${count} ${count === 1 ? 'message' : 'messages'}`,
+      toolCallCount: count => `${count} ${count === 1 ? 'tool call' : 'tool calls'}`,
+      openInTerminal: 'Open in terminal',
+      openInTerminalFailed: 'No terminal application could be opened here',
       openInBubble: 'Open in bubble',
       export: 'Export',
       branchFrom: 'Branch',
@@ -2050,6 +2182,15 @@ export const en: Translations = {
   },
 
   composer: {
+    mcpSuggestions: {
+      label: server => `Add ${server}`,
+      tip: keyword => `Suggested because you mentioned “${keyword}” — click to connect`,
+      connecting: server => `Connecting ${server}…`,
+      cancelTip: 'Click to cancel',
+      added: server => `Added ${server}`,
+      addedTip: 'Connected — its tools are ready in this chat',
+      connectFailed: server => `Could not connect ${server}`
+    },
     message: 'Message',
     bubbles: {
       releaseToClose: 'Release to close',
@@ -2169,6 +2310,7 @@ export const en: Translations = {
     attachLabel: 'Attach',
     attachFailed: label => `Could not attach ${label}`,
     attachNoRef: 'The gateway staged nothing for this file.',
+    attachTooLarge: maxMb => `Bigger than the ${maxMb} MB limit. Raise it in Settings → Chat.`,
     files: 'Files…',
     folder: 'Folder…',
     back: 'Back',
@@ -2901,6 +3043,27 @@ export const en: Translations = {
         `This adds the “${pattern}” pattern to your permanent allowlist (~/.hermes/config.yaml). Hermes won’t ask again for commands like this — in this session or any future one.`,
       alwaysAllow: 'Always allow'
     },
+    mcpSetup: {
+      installTitle: server => `Add the ${server} MCP server?`,
+      enableTitle: server => `Enable the ${server} MCP server?`,
+      authorizeTitle: server => `Authorize the ${server} MCP server?`,
+      installAction: 'Install',
+      enableAction: 'Enable',
+      authorizeAction: 'Authorize',
+      decline: 'Not now',
+      catalogSource: 'From the Nous-approved catalog',
+      envRequired: 'Fill in the required credentials first',
+      notInCatalog: server => `“${server}” is not in the MCP catalog`,
+      installed: server => `Installed ${server}`,
+      enabled: server => `Enabled ${server}`,
+      authorized: server => `Authorized ${server}`,
+      declined: 'Declined',
+      unanswered: 'No response',
+      failed: server => `Setup failed for ${server}`,
+      toolCount: count => `${count} tools`,
+      sendFailed: 'Could not send the MCP setup response',
+      reloadFailed: 'The server was set up, but this chat could not reload its tools'
+    },
     clarify: {
       notReady: 'Clarify request is not ready yet',
       gatewayDisconnected: 'Hermes gateway is not connected',
@@ -2910,6 +3073,10 @@ export const en: Translations = {
       placeholder: 'Type your answer…',
       skip: 'Skip',
       continueLabel: 'Continue',
+      confirmAndContinueLabel: 'Confirm and continue',
+      answeredBadge: 'Answered',
+      questionProgress: (answered, total) => `${answered} of ${total} answered`,
+      unknownQuestion: 'The agent is no longer asking that question — answer the ones still shown',
       skipped: 'Skipped',
       lateAnswer: (question, choice) => `Re: "${question}" — my answer: ${choice}`,
       lateAnswerTip: 'Draft this answer as a follow-up message',
@@ -2939,6 +3106,10 @@ export const en: Translations = {
       statusRecovered: 'Recovered',
       statusDone: 'Done',
       memoryWriteNoted: 'Memory write noted',
+      spilloverLabel: 'Full output',
+      spilloverSaved: (size: string) => `Too large to inline (${size}) — saved to a file`,
+      spilloverSavedUnsized: 'Too large to inline — saved to a file',
+      spilloverOpen: 'Open',
       actions: {
         read: 'Read',
         reading: 'Reading',
@@ -2994,6 +3165,7 @@ export const en: Translations = {
           pending: 'Searching session history',
           pendingAction: 'Searching'
         },
+        setup_mcp: { done: 'Set up an MCP server', pending: 'Setting up an MCP server', pendingAction: 'Setting up' },
         terminal: { done: 'Ran command', pending: 'Running command', pendingAction: 'Running' },
         todo: { done: 'Updated todos', pending: 'Updating todos', pendingAction: 'Updating' },
         vision_analyze: { done: 'Analyzed image', pending: 'Analyzing image', pendingAction: 'Analyzing' },

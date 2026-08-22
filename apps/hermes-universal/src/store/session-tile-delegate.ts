@@ -187,7 +187,7 @@ async function hydrateSessionToState(storedId: string): Promise<string> {
  * `/goal …` run in a tile opens the tile's turn and shows the tile's busy state
  * exactly as typing would (MJXHRM-419).
  */
-async function submitTextToSession(runtimeId: string, text: string): Promise<void> {
+async function submitTextToSession(runtimeId: string, text: string, displayText?: string): Promise<void> {
   // A tile runs the same voice conversation the main composer does, so the same
   // interruption latch has to be consumed here — otherwise a barge-in in a tile
   // leaves the flag set and the NEXT submit anywhere in the app inherits it
@@ -209,7 +209,10 @@ async function submitTextToSession(runtimeId: string, text: string): Promise<voi
     statusLine: '',
     turnStartedAt: Date.now(),
     interrupted: false,
-    messages: [...state.messages, userMessage(text)]
+    // `displayText` (a slash directive's `display` projection) replaces the
+    // BUBBLE only — see sendPrompt. `beginTurn` and the submit below keep the
+    // model-facing text the gateway will reconcile against.
+    messages: [...state.messages, userMessage(displayText?.trim() || text)]
   }))
 
   // Open the in-flight turn BEFORE the submit leaves, exactly as `sendPrompt`
@@ -260,8 +263,8 @@ async function submitTextToSession(runtimeId: string, text: string): Promise<voi
 setSessionTileDelegate({
   resumeTile: storedId => resumeSessionToState(storedId),
 
-  async submitToSession(runtimeId, text) {
-    await submitTextToSession(runtimeId, text)
+  async submitToSession(runtimeId, text, displayText) {
+    await submitTextToSession(runtimeId, text, displayText)
   },
 
   async interruptSession(runtimeId) {

@@ -154,7 +154,7 @@ describe('useSlashCommand', () => {
     await run('/goal ship it')
 
     expect(systemLines()).toEqual(['slash:/goal ship it\n⊙ Goal set'])
-    expect(sendPrompt).toHaveBeenCalledWith('do the thing')
+    expect(sendPrompt).toHaveBeenCalledWith('do the thing', { displayText: undefined })
   })
 
   it('refuses a send directive while the session is busy', async () => {
@@ -441,6 +441,11 @@ describe('a slash command typed in a tile', () => {
    *  store/session-tile-delegate.test.ts. */
   let submitted: [string, string][]
 
+  /** The `displayText` each submit carried — the transcript projection, kept
+   *  apart from `submitted` so the wire text and the shown text are asserted
+   *  as the two different values they are. */
+  let submittedDisplay: (string | undefined)[]
+
   /** The TILE's system lines. `systemLines()` reads `$messages`, which is the
    *  foreground chat — a tile's slash output must never appear there. */
   const tileSystemLines = () =>
@@ -457,9 +462,11 @@ describe('a slash command typed in a tile', () => {
     publishSessionState('tile-1', { ...emptySessionState('stored-tile'), runtimeSessionId: 'tile-1' })
 
     submitted = []
+    submittedDisplay = []
     setSessionTileDelegate({
-      submitToSession: async (runtimeId: string, text: string) => {
+      submitToSession: async (runtimeId: string, text: string, displayText?: string) => {
         submitted.push([runtimeId, text])
+        submittedDisplay.push(displayText)
       }
     } as unknown as SessionTileDelegate)
 
@@ -550,6 +557,55 @@ describe('a slash command typed in a tile', () => {
 
     expect(submitted).toEqual([])
     expect(tileSystemLines().at(-1)).toContain('session busy')
+  })
+
+  // MJXHRM-457 — the `/goal resume` compat-must, end to end. The gateway
+  // answers `{type:'send', notice, message, display}` (tui_gateway
+  // methods_tools.py): `message` is the model-facing continuation prompt, and
+  // `display` is the invocation the transcript should show instead. #266
+  // preserved `display` through parseCommandDispatch and then nothing read it,
+  // so the scaffolding prompt was rendered back at the user as their own turn.
+  it('fires the continuation turn with the model text and shows the display projection', async () => {
+    vi.mocked(requestGateway).mockResolvedValue({
+      type: 'send',
+      notice: '▶ Goal resumed: ship it\nContinuing now — taking the next step.',
+      message: 'Continue working toward the goal. Take the next concrete step.',
+      display: '/goal resume'
+    } as never)
+
+    await run('/goal resume')
+
+    // (a) the notice renders...
+    expect(tileSystemLines().at(-1)).toContain('Goal resumed')
+    // (b) ...the continuation turn fires, carrying the MODEL-facing prompt...
+    expect(submitted).toEqual([['tile-1', 'Continue working toward the goal. Take the next concrete step.']])
+    // (c) ...and the transcript is told to show the invocation, not that prompt.
+    expect(submittedDisplay).toEqual(['/goal resume'])
+  })
+
+  it('leaves the display projection unset when the gateway sends none', async () => {
+    vi.mocked(requestGateway).mockResolvedValue({ type: 'send', message: 'do the thing' } as never)
+
+    await run('/goal ship it')
+
+    // An older gateway sends no `display`; the bubble must then be the message
+    // itself, which is what `undefined` here means downstream.
+    expect(submittedDisplay).toEqual([undefined])
+  })
+
+  it('shows a skill dispatch as its invocation, never its expanded body', async () => {
+    vi.mocked(requestGateway).mockResolvedValue({
+      type: 'skill',
+      name: 'gif-search',
+      message: 'You are a GIF search assistant. Expand the query, call the tool, …'
+    } as never)
+
+    await run('/gif-search cats')
+
+    // No `display` from this gateway, but a skill's `message` is scaffolding by
+    // definition — `/name` is the invocation that produced it.
+    expect(submitted).toEqual([['tile-1', 'You are a GIF search assistant. Expand the query, call the tool, …']])
+    expect(submittedDisplay).toEqual(['/gif-search'])
   })
 
   it('hands a prefill back to the tile composer, not the main one', async () => {

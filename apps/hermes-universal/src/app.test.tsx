@@ -25,6 +25,13 @@ vi.mock('@/app/right-pane/files/remote-picker', () => ({
 vi.mock('@/components/find-bar', () => ({ FindBar: () => <div data-testid="find-bar" /> }))
 vi.mock('@/app/close-confirm', () => ({ CloseConfirm: () => <div data-testid="close-confirm" /> }))
 
+// Side-effect starters App() arms at mount, not surfaces it renders. Stubbed so
+// this file stays about WHICH roots mount — the real ones reach the gateway,
+// @/store/windows and the Tauri event bus (MJXHRM-454).
+vi.mock('@/app/mcp-install-deeplink-dialog', () => ({ McpInstallDeepLinkDialog: () => null }))
+vi.mock('@/store/mcp-deeplink-install', () => ({ startMcpDeepLinkListener: vi.fn() }))
+vi.mock('@/store/mcp-health', () => ({ startMcpHealthChecker: vi.fn() }))
+
 let activity = false
 let tile = false
 let surface: string | null = null

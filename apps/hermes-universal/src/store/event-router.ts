@@ -28,7 +28,7 @@ import '@/store/turn-hydration'
 import { burstVibeHearts } from '@/components/chat/vibe-hearts'
 import type { GatewayEvent } from '@/gateway'
 import { translateNow } from '@/i18n'
-import { coerceStringList, coerceText } from '@/lib/chat-messages'
+import { coerceText } from '@/lib/chat-messages'
 import { coerceThinkingText } from '@/lib/chat-runtime'
 import { type GatewayToolPayload, toolIdFromPayload } from '@/lib/chat-tool-parts'
 import { playCompletionSound } from '@/lib/completion-sound'
@@ -37,11 +37,14 @@ import { triggerHaptic } from '@/lib/haptics'
 import { queryClient } from '@/lib/query-client'
 import { invalidateSlashCompletions } from '@/lib/slash-completion-cache'
 import { type DeltaChannel, flushDeltas, queueDelta, setStreamBatchSink } from '@/lib/stream-batch'
+import { prettyName } from '@/lib/text'
 import { stopSpeaking } from '@/lib/tts'
 import { type AgentNoticePayload, clearAgentNotice, nativeNoticeInput, showAgentNotice } from '@/store/agent-notices'
+import { reconcileApprovalModeForProfile } from '@/store/approval-mode'
+import { ackApprovalReceived, readApprovalPayload } from '@/store/approvals'
 import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block'
 import { noteMissedSteer } from '@/store/chat'
-import { readChoices } from '@/store/clarify'
+import { normalizeQuestions, readChoices, readLockedAnswers } from '@/store/clarify'
 import { routeCompactionEvent } from '@/store/compaction'
 import { addGatewayEventListener, requestGateway } from '@/store/gateway'
 import {
@@ -53,23 +56,30 @@ import {
   type PetChangeMeta,
   setChangeEventsAvailable
 } from '@/store/live-sync'
+import { readMcpSetupRequest } from '@/store/mcp-setup'
 import { dispatchNativeNotification } from '@/store/native-notifications'
+import { notify } from '@/store/notifications'
+import { applyBridgeLayoutPreset, revealBridgePane } from '@/store/pane-focus'
 import { flashPetActivity, setPetActivity } from '@/store/pet'
+import { $activeGatewayProfile } from '@/store/profile'
 import {
   clearAllPrompts,
   clearSessionClarify,
+  clearSessionMcpSetup,
   clearSessionSecret,
   clearSessionSudo,
   sessionAwaitingInput,
+  sessionMcpSetupRequest,
   sessionSecretRequest,
   sessionSudoRequest,
   setSessionApproval,
   setSessionClarify,
+  setSessionMcpSetup,
   setSessionSecret,
   setSessionSudo
 } from '@/store/prompts'
 import { applyReactionEvent } from '@/store/reactions'
-import { reduceSessionState } from '@/store/session-reducer'
+import { EMPTY_USAGE, reduceSessionState } from '@/store/session-reducer'
 import {
   $activeSessionKey,
   $sessionStates,
@@ -84,7 +94,7 @@ import { routeTurnEvent, startTurnReconciler } from '@/store/turn-lifecycle'
 // out of the gateway event hot path — same reason desktop does it.
 import { ingestBackendSkin } from '@/themes/backend-sync'
 import type { HermesSkin } from '@/themes/skin-contract'
-import type { ContextBreakdown, MessageReaction, UsageStats } from '@/types/hermes'
+import type { ContextBreakdown, MessageReaction } from '@/types/hermes'
 
 // Self-register at import. Nothing else consumes the gateway's event stream, so
 // if this module is loaded but not listening the app silently receives nothing —
@@ -136,7 +146,18 @@ const CHANGE_EVENT_NOTIFIERS: Record<string, (() => void) | undefined> = {
 }
 
 /** Blocking prompts: never dropped, because the agent is parked waiting. */
-const BLOCKING_PROMPT_TYPES = new Set(['approval.request', 'clarify.request', 'secret.request', 'sudo.request'])
+const BLOCKING_PROMPT_TYPES = new Set([
+  'approval.request',
+  'clarify.request',
+  // `setup_mcp` parks the run loop for TEN minutes (`_block(..., timeout=600)`),
+  // the longest of any bridge. It belongs in this set for the same reason the
+  // other four do: without it the fail-closed guard below drops the frame for a
+  // session this client has no slice for — a background turn, a cold reattach —
+  // and the agent waits out the whole budget with nothing on screen to answer.
+  'mcp.setup.request',
+  'secret.request',
+  'sudo.request'
+])
 
 /** The batched streaming channels, by event type. */
 const DELTA_CHANNELS: Record<string, DeltaChannel | undefined> = {
@@ -155,8 +176,6 @@ setStreamBatchSink((key, channel, text) => {
   updateSession(key, state => reduceSessionState(state, { type } as GatewayEvent, { text }))
 })
 
-const EMPTY_USAGE: UsageStats = { calls: 0, input: 0, output: 0, total: 0 }
-
 /**
  * Pull the live context breakdown for the statusbar label after a settled turn.
  * The ContextUsagePanel fetches its own breakdown on open; this only feeds the
@@ -174,8 +193,13 @@ async function refreshSessionUsage(key: string): Promise<void> {
 
     updateSession(key, state => ({
       ...state,
+      // MERGED over whatever the turn's live `session.usage` ticks left behind.
+      // This used to spread only `EMPTY_USAGE`, so the settle zeroed `calls`,
+      // `input` and `output` — the breakdown RPC does not report them — and the
+      // context panel's fallback row read 0 calls on every finished turn.
       usage: {
         ...EMPTY_USAGE,
+        ...state.usage,
         context_max: b.context_max,
         context_percent: b.context_percent,
         context_used: b.context_used,
@@ -361,15 +385,18 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
   // --- Per-session blocking prompts ----------------------------------------
   switch (event.type) {
-    case 'approval.request':
-      setSessionApproval(key, {
-        command: coerceText(payload.command),
-        description: coerceText(payload.description) || 'dangerous command',
-        // false only when a tirith warning forbids it; backend omits it otherwise.
-        allowPermanent: payload.allow_permanent !== false,
-        choices: coerceStringList(payload.choices) ?? undefined,
-        smartDenied: payload.smart_denied === true
-      })
+    case 'approval.request': {
+      // One reader for the event and for the `approval.pending` /
+      // `pending_approval` replays — they are the same payload
+      // (`_approval_request_payload`), and a client that parsed them
+      // differently would answer a replayed approval with a different
+      // request_id than the live one.
+      const approval = readApprovalPayload(payload)
+
+      setSessionApproval(key, approval)
+      // Session-scoped: `approval.received` resolves through `_sess()`, so it
+      // needs the runtime id the gateway knows, which is this event's session.
+      void ackApprovalReceived(key, approval.requestId)
       dispatchNativeNotification({
         kind: 'approval',
         title: translateNow('notifications.native.approvalTitle'),
@@ -379,21 +406,70 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       void triggerHaptic('warning')
 
       break
+    }
+
     case 'clarify.request': {
       // The gateway sends `question` + `choices` — NOT `prompt`; the other keys
       // are tolerated only as a fallback.
       const requestId = coerceText(payload.request_id)
+      // A BATCH clarify (2–5 independent questions, `tools/clarify_tool.py`)
+      // carries `questions[]` and NO top-level `question` at all. Testing only
+      // for `question` dropped the whole event on the floor: nothing wrote the
+      // prompt store, nothing ever called `clarify.respond`, and the agent sat
+      // in the backend's `_block` for the full clarify deadline with the UI
+      // showing a contentless "needs input" dot. The tool advertises the batch
+      // form in its schema on EVERY session, so any model could hang any turn.
+      const questions = normalizeQuestions(payload.questions)
       const question = coerceText(payload.question) || coerceText(payload.prompt) || coerceText(payload.message)
 
-      if (requestId && question) {
+      if (requestId && (question || questions.length > 0)) {
         // Normalized here, not in the panel: this is the PRIMARY source for the
         // choice list (`tool.start` ships no args), so a blank / multi-line /
         // 4KB entry from a sloppy tool call would reach the renderer unguarded.
-        setSessionClarify(key, { requestId, question, choices: readChoices('gateway', question, payload.choices) })
+        setSessionClarify(
+          key,
+          questions.length > 0
+            ? {
+                requestId,
+                question: '',
+                choices: null,
+                questions,
+                // Present only on a resume replay of a partly-answered batch
+                // (`_pending_clarify_request_payload`), never on a live event.
+                lockedAnswers: readLockedAnswers(payload.answers)
+              }
+            : {
+                requestId,
+                question,
+                choices: readChoices('gateway', question, payload.choices),
+                ...(payload.multi_select === true ? { multiSelect: true } : {})
+              }
+        )
         dispatchNativeNotification({
           kind: 'input',
           title: translateNow('notifications.native.inputTitle'),
-          body: question,
+          body: questions.length > 0 ? questions.map(entry => entry.question).join(' · ') : question,
+          sessionId: key
+        })
+        void triggerHaptic('warning')
+      }
+
+      break
+    }
+
+    // Shape-gated like `clarify.request` above: the payload is
+    // `{server, action, reason, request_id}` (`_block("mcp.setup.request", …)`),
+    // and a frame missing either identifier is unrenderable rather than
+    // half-renderable — see `readMcpSetupRequest`.
+    case 'mcp.setup.request': {
+      const request = readMcpSetupRequest(payload)
+
+      if (request) {
+        setSessionMcpSetup(key, request)
+        dispatchNativeNotification({
+          kind: 'input',
+          title: translateNow('notifications.native.inputTitle'),
+          body: request.reason || prettyName(request.server),
           sessionId: key
         })
         void triggerHaptic('warning')
@@ -455,6 +531,24 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       break
     }
 
+    // Unlike `clarify.expire` (deliberately unhandled — see above), this one IS
+    // consumed. The reasoning that keeps a clarify panel alive on its spinner
+    // does not transfer: a clarify's late answer still routes somewhere useful
+    // (the composer drafts it as a follow-up), whereas an expired setup card can
+    // only offer to install a server the agent has already given up waiting for,
+    // and every button on it would run a real install against a tool that has
+    // already returned `unanswered`. Ten minutes is also long enough that the
+    // `tool.complete` clear below can be a long way off on a slow reconnect.
+    case 'mcp.setup.expire': {
+      const requestId = coerceText(payload.request_id)
+
+      if (requestId && sessionMcpSetupRequest(key).get()?.requestId === requestId) {
+        clearSessionMcpSetup(key)
+      }
+
+      break
+    }
+
     case 'message.start':
       // A fresh turn on this session optimistically clears its billing wall; if
       // credits are still exhausted the next failure re-raises it.
@@ -503,6 +597,51 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       void refreshSessionUsage(key)
 
       break
+    /**
+     * `status.update` is TWO things on one event name, and only one of them is
+     * transient narration.
+     *
+     * `_status_update` (`tui_gateway/server.py`) tags the frame with the kind
+     * its producer used. `status` / `lifecycle` / `compacting` / `goal` are the
+     * agent talking about what it is doing right now — the reducer folds those
+     * into `statusLine`, the chat renders them while busy, and each one
+     * overwrites the last. That is correct for narration and WRONG for the one
+     * kind that is not narration.
+     *
+     * `warn` is `AIAgent._emit_warning` (`run_agent.py`) — the channel for
+     * "the main turn can continue but the user needs to know something
+     * important failed", and it is DEDUPED at the source precisely because the
+     * backend expects each one to be seen once and remembered. The whole family
+     * arrives here: the mid-turn uncompressed-context overflow guardrail when
+     * compression is disabled ("use /compact or enable compression",
+     * `_warn_uncompressed_context_overflow`), compression blocked by cooldown
+     * or anti-thrashing, a compression timeout or commit overrun, an auxiliary
+     * task failure, and the session turn-lease timeout — the one message that
+     * explains why a submitted turn was never processed.
+     *
+     * Every one of them was folded into `statusLine` and gone by the next
+     * frame, so the actionable half of each ("run /compact", "send it again")
+     * was unreachable. Raise them as sticky warning toasts instead: `warning`
+     * has no auto-dismiss duration (`store/notifications.ts`), so the user
+     * dismisses it, not a timer.
+     *
+     * NOT under the `isActive` gate below: a background session warning that it
+     * is about to stop answering is exactly the one the user cannot see for
+     * themselves. Keyed per session so a newer warning for the same session
+     * replaces the older one in place instead of stacking — the backend's dedup
+     * means a fresh frame is a fresh problem.
+     */
+    case 'status.update': {
+      if (coerceText(payload.kind) === 'warn') {
+        const text = coerceText(payload.text).trim()
+
+        if (text) {
+          notify({ id: `agent-warn:${key}`, kind: 'warning', message: text })
+        }
+      }
+
+      break
+    }
 
     case 'error':
       clearAllPrompts(key)
@@ -545,10 +684,49 @@ export function routeGatewayEvent(event: GatewayEvent): void {
         clearSessionClarify(key)
       }
 
+      // Same terminal-event reasoning for the setup card: the tool returning is
+      // the one signal shared by answered, timed out and interrupted. Only the
+      // answered path clears the request itself, so without this an interrupted
+      // turn leaves a phantom card that `$activeSessionAwaitingInput` keeps
+      // calling "parked on the user" — which is what makes Esc refuse to
+      // interrupt for the rest of the turn.
+      if (payload.name === 'setup_mcp') {
+        clearSessionMcpSetup(key)
+      }
+
       // A file-mutating tool just finished — nudge the git-mirroring surfaces
       // (coding rail, review pane, file tree) to refresh. Event-driven, not
       // polled: fires exactly when the agent touches the tree.
       void notifyWorkspaceChangeFromTool(payload)
+
+      break
+    }
+
+    // The agent revealed a pane through its own `focus_pane` tool, in response
+    // to an explicit user request. ACTIVE session only — desktop's
+    // `isActiveEvent` gate, i.e. "offer, don't hijack": a background turn must
+    // never move the focus of the chat the user is looking at.
+    //
+    // Fire-and-forget: `tools/desktop_ui.py::emit` has no respond method, so an
+    // unknown pane id is simply not revealed (`revealBridgePane` returns false)
+    // and the tool has already told the agent `{"success": true}`. The enum is
+    // closed backend-side, so an unknown id means a version skew, not a typo.
+    case 'pane.reveal': {
+      if (isActive) {
+        revealBridgePane(typeof payload.pane === 'string' ? payload.pane : '')
+      }
+
+      break
+    }
+
+    // The agent applied a layout preset through its own `apply_layout` tool.
+    // Same contract as pane.reveal, and the preset resolves against the SAME
+    // layouts registry the picker reads — so core, plugin and user-saved
+    // presets are all addressable.
+    case 'layout.apply': {
+      if (isActive) {
+        applyBridgeLayoutPreset(typeof payload.preset === 'string' ? payload.preset : '')
+      }
 
       break
     }
@@ -604,6 +782,46 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
       break
 
+    /**
+     * The live approval indicator.
+     *
+     * `approvals.mode` is gateway-global config, and `$approvalModes` is a cache
+     * the statusbar item fills ONCE when it mounts (`syncApprovalModeForProfile`
+     * in `app/shell/approval-mode-menu.tsx`). Every other writer is a local
+     * action — this app's own `/approvals` run or its Settings save — so a mode
+     * changed anywhere else (the TUI, the web dashboard, `PUT /api/config`, a
+     * second Hermes window) left the zap glyph showing the mode from mount time
+     * for the rest of the session, i.e. it claimed approvals were on while the
+     * backend auto-approved every dangerous command.
+     *
+     * The backend now pushes for exactly this: `broadcast_session_info()`
+     * (`tui_gateway/server.py`) re-emits `session.info` to every live session
+     * whenever `approvals.mode` moves, mid-turn included. `_session_info` stamps
+     * `approval_mode` (the persisted mode) and `yolo` (the EFFECTIVE bypass —
+     * that mode OR the frozen env OR the per-session flag) on every frame.
+     *
+     * Scoped like desktop's `handleSessionInfoEvent`: only the ACTIVE session's
+     * frame may reconcile the foreground cache, since the cache is keyed by
+     * gateway profile and background sessions can belong to another one.
+     */
+    case 'session.info':
+      if (typeof payload.approval_mode === 'string') {
+        reconcileApprovalModeForProfile($activeGatewayProfile.get(), payload.approval_mode)
+      }
+
+      if (typeof payload.yolo === 'boolean') {
+        // `$yoloActive` is what `/yolo` toggles against, so an un-synced copy
+        // makes the first press after connecting a no-op (it flips a stale
+        // `false` to `true` while the backend was already bypassing). Lazy
+        // import: `store/session` imports this module's graph — same reason
+        // `applySessionTitle` above defers it.
+        const yolo = payload.yolo
+
+        void import('@/store/session').then(m => m.setYoloActive(yolo)).catch(() => {})
+      }
+
+      break
+
     case 'reasoning.available':
 
     case 'reasoning.delta':
@@ -648,12 +866,16 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
     case 'clarify.request':
 
+    case 'mcp.setup.request':
+
     case 'secret.request':
 
     case 'sudo.request':
       setPetActivity({ awaitingInput: true }) // pet: waiting pose (blocked on user)
 
       break
+
+    case 'mcp.setup.expire':
 
     case 'secret.expire':
 

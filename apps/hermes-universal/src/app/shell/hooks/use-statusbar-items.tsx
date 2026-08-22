@@ -15,6 +15,7 @@ import { $pluginRecords } from '@/contrib/plugins-store'
 import { useI18n } from '@/i18n'
 import { writeClipboardText } from '@/lib/clipboard'
 import { pathLeaf } from '@/lib/display-path'
+import { platformStatusId } from '@/lib/gateway-platforms'
 import { Activity, AlertCircle, Clock, Command, FolderOpen, Hash, Loader2, Plug, Sun, Terminal, Zap } from '@/lib/icons'
 import { IS_DESKTOP, IS_MOBILE } from '@/lib/platform'
 import { revealPathInFileManager } from '@/lib/reveal-path'
@@ -243,6 +244,11 @@ export function useStatusbarItems(opts?: {
   const messagingPlatforms = useMemo(
     () =>
       Object.entries(statusSnapshot?.gateway_platforms ?? {})
+        // A secondary profile's adapters report as `<profile>:<platform>`, so
+        // both the api_server filter and the icon lookup have to read the bare
+        // platform id — otherwise `work:api_server` renders as a messaging
+        // platform and `work:telegram` loses its brand glyph to a "W" monogram.
+        .map(([id, platform]) => [platformStatusId(id), platform, id] as const)
         .filter(([id]) => id !== 'api_server')
         .sort(([, a], [, b]) => Number(b.state === 'connected') - Number(a.state === 'connected'))
         .slice(0, 3),
@@ -253,8 +259,8 @@ export function useStatusbarItems(opts?: {
     () => (
       <span className="flex items-center gap-1.5">
         <Zap className={cn('size-4', gatewayRunning ? 'text-(--ui-accent)' : 'text-(--ui-orange)')} />
-        {messagingPlatforms.map(([id, platform]) => (
-          <PlatformGlyph key={id} muted={platform.state !== 'connected'} platformId={id} platformName={id} />
+        {messagingPlatforms.map(([id, platform, key]) => (
+          <PlatformGlyph key={key} muted={platform.state !== 'connected'} platformId={id} platformName={id} />
         ))}
       </span>
     ),

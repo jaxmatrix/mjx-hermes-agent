@@ -3,12 +3,18 @@ import { describe, expect, it } from 'vitest'
 import type { CronDeliveryTarget } from '@/types/hermes'
 
 import {
+  cronContextFromPayload,
   cronDeliverSummary,
   cronDeliveryOptions,
   cronDeliveryTargetLabel,
   cronEditorUpdates,
+  cronExternalContextFrom,
+  cronJobContinuity,
+  cronJobFireError,
+  cronRepeatSummary,
   jobIsScriptOnly,
   normalizeCronDeliverValue,
+  parseCronContextFrom,
   parseCronDeliveryTargets,
   toggleCronDeliveryTarget,
   validateCronEditor
@@ -54,10 +60,19 @@ describe('cronEditorUpdates', () => {
   it('omits prompt when saving a script-only job with an empty prompt', () => {
     expect(
       cronEditorUpdates(
-        { deliver: 'local', model: '', name: 'Weekly', prompt: '', provider: '', schedule: '0 9 * * 1' },
+        {
+          continuity: false,
+          deliver: 'local',
+          model: '',
+          name: 'Weekly',
+          prompt: '',
+          provider: '',
+          schedule: '0 9 * * 1'
+        },
         { scriptOnlyJob: true }
       )
     ).toEqual({
+      context_from: null,
       deliver: 'local',
       name: 'Weekly',
       schedule: '0 9 * * 1'
@@ -67,7 +82,15 @@ describe('cronEditorUpdates', () => {
   it('includes prompt when the user typed one on a script-only job', () => {
     expect(
       cronEditorUpdates(
-        { deliver: 'email', model: '', name: 'Weekly', prompt: 'note', provider: '', schedule: '0 9 * * 1' },
+        {
+          continuity: false,
+          deliver: 'email',
+          model: '',
+          name: 'Weekly',
+          prompt: 'note',
+          provider: '',
+          schedule: '0 9 * * 1'
+        },
         { scriptOnlyJob: true }
       ).prompt
     ).toBe('note')
@@ -76,6 +99,7 @@ describe('cronEditorUpdates', () => {
   it('writes the model override for agent jobs', () => {
     const updates = cronEditorUpdates(
       {
+        continuity: false,
         deliver: 'local',
         model: 'claude-sonnet-4',
         name: 'Daily',
@@ -92,7 +116,15 @@ describe('cronEditorUpdates', () => {
 
   it('clears a previous pin when the override is reset to default', () => {
     const updates = cronEditorUpdates(
-      { deliver: 'local', model: '', name: 'Daily', prompt: 'go', provider: '', schedule: '0 9 * * *' },
+      {
+        continuity: false,
+        deliver: 'local',
+        model: '',
+        name: 'Daily',
+        prompt: 'go',
+        provider: '',
+        schedule: '0 9 * * *'
+      },
       { scriptOnlyJob: false }
     )
 
@@ -102,7 +134,15 @@ describe('cronEditorUpdates', () => {
 
   it('never touches model fields on script-only jobs', () => {
     const updates = cronEditorUpdates(
-      { deliver: 'local', model: 'x', name: 'Weekly', prompt: '', provider: 'y', schedule: '0 9 * * 1' },
+      {
+        continuity: false,
+        deliver: 'local',
+        model: 'x',
+        name: 'Weekly',
+        prompt: '',
+        provider: 'y',
+        schedule: '0 9 * * 1'
+      },
       { scriptOnlyJob: true }
     )
 
@@ -233,5 +273,172 @@ describe('cronDeliverSummary', () => {
 
   it('summarizes the legacy list shape too', () => {
     expect(cronDeliverSummary(['local', 'telegram'], labels)).toBe('This desktop, Telegram')
+  })
+})
+
+describe('cronJobContinuity', () => {
+  // The REST shape: /api/cron/jobs returns the RAW store record, so the
+  // reserved ref is still sitting inside context_from.
+  it('reads the reserved self ref out of the REST shape', () => {
+    expect(cronJobContinuity({ context_from: ['upstream-a', 'self'], id: 'job-1' })).toBe(true)
+  })
+
+  // The RPC shape: tools/cronjob_tools.py `_format_job` STRIPS self and sets an
+  // explicit flag instead. A reader that only knew the REST shape called this
+  // job's continuity off — and the editor would then write that off back.
+  it('reads the explicit flag out of the RPC shape', () => {
+    expect(cronJobContinuity({ context_from: ['upstream-a'], continuity: true, id: 'job-1' })).toBe(true)
+  })
+
+  it('counts a job that names its own id instead of the reserved word', () => {
+    expect(cronJobContinuity({ context_from: ['job-1'], id: 'job-1' })).toBe(true)
+  })
+
+  it('is case-insensitive about the reserved word, like the backend', () => {
+    expect(cronJobContinuity({ context_from: ['SELF'], id: 'job-1' })).toBe(true)
+  })
+
+  // Fixtures that DISAGREE: refs are present, just not self-referential.
+  it('stays off for a job that only feeds on other jobs', () => {
+    expect(cronJobContinuity({ context_from: ['upstream-a', 'upstream-b'], id: 'job-1' })).toBe(false)
+  })
+
+  it('stays off for a job with no context at all', () => {
+    expect(cronJobContinuity({ context_from: null, id: 'job-1' })).toBe(false)
+  })
+
+  it('does not mistake another job whose id merely contains self', () => {
+    expect(cronJobContinuity({ context_from: ['selfie-report'], id: 'job-1' })).toBe(false)
+  })
+})
+
+describe('cronExternalContextFrom', () => {
+  it('drops the continuity ref and keeps everything else', () => {
+    expect(cronExternalContextFrom({ context_from: ['upstream-a', 'self', 'upstream-b'], id: 'job-1' })).toEqual([
+      'upstream-a',
+      'upstream-b'
+    ])
+  })
+
+  it('drops a self-reference written as the job id', () => {
+    expect(cronExternalContextFrom({ context_from: ['job-1', 'upstream-a'], id: 'job-1' })).toEqual(['upstream-a'])
+  })
+})
+
+describe('parseCronContextFrom', () => {
+  it('reads the list shape', () => {
+    expect(parseCronContextFrom(['a', ' b '])).toEqual(['a', 'b'])
+  })
+
+  it('reads a hand-edited comma/newline string', () => {
+    expect(parseCronContextFrom('a,\nb , ')).toEqual(['a', 'b'])
+  })
+
+  it('reads nothing out of a null', () => {
+    expect(parseCronContextFrom(null)).toEqual([])
+  })
+})
+
+describe('cronContextFromPayload', () => {
+  // The editor shows ONE checkbox but the field is a list. External refs are set
+  // from the CLI and the dashboard and universal has no control for them, so a
+  // save that wrote a bare ['self'] would delete a link the user never touched.
+  it('carries external refs through when continuity is switched on', () => {
+    expect(cronContextFromPayload(true, ['upstream-a', 'upstream-b'])).toEqual(['upstream-a', 'upstream-b', 'self'])
+  })
+
+  it('carries external refs through when continuity is switched off', () => {
+    expect(cronContextFromPayload(false, ['upstream-a'])).toEqual(['upstream-a'])
+  })
+
+  it('never writes the reserved ref twice', () => {
+    expect(cronContextFromPayload(true, ['self', 'upstream-a'])).toEqual(['upstream-a', 'self'])
+  })
+
+  // null, not []: the backend treats an ABSENT key as "leave the stored list
+  // alone", so an empty array is the only way to actually clear it — and this
+  // helper's caller writes the result straight into the payload.
+  it('clears with null rather than an empty list', () => {
+    expect(cronContextFromPayload(false, [])).toBeNull()
+    expect(cronContextFromPayload(false, ['self'])).toBeNull()
+  })
+})
+
+describe('cronJobFireError', () => {
+  it('reads the scheduler stamp', () => {
+    expect(
+      cronJobFireError({ last_fire_error: { at: '2026-08-20T09:00:00Z', detail: 'gateway unreachable' } })
+    ).toEqual({ at: '2026-08-20T09:00:00Z', detail: 'gateway unreachable' })
+  })
+
+  // A stamp with no detail says nothing a user can act on, and rendering it
+  // would put an empty red box on a healthy job.
+  it('ignores a stamp with no detail', () => {
+    expect(cronJobFireError({ last_fire_error: { at: '2026-08-20T09:00:00Z', detail: '  ' } })).toBeNull()
+  })
+
+  it('ignores a job the scheduler has never missed', () => {
+    expect(cronJobFireError({ last_fire_error: null })).toBeNull()
+  })
+
+  it('survives a stamp with no timestamp', () => {
+    expect(cronJobFireError({ last_fire_error: { detail: 'gateway unreachable' } })).toEqual({
+      at: '',
+      detail: 'gateway unreachable'
+    })
+  })
+})
+
+describe('cronEditorUpdates continuity', () => {
+  const values = {
+    continuity: true,
+    deliver: 'local',
+    model: '',
+    name: 'Daily',
+    prompt: 'go',
+    provider: '',
+    schedule: '0 9 * * *'
+  }
+
+  it('writes the reserved ref when continuity is on', () => {
+    expect(cronEditorUpdates(values, { scriptOnlyJob: false }).context_from).toEqual(['self'])
+  })
+
+  it('preserves the external refs the editor does not show', () => {
+    expect(
+      cronEditorUpdates(values, { externalContextFrom: ['upstream-a'], scriptOnlyJob: false }).context_from
+    ).toEqual(['upstream-a', 'self'])
+  })
+
+  // Turning it OFF has to write an explicit null; omitting the key leaves the
+  // stored 'self' in place and the toggle silently springs back.
+  it('clears the ref explicitly when continuity is off', () => {
+    expect(cronEditorUpdates({ ...values, continuity: false }, { scriptOnlyJob: false }).context_from).toBeNull()
+  })
+})
+
+describe('cronRepeatSummary', () => {
+  const of = (completed: number, times: number) => `${completed} of ${times}`
+
+  it('reads progress against a run-count cap', () => {
+    expect(cronRepeatSummary({ repeat: { completed: 3, times: 5 } }, 'forever', of)).toBe('3 of 5')
+  })
+
+  it('counts a cap not yet started', () => {
+    expect(cronRepeatSummary({ repeat: { completed: 0, times: 5 } }, 'forever', of)).toBe('0 of 5')
+  })
+
+  // times: null is the ordinary recurring job — saying "runs forever" on every
+  // one of them is noise, so it only speaks once the job has actually run.
+  it('says nothing about an uncapped job that has never run', () => {
+    expect(cronRepeatSummary({ repeat: { completed: 0, times: null } }, 'forever', of)).toBe('')
+  })
+
+  it('reports an uncapped job that has run', () => {
+    expect(cronRepeatSummary({ repeat: { completed: 4, times: null } }, 'forever', of)).toBe('forever')
+  })
+
+  it('says nothing about a record with no repeat at all', () => {
+    expect(cronRepeatSummary({ repeat: null }, 'forever', of)).toBe('')
   })
 })

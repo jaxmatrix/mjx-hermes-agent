@@ -25,14 +25,18 @@ const view = (kind: SessionView['kind'], key: null | string): SessionView =>
   ({ $runtimeId: atom<null | string>(key), kind }) as unknown as SessionView
 
 let submitted: [string, string][]
+/** The `displayText` each submit carried, kept apart from the wire text. */
+let submittedDisplay: (string | undefined)[]
 
 beforeEach(() => {
   submitted = []
+  submittedDisplay = []
   vi.mocked(sendPrompt).mockClear()
   vi.mocked(notify).mockClear()
   setSessionTileDelegate({
-    submitToSession: async (runtimeId: string, text: string) => {
+    submitToSession: async (runtimeId: string, text: string, displayText?: string) => {
       submitted.push([runtimeId, text])
+      submittedDisplay.push(displayText)
     }
   } as unknown as SessionTileDelegate)
 })
@@ -41,8 +45,24 @@ describe('submitPromptToSurface', () => {
   it('sends the primary chat through sendPrompt', async () => {
     await submitPromptToSurface(view('primary', 'sess-1'), 'hello')
 
-    expect(sendPrompt).toHaveBeenCalledWith('hello')
+    expect(sendPrompt).toHaveBeenCalledWith('hello', { displayText: undefined })
     expect(submitted).toEqual([])
+  })
+
+  // MJXHRM-457. `displayText` is the slash dispatcher's `display` projection:
+  // the model is sent `text`, the transcript shows this. Both surfaces have to
+  // carry it, or `/goal resume` renders its continuation scaffolding as the
+  // user's own turn on whichever surface forgot.
+  it('carries the display projection to the primary chat', async () => {
+    await submitPromptToSurface(view('primary', 'sess-1'), 'the continuation prompt', '/goal resume')
+
+    expect(sendPrompt).toHaveBeenCalledWith('the continuation prompt', { displayText: '/goal resume' })
+  })
+
+  it('carries the display projection to a tile', async () => {
+    await submitPromptToSurface(view('tile', 'tile-1'), 'the continuation prompt', '/goal resume')
+
+    expect(submittedDisplay).toEqual(['/goal resume'])
   })
 
   // The whole point of the helper. `sendPrompt` writes to `$activeSessionKey`

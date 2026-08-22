@@ -36,6 +36,7 @@ import { Codicon } from '@/components/ui/codicon'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { sanitizeComposerInput } from '@/lib/composer-input-sanitize'
+import { isImeCommitEnter, reconcileCompositionFlag } from '@/lib/ime-composition'
 import { cn } from '@/lib/utils'
 import { notifyThreadEditClose } from '@/store/thread-scroll'
 
@@ -77,6 +78,9 @@ export const UserEditComposer: FC = () => {
   // submit, and the input events fired DURING composition carry uncommitted
   // preedit text that must not reach the draft.
   const composingRef = useRef(false)
+  // Whether this engine has been observed stamping `isComposing` during a
+  // composition — see lib/ime-composition.ts.
+  const imeFlagTrustedRef = useRef(false)
   const [submitting, setSubmitting] = useState(false)
   const [triggerPlacement, setTriggerPlacement] = useState<'bottom' | 'top'>('top')
   const expanded = draft.includes('\n')
@@ -288,6 +292,13 @@ export const UserEditComposer: FC = () => {
     (event: FocusEvent<HTMLDivElement>) => {
       const nextTarget = event.relatedTarget
 
+      // A composition never survives focus loss, so a flag still set here is a
+      // missed `compositionend` — clear it before it can swallow the next
+      // Enter. Unconditional: it needs no trust in `isComposing`. Done before
+      // the in-composer refocus bail-out, because a focus jump WITHIN the
+      // composer is one of the ways the preedit gets aborted silently.
+      composingRef.current = false
+
       if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
         return
       }
@@ -324,6 +335,12 @@ export const UserEditComposer: FC = () => {
   )
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    // Same self-heal the docked composer runs: a missed `compositionend` wedges
+    // `composingRef` and every Enter after it is swallowed until this composer
+    // remounts. Engine-adaptive, because the very unreliability noted below is
+    // what makes desktop's unconditional heal unsafe here.
+    reconcileCompositionFlag(composingRef, imeFlagTrustedRef, event.nativeEvent.isComposing)
+
     // IME composition: Enter CONFIRMS the preedit, it does not send. Without
     // this the first Enter a Japanese/Korean/Chinese typist presses re-runs the
     // turn with half-composed text in it — and this composer's Enter is
@@ -336,6 +353,14 @@ export const UserEditComposer: FC = () => {
     // the flag as reliably as Chromium, and compositionstart/end are what the
     // engines agree on.
     if (composingRef.current || event.nativeEvent.isComposing) {
+      return
+    }
+
+    // The IME commit Enter that still carries keyCode 229 after
+    // `compositionend` — and this composer's Enter is destructive (it rewinds
+    // the conversation to this message), so there is no undo for letting it
+    // through early.
+    if (isImeCommitEnter(event)) {
       return
     }
 

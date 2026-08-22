@@ -26,6 +26,7 @@ import { type PaneTabCloseItemsOptions, paneTabCloseSpecs } from '@/components/u
 import { useI18n } from '@/i18n'
 import { writeClipboardText } from '@/lib/clipboard'
 import { triggerHaptic } from '@/lib/haptics'
+import { canOpenInTerminal, openPathInTerminal } from '@/lib/open-in-terminal'
 import { IS_MOBILE } from '@/lib/platform'
 import { PROFILE_SWATCHES } from '@/lib/profile-color'
 import { useStore } from '@/store/atom'
@@ -148,6 +149,10 @@ function useSessionActions({
   const activeStoredId = useStore($activeStoredSessionId)
   const projects = useStore($projects)
   const [renameOpen, setRenameOpen] = useState(false)
+  // The row's own cwd — what "Open in terminal" hands to the OS. Scalars rather
+  // than the whole row: this needs one string, and the hook is already the
+  // narrow face every session menu uses.
+  const sessionCwd = useSessionRowScalars(sessionId).cwd
 
   // Destinations for a move: a project's primary folder, else its first. A
   // project with no folder has no directory to adopt, so it is not offered.
@@ -210,6 +215,26 @@ function useSessionActions({
             }
           }
         ]),
+    // Hand the session's project directory to the OS terminal — the shell the
+    // user configured, outside the app. Distinct from the in-app terminal rail.
+    // Hidden rather than disabled where it cannot work (mobile, a detached chat
+    // with no cwd): a permanently greyed row teaches nothing.
+    ...(canOpenInTerminal(sessionCwd)
+      ? [
+          {
+            icon: 'terminal',
+            label: r.openInTerminal,
+            onSelect: () => {
+              void triggerHaptic('selection')
+              void openPathInTerminal(sessionCwd).then(opened => {
+                if (!opened) {
+                  notify({ kind: 'error', message: r.openInTerminalFailed })
+                }
+              })
+            }
+          }
+        ]
+      : []),
     // Pop this conversation out into its own native window (desktop only —
     // gated by canOpenSessionWindow; MJX-104).
     ...(canOpenSessionWindow()

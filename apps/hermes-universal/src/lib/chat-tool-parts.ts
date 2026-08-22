@@ -79,12 +79,45 @@ function collectToolMatchValues(query: string, context: string, preview: string)
  * live clarify card — same question, same choices, its own global key handler,
  * answering a request the first card also owns. Desktop added the same key for
  * the same reason (upstream `d21165c2f0`).
+ *
+ * `server` is `setup_mcp`'s, for the identical reason and with a worse failure:
+ * a duplicated consent card is two Install buttons for one blocking request, and
+ * the second one's approve answers a `request_id` the first already resolved —
+ * an install the user consented to once, run twice.
  */
-const TOOL_QUERY_ARG_KEYS = ['search_term', 'query', 'question'] as const
+const TOOL_QUERY_ARG_KEYS = ['search_term', 'query', 'question', 'server'] as const
+
+/**
+ * The batch-clarify counterpart of the `question` correlation key.
+ *
+ * A batch payload has NO top-level `question` — only `questions[]` — so
+ * without this the synthetic `clarify.request` row and the `tool.start` row
+ * share no match value, never merge, and the transcript grows two live batch
+ * cards for one question set (each with its own staged answers, both able to
+ * lock the same qids). The joined per-question texts identify the batch the
+ * same way one question text identifies a single prompt; `\u0000` cannot occur
+ * in real question text, so a batch key can never collide with a
+ * single-question one. Desktop uses the identical key (`838c4692bc`).
+ */
+function batchClarifyMatchValue(questions: unknown): string {
+  if (!Array.isArray(questions)) {
+    return ''
+  }
+
+  const texts = questions
+    .map(entry => {
+      const question = (entry as Record<string, unknown> | null)?.question
+
+      return typeof question === 'string' ? question.trim() : ''
+    })
+    .filter(Boolean)
+
+  return texts.length > 0 ? texts.join('\u0000') : ''
+}
 
 function toolPayloadMatchValues(payload: GatewayToolPayload | undefined): string[] {
   const payloadArgs = liveToolArgs(payload)
-  const query = firstStringField(payloadArgs, TOOL_QUERY_ARG_KEYS)
+  const query = firstStringField(payloadArgs, TOOL_QUERY_ARG_KEYS) || batchClarifyMatchValue(payloadArgs.questions)
   const context = typeof payload?.context === 'string' ? payload.context.trim() : ''
   const preview = typeof payload?.preview === 'string' ? payload.preview.trim() : ''
 
@@ -97,7 +130,7 @@ function toolPartMatchValues(part: ChatPart | undefined): string[] {
   }
 
   const args = part.args as Record<string, unknown>
-  const query = firstStringField(args, TOOL_QUERY_ARG_KEYS)
+  const query = firstStringField(args, TOOL_QUERY_ARG_KEYS) || batchClarifyMatchValue(args.questions)
   const context = typeof args.context === 'string' ? args.context.trim() : ''
   const preview = typeof args.preview === 'string' ? args.preview.trim() : ''
 
