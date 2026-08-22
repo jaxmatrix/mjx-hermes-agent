@@ -1559,6 +1559,27 @@ export const zh: Translations = {
     settings: '设置',
     changeTheme: '更改主题',
     changeColorMode: '更改颜色模式…',
+    tour: {
+      label: '开始导览',
+      steps: {
+        sidebar: {
+          title: '会话',
+          text: '所有对话都在这里。新建会话、在会话间跳转，或重新打开已归档的内容。'
+        },
+        composer: {
+          title: '输入框',
+          text: '在这里提出任何请求。可以附加文件、选择模型，或输入 / 使用命令。'
+        },
+        statusbar: {
+          title: '状态',
+          text: '一眼看清网关、模型和上下文用量。右键可选择显示哪些内容。'
+        },
+        palette: {
+          title: '其他一切',
+          text: '随时按 ⌘K（Ctrl+K）——设置、会话、主题和本导览都在里面。'
+        }
+      }
+    },
     pets: {
       title: '宠物',
       placeholder: '搜索宠物…',

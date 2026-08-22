@@ -41,6 +41,7 @@ import {
   FolderOpen,
   GitBranch,
   Globe,
+  HelpCircle,
   type IconComponent,
   Info,
   KeyRound,
@@ -78,12 +79,13 @@ import { $paneHeightOverride, setPaneHeightOverride } from '@/store/panes'
 import { openPetGenerate } from '@/store/pet-generate'
 import { $projectTree, goToProject, openFolderAsProject, requestStartWorkSession } from '@/store/projects'
 import { runGatewayRestart } from '@/store/system-status'
-import { canOpenNewWindow, openAppRoute, openNewWindow } from '@/store/windows'
+import { canOpenNewWindow, openAppRoute, openNewWindow, ownsPersistedAppState } from '@/store/windows'
 import { luminance } from '@/themes/color'
 import { type ThemeMode, useTheme } from '@/themes/context'
 import { isUserTheme, resolveTheme } from '@/themes/user-themes'
 
 import { usePaletteContributions } from './contrib'
+import { startCuratedTour } from './curated-tour'
 import { HighlightWatcher } from './highlight-watcher'
 import {
   PAGE_PARENTS,
@@ -637,6 +639,22 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
                   keywords: ['window', 'instance', 'open', 'new'],
                   label: t.keybinds.actions['session.newWindow'],
                   run: () => void openNewWindow()
+                }
+              ]
+            : []),
+          // The guided tour (MJXHRM-473). Gated on owning the app's layout for
+          // the same reason the agent's tour driver is: its steps point at the
+          // sidebar, composer and statusbar, none of which exist in a detached
+          // tile, a satellite or an Android activity screen — the engine would
+          // correctly refuse, which is a worse row than no row.
+          ...(ownsPersistedAppState()
+            ? [
+                {
+                  icon: HelpCircle,
+                  id: 'help-tour',
+                  keywords: ['tour', 'guide', 'walkthrough', 'help', 'intro', 'onboarding', 'show me'],
+                  label: cc.tour.label,
+                  run: () => void startCuratedTour(t)
                 }
               ]
             : []),
