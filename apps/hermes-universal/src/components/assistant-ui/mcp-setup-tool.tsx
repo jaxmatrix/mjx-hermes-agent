@@ -34,6 +34,7 @@ import { requestGateway } from '@/store/gateway'
 import { type McpSetupClientOutcome, type McpSetupStatus, readMcpSetupAction } from '@/store/mcp-setup'
 import { notifyError } from '@/store/notifications'
 import { clearSessionMcpSetup, type McpSetupAction, sessionMcpSetupRequest } from '@/store/prompts'
+import { invalidateMcpSuggestionIndex } from '@/store/suggestion-providers/mcp'
 import type { McpCatalogEntry } from '@/types/hermes'
 
 import { selectMessageRunning } from './tool/fallback-model'
@@ -239,6 +240,9 @@ function McpSetupPending({ args }: ToolCallMessagePartProps) {
         } catch (error) {
           notifyError(error, copy.reloadFailed)
         }
+
+        // The just-set-up server must stop being offered as a composer pill.
+        invalidateMcpSuggestionIndex()
       }
 
       try {

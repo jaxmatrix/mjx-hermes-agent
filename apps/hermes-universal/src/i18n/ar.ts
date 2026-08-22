@@ -1814,6 +1814,15 @@ export const ar = defineLocale({
     }
   },
   composer: {
+    mcpSuggestions: {
+      label: server => `إضافة ${server}`,
+      tip: keyword => `اقتُرح لأنك ذكرت «${keyword}» — انقر للاتصال`,
+      connecting: server => `جار الاتصال بـ ${server}…`,
+      cancelTip: 'انقر للإلغاء',
+      added: server => `تمت إضافة ${server}`,
+      addedTip: 'تم الاتصال — أدواته جاهزة في هذه المحادثة',
+      connectFailed: server => `تعذر الاتصال بـ ${server}`
+    },
     message: 'الرسالة',
     wakingProfile: profile => `جار إيقاظ ${profile}`,
     placeholderStarting: 'جار بدء Hermes...',

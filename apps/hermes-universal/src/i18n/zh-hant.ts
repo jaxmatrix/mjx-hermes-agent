@@ -1949,6 +1949,15 @@ export const zhHant = defineLocale({
   },
 
   composer: {
+    mcpSuggestions: {
+      label: server => `新增 ${server}`,
+      tip: keyword => `因為你提到了「${keyword}」——點擊即可連線`,
+      connecting: server => `正在連線 ${server}…`,
+      cancelTip: '點擊取消',
+      added: server => `已新增 ${server}`,
+      addedTip: '已連線——其工具已可在此對話使用',
+      connectFailed: server => `無法連線 ${server}`
+    },
     message: '訊息',
     wakingProfile: profile => `正在喚醒 ${profile}…`,
     placeholderStarting: '正在啟動 Hermes...',

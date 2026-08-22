@@ -2015,6 +2015,15 @@ export const ja = defineLocale({
   },
 
   composer: {
+    mcpSuggestions: {
+      label: server => `${server} を追加`,
+      tip: keyword => `「${keyword}」に言及したため提案しています — クリックで接続`,
+      connecting: server => `${server} に接続中…`,
+      cancelTip: 'クリックでキャンセル',
+      added: server => `${server} を追加しました`,
+      addedTip: '接続しました — このチャットでツールを利用できます',
+      connectFailed: server => `${server} に接続できませんでした`
+    },
     message: 'メッセージ',
     wakingProfile: profile => `${profile} を起動中…`,
     placeholderStarting: 'Hermes を起動中...',

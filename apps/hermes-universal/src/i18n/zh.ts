@@ -2331,6 +2331,15 @@ export const zh: Translations = {
   },
 
   composer: {
+    mcpSuggestions: {
+      label: server => `添加 ${server}`,
+      tip: keyword => `因为你提到了“${keyword}”——点击即可连接`,
+      connecting: server => `正在连接 ${server}…`,
+      cancelTip: '点击取消',
+      added: server => `已添加 ${server}`,
+      addedTip: '已连接——其工具已在此对话中可用',
+      connectFailed: server => `无法连接 ${server}`
+    },
     message: '消息',
     bubbles: {
       releaseToClose: '松开以关闭',

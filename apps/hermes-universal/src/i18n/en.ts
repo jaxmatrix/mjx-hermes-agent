@@ -2182,6 +2182,15 @@ export const en: Translations = {
   },
 
   composer: {
+    mcpSuggestions: {
+      label: server => `Add ${server}`,
+      tip: keyword => `Suggested because you mentioned “${keyword}” — click to connect`,
+      connecting: server => `Connecting ${server}…`,
+      cancelTip: 'Click to cancel',
+      added: server => `Added ${server}`,
+      addedTip: 'Connected — its tools are ready in this chat',
+      connectFailed: server => `Could not connect ${server}`
+    },
     message: 'Message',
     bubbles: {
       releaseToClose: 'Release to close',

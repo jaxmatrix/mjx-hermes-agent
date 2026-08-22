@@ -1889,6 +1889,15 @@ export interface Translations {
   }
 
   composer: {
+    mcpSuggestions: {
+      label: (server: string) => string
+      tip: (keyword: string) => string
+      connecting: (server: string) => string
+      cancelTip: string
+      added: (server: string) => string
+      addedTip: string
+      connectFailed: (server: string) => string
+    }
     message: string
     bubbles: {
       releaseToClose: string
