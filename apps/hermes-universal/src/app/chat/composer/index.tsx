@@ -65,6 +65,7 @@ import {
 import { useComposerScope } from './scope'
 import { ComposerStatusStack } from './status-stack'
 import { CodingStatusRow } from './status-stack/coding-row'
+import { SuggestionPills } from './suggestion-pills'
 import { extractClipboardImageBlobs, openDirectiveScope } from './text-utils'
 import { ComposerTriggerPopover } from './trigger-popover'
 import type { ChatBarProps } from './types'
@@ -1133,6 +1134,7 @@ export function ChatBar({
               away entirely when nothing contributes. */}
           <div className={cn(composerFloatingStrip, 'relative z-4 pb-1.5 empty:hidden')}>
             <ActionBadges sessionId={statusSessionId} />
+            <SuggestionPills sessionId={statusSessionId} />
           </div>
           <div className="relative w-full rounded-[inherit]">
             {/* Session-scoped status stack (todos, subagents, background tasks,

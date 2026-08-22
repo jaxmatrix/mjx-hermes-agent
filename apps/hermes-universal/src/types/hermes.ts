@@ -1519,6 +1519,11 @@ export interface McpCatalogEntry {
   needs_install: boolean
   installed: boolean
   enabled: boolean
+  /** Composer-suggestion triggers (present when the manifest declares a
+   *  `suggest` block — `hermes_cli/mcp_catalog.py`; null/absent on entries
+   *  without one and on older backends that predate the field, which is what
+   *  `lib/mcp-directory.ts` stays around as the fallback rung for). */
+  suggest?: null | { hosts: string[]; keywords: string[] }
 }
 
 export interface McpCatalogResponse {

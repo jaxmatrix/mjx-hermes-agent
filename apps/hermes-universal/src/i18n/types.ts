@@ -25,6 +25,7 @@ export type ToolTitleKey =
   | 'read_file'
   | 'search_files'
   | 'session_search_recall'
+  | 'setup_mcp'
   | 'terminal'
   | 'todo'
   | 'vision_analyze'
@@ -1888,6 +1889,15 @@ export interface Translations {
   }
 
   composer: {
+    mcpSuggestions: {
+      label: (server: string) => string
+      tip: (keyword: string) => string
+      connecting: (server: string) => string
+      cancelTip: string
+      added: (server: string) => string
+      addedTip: string
+      connectFailed: (server: string) => string
+    }
     message: string
     bubbles: {
       releaseToClose: string
@@ -2642,6 +2652,27 @@ export interface Translations {
       alwaysTitle: string
       alwaysDescription: (pattern: string) => string
       alwaysAllow: string
+    }
+    mcpSetup: {
+      installTitle: (server: string) => string
+      enableTitle: (server: string) => string
+      authorizeTitle: (server: string) => string
+      installAction: string
+      enableAction: string
+      authorizeAction: string
+      decline: string
+      catalogSource: string
+      envRequired: string
+      notInCatalog: (server: string) => string
+      installed: (server: string) => string
+      enabled: (server: string) => string
+      authorized: (server: string) => string
+      declined: string
+      unanswered: string
+      failed: (server: string) => string
+      toolCount: (count: number) => string
+      sendFailed: string
+      reloadFailed: string
     }
     clarify: {
       notReady: string

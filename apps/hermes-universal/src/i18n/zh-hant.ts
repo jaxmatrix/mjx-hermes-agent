@@ -1949,6 +1949,15 @@ export const zhHant = defineLocale({
   },
 
   composer: {
+    mcpSuggestions: {
+      label: server => `新增 ${server}`,
+      tip: keyword => `因為你提到了「${keyword}」——點擊即可連線`,
+      connecting: server => `正在連線 ${server}…`,
+      cancelTip: '點擊取消',
+      added: server => `已新增 ${server}`,
+      addedTip: '已連線——其工具已可在此對話使用',
+      connectFailed: server => `無法連線 ${server}`
+    },
     message: '訊息',
     wakingProfile: profile => `正在喚醒 ${profile}…`,
     placeholderStarting: '正在啟動 Hermes...',
@@ -2663,6 +2672,27 @@ export const zhHant = defineLocale({
         `這會將「${pattern}」模式加入永久允許清單（~/.hermes/config.yaml）。Hermes 對類似指令將不再詢問，包括目前工作階段和未來工作階段。`,
       alwaysAllow: '一律允許'
     },
+    mcpSetup: {
+      installTitle: server => `要新增 ${server} MCP 伺服器嗎？`,
+      enableTitle: server => `要啟用 ${server} MCP 伺服器嗎？`,
+      authorizeTitle: server => `要授權 ${server} MCP 伺服器嗎？`,
+      installAction: '安裝',
+      enableAction: '啟用',
+      authorizeAction: '授權',
+      decline: '暫時不要',
+      catalogSource: '來自 Nous 審核目錄',
+      envRequired: '請先填寫所需憑證',
+      notInCatalog: server => `「${server}」不在 MCP 目錄中`,
+      installed: server => `已安裝 ${server}`,
+      enabled: server => `已啟用 ${server}`,
+      authorized: server => `已授權 ${server}`,
+      declined: '已拒絕',
+      unanswered: '未回應',
+      failed: server => `${server} 設定失敗`,
+      toolCount: count => `${count} 個工具`,
+      sendFailed: '無法傳送 MCP 設定回應',
+      reloadFailed: '伺服器已設定，但此對話未能重新載入其工具'
+    },
     clarify: {
       notReady: '澄清請求尚未就緒',
       gatewayDisconnected: 'Hermes 閘道未連線',
@@ -2756,6 +2786,7 @@ export const zhHant = defineLocale({
           pending: '正在搜尋工作階段歷史',
           pendingAction: '正在搜尋'
         },
+        setup_mcp: { done: '已設定 MCP 伺服器', pending: '正在設定 MCP 伺服器', pendingAction: '正在設定' },
         terminal: { done: '已執行指令', pending: '正在執行指令', pendingAction: '正在執行' },
         todo: { done: '已更新待辦', pending: '正在更新待辦', pendingAction: '正在更新' },
         vision_analyze: { done: '已分析圖片', pending: '正在分析圖片', pendingAction: '正在分析' },

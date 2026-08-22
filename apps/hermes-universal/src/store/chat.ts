@@ -1861,7 +1861,11 @@ export async function respondSecret(value: string, key = $activeSessionKey.get()
 
 /** The pet reflects what the USER is looking at, so answering a background
  *  session's prompt must not take it out of its waiting pose. */
-function clearAwaitingInputPose(key: string): void {
+/** Drop the pet's "waiting on you" pose once a blocking prompt is answered.
+ *  Exported for the `setup_mcp` consent card, whose request is a blocking
+ *  prompt like clarify's and whose answer likewise lands long before
+ *  `message.complete` would otherwise clear it. */
+export function clearAwaitingInputPose(key: string): void {
   if (key === $activeSessionKey.get()) {
     setPetActivity({ awaitingInput: false })
   }

@@ -1814,6 +1814,15 @@ export const ar = defineLocale({
     }
   },
   composer: {
+    mcpSuggestions: {
+      label: server => `إضافة ${server}`,
+      tip: keyword => `اقتُرح لأنك ذكرت «${keyword}» — انقر للاتصال`,
+      connecting: server => `جار الاتصال بـ ${server}…`,
+      cancelTip: 'انقر للإلغاء',
+      added: server => `تمت إضافة ${server}`,
+      addedTip: 'تم الاتصال — أدواته جاهزة في هذه المحادثة',
+      connectFailed: server => `تعذر الاتصال بـ ${server}`
+    },
     message: 'الرسالة',
     wakingProfile: profile => `جار إيقاظ ${profile}`,
     placeholderStarting: 'جار بدء Hermes...',
@@ -2513,6 +2522,27 @@ export const ar = defineLocale({
       alwaysDescription: pattern => `السماح دائما بالأوامر المطابقة لـ ${pattern}`,
       alwaysAllow: 'السماح دائما'
     },
+    mcpSetup: {
+      installTitle: server => `إضافة خادم ${server} عبر MCP؟`,
+      enableTitle: server => `تمكين خادم ${server} عبر MCP؟`,
+      authorizeTitle: server => `تفويض خادم ${server} عبر MCP؟`,
+      installAction: 'تثبيت',
+      enableAction: 'تمكين',
+      authorizeAction: 'تفويض',
+      decline: 'ليس الآن',
+      catalogSource: 'من الكتالوج المعتمد من Nous',
+      envRequired: 'أدخل بيانات الاعتماد المطلوبة أولاً',
+      notInCatalog: server => `«${server}» غير موجود في كتالوج MCP`,
+      installed: server => `تم تثبيت ${server}`,
+      enabled: server => `تم تمكين ${server}`,
+      authorized: server => `تم تفويض ${server}`,
+      declined: 'تم الرفض',
+      unanswered: 'بلا رد',
+      failed: server => `فشل إعداد ${server}`,
+      toolCount: count => `${count} أدوات`,
+      sendFailed: 'تعذر إرسال رد إعداد MCP',
+      reloadFailed: 'تم إعداد الخادم، لكن تعذر على هذه المحادثة إعادة تحميل أدواته'
+    },
     clarify: {
       notReady: 'غير جاهز',
       gatewayDisconnected: 'البوابة غير متصلة',
@@ -2662,6 +2692,11 @@ export const ar = defineLocale({
           done: 'تم البحث في سجل الجلسة',
           pending: 'جار البحث في سجل الجلسة',
           pendingAction: 'جار البحث'
+        },
+        setup_mcp: {
+          done: 'تم إعداد خادم MCP',
+          pending: 'جار إعداد خادم MCP',
+          pendingAction: 'جار الإعداد'
         },
         terminal: {
           done: 'تم تشغيل الأمر',

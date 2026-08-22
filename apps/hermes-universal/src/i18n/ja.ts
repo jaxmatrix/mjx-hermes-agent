@@ -2015,6 +2015,15 @@ export const ja = defineLocale({
   },
 
   composer: {
+    mcpSuggestions: {
+      label: server => `${server} を追加`,
+      tip: keyword => `「${keyword}」に言及したため提案しています — クリックで接続`,
+      connecting: server => `${server} に接続中…`,
+      cancelTip: 'クリックでキャンセル',
+      added: server => `${server} を追加しました`,
+      addedTip: '接続しました — このチャットでツールを利用できます',
+      connectFailed: server => `${server} に接続できませんでした`
+    },
     message: 'メッセージ',
     wakingProfile: profile => `${profile} を起動中…`,
     placeholderStarting: 'Hermes を起動中...',
@@ -2753,6 +2762,27 @@ export const ja = defineLocale({
         `これにより "${pattern}" パターンが永続的な許可リスト (~/.hermes/config.yaml) に追加されます。Hermes はこのセッションや将来のセッションで、このようなコマンドについて再度尋ねません。`,
       alwaysAllow: '常に許可'
     },
+    mcpSetup: {
+      installTitle: server => `${server} の MCP サーバーを追加しますか？`,
+      enableTitle: server => `${server} の MCP サーバーを有効にしますか？`,
+      authorizeTitle: server => `${server} の MCP サーバーを認証しますか？`,
+      installAction: 'インストール',
+      enableAction: '有効にする',
+      authorizeAction: '認証',
+      decline: '今はしない',
+      catalogSource: 'Nous 承認カタログから',
+      envRequired: '先に必要な認証情報を入力してください',
+      notInCatalog: server => `「${server}」は MCP カタログにありません`,
+      installed: server => `${server} をインストールしました`,
+      enabled: server => `${server} を有効にしました`,
+      authorized: server => `${server} を認証しました`,
+      declined: '拒否しました',
+      unanswered: '応答なし',
+      failed: server => `${server} のセットアップに失敗しました`,
+      toolCount: count => `${count} 個のツール`,
+      sendFailed: 'MCP セットアップの応答を送信できませんでした',
+      reloadFailed: 'サーバーは設定されましたが、このチャットのツールを再読み込みできませんでした'
+    },
     clarify: {
       notReady: '明確化リクエストはまだ準備できていません',
       gatewayDisconnected: 'Hermes ゲートウェイが接続されていません',
@@ -2870,6 +2900,7 @@ export const ja = defineLocale({
           pending: 'セッション履歴を検索中',
           pendingAction: '検索中'
         },
+        setup_mcp: { done: 'MCP サーバーを設定しました', pending: 'MCP サーバーを設定中', pendingAction: '設定中' },
         terminal: { done: 'コマンドを実行しました', pending: 'コマンドを実行中', pendingAction: '実行中' },
         todo: { done: 'Todo を更新しました', pending: 'Todo を更新中', pendingAction: '更新中' },
         vision_analyze: { done: '画像を分析しました', pending: '画像を分析中', pendingAction: '分析中' },

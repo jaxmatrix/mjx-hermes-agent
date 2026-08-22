@@ -200,6 +200,13 @@ const TOOL_META: Record<ToolTitleKey, ToolMetaSpec> = {
     icon: 'search',
     tone: 'agent'
   },
+  // Only reached when the card stands down (a turn stopped mid-prompt renders
+  // ToolFallback instead of a dead interactive panel) — `isCardTool` keeps the
+  // live row out of the run summary.
+  setup_mcp: {
+    icon: 'plug',
+    tone: 'agent'
+  },
   terminal: {
     icon: 'terminal',
     tone: 'terminal'
