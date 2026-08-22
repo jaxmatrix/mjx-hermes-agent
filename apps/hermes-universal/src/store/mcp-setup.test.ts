@@ -12,6 +12,12 @@ vi.mock('@/store/gateway', async () => {
 
 vi.mock('@/store/notifications', () => ({ notify: vi.fn(), notifyError: vi.fn() }))
 
+vi.mock('@/store/pet', async importActual => {
+  const actual = await importActual<typeof Pet>()
+
+  return { ...actual, setPetActivity: vi.fn() }
+})
+
 import type { ToolCallPart } from '@/lib/chat-messages'
 import { requestGateway } from '@/store/gateway'
 import {
@@ -22,6 +28,8 @@ import {
   skipMcpSetupRequest
 } from '@/store/mcp-setup'
 import { notifyError } from '@/store/notifications'
+import type * as Pet from '@/store/pet'
+import { setPetActivity } from '@/store/pet'
 import { clearAllPrompts, sessionMcpSetupRequest, setSessionMcpSetup } from '@/store/prompts'
 import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
 import type { SessionResumeResponse } from '@/types/hermes'
@@ -123,6 +131,16 @@ describe('skipMcpSetupRequest', () => {
     release()
     await pending
     expect(rpc).toHaveBeenCalledTimes(1)
+  })
+
+  // The pet's "waiting on you" pose is set by the request and, without this,
+  // cleared only by `message.complete` — leaving it waiting for input nobody
+  // will ever give for the rest of the turn. Same clear `respondClarify` does.
+  it('drops the waiting pose it answered on behalf of', async () => {
+    setSessionMcpSetup('s1', REQUEST)
+    await skipMcpSetupRequest('s1')
+
+    expect(setPetActivity).toHaveBeenCalledWith({ awaitingInput: false })
   })
 
   it('is a no-op with nothing parked', async () => {

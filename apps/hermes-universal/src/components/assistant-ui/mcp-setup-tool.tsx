@@ -30,6 +30,7 @@ import { directoryEntry } from '@/lib/mcp-directory'
 import { removeMcpServerEntry, writeMcpServerEntry } from '@/lib/mcp-servers'
 import { prettyName } from '@/lib/text'
 import { cn } from '@/lib/utils'
+import { clearAwaitingInputPose } from '@/store/chat'
 import { requestGateway } from '@/store/gateway'
 import { type McpSetupClientOutcome, type McpSetupStatus, readMcpSetupAction } from '@/store/mcp-setup'
 import { notifyError } from '@/store/notifications'
@@ -227,6 +228,7 @@ function McpSetupPending({ args }: ToolCallMessagePartProps) {
       // Clear first: the answer is decided, and an in-flight RPC must not leave
       // a live card that can be answered a second time.
       clearSessionMcpSetup(sessionKey)
+      clearAwaitingInputPose(sessionKey)
 
       // A successful outcome changed mcp_servers — reload the live session
       // BEFORE unblocking the tool, or the agent resumes being told the server

@@ -19,6 +19,7 @@
 import type { GatewayEvent } from '@/gateway'
 import { coerceText } from '@/lib/chat-messages'
 import { type McpSetupOutcome, respondMcpSetup } from '@/lib/gateway-rpc'
+import { clearAwaitingInputPose } from '@/store/chat'
 import { notifyError } from '@/store/notifications'
 import {
   clearSessionMcpSetup,
@@ -97,6 +98,7 @@ export async function skipMcpSetupRequest(key: null | string | undefined): Promi
   }
 
   clearSessionMcpSetup(key)
+  clearAwaitingInputPose(key)
 
   try {
     await respondMcpSetup(request.requestId, { server: request.server, status: 'declined' })
