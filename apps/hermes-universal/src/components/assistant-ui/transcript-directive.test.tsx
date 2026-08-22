@@ -86,6 +86,7 @@ describe('TranscriptDirectiveLeaf', () => {
         render: () => <div data-testid="other-card">other</div>
       } satisfies TranscriptDirectiveContribution
     })
+
     const dispose = contribution()
 
     try {
