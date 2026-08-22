@@ -303,6 +303,13 @@ export { evaluateRuntimeReadiness, type RuntimeReadinessResult } from '@/lib/run
 /** Canonical time formatting — every timestamp/age string in the app comes
  *  from these (localized `Intl` under the hood). Don't hand-roll "Xm ago". */
 export { coarseElapsed, fmtDateTime, fmtDayTime, relativeTime } from '@/lib/time'
+/** The transcript as a contribution area: register a named `::directive{...}`
+ *  and the model can render your component inline in assistant messages. */
+export {
+  TRANSCRIPT_DIRECTIVE_AREA,
+  type TranscriptDirectiveContribution,
+  type TranscriptDirectiveProps
+} from '@/lib/transcript-directives'
 export { cn } from '@/lib/utils'
 /** Live accent override — set a hex and the ACTIVE theme repaints with its
  *  accent family re-seeded from it (see `retintTheme`); `null` restores the
