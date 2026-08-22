@@ -169,6 +169,14 @@ export const zhHant = defineLocale({
       backgroundDoneTitle: '背景工作已完成',
       backgroundFailedTitle: '背景工作失敗',
       creditsTitle: '額度'
+    },
+    mcp: {
+      needsAuthTitle: 'MCP 伺服器需要重新驗證',
+      needsAuthMessage: name => `${name} MCP 需要重新驗證。`,
+      errorTitle: 'MCP 伺服器無法連線',
+      errorMessage: name => `${name} MCP 健康檢查失敗。`,
+      signIn: '登入',
+      view: '檢視'
     }
   },
 
@@ -885,7 +893,27 @@ export const zhHant = defineLocale({
       unsavedConnect: '未儲存 — 儲存 mcp.json 以連線。',
       enableTool: tool => `啟用 ${tool}`,
       disableTool: tool => `停用 ${tool}`,
-      noOutput: '尚無輸出。'
+      noOutput: '尚無輸出。',
+      importButton: '匯入',
+      importPlaceholder: '貼上 mcp.json 片段、npx/docker 指令、claude mcp add 行、URL 或 Cursor 連結…',
+      importNoMatch: '在貼上的文字中未辨識到伺服器設定。',
+      importConfirm: '新增至 mcp.json',
+      importConfirmMany: count => `將 ${count} 個伺服器新增至 mcp.json`,
+      deepLinkTitle: '新增 MCP 伺服器？',
+      deepLinkDescription: '有連結要求將此 MCP 伺服器新增至 Hermes。請核對下方的確切設定——它來自該連結，而非 Hermes。',
+      deepLinkStdioWarning: '此伺服器會以下方顯示的指令在你的機器上執行本機程序。只有信任其來源時才繼續。',
+      deepLinkConfirm: '新增伺服器',
+      deepLinkNameInvalid: '名稱可使用 1-64 個字母、數字、點、連字號或底線。',
+      deepLinkNameConflict: name => `名為 ${name} 的伺服器已存在——請換一個名稱或取消。`,
+      deepLinkErrorTitle: 'MCP 安裝連結已遭拒',
+      deepLinkErrorName: '連結中的伺服器名稱缺失或無效。',
+      deepLinkErrorConfig: '連結中的設定不是有效的 base64 編碼 JSON。',
+      deepLinkErrorShape: '設定必須是包含字串 `url` 或 `command` 欄位的 JSON 物件。',
+      deepLinkErrorUrl: '僅允許 http:// 與 https:// 的伺服器 URL。',
+      deepLinkErrorTooLarge: '設定負載超過 32KB 上限。',
+      costTokens: tokens => `約 ${tokens} 詞元/次`,
+      usage30d: uses => `${uses} 次/30 天`,
+      unusedPill: '未使用'
     },
     model: {
       loading: '正在載入模型設定...',

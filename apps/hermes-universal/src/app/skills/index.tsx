@@ -204,10 +204,11 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
   // for single-profile users; `scopeKey` is the concrete profile the caches
   // are keyed by.
   //
-  // SKILLS ONLY, deliberately: Tools' per-toolset config panels and the MCP
-  // tab's live-reload RPC are not profile-threaded yet (MJXHRM-451/454 own
-  // that surface), and a scope chip above a tab that ignores it would lie. So
-  // the chips render on the Skills tab, where every action honours them.
+  // Skills and MCP, deliberately: Tools' per-toolset config panels are not
+  // profile-threaded yet, and a scope chip above a tab that ignores it would
+  // lie. So the chips render on those two tabs, where every action honours
+  // them. The MCP tab threads the same override through its config record,
+  // catalog, probes and every lifecycle call (MJXHRM-454).
   const scopeOverride = useStore($settingsScopeOverride)
   const scopeKey = useStore($settingsScopeProfile)
   const skillsQueryKey = useMemo(() => [...SKILLS_QUERY_KEY, scopeKey], [scopeKey])
@@ -581,7 +582,14 @@ export function SkillsView({ setStatusbarItemGroup: _setStatusbarItemGroup, ...p
       ]}
     >
       {mode === 'mcp' ? (
-        <McpTab gateway={gateway} />
+        <div className="flex h-full min-h-0 flex-col">
+          {/* Same store (and chips) as the settings pages and the Skills tab,
+              so the choice carries across all three. */}
+          <SettingsProfileScope className="shrink-0 px-3 pb-3" />
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <McpTab gateway={gateway} profile={scopeOverride} />
+          </div>
+        </div>
       ) : (skillsFailed || toolsetsFailed) && (!skills || !toolsets) ? (
         <PanelEmpty
           action={

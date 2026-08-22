@@ -3,6 +3,7 @@ import { BackgroundCloseDialog } from '@/app/background-close-dialog'
 import { CloseConfirm } from '@/app/close-confirm'
 import { HUD_SURFACE } from '@/app/hud/hud'
 import { HudWindowRoot } from '@/app/hud/hud-window'
+import { McpInstallDeepLinkDialog } from '@/app/mcp-install-deeplink-dialog'
 import { MobileController } from '@/app/mobile-controller'
 import { QUICK_ENTRY_SURFACE } from '@/app/quick-entry/quick-entry'
 import { QuickEntryWindowRoot } from '@/app/quick-entry/quick-entry-window'
@@ -12,6 +13,8 @@ import { WakeIndicatorOverlay } from '@/app/wake-indicator-overlay'
 import { WakeIndicatorWindowRoot } from '@/app/wake-indicator/wake-indicator-window'
 import { ConfirmHost } from '@/components/confirm-host'
 import { FindBar } from '@/components/find-bar'
+import { startMcpDeepLinkListener } from '@/store/mcp-deeplink-install'
+import { startMcpHealthChecker } from '@/store/mcp-health'
 import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFACE } from '@/store/windows'
 
 /**
@@ -57,10 +60,21 @@ import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFAC
  * and a sidebar row each reach it from a different shell, so the shell level is
  * again one level too low.
  *
+ * `McpInstallDeepLinkDialog` (MJXHRM-454) is the seventh, and it is the
+ * `ConfirmHost` case again from outside the app: a `hermes://mcp/install` link
+ * is opened by the OS, so whichever window happens to be listening has to be
+ * able to draw the confirmation — and nothing is written to config until it is
+ * answered. The listener is armed here for the same reason.
+ *
  * Mounted HERE rather than once per root so the next root cannot forget them —
  * the failure mode is silence, which is the kind that ships.
  */
 export function App() {
+  startMcpDeepLinkListener()
+  // Both are idempotent and refuse to arm twice; the health checker also
+  // refuses in a satellite window, so the fleet gets ONE sweeper.
+  startMcpHealthChecker()
+
   return (
     <>
       <AppRoot />
@@ -69,6 +83,7 @@ export function App() {
       <CloseConfirm />
       <BackgroundCloseDialog />
       <ConfirmHost />
+      <McpInstallDeepLinkDialog />
       <WakeIndicatorOverlay />
     </>
   )

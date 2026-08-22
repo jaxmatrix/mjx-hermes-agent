@@ -118,6 +118,14 @@ export const ar = defineLocale({
       turnErrorTitle: 'فشلت الجولة',
       backgroundDoneTitle: 'انتهت المهمة في الخلفية',
       backgroundFailedTitle: 'فشلت المهمة في الخلفية'
+    },
+    mcp: {
+      needsAuthTitle: 'خادم MCP يحتاج إعادة مصادقة',
+      needsAuthMessage: name => `يحتاج خادم ${name} إلى إعادة المصادقة.`,
+      errorTitle: 'تعذّر الوصول إلى خادم MCP',
+      errorMessage: name => `فشل فحص سلامة خادم ${name}.`,
+      signIn: 'تسجيل الدخول',
+      view: 'عرض'
     }
   },
   remoteDisplayBanner: {
@@ -775,7 +783,28 @@ export const ar = defineLocale({
       name: 'الاسم',
       serverJson: 'JSON الخادم',
       remove: 'إزالة',
-      saveServer: 'حفظ الخادم'
+      saveServer: 'حفظ الخادم',
+      importButton: 'استيراد',
+      importPlaceholder: 'الصق مقتطف mcp.json أو أمر npx/docker أو سطر claude mcp add أو رابطًا أو رابط Cursor…',
+      importNoMatch: 'لم يتم التعرف على أي إعداد خادم في النص الملصق.',
+      importConfirm: 'إضافة إلى mcp.json',
+      importConfirmMany: count => `إضافة ${count} خوادم إلى mcp.json`,
+      deepLinkTitle: 'إضافة خادم MCP؟',
+      deepLinkDescription:
+        'طلب رابط إضافة خادم MCP هذا إلى Hermes. راجع الإعداد الدقيق أدناه — فهو يأتي من الرابط، لا من Hermes.',
+      deepLinkStdioWarning: 'يشغّل هذا الخادم عملية محلية على جهازك بالأمر الظاهر أدناه. تابع فقط إذا كنت تثق بمصدره.',
+      deepLinkConfirm: 'إضافة الخادم',
+      deepLinkNameInvalid: 'تستخدم الأسماء من 1 إلى 64 حرفًا أو رقمًا أو نقطة أو شرطة أو شرطة سفلية.',
+      deepLinkNameConflict: name => `يوجد خادم باسم ${name} بالفعل — اختر اسمًا مختلفًا أو ألغِ.`,
+      deepLinkErrorTitle: 'تم رفض رابط تثبيت MCP',
+      deepLinkErrorName: 'اسم الخادم في الرابط مفقود أو غير صالح.',
+      deepLinkErrorConfig: 'إعداد الرابط ليس JSON مُرمّزًا بصيغة base64 صالحة.',
+      deepLinkErrorShape: 'يجب أن يكون الإعداد كائن JSON يحتوي على حقل `url` أو `command` نصي.',
+      deepLinkErrorUrl: 'يُسمح فقط بعناوين الخوادم http:// و https://.',
+      deepLinkErrorTooLarge: 'حمولة الإعداد تتجاوز حد 32 كيلوبايت.',
+      costTokens: tokens => `~${tokens} رمز/استدعاء`,
+      usage30d: uses => `${uses} استخدام/30 يومًا`,
+      unusedPill: 'غير مستخدم'
     },
     model: {
       loading: 'جار تحميل إعدادات النموذج...',

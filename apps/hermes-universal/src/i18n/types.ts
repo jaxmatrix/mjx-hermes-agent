@@ -209,6 +209,14 @@ export interface Translations {
       backgroundFailedTitle: string
       creditsTitle: string
     }
+    mcp: {
+      needsAuthTitle: string
+      needsAuthMessage: (name: string) => string
+      errorTitle: string
+      errorMessage: (name: string) => string
+      signIn: string
+      view: string
+    }
   }
 
   billingBlock: {
@@ -819,6 +827,26 @@ export interface Translations {
       enableTool: (tool: string) => string
       disableTool: (tool: string) => string
       noOutput: string
+      importButton: string
+      importPlaceholder: string
+      importNoMatch: string
+      importConfirm: string
+      importConfirmMany: (count: number) => string
+      deepLinkTitle: string
+      deepLinkDescription: string
+      deepLinkStdioWarning: string
+      deepLinkConfirm: string
+      deepLinkNameInvalid: string
+      deepLinkNameConflict: (name: string) => string
+      deepLinkErrorTitle: string
+      deepLinkErrorName: string
+      deepLinkErrorConfig: string
+      deepLinkErrorShape: string
+      deepLinkErrorUrl: string
+      deepLinkErrorTooLarge: string
+      costTokens: (tokens: string) => string
+      usage30d: (uses: string) => string
+      unusedPill: string
     }
     model: {
       loading: string

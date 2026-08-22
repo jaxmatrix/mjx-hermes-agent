@@ -172,6 +172,14 @@ export const ja = defineLocale({
       backgroundDoneTitle: 'バックグラウンドタスクが完了しました',
       backgroundFailedTitle: 'バックグラウンドタスクが失敗しました',
       creditsTitle: 'クレジット'
+    },
+    mcp: {
+      needsAuthTitle: 'MCP サーバーの再認証が必要です',
+      needsAuthMessage: name => `${name} MCP の再認証が必要です。`,
+      errorTitle: 'MCP サーバーに接続できません',
+      errorMessage: name => `${name} MCP のヘルスチェックに失敗しました。`,
+      signIn: 'サインイン',
+      view: '表示'
     }
   },
 
@@ -916,7 +924,30 @@ export const ja = defineLocale({
       unsavedConnect: '未保存 — 接続するには mcp.json を保存してください。',
       enableTool: tool => `${tool} を有効化`,
       disableTool: tool => `${tool} を無効化`,
-      noOutput: 'まだ出力がありません。'
+      noOutput: 'まだ出力がありません。',
+      importButton: 'インポート',
+      importPlaceholder: 'mcp.json スニペット、npx/docker コマンド、claude mcp add 行、URL、Cursor リンクを貼り付け…',
+      importNoMatch: '貼り付けたテキストにサーバー設定が見つかりません。',
+      importConfirm: 'mcp.json に追加',
+      importConfirmMany: count => `${count} 件のサーバーを mcp.json に追加`,
+      deepLinkTitle: 'MCP サーバーを追加しますか？',
+      deepLinkDescription:
+        'リンクがこの MCP サーバーの追加を要求しました。以下の設定は Hermes ではなくリンクから来ています。内容を確認してください。',
+      deepLinkStdioWarning:
+        'このサーバーは以下のコマンドでローカルプロセスを実行します。提供元を信頼できる場合のみ続行してください。',
+      deepLinkConfirm: 'サーバーを追加',
+      deepLinkNameInvalid: '名前は英数字・ドット・ハイフン・アンダースコアの 1〜64 文字です。',
+      deepLinkNameConflict: name =>
+        `${name} という名前のサーバーは既にあります。別の名前を選ぶかキャンセルしてください。`,
+      deepLinkErrorTitle: 'MCP インストールリンクを拒否しました',
+      deepLinkErrorName: 'リンクのサーバー名がないか無効です。',
+      deepLinkErrorConfig: 'リンクの設定が有効な base64 エンコード JSON ではありません。',
+      deepLinkErrorShape: '設定は文字列の `url` または `command` を持つ JSON オブジェクトである必要があります。',
+      deepLinkErrorUrl: 'http:// と https:// のサーバー URL のみ許可されています。',
+      deepLinkErrorTooLarge: '設定のペイロードが 32KB の上限を超えています。',
+      costTokens: tokens => `約 ${tokens} トークン/回`,
+      usage30d: uses => `${uses} 回/30日`,
+      unusedPill: '未使用'
     },
     model: {
       loading: 'モデル設定を読み込み中...',

@@ -919,7 +919,9 @@ export function toggleSkill(
 export interface McpTestResult {
   ok: boolean
   error?: string
-  tools: { name: string; description: string }[]
+  /** `schema_chars` (the JSON-stringified registry schema's length) is additive —
+   *  older backends omit it and the cost overlay shows no token estimate. */
+  tools: { name: string; description: string; schema_chars?: number }[]
   /** Capability counts (absent on older backends / failed probes). */
   prompts?: number
   resources?: number
@@ -927,9 +929,9 @@ export interface McpTestResult {
 
 /** Connect to the server, list its tools, disconnect. Slow (spawns/handshakes
  *  for real) — well past the 15s default fetch timeout. */
-export function testMcpServer(name: string): Promise<McpTestResult> {
+export function testMcpServer(name: string, profile?: null | string): Promise<McpTestResult> {
   return api<McpTestResult>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/mcp/servers/${encodeURIComponent(name)}/test`,
     method: 'POST',
     timeoutMs: 60_000
@@ -939,9 +941,12 @@ export function testMcpServer(name: string): Promise<McpTestResult> {
 /** Replace the whole `mcp_servers` map (the mcp.json editor's save). Unlike
  *  `saveHermesConfig`, this REPLACES rather than deep-merges, so deletes,
  *  re-enables (dropping `enabled: false`), and removed nested fields persist. */
-export function saveMcpServers(servers: Record<string, Record<string, unknown>>): Promise<{ ok: boolean }> {
+export function saveMcpServers(
+  servers: Record<string, Record<string, unknown>>,
+  profile?: null | string
+): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/mcp/servers',
     method: 'PUT',
     body: { servers }
@@ -961,9 +966,9 @@ export interface McpOAuthFlow {
  *  Capabilities MCP tab drives the browser + polling itself via
  *  completeMcpDesktopOAuth (see lib/mcp-dashboard-oauth), so this only kicks the
  *  flow off — hence a short timeout, not a blocking 5-minute wait. */
-export function authMcpServer(name: string): Promise<McpOAuthFlow> {
+export function authMcpServer(name: string, profile?: null | string): Promise<McpOAuthFlow> {
   return api<McpOAuthFlow>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/mcp/servers/${encodeURIComponent(name)}/auth`,
     method: 'POST',
     timeoutMs: 60_000
@@ -971,9 +976,9 @@ export function authMcpServer(name: string): Promise<McpOAuthFlow> {
 }
 
 /** Poll a running MCP OAuth flow by id until it lands approved/error. */
-export function getMcpOAuthFlow(flowId: string): Promise<McpOAuthFlow> {
+export function getMcpOAuthFlow(flowId: string, profile?: null | string): Promise<McpOAuthFlow> {
   return api<McpOAuthFlow>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/mcp/oauth/flows/${encodeURIComponent(flowId)}`
   })
 }
@@ -993,9 +998,9 @@ export function getMcpOAuthFlow(flowId: string): Promise<McpOAuthFlow> {
  * `{ok: true, status: 'expired'}`, NOT a 404, so a cleanup path can call this
  * unconditionally without first checking whether the flow still exists.
  */
-export function cancelMcpOAuthFlow(flowId: string): Promise<{ ok: boolean; status: string }> {
+export function cancelMcpOAuthFlow(flowId: string, profile?: null | string): Promise<{ ok: boolean; status: string }> {
   return api<{ ok: boolean; status: string }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/mcp/oauth/flows/${encodeURIComponent(flowId)}`,
     method: 'DELETE'
   })
@@ -1353,9 +1358,9 @@ export function getProfileSetupCommand(name: string): Promise<ProfileSetupComman
   })
 }
 
-export function getUsageAnalytics(days = 30): Promise<AnalyticsResponse> {
+export function getUsageAnalytics(days = 30, profile?: null | string): Promise<AnalyticsResponse> {
   return api<AnalyticsResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/analytics/usage?days=${Math.max(1, Math.floor(days))}`
   })
 }
@@ -1489,9 +1494,9 @@ export function checkHermesUpdate(force = false): Promise<BackendUpdateCheckResp
   })
 }
 
-export function getActionStatus(name: string, lines = 200): Promise<ActionStatusResponse> {
+export function getActionStatus(name: string, lines = 200, profile?: null | string): Promise<ActionStatusResponse> {
   return api<ActionStatusResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/actions/${encodeURIComponent(name)}/status?lines=${Math.max(1, lines)}`
   })
 }
@@ -1608,35 +1613,36 @@ export function updateSkillsFromHub(profile?: null | string): Promise<ActionResp
 // config.yaml via saveHermesConfig.
 // ---------------------------------------------------------------------------
 
-export function listMcpServers(): Promise<{ servers: McpServerSummary[] }> {
+export function listMcpServers(profile?: null | string): Promise<{ servers: McpServerSummary[] }> {
   return api<{ servers: McpServerSummary[] }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/mcp/servers'
   })
 }
 
-export function setMcpServerEnabled(name: string, enabled: boolean): Promise<{ ok: boolean }> {
+export function setMcpServerEnabled(name: string, enabled: boolean, profile?: null | string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/mcp/servers/${encodeURIComponent(name)}/enabled`,
     method: 'PUT',
     body: { enabled }
   })
 }
 
-export function getMcpCatalog(): Promise<McpCatalogResponse> {
+export function getMcpCatalog(profile?: null | string): Promise<McpCatalogResponse> {
   return api<McpCatalogResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/mcp/catalog'
   })
 }
 
 export function installMcpCatalogEntry(
   name: string,
-  env: Record<string, string> = {}
+  env: Record<string, string> = {},
+  profile?: null | string
 ): Promise<{ ok: boolean; name?: string; pid?: number; action?: string; background?: boolean }> {
   return api<{ ok: boolean; name?: string; pid?: number; action?: string; background?: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/mcp/catalog/install',
     method: 'POST',
     body: { name, env, enable: true },
