@@ -105,7 +105,15 @@ export function PageSearchShell({
                 />
               )}
             </div>
-            {hasTabs ? <ShellTabs activeTab={activeTab} onTabChange={onTabChange} tabs={tabs!} /> : <span />}
+            {/* Durable tour handle (see lib/tour) — every page built on this
+                shell answers to one name for its tab row. */}
+            {hasTabs ? (
+              <div className="flex min-w-0 items-center justify-center" data-tour="page-tabs">
+                <ShellTabs activeTab={activeTab} onTabChange={onTabChange} tabs={tabs!} />
+              </div>
+            ) : (
+              <span />
+            )}
             <div className="flex min-w-0 items-center justify-end">{searchTrailingAction}</div>
           </div>
         )}

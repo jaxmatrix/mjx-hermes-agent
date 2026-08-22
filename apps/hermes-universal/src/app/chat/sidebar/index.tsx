@@ -56,6 +56,10 @@ export function ChatSidebar({ variant = 'pane', onNavigate }: ChatSidebarProps) 
     return (
       <div
         className="flex h-full min-h-0 flex-col bg-(--ui-sidebar-surface-background)"
+        // Durable tour handle (see lib/tour). The drawer and the docked pane
+        // both answer to it: only one of the two is ever mounted, so a tour
+        // step pointing at "the sidebar" lands on whichever the viewport has.
+        data-tour="sidebar"
         style={{ paddingTop: 'var(--safe-area-inset-top)', paddingBottom: 'var(--safe-area-inset-bottom)' }}
       >
         <SidebarBody onNavigate={onNavigate} variant="sheet" />
@@ -72,6 +76,7 @@ export function ChatSidebar({ variant = 'pane', onNavigate }: ChatSidebarProps) 
           ? 'border-(--sidebar-edge-border) bg-(--ui-sidebar-surface-background) opacity-100'
           : 'pointer-events-none border-transparent bg-transparent opacity-0'
       )}
+      data-tour="sidebar"
     >
       {contentVisible && <SidebarBody variant="pane" />}
     </div>

@@ -1064,6 +1064,10 @@ export function ChatBar({
           data-slot="composer-root"
           data-status-stack={statusStackVisible ? '' : undefined}
           data-thread-scrolled-up={scrolledUp ? '' : undefined}
+          // Durable tour handle (see lib/tour). On the root rather than the
+          // textarea: a tour points at the composer as a THING (attachments,
+          // model pill, send), not at one input inside it.
+          data-tour="composer"
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
           onDragOver={handleDragOver}
