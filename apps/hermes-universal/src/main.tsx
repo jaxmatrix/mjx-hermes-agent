@@ -38,12 +38,18 @@ import './themes/appearance-sync'
 // happened to be in.
 import './app/right-pane/terminal/terminal-font-sync'
 
+import { installTourDriver } from './store/tour-bridge'
 import { installWindowBelowReader } from './store/window-below'
 
 // And the reader that gives `window.read.request` something to say. Installed at
 // boot, next to the responder it feeds, because the first turn can ask before
 // any component has mounted (MJXHRM-213).
 installWindowBelowReader()
+// Same contract for `tour.request` (MJXHRM-473): the frame parks a blocked tool,
+// so the driver has to be registered before the first turn rather than when some
+// component happens to mount. driver.js itself stays off this path — the driver
+// dynamic-imports `@/lib/tour` on the first request.
+installTourDriver()
 
 import { QueryClientProvider } from '@tanstack/react-query'
 import { createRoot } from 'react-dom/client'
