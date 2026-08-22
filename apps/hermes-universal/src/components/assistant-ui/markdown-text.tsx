@@ -6,7 +6,16 @@ import {
   tailBoundedRemend
 } from '@assistant-ui/react-streamdown'
 import type { Element as HastElement } from 'hast'
-import { type ComponentProps, createContext, memo, useContext, useEffect, useMemo, useState } from 'react'
+import {
+  type ComponentProps,
+  createContext,
+  memo,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useMemo,
+  useState
+} from 'react'
 
 import { ArtifactCard } from '@/components/assistant-ui/artifact-card'
 import { ExpandableBlock } from '@/components/chat/expandable-block'
@@ -29,12 +38,14 @@ import {
 } from '@/lib/media'
 import { isMediaStreamUrl } from '@/lib/media-stream'
 import { sessionRefFromMarkdownHref } from '@/lib/session-refs'
+import { parseTranscriptDirective } from '@/lib/transcript-directives'
 import { cn } from '@/lib/utils'
 import { span } from '@/observability'
 
 import { SessionRefLink } from './directive-content'
 import { detectEmbed, extractAlert, MarkdownAlert, RichCodeBlock, UrlEmbed } from './embeds'
 import { ResizableMarkdownTable, ResizableMarkdownTh } from './markdown-table'
+import { paragraphPlainText, TranscriptDirectiveLeaf, useIsClaimedDirective } from './transcript-directive'
 
 // Math rendering plugin (KaTeX). Configured once at module scope — the plugin
 // is stateless beyond its internal cache, so re-creating it per render would
@@ -650,6 +661,54 @@ function MarkdownSyntaxHighlighter(props: SyntaxHighlighterProps) {
 // KatexHtml gets its markup) — hence the separate slot cast below.
 type MarkdownComponentSlot = StreamdownTextComponents[string]
 
+/**
+ * The directive half of the paragraph slot, mounted ONLY for a paragraph whose
+ * text already parses as `::name{...}`.
+ *
+ * It lives behind its own component boundary rather than an `if` inside
+ * `MarkdownParagraph` because the two hooks here — the contribution registry
+ * subscription and the streaming read — cannot be called conditionally, and
+ * making every paragraph in every transcript pay for them is exactly the kind
+ * of per-block cost `MARKDOWN_COMPONENTS` is a module constant to avoid.
+ *
+ * An unclaimed directive falls back to the `<p>` the caller already built: a
+ * paragraph that merely looks like a directive is prose, and stays prose when
+ * the plugin that would claim it is disabled or not installed.
+ */
+function DirectiveParagraph({ fallback, text }: { fallback: ReactNode; text: string }) {
+  // Same primitive-selecting read `MarkdownSyntaxHighlighter` uses — see its
+  // comment for why the boolean and not the part.
+  const streaming = useAuiState(state => state.part.status?.type === 'running')
+  const claimed = useIsClaimedDirective(text, streaming)
+
+  return claimed ? <TranscriptDirectiveLeaf streaming={streaming} text={text} /> : <>{fallback}</>
+}
+
+/**
+ * Paragraph override. Almost always a plain `<p>` — but a paragraph that is
+ * exactly one `::name{...}` directive claimed by a plugin renders as that
+ * plugin's transcript component instead (`transcript.directives` area). The
+ * claim check subscribes to the registry, so hot-loading a plugin upgrades
+ * already-rendered directives in place; unclaimed directives stay prose.
+ */
+function MarkdownParagraph({ children, className, ...props }: ComponentProps<'p'>) {
+  const plain = paragraphPlainText(children)
+
+  const paragraph = (
+    <p className={cn('wrap-anywhere leading-(--dt-line-height)', className)} {...props}>
+      {children}
+    </p>
+  )
+
+  // Cheap, pure, hook-free gate: `parseTranscriptDirective` rejects anything
+  // not starting with `::` before it touches a regex.
+  return plain !== null && parseTranscriptDirective(plain) !== null ? (
+    <DirectiveParagraph fallback={paragraph} text={plain} />
+  ) : (
+    paragraph
+  )
+}
+
 // Module constant — never re-created, so streamdown's per-key comparator always
 // bails out. See MarkdownSyntaxHighlighter above for why this matters.
 const MARKDOWN_COMPONENTS = {
@@ -666,9 +725,7 @@ const MARKDOWN_COMPONENTS = {
     <h4 className={cn('my-1 font-semibold', HEADING_SIZES.h4, className)} {...props} />
   ),
   // Vertical rhythm owned by styles.css (`--paragraph-gap`) — no `my-*` here.
-  p: ({ className, ...props }: ComponentProps<'p'>) => (
-    <p className={cn('wrap-anywhere leading-(--dt-line-height)', className)} {...props} />
-  ),
+  p: MarkdownParagraph,
   a: MarkdownLink,
   inlineCode: ({ className, ...props }: ComponentProps<'code'>) => <code className={className} dir="ltr" {...props} />,
   // `---` as quiet spacing, not a heavy full-width rule.
