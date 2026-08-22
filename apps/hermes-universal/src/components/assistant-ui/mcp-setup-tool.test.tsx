@@ -99,6 +99,7 @@ afterEach(() => {
   aui.messageRunning = true
   vi.clearAllMocks()
   respond.mockResolvedValue({ status: 'ok' })
+  vi.mocked(requestGateway).mockResolvedValue({} as never)
   vi.mocked(getMcpCatalog).mockResolvedValue({ entries: [], diagnostics: [] })
   vi.mocked(setMcpServerEnabled).mockResolvedValue({ ok: true })
   vi.mocked(installMcpCatalogEntry).mockResolvedValue({ ok: true })
@@ -202,20 +203,44 @@ describe('McpSetupTool — the consent card', () => {
     expect(respond).toHaveBeenCalledWith('req-1', { server: 'linear', status: 'enabled' })
   })
 
-  it('reloads the live session BEFORE it unblocks the tool', async () => {
+  // Not just "called first" — call ORDER is the same whether or not the reload
+  // is awaited, so that assertion cannot fail. What matters is that the reload
+  // has COMPLETED: the agent must not resume holding a tool snapshot that lacks
+  // the server it was just told is ready. So hold the reload open and prove the
+  // respond has not gone out yet.
+  it('waits for the live session to reload before it unblocks the tool', async () => {
     park({ action: 'enable' })
-    renderCard(<McpSetupTool {...setupProps({ server: 'linear' })} />)
 
+    let finishReload = () => {}
+    vi.mocked(requestGateway).mockImplementation(
+      () => new Promise(resolve => (finishReload = () => resolve({} as never)))
+    )
+
+    renderCard(<McpSetupTool {...setupProps({ server: 'linear' })} />)
     fireEvent.click(screen.getByRole('button', { name: /Enable/ }))
     await settle()
 
     expect(requestGateway).toHaveBeenCalledWith('reload.mcp', { confirm: true, session_id: 'sess-1' })
-    // Order matters: the agent must not resume holding a tool snapshot that
-    // lacks the server it was just told is ready.
-    const reloadAt = vi.mocked(requestGateway).mock.invocationCallOrder[0]!
-    const respondAt = respond.mock.invocationCallOrder[0]!
+    expect(respond).not.toHaveBeenCalled()
 
-    expect(reloadAt).toBeLessThan(respondAt)
+    finishReload()
+    await settle()
+
+    expect(respond).toHaveBeenCalledWith('req-1', { server: 'linear', status: 'enabled' })
+  })
+
+  // A reload that fails is reported, not fatal: the config landed and the tools
+  // arrive next session, so the tool must still be unblocked.
+  it('still unblocks the tool when the reload fails', async () => {
+    park({ action: 'enable' })
+    vi.mocked(requestGateway).mockRejectedValue(new Error('socket closed'))
+
+    renderCard(<McpSetupTool {...setupProps({ server: 'linear' })} />)
+    fireEvent.click(screen.getByRole('button', { name: /Enable/ }))
+    await settle()
+
+    expect(notifyError).toHaveBeenCalled()
+    expect(respond).toHaveBeenCalledWith('req-1', { server: 'linear', status: 'enabled' })
   })
 
   // A decline changed no config, so reloading would be pure noise on a socket
