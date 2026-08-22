@@ -49,16 +49,53 @@ describe('TranscriptDirectiveLeaf', () => {
     }
   })
 
-  it('renders nothing for an unclaimed directive', () => {
-    const { container } = render(<TranscriptDirectiveLeaf text="::nobody-home" />)
+  // Both of these register `demo` FIRST and then ask for something else. An
+  // empty registry would pass either assertion without the name ever being
+  // compared — the rival claim is what makes them mean anything.
+  it('renders nothing for an unclaimed directive, even with another claim registered', () => {
+    const dispose = contribution()
 
-    expect(container.firstChild).toBeNull()
+    try {
+      const { container } = render(<TranscriptDirectiveLeaf text="::nobody-home" />)
+
+      expect(container.firstChild).toBeNull()
+    } finally {
+      dispose()
+    }
   })
 
-  it('renders nothing for plain prose', () => {
-    const { container } = render(<TranscriptDirectiveLeaf text="just some text" />)
+  it('renders nothing for plain prose, even with a claim registered', () => {
+    const dispose = contribution()
 
-    expect(container.firstChild).toBeNull()
+    try {
+      const { container } = render(<TranscriptDirectiveLeaf text="just some text" />)
+
+      expect(container.firstChild).toBeNull()
+    } finally {
+      dispose()
+    }
+  })
+
+  it('picks the claim whose name matches, not the first one registered', () => {
+    const disposeOther = registry.register({
+      id: 'test:other',
+      area: TRANSCRIPT_DIRECTIVE_AREA,
+      source: 'plugin:test',
+      data: {
+        name: 'other',
+        render: () => <div data-testid="other-card">other</div>
+      } satisfies TranscriptDirectiveContribution
+    })
+    const dispose = contribution()
+
+    try {
+      render(<TranscriptDirectiveLeaf text='::demo{label="mine"}' />)
+      expect(screen.getByTestId('demo-card').textContent).toBe('mine')
+      expect(screen.queryByTestId('other-card')).toBeNull()
+    } finally {
+      dispose()
+      disposeOther()
+    }
   })
 
   it('contains a throwing plugin render to its own boundary', () => {
