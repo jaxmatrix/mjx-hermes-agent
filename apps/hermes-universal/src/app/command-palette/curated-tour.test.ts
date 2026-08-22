@@ -23,7 +23,16 @@ import { curatedTourSteps } from './curated-tour'
 
 const SRC = path.resolve(process.cwd(), 'src')
 
-/** Every `data-tour="…"` value declared anywhere under src/. */
+/**
+ * Every `data-tour="…"` value DECLARED in JSX anywhere under src/.
+ *
+ * `.tsx`, and never a test file. Both exclusions are load-bearing: the first
+ * pass scanned `.ts` too and every `.test.tsx`, so `store/tour-bridge.test.ts`
+ * — whose fixture DOM seeds `data-tour="sidebar"` and `data-tour="composer"` —
+ * satisfied the assertion on its own. Renaming the real handle in
+ * `app/chat/sidebar/index.tsx` left this file green, which is the whole defect
+ * class it exists to catch.
+ */
 function declaredHandles(): Set<string> {
   const handles = new Set<string>()
 
@@ -33,7 +42,7 @@ function declaredHandles(): Set<string> {
 
       if (entry.isDirectory()) {
         walk(full)
-      } else if (/\.tsx?$/.test(entry.name)) {
+      } else if (/\.tsx$/.test(entry.name) && !/\.test\.tsx$/.test(entry.name)) {
         for (const match of fs.readFileSync(full, 'utf8').matchAll(/data-tour="([^"]+)"/g)) {
           handles.add(match[1] as string)
         }
