@@ -31,6 +31,7 @@ import {
 import { registerAgentTerminalWriter } from './agent-terminal-stream'
 import { makeTerminalReader, registerTerminalReader } from './buffer'
 import { terminalClipboardIntent } from './clipboard'
+import { registerTerminalContextMenu } from './context-menu'
 import { terminalLinkHandler, terminalWebLinksAddon } from './links'
 import { applyTerminalModifiers, MobileTerminalKeys, nextModifierState, type TerminalModifiers } from './mobile-keys'
 import { isMacPlatform, mirrorSelection } from './selection'
@@ -317,6 +318,16 @@ export function TerminalView({ id }: { id: string }) {
 
     const onResize = term.onResize(({ cols, rows }) => socketRef.current?.resize(cols, rows))
 
+    // The app-wide context menu's handle for THIS terminal (MJXHRM-478). xterm
+    // draws to a canvas, so the menu cannot read a selection or paste anywhere
+    // without asking the live instance. `paste` is null on the read-only agent
+    // mirror — that tab has no PTY, so the row is hidden rather than dead.
+    const unregisterMenu = registerTerminalContextMenu(host, {
+      getSelection: () => term.getSelection(),
+      paste: procId ? null : (text: string) => sendRef.current(text),
+      selectAll: () => term.selectAll()
+    })
+
     let raf = 0
 
     // Throttled while a pane sash or the window edge is being dragged: a fit is
@@ -342,6 +353,7 @@ export function TerminalView({ id }: { id: string }) {
     return () => {
       disposed = true
       unregisterReader()
+      unregisterMenu()
       onData.dispose()
       onSelection.dispose()
       onResize.dispose()
@@ -644,8 +656,13 @@ export function TerminalView({ id }: { id: string }) {
           the canvas sizes to the content area (FitAddon) and the p-2 reads as
           terminal padding. Both the padding and the xterm screen/viewport are the
           same --ui-editor-surface-background var, so the inset stays seamless. */}
+        {/* `data-terminal` is the terminal's focus scope AND the context menu's
+          host key. `lib/keybinds/composer-focus-keys.ts` has matched on it since
+          it was written and nothing ever stamped it outside a test, so that
+          selector was dead in production until MJXHRM-478. */}
         <div
           className="h-full min-h-0 overflow-hidden bg-(--ui-editor-surface-background) [&_.xterm-screen]:bg-(--ui-editor-surface-background)! [&_.xterm-viewport]:bg-(--ui-editor-surface-background)!"
+          data-terminal=""
           ref={hostRef}
         />
 

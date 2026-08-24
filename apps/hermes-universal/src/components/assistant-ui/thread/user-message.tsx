@@ -257,6 +257,11 @@ export const UserMessage: FC<{
             >
               <div
                 className="relative w-full"
+                // This bubble owns its PLAIN right-click (the reaction picker),
+                // so the app-wide coordinator stands down for it — but only when
+                // the gesture found nothing of its own. A link, an image or a
+                // live selection inside the bubble still gets the Hermes menu.
+                data-context-menu-skip=""
                 onContextMenu={
                   // Right-click is the desktop stand-in for iOS touch-and-hold —
                   // but only when there's nothing selected. A live highlight

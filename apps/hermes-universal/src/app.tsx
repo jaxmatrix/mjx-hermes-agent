@@ -1,6 +1,7 @@
 import { ActivityScreenRoot } from '@/app/activity-screen'
 import { BackgroundCloseDialog } from '@/app/background-close-dialog'
 import { CloseConfirm } from '@/app/close-confirm'
+import { AppContextMenu } from '@/app/context-menu/coordinator'
 import { HUD_SURFACE } from '@/app/hud/hud'
 import { HudWindowRoot } from '@/app/hud/hud-window'
 import { McpInstallDeepLinkDialog } from '@/app/mcp-install-deeplink-dialog'
@@ -54,6 +55,12 @@ import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFAC
  * exist wherever that guard does. A window whose shell forgot it would park the
  * first close and never draw the question, which is a dead titlebar button.
  *
+ * `AppContextMenu` (MJXHRM-478) is the ninth, and it is the sharpest case of
+ * the same rule: on Tauri every engine pops its OWN context menu for a gesture
+ * the page does not cancel, so a root without the coordinator does not merely
+ * lose the Hermes menu — it shows WebKitGTK's "Reload / Inspect Element" over
+ * the app instead. Right-click and long-press exist in every window.
+ *
  * `ConfirmHost` (MJXHRM-479) is the sixth, and it is the strongest case of all:
  * `confirm()` is called from plain async handlers and store actions that have no
  * component of their own, so the promise is parked with NOTHING on screen unless
@@ -90,6 +97,7 @@ export function App() {
       <CloseConfirm />
       <BackgroundCloseDialog />
       <ConfirmHost />
+      <AppContextMenu />
       <McpInstallDeepLinkDialog />
       <PluginInstallModal />
       <WakeIndicatorOverlay />

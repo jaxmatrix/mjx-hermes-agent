@@ -48,6 +48,7 @@ import './store/transcript-cache-sync'
 // paint — so this import IS the wiring, exactly like the event router above.
 import './store/deep-link-builtins'
 
+import { installContextMenuBridge } from './app/context-menu/bridge'
 import { installNotificationActivation } from './store/plugin-notify-handlers'
 import { installTourDriver } from './store/tour-bridge'
 import { installWindowBelowReader } from './store/window-below'
@@ -66,6 +67,12 @@ installTourDriver()
 // listener has to exist before any surface mounts. A no-op on desktop, where the
 // notification plugin registers no click hook at all.
 installNotificationActivation()
+// And the context menu's platform bridge (MJXHRM-478). Idempotent, and armed at
+// boot rather than from the coordinator because Rust keys its per-engine
+// handlers by WINDOW LABEL — a component that mounts, unmounts and remounts must
+// not re-wire them. In v1 every platform answers "nothing suppressed, nothing
+// promised", which is a true answer rather than a stub that lies.
+installContextMenuBridge()
 
 import { QueryClientProvider } from '@tanstack/react-query'
 import { createRoot } from 'react-dom/client'

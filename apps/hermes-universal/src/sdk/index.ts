@@ -364,6 +364,26 @@ export {
 } from '@/app/chat/composer/contrib'
 
 export { PALETTE_AREA, type PaletteContribution } from '@/app/command-palette/contrib'
+/** Rows in the app-wide right-click / long-press menu (MJXHRM-478). The NORMAL
+ *  door: contribute to `contextMenu.items` and your sections are appended to
+ *  whatever target the gesture landed on, in contribution `order`. `provide()`
+ *  runs per gesture, which is how live state reaches it — `when()` is not
+ *  reactive. */
+export {
+  CONTEXT_MENU_ITEMS_AREA,
+  type ContextMenuItemsContribution
+} from '@/app/context-menu/contrib'
+/** Claim a whole new target KIND (the sharp door — MJXHRM-447's browser webview
+ *  is its first user). `order < 100` is reserved for core and `dom` is total at
+ *  100, so a provider registered below it can swallow the app's own menu. */
+export {
+  type ContextGesture,
+  type ContextMenuItemContext,
+  type ContextMenuItemSpec,
+  type ContextMenuSection,
+  type ContextTargetProvider,
+  registerContextTarget
+} from '@/app/context-menu/registry'
 /** `statusBar.left` / `statusBar.right` and `titleBar.left/center/right`. A
  *  `data` contribution is a StatusbarItem; a `render` contribution owns its slot
  *  (arbitrary stateful node) — the only form `titleBar.*` accepts. */

@@ -64,6 +64,33 @@ export const ja = defineLocale({
 
   // The read-only `shortcuts` reference became the full rebindable `keybinds`
   // panel; only its title is translated here, the rest falls back to English.
+  contextMenu: {
+    link: {
+      openExternal: '外部ブラウザーで開く',
+      copyUrl: 'URL をコピー',
+      openInApp: 'アプリ内ブラウザーで開く',
+      copyResolvedUrl: '解決済み URL をコピー'
+    },
+    image: {
+      copyImage: '画像をコピー',
+      copyImageAddress: '画像アドレスをコピー',
+      saveImageAs: '画像を名前を付けて保存…',
+      copyFailed: '画像をコピーできませんでした',
+      saveFailed: '画像を保存できませんでした'
+    },
+    edit: {
+      cut: '切り取り',
+      paste: '貼り付け',
+      selectAll: 'すべて選択',
+      addToDictionary: '辞書に追加'
+    },
+    page: {
+      inspectElement: '要素を検証'
+    },
+    checkForUpdates: '更新を確認',
+    someItemsFailed: '一部の項目を読み込めませんでした'
+  },
+
   pluginInstall: {
     title: 'プラグインをインストール',
     fromDeepLink: 'リンクがこのプラグインのインストールを要求しました。承認するまで何もインストールされません。',

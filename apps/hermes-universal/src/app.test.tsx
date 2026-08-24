@@ -10,7 +10,7 @@
  * that nothing would ever draw.
  */
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/app/activity-screen', () => ({ ActivityScreenRoot: () => <div>activity</div> }))
@@ -38,29 +38,34 @@ vi.mock('@/app/settings/plugin-install-modal', () => ({ PluginInstallModal: () =
 vi.mock('@/store/deep-link', () => ({ startDeepLinkRouter: vi.fn() }))
 vi.mock('@/store/mcp-health', () => ({ startMcpHealthChecker: vi.fn() }))
 
-let activity = false
-let tile = false
-let surface: string | null = null
+// `vi.hoisted`, not three `let`s: the mock factory below is called during the
+// import of `./app`, which ESM evaluates BEFORE any module-scope `let` in this
+// file has initialised. `pane-shell/tree/store` calls `isSecondaryWindow()` at
+// module scope, so a plain `let` is a temporal-dead-zone crash the moment this
+// file's graph reaches the layout tree — which MJXHRM-455 and then MJXHRM-478
+// each widened it into.
+const root = vi.hoisted(() => ({ activity: false, surface: null as null | string, tile: false }))
 
-vi.mock('@/store/windows', () => ({
-  WAKE_INDICATOR_SURFACE: 'wake',
-  // The wake light's own driver reads these when the indicator fires. It never
-  // does in this file — the atom starts hidden — but a mock that answers only
-  // the questions asked today is the shape that turns the next root into a
-  // crash rather than a failed assertion.
+// Spread the REAL module and override only the four window-identity answers.
+// The previous shape listed the exports this file happened to reach, and its own
+// comment said what that costs: `AppContextMenu` (MJXHRM-478) pulled
+// `pane-shell/tree/store.ts` onto the graph, which reads `isSecondaryWindow` at
+// module scope, and the mock crashed the suite instead of failing an assertion.
+vi.mock('@/store/windows', async importOriginal => ({
+  ...((await importOriginal()) as Record<string, unknown>),
   canOpenSatelliteWindow: () => true,
   closeSatelliteWindow: async () => undefined,
-  isActivityWindow: () => activity,
-  isSatelliteWindow: () => surface !== null,
+  isActivityWindow: () => root.activity,
+  isSatelliteWindow: () => root.surface !== null,
   // Read at MODULE SCOPE by `pane-shell/tree/store`, so its absence is a
   // collect-time crash rather than a failed assertion the moment anything in
   // this file's graph reaches the layout tree — which is exactly what the
   // comment above predicted and what MJXHRM-455 triggered.
-  isSecondaryWindow: () => tile || surface !== null,
-  isTileWindow: () => tile,
+  isSecondaryWindow: () => root.tile || root.surface !== null,
+  isTileWindow: () => root.tile,
   openSatelliteWindow: async () => null,
-  ownsPersistedAppState: () => !activity && !tile && surface === null,
-  satelliteSurface: () => surface
+  ownsPersistedAppState: () => !root.activity && !root.tile && root.surface === null,
+  satelliteSurface: () => root.surface
 }))
 
 import { HUD_SURFACE } from '@/app/hud/hud'
@@ -70,18 +75,18 @@ import { WAKE_INDICATOR_SURFACE } from '@/store/windows'
 import { App } from './app'
 
 beforeEach(() => {
-  activity = false
-  tile = false
-  surface = null
+  root.activity = false
+  root.tile = false
+  root.surface = null
 })
 
 const ROOTS: [name: string, arrange: () => void, marker: string][] = [
   ['the main shell', () => undefined, 'shell'],
-  ['a detached tile window', () => void (tile = true), 'tile'],
-  ['the HUD', () => void (surface = HUD_SURFACE), 'hud'],
-  ['Quick Entry', () => void (surface = QUICK_ENTRY_SURFACE), 'quick'],
-  ['the wake indicator light', () => void (surface = WAKE_INDICATOR_SURFACE), 'wake'],
-  ['an activity screen', () => void (activity = true), 'activity']
+  ['a detached tile window', () => void (root.tile = true), 'tile'],
+  ['the HUD', () => void (root.surface = HUD_SURFACE), 'hud'],
+  ['Quick Entry', () => void (root.surface = QUICK_ENTRY_SURFACE), 'quick'],
+  ['the wake indicator light', () => void (root.surface = WAKE_INDICATOR_SURFACE), 'wake'],
+  ['an activity screen', () => void (root.activity = true), 'activity']
 ]
 
 describe('App', () => {
@@ -94,5 +99,27 @@ describe('App', () => {
     expect(screen.getByTestId('find-bar')).toBeInTheDocument()
     expect(screen.getByTestId('remote-picker')).toBeInTheDocument()
     expect(screen.getByTestId('close-confirm')).toBeInTheDocument()
+  })
+
+  it.each(ROOTS)('owns the right-click gesture in %s', (_name, arrange) => {
+    arrange()
+    render(<App />)
+
+    const link = document.createElement('a')
+
+    link.href = 'https://example.test/'
+    document.body.append(link)
+
+    const gesture = new MouseEvent('contextmenu', { bubbles: true, button: 2, cancelable: true })
+
+    fireEvent(link, gesture)
+
+    // A root without the coordinator does not merely lose the Hermes menu — on
+    // Tauri it shows WebKitGTK's own "Reload / Inspect Element" instead, because
+    // nothing cancelled the gesture.
+    expect(gesture.defaultPrevented).toBe(true)
+    expect(screen.getByText('Copy URL')).toBeInTheDocument()
+
+    link.remove()
   })
 })

@@ -630,10 +630,11 @@ interface ProfileSquareProps {
   sortDisabled?: boolean
 }
 
-// Hold this long without moving (a drag would have started first) — the "hard
-// press" gesture, distinct from tap-to-select. What it opens depends on the
-// pointer: see the pointerdown handler below.
-const PROFILE_LONG_PRESS_MS = 450
+// The hard-press duration is `LONG_PRESS_MS` — the app's ONE number, which
+// `lib/long-press.ts` says the hand-rolled copies "should eventually collapse
+// into". This surface held its own 450 until MJXHRM-478 gave the app an
+// app-wide long press: two competing durations on one finger is a gesture the
+// user cannot learn.
 
 // A profile *is* its colored square — no icon-button chrome. Soft profile-tint
 // fill + the initial in the full color; the active one pops to full opacity with
@@ -684,7 +685,6 @@ function ProfileSquare({
   // point the finger is actually holding.
   const press = useRef(
     createLongPress({
-      ms: PROFILE_LONG_PRESS_MS,
       onFire: ({ x, y }) => {
         suppressClick.current = true
         triggerHaptic('success')
