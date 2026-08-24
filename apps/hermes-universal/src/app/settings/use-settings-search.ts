@@ -17,6 +17,7 @@ import { getEnvVars, getHermesConfigSchema } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { useStore } from '@/store/atom'
 import { $settingsScopeOverride } from '@/store/settings-scope'
+import { $glassCapabilities, glassAvailable } from '@/store/translucency'
 
 import type { SettingsSearchEntry } from './settings-search'
 import { buildClientPrefSearchEntries, buildConfigSearchEntries, buildCredentialSearchEntries } from './settings-search'
@@ -33,6 +34,7 @@ export interface SettingsSearchCatalog {
 export function useSettingsSearchCatalog(enabled: boolean): SettingsSearchCatalog {
   const { t } = useI18n()
   const scopeProfile = useStore($settingsScopeOverride)
+  const glassCapabilities = useStore($glassCapabilities)
 
   const configQuery = useHermesConfigRecord(scopeProfile)
 
@@ -90,7 +92,10 @@ export function useSettingsSearchCatalog(enabled: boolean): SettingsSearchCatalo
 
   // Device-local rows: no gateway round trip, so they are the one part of the
   // catalog that is complete the instant the palette opens.
-  const clientPrefEntries = useMemo(() => buildClientPrefSearchEntries(t, sectionLabels), [sectionLabels, t])
+  const clientPrefEntries = useMemo(
+    () => buildClientPrefSearchEntries(t, sectionLabels, glassAvailable(glassCapabilities)),
+    [glassCapabilities, sectionLabels, t]
+  )
 
   return { clientPrefEntries, configEntries, credentialEntries }
 }

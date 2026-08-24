@@ -525,6 +525,24 @@ export interface Translations {
       terminalFontReset: string
       translucencyTitle: string
       translucencyDesc: string
+      glass: {
+        modeOff: string
+        modeClear: string
+        modeGlass: string
+        tintTitle: string
+        tintDesc: string
+        frostTitle: string
+        frostDesc: string
+        frost: Record<'header' | 'popover' | 'titlebar' | 'underWindow', string>
+        areaTitle: string
+        areaWindow: string
+        areaSidebar: string
+        fadeTitle: string
+        fadeDesc: string
+        clearDesc: string
+        unsupportedLinux: string
+        unsupportedWindows: (build: string) => string
+      }
       embedsTitle: string
       embedsDesc: string
       embedsAsk: string

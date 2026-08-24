@@ -95,6 +95,7 @@ import { resumePortalSignIn } from './store/cloud'
 import { initDataUrlReadMax } from './store/data-url-read-max'
 import { autoRestoreConnection } from './store/gateway-restore'
 import { initKeepAwake } from './store/keep-awake'
+import { initTranslucency } from './store/translucency'
 import { initTray } from './store/tray'
 import { installWindowCloseGuard, ownsPersistedAppState, sweepStaleSurfaceGrants } from './store/windows'
 import { ThemeProvider } from './themes'
@@ -129,6 +130,11 @@ initKeepAwake()
 // Without this a device configured down to 2 MB would spend the whole session
 // letting 16 MB through — the one number the guard exists to get right.
 initDataUrlReadMax()
+
+// The window's own translucency. The native lever dies with the process, so a
+// persisted preference has to be re-asserted or a tuned window comes back
+// opaque on every relaunch.
+initTranslucency()
 
 // Background mode (MJXHRM-436). Three pieces, all at boot:
 //

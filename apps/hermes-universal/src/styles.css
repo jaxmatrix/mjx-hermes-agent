@@ -538,6 +538,12 @@
     --ui-sidebar-surface-background: var(--ui-bg-sidebar);
     --ui-chat-surface-background: var(--ui-bg-chrome);
     --ui-editor-surface-background: var(--ui-bg-chrome);
+    /* The terminal's own surface. Identical to the editor's off glass, and
+       deliberately NOT thinned under it: xterm resolves this to a concrete
+       canvas colour, and a WebGL/canvas renderer cannot composite page alpha,
+       so a semi-transparent value paints a wrong flat colour rather than
+       glass. `terminal-theme.ts` probes this variable, not the editor one. */
+    --ui-terminal-surface-background: var(--ui-editor-surface-background);
     --ui-chat-bubble-background: color-mix(
       in srgb,
       var(--theme-bubble-seed) var(--theme-mix-bubble),
@@ -860,6 +866,93 @@
     background: var(--ui-selection-background);
     color: inherit;
   }
+}
+
+/* ── Window glass ────────────────────────────────────────────────────────────
+   ONE painter. `body` above already carries the field colour, so glass thins
+   that single declaration and sends the surface TOKENS transparent — the field
+   surfaces NEST (body > zone > pane > transcript) and tinting each of them
+   would stack the same coat four times.
+
+   Unlayered on purpose: these rules have to beat Tailwind's utilities layer,
+   which is where every `bg-(--ui-*)` on a component lands.
+
+   `data-hermes-glass`      a compositor material is on THIS window right now
+                            (the native outcome said so — never just the ask).
+   `data-hermes-glass-on`   the glass setting is active, on every window that
+                            follows it, satellites included. Tint only.
+   `data-hermes-clear`      the whole window is being faded, text included.  */
+:root[data-hermes-glass] {
+  --ui-chat-surface-background: transparent;
+  --ui-sidebar-surface-background: transparent;
+  --ui-editor-surface-background: transparent;
+  --ui-surface-background: transparent;
+  --ui-terminal-surface-background: var(--ui-bg-chrome);
+}
+
+:root[data-hermes-glass] body {
+  background: color-mix(in srgb, var(--ui-bg-chrome) var(--translucency-glass-keep, 100%), transparent);
+}
+
+/* The Finder shape: glass rail, opaque content column, a hard seam at the
+   sessions pane's inner edge (`--glass-rail-edge`, published by
+   lib/glass-surfaces.ts). With no rail on screen the edge is 0px and the whole
+   field is opaque, which is the honest no-rail answer. */
+:root[data-hermes-glass][data-hermes-glass-scope='sidebar'] body {
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--ui-bg-chrome) var(--translucency-glass-keep, 100%), transparent)
+      var(--glass-rail-edge, 0px),
+    var(--ui-bg-chrome) var(--glass-rail-edge, 0px)
+  );
+}
+
+/* RTL puts the rail at the other physical edge; the gradient is physical, so it
+   has to be mirrored here rather than in the measurement. */
+:root[dir='rtl'][data-hermes-glass][data-hermes-glass-scope='sidebar'] body {
+  background: linear-gradient(
+    to left,
+    color-mix(in srgb, var(--ui-bg-chrome) var(--translucency-glass-keep, 100%), transparent)
+      var(--glass-rail-edge, 0px),
+    var(--ui-bg-chrome) var(--glass-rail-edge, 0px)
+  );
+}
+
+/* Surfaces that MASK what is behind them — a revealed sidebar overlay, a sticky
+   diff gutter, a row being dragged over its neighbours. See-through masks read
+   as text through text. */
+:root[data-hermes-glass] [data-glass-opaque] {
+  background: var(--ui-bg-chrome) !important;
+}
+
+/* Content RAISED above the field — overlay cards, the context menu, a settings
+   footer. It may thin with the tint, but never past the point of reading, so it
+   keeps at least 94% of the chrome colour. */
+:root[data-hermes-glass] [data-glass-raised] {
+  background: color-mix(
+    in srgb,
+    var(--ui-bg-chrome) max(94%, var(--translucency-glass-keep, 100%)),
+    transparent
+  ) !important;
+}
+
+/* Clear fades the WINDOW, scrim included, so the overlay scrim has to work
+   harder to keep the card legible against a desktop showing through. */
+:root[data-hermes-clear] [data-overlay-surface] {
+  background: color-mix(in srgb, #000 38%, transparent);
+}
+
+/* Peek: while a translucency control is held, the Settings overlay ghosts out
+   of the way so the live window IS the preview. Scoped to the overlay that
+   actually contains a translucency row, so the transition does not tax every
+   overlay for the life of the process. Reveal fast, return slow. */
+[data-overlay-surface]:has([data-translucency-peek-scope]) {
+  transition: opacity 420ms ease;
+}
+
+:root[data-hermes-translucency-peek] [data-overlay-surface]:has([data-translucency-peek-scope]) {
+  opacity: 0.08;
+  transition-duration: 160ms;
 }
 
 /* Primitive-level pointer cursor for every interactive control (buttons,

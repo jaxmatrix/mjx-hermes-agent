@@ -504,7 +504,31 @@ export const ja = defineLocale({
       terminalFontPreview: 'グリフのプレビュー',
       terminalFontReset: '既定値を使用',
       translucencyTitle: 'ウィンドウの透過',
-      translucencyDesc: 'ウィンドウ全体を透過させてデスクトップを表示します。macOS と Windows のみ。',
+      translucencyDesc: 'Hermes の背後のデスクトップを透けさせます。ライトとダークで個別に調整されます。',
+      glass: {
+        modeOff: 'オフ',
+        modeClear: 'クリア',
+        modeGlass: 'すりガラス',
+        tintTitle: '色の濃さ',
+        tintDesc: 'ウィンドウからテーマ色をどれだけ取り除くか。100% ではすりガラスだけが残ります。',
+        frostTitle: 'すりガラスの強さ',
+        frostDesc: 'ウィンドウ素材の重さ。透明感のあるものから不透明なものまで。',
+        frost: {
+          underWindow: '軽い',
+          popover: 'やわらか',
+          titlebar: 'すりガラス',
+          header: '濃い'
+        },
+        areaTitle: '範囲',
+        areaWindow: 'ウィンドウ全体',
+        areaSidebar: 'サイドバーのみ',
+        fadeTitle: 'ウィンドウを薄く',
+        fadeDesc: 'すりガラスの上でウィンドウ自体を薄くします（文字も含む）。コントラストを保つには 0 のままに。',
+        clearDesc: 'ウィンドウ全体を、文字も含めて薄くします。',
+        unsupportedLinux: 'すりガラスにはこのデスクトップが提供しないウィンドウ素材が必要です。',
+        unsupportedWindows: (build: string) =>
+          `すりガラスには Windows 11 22H2（ビルド 22621）が必要です。このシステムは ${build} を報告しています。`
+      },
       embedsTitle: 'インライン埋め込み',
       embedsDesc:
         'リッチプレビューは第三者サイト（YouTube、X など）から読み込まれます。確認は許可するまでプレースホルダーを表示し、常には自動で読み込み、オフはリンクのままにします。',

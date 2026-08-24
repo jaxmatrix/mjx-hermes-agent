@@ -131,6 +131,9 @@ export function NarrowOverlays() {
               ? 'start-0 border-e border-(--ui-stroke-secondary)'
               : 'end-0 border-s border-(--ui-stroke-secondary)'
           )}
+          // It slides OVER the content it reveals from; see-through here reads
+          // as text through text.
+          data-glass-opaque=""
           onMouseLeave={() => setReveal(current => (current?.pinned ? current : null))}
           // Match the pane's docked width (sessions ~237px, files its rail
           // width) instead of a fat fixed 20rem — capped for tiny screens.

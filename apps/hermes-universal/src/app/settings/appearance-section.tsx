@@ -10,7 +10,7 @@ import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { Check, Download, Loader2, Monitor, Moon, Palette, Sun, Trash } from '@/lib/icons'
-import { IS_DESKTOP, IS_TAURI } from '@/lib/platform'
+import { IS_TAURI } from '@/lib/platform'
 import {
   $calmDuringResize,
   $resizeThrottle,
@@ -30,7 +30,6 @@ import { installFromMarketplace, type MarketplaceSearchItem, searchMarketplace }
 import { $reactionsEnabled, setReactionsEnabled } from '@/store/reactions-enabled'
 import { $restorePaintEnabled, setRestorePaintEnabled } from '@/store/restore-paint'
 import { $toolViewMode, setToolViewMode, type ToolViewMode } from '@/store/tool-view'
-import { $translucency, setTranslucency } from '@/store/translucency'
 import { $zoomPercent, setZoomPercent } from '@/store/zoom'
 import { useTheme } from '@/themes'
 import { getBaseColors } from '@/themes/context'
@@ -40,6 +39,7 @@ import { $marketplaceInstalls, isUserTheme, removeUserTheme } from '@/themes/use
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
 import { settingRowElementId } from './settings-search'
 import { TerminalFontSetting } from './terminal-font-setting'
+import { TranslucencySettings } from './translucency-rows'
 
 const MODE_OPTIONS = [
   { icon: Sun, id: 'light' },
@@ -246,7 +246,8 @@ function MarketplaceThemeResults({
 }
 
 // The Appearance page (desktop parity): Language, Theme (mode + preview cards +
-// search + VS Code Marketplace install), UI scale, Translucency (desktop-only),
+// search + VS Code Marketplace install), UI scale, Translucency (per the
+// platform's capability report),
 // Tool view, Embeds, and the nested Pet panel.
 export function AppearanceSection() {
   const { t } = useI18n()
@@ -260,7 +261,6 @@ export function AppearanceSection() {
   const zoomPercent = useStore($zoomPercent)
   const embedMode = useStore($embedMode)
   const embedAllowed = useStore($embedAllowed)
-  const translucency = useStore($translucency)
   const resizeThrottle = useStore($resizeThrottle)
   const calmDuringResize = useStore($calmDuringResize)
   const installs = useStore($marketplaceInstalls)
@@ -426,35 +426,9 @@ export function AppearanceSection() {
             title={a.uiScaleTitle}
           />
 
-          {/* Translucency (desktop-only native effect) */}
-          {IS_DESKTOP && (
-            <ListRow
-              action={
-                <div className="flex items-center gap-3">
-                  <input
-                    aria-label={a.translucencyTitle}
-                    className="h-1 w-40 cursor-pointer appearance-none rounded-full bg-(--ui-stroke-tertiary)"
-                    max={100}
-                    min={0}
-                    onChange={event => {
-                      triggerHaptic('selection')
-                      setTranslucency(Number(event.target.value))
-                    }}
-                    step={5}
-                    style={{ accentColor: 'var(--dt-primary)' }}
-                    type="range"
-                    value={translucency}
-                  />
-                  <span className="w-9 text-end text-[length:var(--conversation-caption-font-size)] tabular-nums text-(--ui-text-tertiary)">
-                    {translucency}%
-                  </span>
-                </div>
-              }
-              description={a.translucencyDesc}
-              id={settingRowElementId('appearance.translucency')}
-              title={a.translucencyTitle}
-            />
-          )}
+          {/* Translucency: mode, tint, frost, area, fade — behind the
+              capability probe, not IS_DESKTOP (appearance/mod.rs decides). */}
+          <TranslucencySettings />
 
           {/* Terminal font — profile config (`terminal.font_family`), not a
               device-local pref, so it lives behind the shared config record

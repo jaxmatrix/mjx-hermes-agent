@@ -181,7 +181,7 @@ export function DetailColumn({
         </div>
       )}
       {actionBar && (
-        <footer className="shrink-0 bg-(--ui-chat-surface-background) px-5 py-2.5">
+        <footer className="shrink-0 bg-(--ui-chat-surface-background) px-5 py-2.5" data-glass-raised="">
           <div className="mx-auto flex max-w-2xl flex-wrap items-center gap-2">{actionBar}</div>
         </footer>
       )}
@@ -291,7 +291,10 @@ export function DetailPane({
   }
 
   return (
-    <section className="relative flex shrink-0 flex-col border-t border-(--ui-stroke-tertiary) bg-(--ui-chat-surface-background)">
+    <section
+      className="relative flex shrink-0 flex-col border-t border-(--ui-stroke-tertiary) bg-(--ui-chat-surface-background)"
+      data-glass-raised=""
+    >
       <div
         className="group/sash absolute inset-x-0 top-0 z-10 h-1 -translate-y-1/2 cursor-row-resize"
         onDoubleClick={() => setPaneHeightOverride(id, undefined)}

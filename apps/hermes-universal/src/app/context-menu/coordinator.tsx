@@ -380,6 +380,9 @@ export function AppContextMenu() {
       <DropdownMenuContent
         align="start"
         collisionPadding={MENU_EDGE_PADDING}
+        // MJXHRM-448: raised above the glass field, so the menu never thins
+        // with it. Stamped here rather than asked of 478, which landed first.
+        data-glass-raised=""
         onCloseAutoFocus={event => event.preventDefault()}
         side="bottom"
         sideOffset={2}

@@ -20,6 +20,7 @@ import { matchesQuery, useMediaQuery } from '@/hooks/use-media-query'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { atom } from '@/store/atom'
 import { useStore } from '@/store/atom'
+import { setGlassAppearance } from '@/store/translucency'
 
 import { $accentOverride } from './accent-override'
 import { $backendThemes, $pendingSkinApply } from './backend-sync'
@@ -178,6 +179,10 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark') {
   root.dataset.hermesTheme = skinName
   root.dataset.hermesMode = rendered
   root.classList.toggle('dark', isDark)
+  // The tint answers to the PIXELS, not to the preference: a skin that keeps a
+  // bright background under `mode: 'dark'` renders light and must be tinted like
+  // light. `renderedModeFor` above is that measurement.
+  setGlassAppearance(rendered)
 
   // Brand seeds feed every surface + shadcn token via `color-mix()` in styles.css.
   const seeds: Record<string, string> = {
