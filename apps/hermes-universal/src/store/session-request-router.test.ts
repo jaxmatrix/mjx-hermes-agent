@@ -6,7 +6,7 @@
 import { atom } from 'nanostores'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const requestGateway = vi.fn(async () => ({ ok: true }))
+const requestGateway = vi.fn(async (..._args: unknown[]) => ({ ok: true }))
 const $gatewayState = atom<string>('open')
 
 vi.mock('@/store/gateway', () => ({
@@ -121,7 +121,9 @@ describe('requestForSession', () => {
     $activeProfile.set('work')
     $gatewayState.set('closed')
 
-    const error = await requestForSession('s1', 'session.resume').catch((e: unknown) => e as SessionRouteError)
+    const error = (await requestForSession('s1', 'session.resume').catch(
+      (e: unknown) => e
+    )) as InstanceType<typeof SessionRouteError>
 
     expect(error.scopeKey).toBe('work')
     expect(`${error.message} ${error.scopeKey}`).not.toMatch(/https?:|127\.0\.0\.1|ws:/)
@@ -166,7 +168,7 @@ describe('$activeSessionRoute', () => {
 
   it('follows a swapped router — including one with its own inputs — and restores idempotently', async () => {
     const $connection = atom('box-2')
-    const dispatch = vi.fn(async () => ({ ok: true }))
+    const dispatch = vi.fn(async (..._args: unknown[]) => ({ ok: true }) as never)
 
     const restore = setSessionRequestRouter({
       active: () => ({
