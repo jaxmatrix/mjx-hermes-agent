@@ -281,6 +281,25 @@ export async function autoRestoreConnection(): Promise<void> {
     const status = await oauthStatus(pending.base).catch(() => ({ signedIn: false }))
 
     if (status.signedIn) {
+      // The sign-in was for a REGISTERED source: finish on that one rather than
+      // re-dialling its URL as an anonymous remote (MJXHRM-446 §8.5). The source
+      // was saved BEFORE the navigation, so it is already in the registry — and
+      // `selectConnection` broadcasts the switch itself, which is what re-homes
+      // the other WebViews (on Android, Settings runs in its own activity).
+      if (pending.connectionId) {
+        try {
+          // Imported lazily: `store/connections.ts` reads `loadGatewayTarget`
+          // from this module, and a static import would close that cycle.
+          const { selectConnection } = await import('@/store/connections')
+
+          await selectConnection(pending.connectionId)
+        } finally {
+          $restoring.set(false)
+        }
+
+        return
+      }
+
       $gatewayMode.set('remote')
 
       try {

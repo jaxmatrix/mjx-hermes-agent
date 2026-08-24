@@ -29,6 +29,7 @@ import {
   $status,
   type StatusInfo
 } from '@/store/connection-atoms'
+import { isLatched, latchBackendFailure, releaseLatch } from '@/store/connection-latches'
 import { $gatewayState, closeGateway, connectGateway } from '@/store/gateway'
 import { chooseGatedAuth, type Connection } from '@/store/gateway-config'
 import { loadGatewayTarget, saveGatewayTarget, savePendingOAuth, takePendingOAuth } from '@/store/gateway-restore'
@@ -153,7 +154,11 @@ async function beginOAuthLogin(base: string, provider?: string, username?: strin
     return
   }
 
-  savePendingOAuth({ base, provider, username })
+  // The marker carries the SOURCE (MJXHRM-446). The navigation destroys this JS
+  // context, so without an id the post-reload resume can only guess which
+  // gateway it just signed into — and on a multi-source install a guess means
+  // coming back on the wrong machine.
+  savePendingOAuth({ base, connectionId: $activeConnection.get()?.connectionId, provider, username })
 
   try {
     await oauthLogin(base, provider)
@@ -596,6 +601,14 @@ async function rebootstrapSsh(): Promise<void> {
 
   try {
     const active = $activeConnection.get()
+
+    // The watchdog stands down for a latched source too — otherwise the latch
+    // only stops one of the two retry paths and the loop continues through this
+    // one instead.
+    if (isLatched(active?.connectionId ?? null)) {
+      return
+    }
+
     const target = loadGatewayTarget()
     const ssh = target?.ssh
 
@@ -755,6 +768,25 @@ async function runReconnectLoop(): Promise<void> {
 
       break
     } catch (err) {
+      // A failure that cannot self-heal is LATCHED, per connection, and the loop
+      // stands down for that source (P-23). Nothing latched before this: the
+      // loop re-entered on every `'closed'` and backed off forever, which is how
+      // desktop's bundle showed 157 boot retries in 2.5 hours against a
+      // reinstalled VPS. A transient fault is deliberately NOT latched.
+      const latched = latchBackendFailure($activeConnection.get()?.connectionId ?? conn.baseUrl, {
+        attemptedRemote: conn.mode !== 'local',
+        error: err,
+        isReauth: conn.authMode === 'oauth' && isGatewayReauthRequired(err)
+      })
+
+      if (latched === 'host-key-changed') {
+        // Terminal by construction (`ssh/known_hosts.rs` calls it "always
+        // fatal"): retrying cannot succeed until someone verifies the new key.
+        $connectionError.set(errorText(err))
+
+        break
+      }
+
       if (conn.authMode === 'oauth' && isGatewayReauthRequired(err)) {
         // On mobile an interactive sign-in is a ONE-WAY DOOR: it navigates the app's only
         // webview to the login page and never returns (see `beginOAuthLogin`). This loop
@@ -833,5 +865,12 @@ $gatewayState.subscribe(state => {
 $connectionPhase.subscribe(phase => {
   if (phase === 'ready') {
     $hasConnected.set(true)
+
+    // A source that just connected is, by definition, no longer held down.
+    const connectionId = $activeConnection.get()?.connectionId
+
+    if (connectionId) {
+      releaseLatch(connectionId)
+    }
   }
 })

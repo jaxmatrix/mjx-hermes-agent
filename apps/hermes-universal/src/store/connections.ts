@@ -410,15 +410,22 @@ async function dialResolved(resolved: ResolvedDial): Promise<void> {
   switch (resolved.mode) {
     case 'local':
       return connectLocal(profile)
+    case 'ssh': {
+      const row = connectionById(resolved.connectionId)
 
-    case 'ssh':
+      // Only the ssh TARGET fields — never the whole view. Every secret is read
+      // by Rust from this connection's own keyring accounts (rule 4), and the
+      // non-target fields (`id`, `label`, `hasToken`) have no business on the
+      // wire.
       return connectSsh({
-        host: resolved.remoteHost ?? '',
+        host: row?.host ?? resolved.remoteHost ?? '',
+        keyPath: row?.keyPath,
+        port: row?.port,
         profile,
-        // Every other ssh field, and every secret, is read by Rust from this
-        // connection's own registry row and keyring accounts (rule 4).
-        ...(connectionById(resolved.connectionId) ?? {})
+        remoteHermesPath: row?.remoteHermesPath,
+        user: row?.user
       })
+    }
 
     case 'cloud':
       return connectCloud(resolved.baseUrl ?? '', profile)
