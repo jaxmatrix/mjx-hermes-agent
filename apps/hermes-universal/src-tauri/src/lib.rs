@@ -43,7 +43,7 @@ mod webview_cookies;
 mod window;
 
 use app_state::{get_app_flag, set_app_flag};
-use appearance::set_window_translucency;
+use appearance::{appearance_capabilities, appearance_set_glass, AppearanceState};
 use artifact::{artifact_release, artifact_stage, ArtifactState, ARTIFACT_SCHEME};
 use background::{get_background_mode, quit_app, set_background_mode, BackgroundState};
 use cloud::{
@@ -212,6 +212,9 @@ pub fn run() {
         // the machine even if the webview never turned the preference back off.
         .manage(KeepAwakeState::default())
         .manage(DataUrlReadMaxState::default())
+        // Which glass request each window LABEL already carries, so a tint drag
+        // under glass costs zero native calls (appearance/mod.rs).
+        .manage(AppearanceState::default())
         // Which windows already have the context-menu bridge installed
         // (MJXHRM-478). Managed on BOTH targets so the builder chain has one
         // shape; the set is empty and harmless where no adapter exists yet.
@@ -332,7 +335,8 @@ pub fn run() {
             reveal_in_file_manager,
             #[cfg(desktop)]
             open_in_terminal,
-            set_window_translucency,
+            appearance_capabilities,
+            appearance_set_glass,
             set_keep_awake,
             set_data_url_read_max,
             read_capped_file_base64,
@@ -471,6 +475,7 @@ pub fn run() {
                 pty::reap_window_ptys(app_handle, label);
 
                 transport::reap_window_sockets(app_handle, label);
+                appearance::reap_window(app_handle, label);
 
                 // The main webview is gone (a reload, an Android process
                 // recreation). Stop claiming a listener exists, so the next link
