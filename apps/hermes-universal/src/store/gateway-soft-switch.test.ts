@@ -51,6 +51,7 @@ vi.mock('@/store/session', async () => {
     // clearing does to the atom and its persisted copy is asserted in
     // store/session.test.ts; here the question is whether the wipe calls it.
     clearPinnedSessionCache: vi.fn(),
+    forgetLastSessionMarkers: vi.fn(),
     refreshMessagingSessions: vi.fn().mockResolvedValue(undefined),
     refreshSessions: vi.fn().mockResolvedValue(undefined),
     resetSessionsPaging: vi.fn(),
@@ -61,6 +62,7 @@ vi.mock('@/store/session', async () => {
   }
 })
 
+import { readTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
 import { resetChat } from '@/store/chat'
 import { resetRepoStatusForBackendSwitch } from '@/store/coding-status'
 import { $connection, beginGatewaySwitch, disconnect, endGatewaySwitch } from '@/store/connection'
@@ -79,6 +81,7 @@ import {
   $sessionsTotal,
   $unreadFinishedSessionIds,
   clearPinnedSessionCache,
+  forgetLastSessionMarkers,
   refreshMessagingSessions,
   refreshSessions
 } from '@/store/session'
@@ -155,6 +158,24 @@ describe('gateway soft switch', () => {
     })
 
     expect(clearedDuringDial).toBe(true)
+  })
+
+  // ANOTHER BACKEND CAN RECYCLE STORED IDS. A cached tail carried across paints
+  // another machine's conversation under a same-named id, which is worse than a
+  // loader — and the remembered-chat marker sends the next boot to open that id
+  // over there. `$activeStoredSessionId.set(null)` does not clear the marker (its
+  // subscriber ignores null), so it has to be wiped explicitly.
+  it('wipes the cached transcript tails and the remembered chat, which name ids on the old gateway', async () => {
+    saveTranscriptTail('s1', [{ id: 'm1', parts: [{ text: 'over there', type: 'text' }], role: 'user' }])
+    expect(readTranscriptTail('s1')).not.toBeNull()
+
+    let wipedDuringDial: boolean | null = null
+
+    await softSwitchGateway('remote', async () => {
+      wipedDuringDial = readTranscriptTail('s1') === null && vi.mocked(forgetLastSessionMarkers).mock.calls.length > 0
+    })
+
+    expect(wipedDuringDial).toBe(true)
   })
 
   // A repo path is not gateway-scoped: `/home/me/work` exists on the laptop AND

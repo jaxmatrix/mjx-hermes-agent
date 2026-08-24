@@ -18,6 +18,7 @@ import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { stableArray } from '@/lib/stable-array'
 import { readJson, writeJson } from '@/lib/storage'
 import { reuseUnchanged } from '@/lib/structural-share'
+import { dropTranscriptTails } from '@/lib/transcript-tail-cache'
 import { atom, computed } from '@/store/atom'
 import { $busy, $clarify, $currentCwd, $messages, $sessionId, type ChatMessage, resetChat } from '@/store/chat'
 import { confirm } from '@/store/confirm'
@@ -30,7 +31,7 @@ import { flashPetActivity } from '@/store/pet'
 // Import direction is `session.ts → profile.ts → profiles.ts`; never the reverse.
 import { $activeGatewayProfile, $profileScope, ALL_PROFILES, normalizeProfileKey } from '@/store/profile'
 import { $profiles } from '@/store/profiles'
-import { requestForSession, setSessionOwnerResolver } from '@/store/session-request-router'
+import { requestForSession, SessionRouteError, setSessionOwnerResolver } from '@/store/session-request-router'
 import {
   $activeSessionKey,
   $sessionStates,
@@ -43,6 +44,7 @@ import {
   runtimeKeyForStoredSession,
   updateSession
 } from '@/store/session-state-types'
+import { clearTranscriptPaint, paintCachedTail } from '@/store/transcript-paint'
 import { adoptResumedTurn, resumedTurnIsLive } from '@/store/turn-lifecycle'
 import { openAppRoute, ownsPersistedAppState } from '@/store/windows'
 import type { SessionCreateResponse, SessionInfo, SessionResumeResponse, SessionSearchResult } from '@/types/hermes'
@@ -111,6 +113,23 @@ if (ownsPersistedAppState()) {
 /** The session to land on at boot, if any — the one last open on THIS profile. */
 export function lastOpenedSessionId(): null | string {
   return $lastSessionByProfile.get()[$activeGatewayProfile.get()] ?? null
+}
+
+/**
+ * Forget every profile's remembered chat — a gateway RE-HOME, not a reconnect.
+ *
+ * `wipeSessionListsForGatewaySwitch()` sets `$activeStoredSessionId` to null, and
+ * the subscriber above ignores null, so the id remembered from backend A used to
+ * survive a switch to backend B: the next boot then tried to open it there,
+ * against a database that has never heard of it — or worse, against a recycled
+ * id that names somebody else's conversation. Stored ids are unique per backend
+ * database, so the marker is gateway-bound state and belongs in the wipe list
+ * (rule 20).
+ */
+export function forgetLastSessionMarkers(): void {
+  if (Object.keys($lastSessionByProfile.get()).length) {
+    $lastSessionByProfile.set({})
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1240,6 +1259,18 @@ async function hydrateColdSession(storedId: string): Promise<void> {
   $activeStoredSessionId.set(storedId)
   $activeSessionKey.set(key)
 
+  // The KEY the paint lane is addressed by. `key` is reassigned to the runtime id
+  // after the rekey below; the paint stays filed under the placeholder, so the
+  // clears must not follow the reassignment.
+  const paintKey = key
+
+  // BEFORE ANY I/O — this is the whole "~0 ms" claim. The cached tail goes on
+  // screen through `$paintedMessages` while the REST transcript and the resume
+  // are still in flight, and is replaced the moment either lands. It is pixels,
+  // never knowledge: `store/transcript-paint.ts` holds it outside
+  // `$sessionStates` so nothing can reconcile, journal or narrate it.
+  paintCachedTail(paintKey, storedId)
+
   // A session resumed MID-TURN stays busy: the committed transcript ends before
   // the running turn, and `inflight` carries its tail. Settle to idle otherwise.
   let stillRunning = false
@@ -1255,6 +1286,11 @@ async function hydrateColdSession(storedId: string): Promise<void> {
    * real session that happens to have lost the race for the foreground.
    */
   const abandonPlaceholder = () => {
+    // FIRST, always. A paint left behind on a session with no runtime binding is
+    // a transcript that looks healthy and cannot receive a message — and typing
+    // into it would create a brand-new chat.
+    clearTranscriptPaint(paintKey)
+
     if (!isPlaceholderKey(key)) {
       return
     }
@@ -1326,6 +1362,9 @@ async function hydrateColdSession(storedId: string): Promise<void> {
 
     if (restMessages && isCurrentOpen(own.generation)) {
       updateSession(key, state => ({ ...state, messages: restMessages }))
+      // The authority has landed; the picture of it is spent. Same tick as the
+      // publish, so no frame can show both.
+      clearTranscriptPaint(paintKey)
     }
 
     const resumed = await resumePromise
@@ -1370,6 +1409,12 @@ async function hydrateColdSession(storedId: string): Promise<void> {
     // router addresses.
     adoptResumedTurn(runtimeId, resumed)
   } catch (err) {
+    // CLEAR FIRST — before the fallback and before any toast. This is the whole
+    // "a cached paint can never mask a stranded resume" rule: if the resume
+    // rejected and REST returned nothing, the honest screen is the empty chat
+    // plus the error, not a transcript that cannot receive a message.
+    clearTranscriptPaint(paintKey)
+
     if (!isCurrentOpen(own.generation)) {
       abandonPlaceholder()
 
@@ -1388,6 +1433,12 @@ async function hydrateColdSession(storedId: string): Promise<void> {
         messages: toChatMessages(transcript.messages ?? [])
       })
       key = storedId
+    } else if (err instanceof SessionRouteError) {
+      // The route could not be honoured — a switch in flight, a socket that is
+      // down. That is not this session's fault and not something the user can
+      // act on here: the reconnect path owns it, and it will re-open. Drop the
+      // placeholder rather than wedging a toast onto a chat that is fine.
+      abandonPlaceholder()
     } else {
       // Not the session's own status: surface it as a notification rather than
       // wedging a load error into this chat's status line, where it would stick.
@@ -1395,6 +1446,9 @@ async function hydrateColdSession(storedId: string): Promise<void> {
     }
   } finally {
     releaseHydration(storedId, own)
+    // Belt and braces: idempotent, and the one place every exit path passes
+    // through.
+    clearTranscriptPaint(paintKey)
 
     if (isCurrentOpen(own.generation)) {
       updateSession(key, state => ({ ...state, busy: stillRunning }))
@@ -1955,6 +2009,9 @@ export async function deleteSessionLocal(id: string): Promise<void> {
   // marker are dead weight — and an id that comes back (an unarchive) should
   // come back read, not carrying a marker from before it left.
   unreadPersistence?.forget(ids, owner)
+  // …and its cached transcript tail, under EVERY alias: a deleted conversation
+  // must not be able to paint itself back onto the next launch.
+  dropTranscriptTails(ids)
 
   // DELETING UNPINS (MJXHRM-414). Nothing else ever dropped the pin, and the
   // Pinned section falls back to `$pinnedSessionCache` once the row leaves
