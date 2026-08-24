@@ -431,6 +431,11 @@ export const en: Translations = {
       failed: 'failed',
       empty: 'No plugins installed yet.',
       kinds: { bundled: 'bundled', disk: 'on disk', runtime: 'runtime' },
+      // Which ROOT a disk plugin came from — the row's answer to "why is this
+      // one off by default".
+      roots: { 'agent-packages': 'agent package', 'desktop-plugins': 'desktop-plugins' },
+      agentPackagesNotice:
+        'The desktop half of an installed agent package starts OFF: its agent half is allowlisted before it runs, so this one is too.',
       // The dual door (MJX-53): which filesystem plugins are being read from.
       sourceLocal: 'Reading from this device',
       sourceGateway: 'Reading from the connected backend',

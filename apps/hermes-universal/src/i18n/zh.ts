@@ -415,6 +415,8 @@ export const zh: Translations = {
       failed: '失败',
       empty: '尚未安装插件。',
       kinds: { bundled: '内置', disk: '磁盘', runtime: '运行时' },
+      roots: { 'agent-packages': '代理插件包', 'desktop-plugins': 'desktop-plugins' },
+      agentPackagesNotice: '已安装代理插件包的桌面端部分默认关闭：其代理端需要先加入允许列表才会运行，桌面端同理。',
       sourceLocal: '正在从本设备读取',
       sourceGateway: '正在从已连接的后端读取',
       sourceNone: '没有可用的插件文件夹',

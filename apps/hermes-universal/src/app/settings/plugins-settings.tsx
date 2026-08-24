@@ -321,7 +321,7 @@ function PluginRow({ record, reveal }: { record: PluginRecord; reveal?: (path: s
       title={
         <span className="flex items-center gap-2">
           {record.name}
-          <Pill>{p.kinds[record.kind]}</Pill>
+          <Pill>{record.root ? p.roots[record.root] : p.kinds[record.kind]}</Pill>
           {record.status === 'error' && <Pill tone="primary">{p.failed}</Pill>}
         </span>
       }
@@ -448,6 +448,14 @@ export function PluginsSettings() {
             <PluginRow key={record.id} record={record} reveal={disk?.reveal} />
           ))}
         </div>
+      )}
+
+      {/* Says why an `agent package` row is off, next to the rows it explains —
+          the badge alone answers "which root", not "why". */}
+      {rows.some(record => record.root === 'agent-packages') && (
+        <p className="mt-3 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
+          {p.agentPackagesNotice}
+        </p>
       )}
 
       <div className="mt-8">

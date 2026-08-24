@@ -1,4 +1,11 @@
-//! The LOCAL plugin door — `$HERMES_HOME[/profiles/<p>]/desktop-plugins/<name>/plugin.js`.
+//! The LOCAL plugin door — TWO roots under `$HERMES_HOME[/profiles/<p>]`:
+//!   * `desktop-plugins/<name>/plugin.js` — the user's own drop folder;
+//!   * `plugins/<name>/desktop/plugin.js` — the desktop half of a unified agent
+//!     package, i.e. whatever `plugins.manage{action:"install"}` cloned.
+//!
+//! The second root is the whole reason installing a plugin needs no client-side
+//! git: the gateway clones into `plugins/<name>/`, and if that package carries a
+//! desktop half it lands exactly where this door already looks.
 //!
 //! Port of the Electron `hermes:fs:desktopPluginsRoot` + readDir/readFileText
 //! trio (apps/desktop/electron/main.ts:10910) onto Tauri/Rust.
@@ -27,20 +34,65 @@
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const PLUGIN_DIR: &str = "desktop-plugins";
 const PLUGIN_ENTRY: &str = "plugin.js";
+const AGENT_PACKAGE_DIR: &str = "plugins";
+const AGENT_PACKAGE_ENTRY: &str = "desktop/plugin.js";
+
+/// WHICH root a call addresses.
+///
+/// `None` on the wire means `DesktopPlugins`, so every pre-existing call site is
+/// byte-identical — and, more importantly, the entry file is chosen by this ENUM
+/// rather than by the caller, so the address-space invariant above survives a
+/// second root without a second guard: `AgentPackages` cannot be used to read an
+/// arbitrary sub-path.
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginRoot {
+    #[default]
+    DesktopPlugins,
+    /// Installed-but-INERT until the user allowlists it (GHSA-mcfc-hp25-cjv7):
+    /// an agent package's python half is opt-in, so its desktop half must be
+    /// too. The frontend caps this root's `defaultEnabled` to false.
+    AgentPackages,
+}
+
+impl PluginRoot {
+    /// Directory under the (profile-resolved) hermes home.
+    fn dir(self) -> &'static str {
+        match self {
+            Self::DesktopPlugins => PLUGIN_DIR,
+            Self::AgentPackages => AGENT_PACKAGE_DIR,
+        }
+    }
+
+    /// Entry file, relative to `<root>/<name>/`.
+    fn entry(self) -> &'static str {
+        match self {
+            Self::DesktopPlugins => PLUGIN_ENTRY,
+            Self::AgentPackages => AGENT_PACKAGE_ENTRY,
+        }
+    }
+}
 
 /// One discovered plugin folder.
 #[derive(Serialize)]
 pub struct PluginDirEntry {
     /// Folder name — the ONLY handle `plugins_read` accepts.
     name: String,
-    /// Absolute path to plugin.js, for display + "reveal in file manager".
+    /// Absolute path to the entry file, for display + "reveal in file manager".
     file: String,
+    /// Which root it came from. The frontend keys its records on `file` (folder
+    /// names collide across roots) and shows this as the row's badge.
+    root: PluginRoot,
     /// Modification time in ms; the frontend polls this to spot an edit without
     /// re-reading the source.
+    ///
+    /// NOTE the serde spelling: this struct is deliberately NOT
+    /// `rename_all = "camelCase"` — `plugin-disk.ts` reads `mtime_ms`, and
+    /// renaming it would break that reader silently.
     mtime_ms: u64,
     size: u64,
 }
@@ -99,7 +151,11 @@ fn platform_hermes_home() -> Option<PathBuf> {
 /// Split out from `root_for` so it is testable WITHOUT touching the process
 /// environment — cargo runs tests in parallel threads, and mutating a global env
 /// var made these races against each other.
-fn plugin_root_under(home: PathBuf, profile: Option<&str>) -> Result<PathBuf, String> {
+fn plugin_root_under(
+    home: PathBuf,
+    profile: Option<&str>,
+    root: PluginRoot,
+) -> Result<PathBuf, String> {
     let mut base = home;
 
     if let Some(name) = profile.map(str::trim).filter(|p| !p.is_empty()) {
@@ -113,13 +169,13 @@ fn plugin_root_under(home: PathBuf, profile: Option<&str>) -> Result<PathBuf, St
         }
     }
 
-    Ok(base.join(PLUGIN_DIR))
+    Ok(base.join(root.dir()))
 }
 
-fn root_for(profile: Option<String>) -> Result<PathBuf, String> {
+fn root_for(profile: Option<String>, root: PluginRoot) -> Result<PathBuf, String> {
     let home = hermes_home().ok_or("could not resolve HERMES_HOME on this platform")?;
 
-    plugin_root_under(home, profile.as_deref())
+    plugin_root_under(home, profile.as_deref(), root)
 }
 
 /// A single, well-behaved path segment: no separators, no traversal, not hidden.
@@ -137,30 +193,35 @@ fn safe_segment(name: &str) -> bool {
 /// somewhere to go. Creation failure is not fatal — the path is still returned so
 /// the caller can show a real error instead of an empty inventory.
 #[tauri::command]
-pub fn plugins_root(profile: Option<String>) -> Result<String, String> {
-    let root = root_for(profile)?;
-    let _ = std::fs::create_dir_all(&root);
+pub fn plugins_root(profile: Option<String>, root: Option<PluginRoot>) -> Result<String, String> {
+    let path = root_for(profile, root.unwrap_or_default())?;
+    let _ = std::fs::create_dir_all(&path);
 
-    Ok(root.to_string_lossy().to_string())
+    Ok(path.to_string_lossy().to_string())
 }
 
 /// Every `<root>/<name>/plugin.js` that exists and is readable. A folder without
 /// a readable entry file is not a plugin and is skipped silently — the directory
 /// is a user-writable drop point, so stray files are expected, not errors.
 #[tauri::command]
-pub fn plugins_list(profile: Option<String>) -> Result<Vec<PluginDirEntry>, String> {
-    list_plugins_under(&root_for(profile)?)
+pub fn plugins_list(
+    profile: Option<String>,
+    root: Option<PluginRoot>,
+) -> Result<Vec<PluginDirEntry>, String> {
+    let root = root.unwrap_or_default();
+
+    list_plugins_under(&root_for(profile, root)?, root)
 }
 
 /// The inventory itself, against an explicit root — testable without resolving
 /// (and therefore without mutating) HERMES_HOME.
-fn list_plugins_under(root: &Path) -> Result<Vec<PluginDirEntry>, String> {
-    let dir = match std::fs::read_dir(root) {
+fn list_plugins_under(path: &Path, root: PluginRoot) -> Result<Vec<PluginDirEntry>, String> {
+    let dir = match std::fs::read_dir(path) {
         Ok(dir) => dir,
         // No root yet = no plugins yet. The scanner should see an empty list, not
         // an error it has to special-case on every poll tick.
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => return Err(format!("could not read {}: {err}", root.display())),
+        Err(err) => return Err(format!("could not read {}: {err}", path.display())),
     };
 
     let mut out = Vec::new();
@@ -172,7 +233,7 @@ fn list_plugins_under(root: &Path) -> Result<Vec<PluginDirEntry>, String> {
             continue;
         }
 
-        let file = entry.path().join(PLUGIN_ENTRY);
+        let file = entry.path().join(root.entry());
 
         let Ok(meta) = std::fs::metadata(&file) else {
             continue;
@@ -192,6 +253,7 @@ fn list_plugins_under(root: &Path) -> Result<Vec<PluginDirEntry>, String> {
         out.push(PluginDirEntry {
             name,
             file: file.to_string_lossy().to_string(),
+            root,
             mtime_ms,
             size: meta.len(),
         });
@@ -206,12 +268,17 @@ fn list_plugins_under(root: &Path) -> Result<Vec<PluginDirEntry>, String> {
 /// Source of `<root>/<name>/plugin.js`. `name` is a folder name, never a path —
 /// anything with a separator or traversal is refused before touching the disk.
 #[tauri::command]
-pub fn plugins_read(profile: Option<String>, name: String) -> Result<String, String> {
+pub fn plugins_read(
+    profile: Option<String>,
+    root: Option<PluginRoot>,
+    name: String,
+) -> Result<String, String> {
     if !safe_segment(&name) {
         return Err(format!("illegal plugin name \"{name}\""));
     }
 
-    let file = root_for(profile)?.join(&name).join(PLUGIN_ENTRY);
+    let root = root.unwrap_or_default();
+    let file = root_for(profile, root)?.join(&name).join(root.entry());
 
     std::fs::read_to_string(&file)
         .map_err(|err| format!("could not read {}: {err}", file.display()))
@@ -243,13 +310,16 @@ mod tests {
         // have no `plugin.js`, so the read fails on its own. Only the message
         // separates "the address space forbids this" from "that file happened
         // not to exist", and the address space is this module's one invariant.
-        for name in ["../../etc/passwd", "/etc/passwd", "..", ".hidden", "a\0b"] {
-            let err = plugins_read(None, name.into()).unwrap_err();
+        // BOTH roots: a second root is a second chance to forget the guard.
+        for root in [None, Some(PluginRoot::AgentPackages)] {
+            for name in ["../../etc/passwd", "/etc/passwd", "..", ".hidden", "a\0b"] {
+                let err = plugins_read(None, root, name.into()).unwrap_err();
 
-            assert!(
-                err.starts_with("illegal plugin name"),
-                "{name} should be refused by name, got: {err}"
-            );
+                assert!(
+                    err.starts_with("illegal plugin name"),
+                    "{name} should be refused by name, got: {err}"
+                );
+            }
         }
     }
 
@@ -257,13 +327,17 @@ mod tests {
         PathBuf::from("/tmp/hermes-test-home")
     }
 
+    fn root_under(profile: Option<&str>) -> PathBuf {
+        plugin_root_under(home(), profile, PluginRoot::default()).unwrap()
+    }
+
     #[test]
     fn default_profile_uses_the_home_root_and_named_profiles_nest() {
-        let default = plugin_root_under(home(), None).unwrap();
-        let explicit_default = plugin_root_under(home(), Some("default")).unwrap();
-        let current = plugin_root_under(home(), Some("current")).unwrap();
-        let blank = plugin_root_under(home(), Some("  ")).unwrap();
-        let named = plugin_root_under(home(), Some("work")).unwrap();
+        let default = root_under(None);
+        let explicit_default = root_under(Some("default"));
+        let current = root_under(Some("current"));
+        let blank = root_under(Some("  "));
+        let named = root_under(Some("work"));
 
         assert_eq!(default, home().join("desktop-plugins"));
         // "default" / "current" / blank all mean the home root, not a subfolder.
@@ -278,12 +352,50 @@ mod tests {
 
     #[test]
     fn a_bad_profile_name_is_refused() {
-        for profile in ["../escape", "a/b", "a\\b", ".hidden"] {
-            assert!(
-                plugin_root_under(home(), Some(profile)).is_err(),
-                "{profile} should be refused"
-            );
+        for root in [PluginRoot::DesktopPlugins, PluginRoot::AgentPackages] {
+            for profile in ["../escape", "a/b", "a\\b", ".hidden"] {
+                assert!(
+                    plugin_root_under(home(), Some(profile), root).is_err(),
+                    "{profile} should be refused"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn the_agent_package_root_is_plugins_with_a_desktop_entry() {
+        // The unified package layout the gateway's installer writes:
+        // `<home>/plugins/<name>/desktop/plugin.js`, NOT a `plugin.js` at the
+        // folder root. Getting this wrong makes every installed package look
+        // like it has no desktop half.
+        assert_eq!(
+            plugin_root_under(home(), None, PluginRoot::AgentPackages).unwrap(),
+            home().join("plugins")
+        );
+        assert_eq!(PluginRoot::AgentPackages.entry(), "desktop/plugin.js");
+        assert_eq!(PluginRoot::DesktopPlugins.entry(), "plugin.js");
+
+        // ...and the profile nesting still applies to it.
+        assert_eq!(
+            plugin_root_under(home(), Some("work"), PluginRoot::AgentPackages).unwrap(),
+            home().join("profiles").join("work").join("plugins")
+        );
+    }
+
+    #[test]
+    fn the_root_serializes_as_the_kebab_literal_the_frontend_sends() {
+        assert_eq!(
+            serde_json::to_string(&PluginRoot::AgentPackages).unwrap(),
+            "\"agent-packages\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PluginRoot::DesktopPlugins).unwrap(),
+            "\"desktop-plugins\""
+        );
+        assert!(matches!(
+            serde_json::from_str::<PluginRoot>("\"agent-packages\"").unwrap(),
+            PluginRoot::AgentPackages
+        ));
     }
 
     // These used to set HERMES_HOME and restore it, which raced every `getenv`
@@ -320,8 +432,63 @@ mod tests {
 
     #[test]
     fn listing_a_missing_root_is_empty_not_an_error() {
-        let listed = list_plugins_under(Path::new("/tmp/hermes-does-not-exist-XYZ"));
+        for root in [PluginRoot::DesktopPlugins, PluginRoot::AgentPackages] {
+            let listed = list_plugins_under(Path::new("/tmp/hermes-does-not-exist-XYZ"), root);
 
-        assert_eq!(listed.unwrap().len(), 0);
+            assert_eq!(listed.unwrap().len(), 0);
+        }
+    }
+
+    #[test]
+    fn each_root_lists_only_folders_carrying_its_own_entry_file() {
+        let base = std::env::temp_dir().join(format!(
+            "hermes-plugin-roots-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+
+        // A folder with a bare `plugin.js` is a desktop-plugins plugin; the same
+        // folder name under the package root needs `desktop/plugin.js`.
+        std::fs::create_dir_all(base.join("desktop-plugins").join("demo")).unwrap();
+        std::fs::write(
+            base.join("desktop-plugins").join("demo").join("plugin.js"),
+            "export default {}",
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(base.join("plugins").join("demo").join("desktop")).unwrap();
+        std::fs::write(
+            base.join("plugins")
+                .join("demo")
+                .join("desktop")
+                .join("plugin.js"),
+            "export default {}",
+        )
+        .unwrap();
+        // A package with NO desktop half — the common case, and it must not be
+        // inventoried as a client plugin.
+        std::fs::create_dir_all(base.join("plugins").join("python-only")).unwrap();
+        std::fs::write(
+            base.join("plugins").join("python-only").join("plugin.js"),
+            "not the entry for this root",
+        )
+        .unwrap();
+
+        let desktop =
+            list_plugins_under(&base.join("desktop-plugins"), PluginRoot::DesktopPlugins).unwrap();
+        let packages =
+            list_plugins_under(&base.join("plugins"), PluginRoot::AgentPackages).unwrap();
+
+        assert_eq!(desktop.len(), 1);
+        assert!(desktop[0].file.ends_with("desktop-plugins/demo/plugin.js"));
+
+        // Same folder NAME in both roots, two different files — which is why the
+        // frontend keys its records on `file` rather than on `name`.
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, "demo");
+        assert!(packages[0].file.ends_with("plugins/demo/desktop/plugin.js"));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

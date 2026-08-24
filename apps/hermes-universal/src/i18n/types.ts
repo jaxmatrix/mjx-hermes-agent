@@ -396,6 +396,8 @@ export interface Translations {
       failed: string
       empty: string
       kinds: { bundled: string; disk: string; runtime: string }
+      roots: { 'agent-packages': string; 'desktop-plugins': string }
+      agentPackagesNotice: string
       sourceLocal: string
       sourceGateway: string
       sourceNone: string

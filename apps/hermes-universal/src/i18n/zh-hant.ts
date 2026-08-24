@@ -316,6 +316,8 @@ export const zhHant = defineLocale({
       failed: '失敗',
       empty: '尚未安裝外掛。',
       kinds: { bundled: '內建', disk: '磁碟', runtime: '執行時' },
+      roots: { 'agent-packages': '代理外掛套件', 'desktop-plugins': 'desktop-plugins' },
+      agentPackagesNotice: '已安裝代理外掛套件的桌面端部分預設關閉：其代理端需要先加入允許清單才會執行，桌面端亦然。',
       sourceLocal: '正在從本裝置讀取',
       sourceGateway: '正在從已連線的後端讀取',
       sourceNone: '沒有可用的外掛資料夾',

@@ -328,6 +328,9 @@ export const ja = defineLocale({
       failed: '失敗',
       empty: 'プラグインはまだインストールされていません。',
       kinds: { bundled: '同梱', disk: 'ディスク', runtime: 'ランタイム' },
+      roots: { 'agent-packages': 'エージェントパッケージ', 'desktop-plugins': 'desktop-plugins' },
+      agentPackagesNotice:
+        'インストール済みエージェントパッケージのデスクトップ側は既定でオフです。エージェント側が許可制で動くのと同じ扱いです。',
       sourceLocal: 'この端末から読み込み中',
       sourceGateway: '接続中のバックエンドから読み込み中',
       sourceNone: '利用できるプラグインフォルダーがありません',

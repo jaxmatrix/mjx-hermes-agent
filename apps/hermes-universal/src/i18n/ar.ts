@@ -338,6 +338,9 @@ export const ar = defineLocale({
       blurb:
         'امتدادات واجهة تُحمّل داخل هذا التطبيق — إما مضمّنة مع البناء، أو موضوعة في مجلد desktop-plugins (بما فيها التي يكتبها Hermes). تعطيل الإضافة يفرغها مباشرة ويبقى بعد إعادة التشغيل.',
       count: n => `${n} مثبتة`,
+      roots: { 'agent-packages': 'حزمة وكيل', 'desktop-plugins': 'desktop-plugins' },
+      agentPackagesNotice:
+        'يبدأ النصف المكتبي لحزمة الوكيل المثبَّتة مُعطَّلًا: نصفها الوكيل يحتاج إذنًا قبل التشغيل، وكذلك هذا.',
       installFromGit: 'التثبيت من Git…',
       installFromGitHint: 'استنساخ مستودع إضافة على البوابة. ستُعرض عليك الصلاحيات الممنوحة أولًا.',
       openFolder: 'فتح مجلد الإضافات',
