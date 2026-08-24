@@ -110,7 +110,11 @@ export function Thread() {
   const mountedSessionKey = useStore(view.$runtimeId)
   // Coarse derivations, not `$messages`: both only notify when their VALUE
   // changes, so a token stream does not re-render the whole thread through here.
-  const transcriptEmpty = useStore(view.$messagesEmpty)
+  // The PAINTED emptiness: a cached tail is a transcript as far as the intro
+  // splash is concerned, so the wordmark does not paint over the conversation
+  // the user came back to (the promise already written at
+  // `app/chat/intro-visibility.ts`).
+  const transcriptEmpty = useStore(view.$paintedMessagesEmpty)
   const introSplash = useStore($introSplash)
   const [target, setTarget] = useState<null | RestoreConfirmTarget>(null)
 

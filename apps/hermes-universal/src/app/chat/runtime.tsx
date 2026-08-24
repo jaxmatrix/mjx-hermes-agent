@@ -88,7 +88,10 @@ export function ChatRuntimeProvider({ children }: { children: ReactNode }) {
   // atoms), so the primary chat is unchanged.
   const view = useSessionView()
   const runtimeId = useStore(view.$runtimeId)
-  const messages = useMessagesWhileVisible(view.$messages)
+  // `$paintedMessages`, not `$messages` — the ONE consumer of the paint lane
+  // (MJXHRM-480). It IS `$messages` by identity whenever no cached tail is on
+  // screen, which is every session in the ordinary case.
+  const messages = useMessagesWhileVisible(view.$paintedMessages)
   const isRunning = useStore(view.$busy)
 
   const [windowPages, setWindowPages] = useState(1)

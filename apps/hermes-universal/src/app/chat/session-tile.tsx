@@ -49,6 +49,7 @@ import {
   sessionTileDelegate,
   tileRuntimeKey
 } from '@/store/session-states'
+import { $transcriptPaint } from '@/store/transcript-paint'
 
 import { SessionStatusDot } from './session-status-dot'
 import { SessionContextMenu } from './sidebar/session-actions-menu'
@@ -79,11 +80,20 @@ function buildTileView(storedSessionId: string): SessionView {
   const $state = computed([$runtimeId, $sessionStates], (rt, states) => (rt ? states[rt] : undefined))
   const $messages = computed($state, s => s?.messages ?? NO_MESSAGES)
 
+  // The tile's own paint lane slot, keyed by the same slice key its `$messages`
+  // read from — so a QUAD layout restored at boot paints each cold tile's own
+  // cached tail rather than leaving four blank panes beside one painted one.
+  const $paintedMessages = computed([$messages, $transcriptPaint, $runtimeId], (messages, paint, key) =>
+    messages.length || !key ? messages : (paint[key]?.messages ?? messages)
+  )
+
   return {
     kind: 'tile',
     $runtimeId,
     $storedId: atom(storedSessionId),
     $messages,
+    $paintedMessages,
+    $paintedMessagesEmpty: computed($paintedMessages, m => m.length === 0),
     $busy: computed($state, s => Boolean(s?.busy)),
     $awaitingResponse: computed($state, s => Boolean(s?.awaitingResponse)),
     $messagesEmpty: computed($messages, m => m.length === 0),

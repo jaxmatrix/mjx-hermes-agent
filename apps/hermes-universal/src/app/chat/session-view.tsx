@@ -8,6 +8,8 @@ import {
   $lastVisibleMessageIsUser,
   $messages,
   $messagesEmpty,
+  $paintedMessages,
+  $paintedMessagesEmpty,
   $statusLine,
   type ChatMessage
 } from '@/store/chat'
@@ -30,6 +32,16 @@ export interface SessionView {
   $runtimeId: ReadableAtom<string | null>
   $storedId: ReadableAtom<string | null>
   $messages: ReadableAtom<ChatMessage[]>
+  /**
+   * The transcript AS PIXELS — `$messages`, or the cached tail the paint lane is
+   * holding while the slice has none (MJXHRM-480). Read by ONE consumer,
+   * `app/chat/runtime.tsx`.
+   *
+   * `$messages` is knowledge, `$paintedMessages` is pixels: anything that
+   * reconciles, journals, narrates, branches or submits reads `$messages`.
+   */
+  $paintedMessages: ReadableAtom<ChatMessage[]>
+  $paintedMessagesEmpty: ReadableAtom<boolean>
   $busy: ReadableAtom<boolean>
   $awaitingResponse: ReadableAtom<boolean>
   $messagesEmpty: ReadableAtom<boolean>
@@ -58,6 +70,8 @@ export const PRIMARY_SESSION_VIEW: SessionView = {
   $runtimeId: $activeSessionKey,
   $storedId: $activeStoredSessionId,
   $messages,
+  $paintedMessages,
+  $paintedMessagesEmpty,
   $busy,
   $awaitingResponse,
   $messagesEmpty,
