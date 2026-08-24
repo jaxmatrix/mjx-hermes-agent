@@ -131,7 +131,14 @@ pub struct ContextMenuState {
 mod imp {
     use super::BridgeSupport;
 
-    pub fn install<R: tauri::Runtime>(_window: &tauri::WebviewWindow<R>) -> BridgeSupport {
+    /// `wire` is false on a repeat call for the same window. An adapter connects
+    /// its signal handlers only when it is true: `with_webview` runs per call,
+    /// so wiring unconditionally would stack a handler set per invocation — the
+    /// bug `find_in_page.rs` carries the same guard to avoid.
+    pub fn install<R: tauri::Runtime>(
+        _window: &tauri::WebviewWindow<R>,
+        _wire: bool,
+    ) -> BridgeSupport {
         BridgeSupport::default()
     }
 
@@ -191,19 +198,15 @@ pub async fn context_menu_install(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, ContextMenuState>,
 ) -> Result<BridgeSupport, String> {
+    // A second call still answers the descriptor — the caller asked what this
+    // window can do, not to wire it again.
     let first_time = state
         .wired
         .lock()
         .map(|mut set| set.insert(window.label().to_string()))
         .unwrap_or(false);
 
-    if !first_time {
-        // A second call is a no-op that still answers the descriptor — the
-        // caller asked what this window can do, not to wire it again.
-        return Ok(imp::install(&window));
-    }
-
-    Ok(imp::install(&window))
+    Ok(imp::install(&window, first_time))
 }
 
 /// Ask the embedder to suppress (or restore) its own menu, and report the state
@@ -299,17 +302,23 @@ mod tests {
 
     #[test]
     fn refuses_past_the_byte_cap() {
-        // Encoded length alone is over the cap, so this is refused without ever
-        // allocating the decoded buffer.
-        let oversized = format!(
-            "data:image/png;base64,{}",
-            "A".repeat(MAX_IMAGE_BYTES / 3 * 4 + 8)
-        );
+        // A LITERAL size, not one derived from `MAX_IMAGE_BYTES`: a fixture that
+        // scales with the constant cannot tell a 32 MiB cap from no cap at all.
+        // 46e6 base64 chars decode to ~34.5 MiB, just over — and the encoded
+        // length alone says so, so this is refused without ever allocating the
+        // decoded buffer.
+        let oversized = format!("data:image/png;base64,{}", "A".repeat(46_000_000));
 
         assert!(matches!(
             decode_data_url(&oversized),
             Err(ContextMenuError::BadImage)
         ));
+
+        // …and one comfortably under it still decodes, so the cap is a bound
+        // rather than a blanket refusal.
+        let ok = format!("data:image/png;base64,{}", "A".repeat(1_000_000));
+
+        assert!(decode_data_url(&ok).is_ok());
     }
 
     #[test]
