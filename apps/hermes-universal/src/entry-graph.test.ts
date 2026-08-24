@@ -438,6 +438,27 @@ describe('entry import graph', () => {
     expect(fs.readFileSync(path.join(SRC, 'app/context-menu/markers.ts'), 'utf8')).not.toContain('import ')
   })
 
+  it('CALLS every boot lever it imports', () => {
+    // MJXHRM-448 D-01: `initTranslucency()` was exported and never called, so
+    // the persisted lever was never re-asserted and a tuned window came back
+    // opaque on every relaunch. Importing an `init*` and not calling it looks
+    // exactly like wiring it, which is why the whole class is pinned here
+    // rather than one function being remembered.
+    const entry = fs.readFileSync(ENTRY, 'utf8')
+
+    const imported = [...entry.matchAll(/\bimport \{([^}]*)\} from/g)]
+      .flatMap(match => match[1].split(','))
+      .map(name => name.trim())
+      .filter(name => /^init[A-Z]/.test(name))
+
+    expect(imported).toContain('initTranslucency')
+    expect(imported.length).toBeGreaterThan(2)
+
+    for (const lever of imported) {
+      expect([lever, entry.includes(`${lever}(`)]).toEqual([lever, true])
+    }
+  })
+
   it('keeps the lazy-only entry points behind a dynamic boundary', () => {
     // The complement of the assertions above: the seams must still EXIST, or
     // "not statically reachable" would be satisfied by deleting highlighting.

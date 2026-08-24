@@ -392,6 +392,20 @@ describe('platform window config', () => {
     return parsed.app.windows[0]
   }
 
+  it('gives a Rust-built window the same flag the config-built one gets', () => {
+    // `main` is created two ways — from `app.windows[0]` on a cold launch, and
+    // from `app_window_builder` on a background-mode summon or a tile/instance
+    // pop-out. A window whose transparency depended on which route made it is
+    // the bug this pins. Linux is deliberately absent from the cfg: no material
+    // exists there, and an RGBA visual with no compositor renders black.
+    const source = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src-tauri/src/window.rs'),
+      'utf8'
+    )
+
+    expect(source).toContain('.transparent(cfg!(any(target_os = "macos", target_os = "windows")))')
+  })
+
   it('describes the same main window everywhere except `transparent`', () => {
     const shared = readWindow('tauri.conf.json')
     const macos = readWindow('tauri.macos.conf.json')
