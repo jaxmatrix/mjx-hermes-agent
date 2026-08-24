@@ -32,24 +32,39 @@ beforeEach(() => {
 describe('publishActiveConnection', () => {
   // The torn read, closed. Four writes with awaits between them is what let
   // `api()` fire REST at the new base while the UI still said "connecting".
-  it('fires exactly ONE notification for a subscriber watching every derived value', () => {
-    const seen: string[] = []
-    const record = (label: string) => () => seen.push(label)
+  it('lets no subscriber observe a HALF-published identity', () => {
+    // The torn read, stated as a test. Without `batch()` the `$activeConnection`
+    // listener runs between the writes and sees the NEW connection id beside the
+    // OLD base URL and the OLD gateway mode — which is exactly the window in
+    // which `api()` fired REST at one backend under another's scope.
+    //
+    // Counting notifications would NOT catch this: nanostores already coalesces
+    // a `computed` over several inputs changed in one tick, so a derived
+    // subscriber fires once either way. What only `batch()` gives is that every
+    // listener observes the FINAL snapshot.
+    publishActiveConnection(describeConnection(REMOTE))
 
-    const stop = [
-      $activeConnection.listen(record('active')),
-      $connection.listen(record('connection')),
-      $gatewayMode.listen(record('mode'))
-    ]
+    const seen: { id: string; baseUrl: string; mode: string }[] = []
 
-    publishActiveConnection(describeConnection({ ...REMOTE, mode: 'cloud', profile: 'work' }))
+    const stop = $activeConnection.listen(active => {
+      seen.push({
+        baseUrl: $connection.get()?.baseUrl ?? '',
+        id: active?.connectionId ?? '',
+        mode: $gatewayMode.get()
+      })
+    })
 
-    for (const off of stop) {
-      off()
-    }
+    publishActiveConnection(
+      describeConnection({ ...REMOTE, baseUrl: 'https://other.test', mode: 'cloud' }, {
+        connectionId: 'box-2',
+        dialConnectionId: 'box-2',
+        label: 'Box'
+      })
+    )
 
-    // Three atoms, one batch: every listener runs once, not once per write.
-    expect(seen.sort()).toEqual(['active', 'connection', 'mode'])
+    stop()
+
+    expect(seen).toEqual([{ baseUrl: 'https://other.test', id: 'box-2', mode: 'cloud' }])
   })
 
   it('moves the REST scope with the identity, and leaves it alone on a disconnect', () => {

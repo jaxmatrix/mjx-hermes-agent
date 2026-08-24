@@ -337,6 +337,59 @@ export const ar = defineLocale({
   },
   settings: {
     connections: {
+      title: 'البوابات',
+      switchTo: label => `تبديل المصدر: ${label}`,
+      noSource: 'لا توجد بوابة',
+      connecting: label => `جارٍ الاتصال بـ ${label}…`,
+      searchPlaceholder: 'ابحث في البوابات…',
+      searchEmpty: term => `لا توجد بوابة تطابق "${term}".`,
+      add: 'إضافة بوابة',
+      pickOne: 'اختر بوابة لعرض إعداداتها.',
+      readOnly: 'كُتبت قائمة البوابات هذه بإصدار أحدث من هيرميس، لذا فهي للقراءة فقط هنا.',
+      degradedReason: reason => `تعذّر استخدام الملف المحفوظ (${reason})؛ وقد احتُفظ بالملف السابق بجواره.`,
+      fieldLabel: 'الاسم',
+      fieldLabelPlaceholder: 'studio-box',
+      fieldUrl: 'عنوان البوابة',
+      fieldHost: 'مضيف SSH',
+      fieldRemoteProfile: 'الملف الشخصي البعيد',
+      fieldToken: 'رمز البوابة',
+      fieldTokenPlaceholder: 'فقط إذا كانت البوابة تحتاجه',
+      noKeyring: 'لا يوجد في هذا الجهاز مخزن بيانات اعتماد، لذا لا يمكن حفظ رمز البوابة. استخدم تسجيل الدخول عبر المتصفح أو بوابة غير محمية.',
+      localUnsupported: 'لا يستطيع هذا الجهاز تشغيل خادم هيرميس — اتصل بواحد عبر SSH أو عبر رابط.',
+      kindHint: kind =>
+        kind === 'ssh' ? 'سيشغّل هيرميس خادمًا على ذلك المضيف (أو يعيد الاتصال به) وينشئ نفقًا إليه.' : kind === 'cloud' ? 'وكيل Hermes Cloud يتم الوصول إليه عبر البوابة.' : 'خادم هيرميس يمكن الوصول إليه عبر رابط.',
+      save: 'حفظ',
+      saved: 'تم حفظ البوابة',
+      saveFailed: 'تعذّر حفظ هذه البوابة',
+      removeFailed: 'تعذّرت إزالة هذه البوابة',
+      test: 'اختبار',
+      testFailed: 'تعذّر اختبار هذه البوابة',
+      connect: 'اتصال',
+      setPrimary: 'تعيين كأساسية',
+      remove: 'إزالة',
+      droppedHeaders: names => `لم تُحفظ هذه الترويسات لأن طبقة النقل تملكها: ${names}.`,
+      verdict: verdict =>
+        verdict === 'ok'
+          ? 'يمكن الوصول إليها.'
+          : verdict === 'credential-rejected'
+            ? 'قبلت البوابة الاتصال ثم أغلقته (هل رُفضت بيانات الاعتماد؟)'
+            : verdict === 'auth-required'
+              ? 'سجّل الدخول إلى هذه البوابة للمتابعة.'
+              : verdict === 'skipped-no-token'
+                ? 'يمكن الوصول إليها. لا يوجد رمز مخزّن، لذا لم يُختبر المقبس.'
+                : verdict === 'timeout'
+                  ? 'لم تستجب البوابة في الوقت المحدد.'
+                  : verdict === 'ws-unreachable'
+                    ? 'استجابت البوابة، لكن مقبسها رفض الاتصال.'
+                    : 'تعذّر الوصول إلى هذه البوابة.',
+      legHttp: (ok, status, ms) => `HTTP ${ok ? status || 'ok' : 'failed'} · ${ms}ms`,
+      legWs: (ok, ms) => `WebSocket ${ok ? 'ok' : 'failed'} · ${ms}ms`,
+      launchMode: 'عند التشغيل:',
+      launchPrimary: 'الأساسية',
+      launchLastUsed: 'آخر ما استُخدم',
+      updateAll: 'تحديث كل شيء',
+      updateAllSummary: (total, failed) =>
+        failed > 0 ? `${total} أهداف، تعذّر الوصول إلى ${failed} منها.` : `تم تحديث ${total} من الأهداف.`,
       degradedTitle: 'تم إصلاح قائمة البوابات',
       degradedMessage: 'تعذّرت قراءة بعض البوابات المحفوظة وأُعيد إنشاؤها. راجع القائمة أدناه.',
       latchedTitle: 'تم إيقاف هذه البوابة مؤقتًا',

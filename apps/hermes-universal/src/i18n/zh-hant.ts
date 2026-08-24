@@ -304,6 +304,59 @@ export const zhHant = defineLocale({
 
   settings: {
     connections: {
+      title: '閘道',
+      switchTo: label => `切換來源：${label}`,
+      noSource: '無閘道',
+      connecting: label => `正在連線至 ${label}…`,
+      searchPlaceholder: '搜尋閘道…',
+      searchEmpty: term => `沒有符合「${term}」的閘道。`,
+      add: '新增閘道',
+      pickOne: '選擇一個閘道以檢視其設定。',
+      readOnly: '此閘道清單由較新版本的 Hermes 寫入，因此在此為唯讀。',
+      degradedReason: reason => `已儲存的檔案無法使用（${reason}）；舊檔案已保留在旁。`,
+      fieldLabel: '名稱',
+      fieldLabelPlaceholder: 'studio-box',
+      fieldUrl: '閘道網址',
+      fieldHost: 'SSH 主機',
+      fieldRemoteProfile: '遠端設定檔',
+      fieldToken: '閘道權杖',
+      fieldTokenPlaceholder: '僅在此閘道需要時填寫',
+      noKeyring: '此裝置沒有憑證儲存區，因此無法儲存閘道權杖。請改用瀏覽器登入或未加密的閘道。',
+      localUnsupported: '此裝置無法執行 Hermes 後端 — 請透過 SSH 或網址連線至一個後端。',
+      kindHint: kind =>
+        kind === 'ssh' ? 'Hermes 會在該主機上啟動（或重新接上）後端並建立通道。' : kind === 'cloud' ? '透過入口網站存取的 Hermes Cloud 代理。' : '可透過網址存取的 Hermes 後端。',
+      save: '儲存',
+      saved: '閘道已儲存',
+      saveFailed: '無法儲存此閘道',
+      removeFailed: '無法移除此閘道',
+      test: '測試',
+      testFailed: '無法測試此閘道',
+      connect: '連線',
+      setPrimary: '設為主要',
+      remove: '移除',
+      droppedHeaders: names => `下列標頭未儲存，因為它們由傳輸層管理：${names}。`,
+      verdict: verdict =>
+        verdict === 'ok'
+          ? '可連線。'
+          : verdict === 'credential-rejected'
+            ? '閘道接受連線後隨即關閉（憑證遭拒？）'
+            : verdict === 'auth-required'
+              ? '請登入此閘道以繼續。'
+              : verdict === 'skipped-no-token'
+                ? '可連線。未儲存權杖，因此未測試通訊端。'
+                : verdict === 'timeout'
+                  ? '閘道未及時回應。'
+                  : verdict === 'ws-unreachable'
+                    ? '閘道有回應，但其通訊端拒絕連線。'
+                    : '無法連線至此閘道。',
+      legHttp: (ok, status, ms) => `HTTP ${ok ? status || 'ok' : 'failed'} · ${ms}ms`,
+      legWs: (ok, ms) => `WebSocket ${ok ? 'ok' : 'failed'} · ${ms}ms`,
+      launchMode: '啟動時：',
+      launchPrimary: '主要',
+      launchLastUsed: '上次使用',
+      updateAll: '全部更新',
+      updateAllSummary: (total, failed) =>
+        failed > 0 ? `${total} 個目標，其中 ${failed} 個無法連線。` : `已更新 ${total} 個目標。`,
       degradedTitle: '閘道清單已修復',
       degradedMessage: '部分已儲存的閘道無法讀取，已重新建立。請檢查下方清單。',
       latchedTitle: '該閘道已暫停',

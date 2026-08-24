@@ -29,7 +29,7 @@ import { AppearanceSection } from './appearance-section'
 import { ArchivedSection } from './archived-section'
 import { BillingSettings } from './billing'
 import { ConfigSection } from './config-section'
-import { GatewaySection } from './gateway-section'
+import { ConnectionsSection } from './connections'
 import { KeybindSettings } from './keybind-settings'
 import { KeysSection } from './keys-section'
 import { MemorySection } from './memory-section'
@@ -312,9 +312,12 @@ export function SectionBody({ section }: { section: string }) {
     case 'billing':
       return <BillingSettings />
 
-    // Gateway (J10): mode picker + current connection + disconnect/sign-out.
+    // Gateways (MJXHRM-446): the connection registry. The nav id stays
+    // `gateway` so every existing deep link, palette row and plugin
+    // contribution keeps resolving — and with a single source the page renders
+    // exactly today's configurator.
     case 'gateway':
-      return <GatewaySection />
+      return <ConnectionsSection />
 
     // Keyboard shortcuts — the full rebindable panel, ported from desktop.
     // Desktop's nav id for this page is `keybinds`; universal spells it

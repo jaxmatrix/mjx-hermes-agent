@@ -63,6 +63,7 @@ import {
 } from '@/lib/icons'
 import { IS_DESKTOP, IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
+import { $activeConnectionId } from '@/store/active-connection'
 import { useStore } from '@/store/atom'
 import { $repoWorktrees } from '@/store/coding-status'
 import {
@@ -72,6 +73,7 @@ import {
   closeCommandPalette,
   setCommandPaletteOpen
 } from '@/store/command-palette'
+import { $connectionsRegistry, selectConnection } from '@/store/connections'
 import { findInPageSupported, openFindBar } from '@/store/find-in-page'
 import { $bindings, bindingsFor } from '@/store/keybinds'
 import { $dismissedAutoProjectIds, $terminalOpen, setTerminalOpen } from '@/store/layout'
@@ -527,8 +529,42 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
     [go, settingsSectionLabel, t.settings.nav]
   )
 
+  const connectionsRegistry = useStore($connectionsRegistry)
+  const activeConnectionId = useStore($activeConnectionId)
+
   const baseGroups = useMemo<PaletteGroup[]>(() => {
     const cc = t.commandCenter
+    const conn = t.settings.connections
+
+    // The gateway registry (MJXHRM-446). "Add a gateway" is ALWAYS offered — on a
+    // single-source install the palette is the only entry point, because the
+    // Gateways page deliberately shows exactly today's content until there is a
+    // second source or an open draft. Everything else here needs one.
+    // Only the OTHER sources are listed: switching to the one you are on is a
+    // no-op, and a row that does nothing is worse than no row.
+    const connectionRows = connectionsRegistry.connections.filter(row => row.id !== activeConnectionId)
+
+    const sourceGroup: PaletteGroup[] = [
+            {
+              heading: conn.title,
+              items: [
+                ...connectionRows.map(row => ({
+                  icon: Globe,
+                  id: `source-${row.id}`,
+                  keywords: ['gateway', 'source', 'switch', row.kind],
+                  label: `${conn.switchTo(row.label)}`,
+                  run: () => void selectConnection(row.id)
+                })),
+                {
+                  icon: Globe,
+                  id: 'source-add',
+                  keywords: ['gateway', 'source', 'add', 'new', 'connection'],
+                  label: conn.add,
+                  run: go(`${SETTINGS_ROUTE}/gateway`)
+                }
+              ]
+            }
+          ]
 
     // Core destinations come from the registry (app/shell/nav-contrib.ts), not
     // from a hardcoded list here — MJX-52 made the app's own nav contributions,
@@ -681,6 +717,7 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
       },
       projectGroup,
       ...branchGroup,
+      ...sourceGroup,
       {
         heading: cc.commandCenter,
         items: [

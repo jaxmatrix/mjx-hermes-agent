@@ -856,6 +856,44 @@ export interface Translations {
     }
     /** Settings ▸ Gateways — the multi-connection registry (MJXHRM-446). */
     connections: {
+      title: string
+      switchTo: (label: string) => string
+      noSource: string
+      connecting: (label: string) => string
+      searchPlaceholder: string
+      searchEmpty: (term: string) => string
+      add: string
+      pickOne: string
+      readOnly: string
+      degradedReason: (reason: string) => string
+      fieldLabel: string
+      fieldLabelPlaceholder: string
+      fieldUrl: string
+      fieldHost: string
+      fieldRemoteProfile: string
+      fieldToken: string
+      fieldTokenPlaceholder: string
+      noKeyring: string
+      localUnsupported: string
+      kindHint: (kind: string) => string
+      save: string
+      saved: string
+      saveFailed: string
+      removeFailed: string
+      test: string
+      testFailed: string
+      connect: string
+      setPrimary: string
+      remove: string
+      droppedHeaders: (names: string) => string
+      verdict: (verdict: string) => string
+      legHttp: (ok: boolean, status: number, ms: number) => string
+      legWs: (ok: boolean, ms: number) => string
+      launchMode: string
+      launchPrimary: string
+      launchLastUsed: string
+      updateAll: string
+      updateAllSummary: (total: number, failed: number) => string
       degradedTitle: string
       degradedMessage: string
       latchedTitle: string

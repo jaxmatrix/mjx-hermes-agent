@@ -1142,6 +1142,59 @@ export const zh: Translations = {
       startOver: '重新开始'
     },
     connections: {
+      title: '网关',
+      switchTo: label => `切换来源：${label}`,
+      noSource: '无网关',
+      connecting: label => `连接到 ${label}…`,
+      searchPlaceholder: '搜索网关…',
+      searchEmpty: term => `没有匹配“${term}”的网关。`,
+      add: '添加网关',
+      pickOne: '选择一个网关以查看其设置。',
+      readOnly: '该网关列表由较新版本的 Hermes 写入，因此此处为只读。',
+      degradedReason: reason => `已保存的文件无法使用（${reason}）；旧文件已保留在旁边。`,
+      fieldLabel: '名称',
+      fieldLabelPlaceholder: 'studio-box',
+      fieldUrl: '网关地址',
+      fieldHost: 'SSH 主机',
+      fieldRemoteProfile: '远程配置档案',
+      fieldToken: '网关令牌',
+      fieldTokenPlaceholder: '仅在该网关需要时填写',
+      noKeyring: '此设备没有凭据存储，因此无法保存网关令牌。请使用浏览器登录或未加密的网关。',
+      localUnsupported: '此设备无法运行 Hermes 后端 — 请通过 SSH 或网址连接到一个后端。',
+      kindHint: kind =>
+        kind === 'ssh' ? 'Hermes 将在该主机上启动（或重新接入）后端并建立隧道。' : kind === 'cloud' ? '通过门户访问的 Hermes Cloud 代理。' : '可通过网址访问的 Hermes 后端。',
+      save: '保存',
+      saved: '网关已保存',
+      saveFailed: '无法保存该网关',
+      removeFailed: '无法移除该网关',
+      test: '测试',
+      testFailed: '无法测试该网关',
+      connect: '连接',
+      setPrimary: '设为主要',
+      remove: '移除',
+      droppedHeaders: names => `以下请求头未被保存，因为它们由传输层管理：${names}。`,
+      verdict: verdict =>
+        verdict === 'ok'
+          ? '可访问。'
+          : verdict === 'credential-rejected'
+            ? '网关接受了连接随后将其关闭（凭据被拒绝？）'
+            : verdict === 'auth-required'
+              ? '请登录该网关以继续。'
+              : verdict === 'skipped-no-token'
+                ? '可访问。未存储令牌，因此未测试套接字。'
+                : verdict === 'timeout'
+                  ? '网关未及时响应。'
+                  : verdict === 'ws-unreachable'
+                    ? '网关有响应，但其套接字拒绝了连接。'
+                    : '无法访问该网关。',
+      legHttp: (ok, status, ms) => `HTTP ${ok ? status || 'ok' : 'failed'} · ${ms}ms`,
+      legWs: (ok, ms) => `WebSocket ${ok ? 'ok' : 'failed'} · ${ms}ms`,
+      launchMode: '启动时：',
+      launchPrimary: '主要',
+      launchLastUsed: '上次使用',
+      updateAll: '全部更新',
+      updateAllSummary: (total, failed) =>
+        failed > 0 ? `${total} 个目标，其中 ${failed} 个无法访问。` : `已更新 ${total} 个目标。`,
       degradedTitle: '网关列表已修复',
       degradedMessage: '部分已保存的网关无法读取，已重新生成。请检查下面的列表。',
       latchedTitle: '该网关已暂停',

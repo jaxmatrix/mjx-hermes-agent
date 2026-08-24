@@ -440,7 +440,7 @@ export const en: Translations = {
       providerAccounts: 'Accounts',
       providerApiKeys: 'API keys',
       providerCustomEndpoints: 'Custom endpoints',
-      gateway: 'Gateway',
+      gateway: 'Gateways',
       apiKeys: 'Tools & Keys',
       keysTools: 'Tools',
       keysSettings: 'Settings',
@@ -987,6 +987,63 @@ export const en: Translations = {
       startOver: 'Start over'
     },
     connections: {
+      title: 'Gateways',
+      switchTo: label => `Switch source: ${label}`,
+      noSource: 'No gateway',
+      connecting: label => `Connecting to ${label}…`,
+      searchPlaceholder: 'Search gateways…',
+      searchEmpty: term => `No gateway matches "${term}".`,
+      add: 'Add a gateway',
+      pickOne: 'Pick a gateway to see its settings.',
+      readOnly: 'This gateway list was written by a newer version of Hermes, so it is read-only here.',
+      degradedReason: reason => `The saved file was unusable (${reason}); the previous one was kept alongside it.`,
+      fieldLabel: 'Name',
+      fieldLabelPlaceholder: 'studio-box',
+      fieldUrl: 'Gateway URL',
+      fieldHost: 'SSH host',
+      fieldRemoteProfile: 'Remote profile',
+      fieldToken: 'Gateway token',
+      fieldTokenPlaceholder: 'Only if this gateway needs one',
+      noKeyring: 'This device has no credential store, so a gateway token cannot be saved. Use browser sign-in, or an ungated gateway.',
+      localUnsupported: "This device can't run a Hermes backend — connect to one over SSH or a URL.",
+      kindHint: kind =>
+        kind === 'ssh'
+          ? 'Hermes will start (or reattach to) a backend on that host and tunnel to it.'
+          : kind === 'cloud'
+            ? 'A Hermes Cloud agent, reached through the portal.'
+            : 'A Hermes backend you can reach by URL.',
+      save: 'Save',
+      saved: 'Gateway saved',
+      saveFailed: 'Could not save this gateway',
+      removeFailed: 'Could not remove this gateway',
+      test: 'Test',
+      testFailed: 'Could not test this gateway',
+      connect: 'Connect',
+      setPrimary: 'Set as primary',
+      remove: 'Remove',
+      droppedHeaders: names => `These headers were not saved because the transport owns them: ${names}.`,
+      verdict: verdict =>
+        verdict === 'ok'
+          ? 'Reachable.'
+          : verdict === 'credential-rejected'
+            ? 'The gateway accepted the connection then closed it (credential rejected?)'
+            : verdict === 'auth-required'
+              ? 'Sign in to this gateway to continue.'
+              : verdict === 'skipped-no-token'
+                ? 'Reachable. No token is stored, so the socket was not tested.'
+                : verdict === 'timeout'
+                  ? 'The gateway did not answer in time.'
+                  : verdict === 'ws-unreachable'
+                    ? 'The gateway answered, but its socket refused the connection.'
+                    : 'Could not reach this gateway.',
+      legHttp: (ok, status, ms) => `HTTP ${ok ? status || 'ok' : 'failed'} · ${ms}ms`,
+      legWs: (ok, ms) => `WebSocket ${ok ? 'ok' : 'failed'} · ${ms}ms`,
+      launchMode: 'On launch:',
+      launchPrimary: 'Primary',
+      launchLastUsed: 'Last used',
+      updateAll: 'Update everything',
+      updateAllSummary: (total, failed) =>
+        failed > 0 ? `${total} targets, ${failed} could not be reached.` : `${total} targets updated.`,
       degradedTitle: 'Gateway list repaired',
       degradedMessage: 'Some saved gateways could not be read and were rebuilt. Check the list below.',
       latchedTitle: 'That gateway is on hold',
