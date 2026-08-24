@@ -285,6 +285,11 @@ export { displayModelName, modelDisplayParts, reasoningEffortLabel } from '@/lib
 /** The app's deterministic identity color for a name (profiles, assignees,
  *  authors) + its translucent tag fill — so plugin-rendered identities read
  *  the same hue as everywhere else. */
+/** Run a pointer drag to its end and unbind every listener — including on
+ *  `pointercancel`, which is how a touch platform ends a gesture it stole. Use
+ *  it for any drag surface (a colour field, a canvas scrub); a hand-rolled
+ *  pointermove/pointerup pair leaks a live handler on every cancelled gesture. */
+export { startPointerDrag } from '@/lib/pointer-drag'
 export { profileColor, profileColorSoft } from '@/lib/profile-color'
 
 export const PANES_AREA = 'panes'
