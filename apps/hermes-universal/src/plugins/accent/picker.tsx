@@ -4,8 +4,10 @@
 // the second vite glob MJXHRM-455 added to `contrib/plugins.ts`, and MJXHRM-445's
 // Bot Mode lands here too.
 //
-// Ported from `apps/desktop/src/plugins/accent/picker.tsx`. One divergence, and
-// it is a platform one: the drag runs on the app's `startPointerDrag`.
+// Two divergences from desktop's copy, both because `src/` here is swept by
+// convention tests desktop does not run: the drag goes through the app's
+// `startPointerDrag` (below), and every hover label is a `<Tip>` rather than a
+// native `title=` (`components/ui/no-native-title.test.ts`).
 //
 // Dev-only: an OKLCH accent picker in the statusbar.
 //
@@ -41,6 +43,7 @@ import {
   PopoverTrigger,
   setAccentOverride,
   startPointerDrag,
+  Tip,
   useTheme,
   useValue
 } from '@hermes/plugin-sdk'
@@ -269,14 +272,14 @@ function AccentPicker() {
 
       <div className="grid grid-cols-8 gap-1">
         {SWATCHES.map(swatch => (
-          <button
-            className="size-5 rounded-sm border border-(--dt-border)"
-            key={swatch.hex}
-            onClick={() => setAccentOverride(swatch.hex)}
-            style={{ background: swatch.hex }}
-            title={`${swatch.name} · ${swatch.hex}`}
-            type="button"
-          />
+          <Tip key={swatch.hex} label={`${swatch.name} · ${swatch.hex}`}>
+            <button
+              className="size-5 rounded-sm border border-(--dt-border)"
+              onClick={() => setAccentOverride(swatch.hex)}
+              style={{ background: swatch.hex }}
+              type="button"
+            />
+          </Tip>
         ))}
       </div>
 
@@ -312,9 +315,9 @@ export function AccentPickerTrigger() {
   return (
     <Popover>
       <PopoverTrigger asChild>
+        <Tip label="Accent color (dev)">
         <button
           className="inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground"
-          title="Accent color (dev)"
           type="button"
         >
           <span
@@ -328,6 +331,7 @@ export function AccentPickerTrigger() {
             {theme.colors.primary}
           </span>
         </button>
+        </Tip>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-auto p-0" side="top">
         <AccentPicker />

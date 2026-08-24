@@ -54,11 +54,17 @@ const plugin: HermesPlugin = {
           id: 'accent.copy',
           label: 'Accent: copy the current color',
           keywords: ['accent', 'color', 'hex', 'copy', 'clipboard'],
+          // `ctx.os.writeClipboard`, NOT `navigator.clipboard` — desktop's
+          // Electron renderer can reach the async Clipboard API directly, and
+          // WebKitGTK gates it far more tightly, so the direct call is a silent
+          // no-op on universal's primary desktop target. `lib/clipboard.ts` is
+          // the one seam and `lib/clipboard.test.ts` greps for anything that
+          // reaches around it.
           run: () => {
             const hex = $accentOverride.get()
 
             if (hex) {
-              void navigator.clipboard?.writeText(hex)
+              void ctx.os.writeClipboard(hex)
             }
           }
         } satisfies PaletteContribution
