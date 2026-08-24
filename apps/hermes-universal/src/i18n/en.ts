@@ -22,6 +22,7 @@ export const en: Translations = {
     copy: 'Copy',
     copyFailed: 'Copy failed',
     delete: 'Delete',
+    deleteNamed: (name: string) => `Delete ${name}?`,
     docs: 'Docs',
     done: 'Done',
     error: 'Error',

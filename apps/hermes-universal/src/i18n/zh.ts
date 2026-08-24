@@ -22,6 +22,7 @@ export const zh: Translations = {
     copy: '复制',
     copyFailed: '复制失败',
     delete: '删除',
+    deleteNamed: (name: string) => `删除 ${name}？`,
     docs: '文档',
     done: '完成',
     error: '错误',

@@ -27,6 +27,7 @@ import { useStore } from '@/store/atom'
 import { $connection } from '@/store/connection'
 import { $gatewayState, requestGateway } from '@/store/gateway'
 import { modeIsRemoteLike } from '@/store/gateway-config'
+import { $changeEventsAvailable, $pluginsChangeTick } from '@/store/live-sync'
 import { notifyError } from '@/store/notifications'
 import { openPluginInstallRequest } from '@/store/plugin-install-request'
 
@@ -164,13 +165,23 @@ function AgentPluginsSection() {
   const error = useStore($agentPluginsError)
   const [query, setQuery] = useState('')
 
+  // MJXHRM-416's reader. The tick moves when the gateway says its plugin
+  // directory changed — an event NOTHING emits yet (its signature row is a
+  // backend change the freeze forbids), so the mount fetch stays the backstop
+  // and the gate keeps this from looking live when it is not.
+  const changeEvents = useStore($changeEventsAvailable)
+  const pluginsTick = useStore($pluginsChangeTick)
+  // Held flat so the dependency stays statically checkable: on a gateway that
+  // does not advertise change events the tick can never move it.
+  const refreshOn = changeEvents ? pluginsTick : 0
+
   useEffect(() => {
     if (gatewayState !== 'open') {
       return
     }
 
     void loadAgentPlugins(requestGateway)
-  }, [gatewayState])
+  }, [gatewayState, refreshOn])
 
   const needle = normalize(query)
 

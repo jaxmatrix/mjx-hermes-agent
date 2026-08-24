@@ -249,15 +249,22 @@ export function setSessionOwnerResolver(resolver: SessionOwnerResolver): () => v
  *
  * The owner resolution is the only await, and it is skipped entirely when the
  * answer is already known — see `SessionOwnerResolver`.
+ *
+ * `ownerProfile` is an OVERRIDE for a call that is scoped to a profile rather
+ * than to one conversation — MJXHRM-455's `host.requestProfile(route, …)`, whose
+ * route names the profile outright and has no session to resolve it from. Left
+ * unset (the normal case), the owner is derived from the session exactly as
+ * before, so no existing call site changes shape.
  */
 export async function requestForSession<T>(
   storedSessionId: null | string,
   method: string,
   params: Record<string, unknown> = {},
-  timeoutMs?: number
+  timeoutMs?: number,
+  ownerProfileOverride?: null | string
 ): Promise<T> {
-  const pending = storedSessionId ? ownerResolver?.(storedSessionId) : undefined
-  const ownerProfile = pending instanceof Promise ? await pending : pending
+  const pending = ownerProfileOverride ? undefined : storedSessionId ? ownerResolver?.(storedSessionId) : undefined
+  const ownerProfile = ownerProfileOverride ?? (pending instanceof Promise ? await pending : pending)
 
   // RESOLVE AND DISPATCH WITH NO AWAIT BETWEEN THEM.
   const router = $currentRouter.get()

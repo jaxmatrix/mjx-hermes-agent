@@ -52,6 +52,7 @@ import {
   notifyPairingChanged,
   notifyPetChanged,
   notifyPlatformsChanged,
+  notifyPluginsChanged,
   notifySessionsChanged,
   type PetChangeMeta,
   setChangeEventsAvailable
@@ -130,6 +131,10 @@ const GLOBAL_EVENT_TYPES = new Set([
   'pairing.changed',
   'pet.changed',
   'platforms.changed',
+  // Wired for an event nothing emits yet — see `$pluginsChangeTick`. Five lines
+  // here means the post-freeze ticket that adds the gateway's signature row
+  // touches only the gateway.
+  'plugins.changed',
   'session.title',
   'sessions.changed',
   'skin.changed'
@@ -142,6 +147,7 @@ const CHANGE_EVENT_NOTIFIERS: Record<string, (() => void) | undefined> = {
   'cron.changed': notifyCronChanged,
   'pairing.changed': notifyPairingChanged,
   'platforms.changed': notifyPlatformsChanged,
+  'plugins.changed': notifyPluginsChanged,
   'sessions.changed': notifySessionsChanged
 }
 

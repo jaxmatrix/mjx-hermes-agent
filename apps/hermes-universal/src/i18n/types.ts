@@ -68,6 +68,7 @@ export interface Translations {
     copied: string
     copy: string
     copyFailed: string
+    deleteNamed: (name: string) => string
     delete: string
     docs: string
     done: string

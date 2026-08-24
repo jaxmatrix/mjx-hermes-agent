@@ -22,6 +22,7 @@ export const ja = defineLocale({
     copy: 'コピー',
     copyFailed: 'コピーに失敗しました',
     delete: '削除',
+    deleteNamed: (name: string) => `${name} を削除しますか？`,
     docs: 'ドキュメント',
     done: '完了',
     error: 'エラー',

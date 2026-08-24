@@ -22,6 +22,7 @@ export const zhHant = defineLocale({
     copy: '複製',
     copyFailed: '複製失敗',
     delete: '刪除',
+    deleteNamed: (name: string) => `刪除 ${name}？`,
     docs: '文件',
     done: '完成',
     error: '錯誤',

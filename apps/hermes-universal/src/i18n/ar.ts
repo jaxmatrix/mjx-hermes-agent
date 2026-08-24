@@ -29,6 +29,7 @@ export const ar = defineLocale({
     copy: 'نسخ',
     copyFailed: 'فشل النسخ',
     delete: 'حذف',
+    deleteNamed: (name: string) => `حذف ${name}؟`,
     docs: 'الوثائق',
     done: 'تم',
     error: 'خطأ',
