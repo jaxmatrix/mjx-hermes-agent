@@ -467,10 +467,13 @@ describe('reclaimSessionTransport', () => {
     resolveProbe()
     await reclaiming
 
+    // NO `profile`: the owner ('default') is the ambient route here, and a route
+    // that matches the ambient one dispatches unscoped so the reauth-aware
+    // reconnect path in the ambient dispatcher still applies
+    // (`sessionRpcNeedsProfileRoute`).
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-popped',
-      cols: 96,
-      profile: 'default'
+      cols: 96
     })
   })
 

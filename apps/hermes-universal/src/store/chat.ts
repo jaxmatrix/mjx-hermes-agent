@@ -20,6 +20,7 @@ import {
   type ToolCallPart,
   withActiveAssistant
 } from '@/lib/chat-messages'
+import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { stopSpeaking } from '@/lib/tts'
 import {
   isVoicePlaybackActive,
@@ -285,8 +286,12 @@ export async function ensureSession(): Promise<{ created: boolean; id: string; s
   const cwd = $currentCwd.get().trim() || resolveNewSessionCwd()
   const draftKey = $activeSessionKey.get()
 
+  // `source: 'desktop'` (MJXHRM-480), gated on IS_TAURI: it is what the gateway
+  // stamps on the row and later reads back as the session's PLATFORM, and it is
+  // the literal that unlocks the `desktop_ui` toolset. See `lib/session-source.ts`.
   const created = await requestGateway<SessionCreateResponse>('session.create', {
     cols: 96,
+    ...SESSION_SOURCE_PARAMS,
     ...(cwd && { cwd })
   })
 

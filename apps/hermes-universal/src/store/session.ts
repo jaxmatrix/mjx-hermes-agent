@@ -14,6 +14,7 @@ import { chatMessageText } from '@/lib/chat-messages'
 import { sessionTitle } from '@/lib/chat-runtime'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { appendLiveSessionProjection, toChatMessages } from '@/lib/session-history'
+import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { stableArray } from '@/lib/stable-array'
 import { readJson, writeJson } from '@/lib/storage'
 import { reuseUnchanged } from '@/lib/structural-share'
@@ -29,6 +30,7 @@ import { flashPetActivity } from '@/store/pet'
 // Import direction is `session.ts → profile.ts → profiles.ts`; never the reverse.
 import { $activeGatewayProfile, $profileScope, ALL_PROFILES, normalizeProfileKey } from '@/store/profile'
 import { $profiles } from '@/store/profiles'
+import { requestForSession, setSessionOwnerResolver } from '@/store/session-request-router'
 import {
   $activeSessionKey,
   $sessionStates,
@@ -207,6 +209,21 @@ export async function resolveSessionProfile(storedSessionId: null | string): Pro
 
   return undefined
 }
+
+// The router asks THIS module which profile owns a session — a hook, because
+// `session-request-router.ts` is imported from here and the edge has to point
+// one way (recipe 6.4). Registered at module init, so every `requestForSession`
+// in the app routes even when the caller never touched `store/session`: that is
+// what makes `reconcileSessionTurn`'s resume — the one site that used to send no
+// profile at all — resolve its owner like the other four.
+//
+// Both fast paths stay SYNCHRONOUS (a stamped row, a single-profile install);
+// only a genuine miss returns a promise.
+setSessionOwnerResolver(storedSessionId => {
+  const known = knownSessionProfile(storedSessionId)
+
+  return known ?? (sessionProfileIsAmbiguous() ? resolveSessionProfile(storedSessionId) : undefined)
+})
 
 /** What the backends say about an id. `unknown` is NOT `gone`: see below. */
 export type SessionExistence = 'gone' | 'present' | 'unknown'
@@ -1095,18 +1112,26 @@ async function reclaimWarmSession(
   const generation = openGeneration
   const stillWanted = () => !activate || isCurrentOpen(generation)
 
-  const known = knownSessionProfile(storedId)
-  const profile = known ?? (sessionProfileIsAmbiguous() ? await resolveSessionProfile(storedId) : undefined)
+  // Resolved here (not only inside the dispatch) so the cancel check below still
+  // runs on the far side of the probe's await, exactly as it did before routing.
+  // `resolveSessionProfile` memoizes, so the router's own lookup is a synchronous
+  // hit on this answer.
+  if (!knownSessionProfile(storedId) && sessionProfileIsAmbiguous()) {
+    await resolveSessionProfile(storedId)
+  }
 
   if (!stillWanted()) {
     return
   }
 
   try {
-    const resumed = await requestGateway<SessionResumeResponse>('session.resume', {
+    // ROUTED: the profile resolved a moment ago can be stale by the time this
+    // sends — `softSwitchGateway` re-homes the app with no coordination — so the
+    // route is re-read inside the dispatch.
+    const resumed = await requestForSession<SessionResumeResponse>(storedId, 'session.resume', {
       session_id: storedId,
       cols: 96,
-      ...(profile ? { profile } : {})
+      ...SESSION_SOURCE_PARAMS
     })
 
     if (!stillWanted() || (resumed.session_id ?? storedId) === warmKey) {
@@ -1276,10 +1301,15 @@ async function hydrateColdSession(storedId: string): Promise<void> {
     .then(() => getSessionMessages(storedId, profile))
     .catch(() => null)
 
-  const resumePromise = requestGateway<SessionResumeResponse>('session.resume', {
+  // ROUTED (not `requestGateway`): `profile` above was resolved BEFORE a possible
+  // await, and a soft switch landing in that window would send this resume to a
+  // backend that never heard of the session. `requestForSession` re-reads the
+  // route inside the dispatch and rejects with a typed `SessionRouteError`
+  // instead. The owner lookup it does is a memo hit on the resolution above.
+  const resumePromise = requestForSession<SessionResumeResponse>(storedId, 'session.resume', {
     session_id: storedId,
     cols: 96,
-    ...(profile ? { profile } : {})
+    ...SESSION_SOURCE_PARAMS
   })
 
   // The rejection is consumed by the `await` below; this only keeps it from
@@ -1695,6 +1725,7 @@ async function forkBranchSession({
     // then (desktop's `branchStoredSession` behaves identically).
     const branched = await requestGateway<SessionCreateResponse>('session.create', {
       cols: 96,
+      ...SESSION_SOURCE_PARAMS,
       ...(cwd && { cwd }),
       ...(profile ? { profile } : {}),
       messages: branchMessages.map(({ content, role }) => ({ content, role })),

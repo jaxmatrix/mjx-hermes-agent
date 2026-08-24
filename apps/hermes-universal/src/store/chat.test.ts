@@ -8,7 +8,10 @@ vi.mock('@/store/gateway', async () => {
   return {
     addGatewayEventListener: () => () => {},
     requestGateway: vi.fn().mockResolvedValue({}),
-    $gatewayState: atom('idle')
+    // 'open', not 'idle': the session request router refuses to dispatch onto a
+    // socket that is not open, and every RPC these tests drive is one a real
+    // client could only have sent over an open one.
+    $gatewayState: atom('open')
   }
 })
 import { flushDeltas } from '@/lib/stream-batch'

@@ -32,6 +32,7 @@
 
 import { getSessionMessages } from '@/hermes'
 import { appendLiveSessionProjection, toChatMessages } from '@/lib/session-history'
+import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import {
   isVoicePlaybackActive,
   markVoicePlaybackInterrupted,
@@ -51,6 +52,7 @@ import {
   sessionProfileIsAmbiguous
 } from '@/store/session'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
+import { requestForSession } from '@/store/session-request-router'
 import {
   $sessionStates,
   dropSessionState,
@@ -134,15 +136,28 @@ async function hydrateSessionToState(storedId: string): Promise<string> {
   })
 
   try {
-    const transcript = await Promise.resolve()
+    // CONCURRENT, matching the main pane (`store/session.ts#hydrateColdSession`):
+    // the REST transcript and the resume RPC are independent, so wall time is
+    // max(), not sum(). Awaiting the transcript first and only then resuming made
+    // a tile cold open pay both round trips end to end.
+    const transcriptPromise = Promise.resolve()
       .then(() => getSessionMessages(storedId, profile))
       .catch(() => null)
 
-    const resumed = await requestGateway<SessionResumeResponse>('session.resume', {
+    // ROUTED: `profile` was resolved before a possible await, and the route can
+    // move across it (see `store/session-request-router.ts`).
+    const resumePromise = requestForSession<SessionResumeResponse>(storedId, 'session.resume', {
       session_id: storedId,
       cols: 96,
-      ...(profile ? { profile } : {})
+      ...SESSION_SOURCE_PARAMS
     })
+
+    // Consumed by the `await` below; this only keeps a rejection from surfacing
+    // as an unhandled one while the transcript fetch settles.
+    resumePromise.catch(() => undefined)
+
+    const transcript = await transcriptPromise
+    const resumed = await resumePromise
 
     const restMessages = transcript?.messages?.length ? toChatMessages(transcript.messages) : null
     const messages = appendLiveSessionProjection(restMessages ?? toChatMessages(resumed.messages ?? []), resumed)
