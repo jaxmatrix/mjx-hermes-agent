@@ -1,6 +1,7 @@
 import { ContextMenu as ContextMenuPrimitive } from 'radix-ui'
 import * as React from 'react'
 
+import { HERMES_CONTEXT_MENU_TRIGGER_ATTR } from '@/app/context-menu/markers'
 import { Codicon } from '@/components/ui/codicon'
 import { cn } from '@/lib/utils'
 
@@ -13,7 +14,19 @@ function ContextMenuPortal({ ...props }: React.ComponentProps<typeof ContextMenu
 }
 
 function ContextMenuTrigger({ ...props }: React.ComponentProps<typeof ContextMenuPrimitive.Trigger>) {
-  return <ContextMenuPrimitive.Trigger data-slot="context-menu-trigger" {...props} />
+  return (
+    <ContextMenuPrimitive.Trigger
+      data-slot="context-menu-trigger"
+      {...props}
+      // AFTER `{...props}`, and that ordering is the whole fix (desktop
+      // `2d6d7c550f`). Radix `asChild` merges as `mergeProps(slotProps,
+      // childProps)`, so a child that sets its own `data-slot` — the statusbar's
+      // does — WINS and erases the marker above. The app-wide coordinator
+      // (`app/context-menu/coordinator.tsx`) stands down for a gesture that
+      // lands on this attribute; a trigger it cannot see loses its menu.
+      {...{ [HERMES_CONTEXT_MENU_TRIGGER_ATTR]: '' }}
+    />
+  )
 }
 
 function ContextMenuGroup({ ...props }: React.ComponentProps<typeof ContextMenuPrimitive.Group>) {
