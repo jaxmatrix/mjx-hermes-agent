@@ -10,7 +10,7 @@
  * that nothing would ever draw.
  */
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/app/activity-screen', () => ({ ActivityScreenRoot: () => <div>activity</div> }))
@@ -36,12 +36,13 @@ let activity = false
 let tile = false
 let surface: string | null = null
 
-vi.mock('@/store/windows', () => ({
-  WAKE_INDICATOR_SURFACE: 'wake',
-  // The wake light's own driver reads these when the indicator fires. It never
-  // does in this file — the atom starts hidden — but a mock that answers only
-  // the questions asked today is the shape that turns the next root into a
-  // crash rather than a failed assertion.
+// Spread the REAL module and override only the four window-identity answers.
+// The previous shape listed the exports this file happened to reach, and its own
+// comment said what that costs: `AppContextMenu` (MJXHRM-478) pulled
+// `pane-shell/tree/store.ts` onto the graph, which reads `isSecondaryWindow` at
+// module scope, and the mock crashed the suite instead of failing an assertion.
+vi.mock('@/store/windows', async importOriginal => ({
+  ...((await importOriginal()) as Record<string, unknown>),
   canOpenSatelliteWindow: () => true,
   closeSatelliteWindow: async () => undefined,
   isActivityWindow: () => activity,
@@ -82,5 +83,27 @@ describe('App', () => {
     expect(screen.getByTestId('find-bar')).toBeInTheDocument()
     expect(screen.getByTestId('remote-picker')).toBeInTheDocument()
     expect(screen.getByTestId('close-confirm')).toBeInTheDocument()
+  })
+
+  it.each(ROOTS)('owns the right-click gesture in %s', (_name, arrange) => {
+    arrange()
+    render(<App />)
+
+    const link = document.createElement('a')
+
+    link.href = 'https://example.test/'
+    document.body.append(link)
+
+    const gesture = new MouseEvent('contextmenu', { bubbles: true, button: 2, cancelable: true })
+
+    fireEvent(link, gesture)
+
+    // A root without the coordinator does not merely lose the Hermes menu — on
+    // Tauri it shows WebKitGTK's own "Reload / Inspect Element" instead, because
+    // nothing cancelled the gesture.
+    expect(gesture.defaultPrevented).toBe(true)
+    expect(screen.getByText('Copy URL')).toBeInTheDocument()
+
+    link.remove()
   })
 })

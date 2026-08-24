@@ -425,6 +425,19 @@ describe('entry import graph', () => {
     expect(modules).toEqual([])
   })
 
+  it('keeps the Radix context-menu primitive out of the coordinator’s module graph', () => {
+    // `components/ui/context-menu.tsx` stamps the coordinator's marker, so it
+    // needs ONE constant from `app/context-menu/`. Importing anything else from
+    // that subtree would drag the stores, the clipboard seam and the terminal
+    // registry into every surface that renders a per-surface menu — which is why
+    // `markers.ts` has no imports of its own.
+    const primitive = fs.readFileSync(path.join(SRC, 'components/ui/context-menu.tsx'), 'utf8')
+    const reached = [...primitive.matchAll(/from '(@\/app\/context-menu[^']*)'/g)].map(match => match[1])
+
+    expect(reached).toEqual(['@/app/context-menu/markers'])
+    expect(fs.readFileSync(path.join(SRC, 'app/context-menu/markers.ts'), 'utf8')).not.toContain('import ')
+  })
+
   it('keeps the lazy-only entry points behind a dynamic boundary', () => {
     // The complement of the assertions above: the seams must still EXIST, or
     // "not statically reachable" would be satisfied by deleting highlighting.

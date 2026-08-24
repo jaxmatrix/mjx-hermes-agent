@@ -2,7 +2,6 @@ import '@/app/context-menu/targets/dom'
 import '@/app/context-menu/targets/terminal'
 
 import { Fragment, useEffect, useMemo } from 'react'
-import { useLocation } from 'react-router-dom'
 
 import { noteComposition } from '@/app/context-menu/actions'
 import type { ContextMenuItemsContribution } from '@/app/context-menu/contrib'
@@ -226,6 +225,10 @@ function installGestureListeners(): () => void {
     closeContextMenu()
   }
 
+  // Route changes close it too, read off the URL rather than off `useLocation`:
+  // this component mounts in EVERY window root, and a satellite root that has no
+  // Router around it would crash on the hook. `hashchange` is what HashRouter
+  // navigations actually produce.
   const onHide = () => closeContextMenu()
   const onCompositionStart = () => noteComposition(true)
   const onCompositionEnd = () => noteComposition(false)
@@ -237,6 +240,8 @@ function installGestureListeners(): () => void {
   window.addEventListener('pointercancel', onPointerUp, { capture: true })
   window.addEventListener('scroll', onScroll, { capture: true, passive: true })
   window.addEventListener('blur', onHide)
+  window.addEventListener('hashchange', onHide)
+  window.addEventListener('popstate', onHide)
   window.addEventListener('compositionstart', onCompositionStart, { capture: true })
   window.addEventListener('compositionend', onCompositionEnd, { capture: true })
   document.addEventListener('visibilitychange', onHide)
@@ -251,6 +256,8 @@ function installGestureListeners(): () => void {
     window.removeEventListener('pointercancel', onPointerUp, { capture: true })
     window.removeEventListener('scroll', onScroll, { capture: true })
     window.removeEventListener('blur', onHide)
+    window.removeEventListener('hashchange', onHide)
+    window.removeEventListener('popstate', onHide)
     window.removeEventListener('compositionstart', onCompositionStart, { capture: true })
     window.removeEventListener('compositionend', onCompositionEnd, { capture: true })
     document.removeEventListener('visibilitychange', onHide)
@@ -284,10 +291,8 @@ export function AppContextMenu() {
   const { t } = useI18n()
   const open = useStore($contextMenu)
   const contributions = useContributions(CONTEXT_MENU_ITEMS_AREA)
-  const location = useLocation()
 
   useEffect(installGestureListeners, [])
-  useEffect(() => closeContextMenu(), [location.pathname])
 
   const built = useMemo(() => {
     if (!open) {

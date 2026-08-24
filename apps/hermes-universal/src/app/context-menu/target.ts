@@ -47,9 +47,12 @@ export function editableFrom(element: Element | null): HTMLElement | null {
     return field.disabled || field.readOnly ? null : field
   }
 
-  // `contenteditable="false"` reports false here, and so does a plain
-  // `[contenteditable]` inside one — which is what we want either way.
-  return field.isContentEditable ? field : null
+  // The ATTRIBUTE, not `isContentEditable`: inheritance is already handled by
+  // the `closest()` above (the nearest ancestor that declares it wins, so a
+  // `contenteditable="false"` island inside an editable correctly reports not
+  // editable), and the property is a browser-only computation jsdom never
+  // implements — which would make every contenteditable path here untestable.
+  return field.getAttribute('contenteditable') === 'false' ? null : field
 }
 
 export function resolveDomTarget(element: Element | null): ContextMenuDomTarget {

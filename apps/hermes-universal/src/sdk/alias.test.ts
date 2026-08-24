@@ -28,6 +28,8 @@ describe('@hermes/plugin-sdk', () => {
     expect(viaAlias.KEYBINDS_AREA).toBe('keybinds')
     expect(viaAlias.THEMES_AREA).toBe('themes')
     expect(viaAlias.COMPOSER_AREAS.top).toBeTypeOf('string')
+    expect(viaAlias.CONTEXT_MENU_ITEMS_AREA).toBe('contextMenu.items')
+    expect(viaAlias.registerContextTarget).toBeTypeOf('function')
 
     // Host doors.
     for (const door of ['logs', 'navigate', 'notify', 'onEvent', 'request', 'restartGateway', 'status'] as const) {
