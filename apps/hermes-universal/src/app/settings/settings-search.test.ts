@@ -173,6 +173,10 @@ describe('buildClientPrefSearchEntries', () => {
         backgroundModeTitle: 'Keep running in the background',
         keepAwakeTitle: 'Keep computer awake'
       },
+      // MJXHRM-455's rows: the plugin install door, the gateway plugin door and
+      // the plugin-notification toggle.
+      notifications: { kinds: { plugin: { label: 'Plugin notifications' } } },
+      plugins: { gatewayDoor: 'Load plugins from the connected backend', installFromGit: 'Install from Git\u2026' },
       workspace: { terminalHostTitle: 'Shell runs on' }
     }
   } as any
@@ -186,6 +190,10 @@ describe('buildClientPrefSearchEntries', () => {
     expect(byId.get('setting:appearance.tool-view')?.label).toBe('Tool Call Display')
     expect(byId.get('setting:appearance.embeds')?.label).toBe('Inline Embeds')
     expect(byId.get('setting:chat.attachment-size')?.label).toBe('Max attachment / preview size')
+
+    expect(byId.get('setting:plugins.install')?.label).toBe('Install from Git\u2026')
+    expect(byId.get('setting:plugins.gatewayDoor')?.label).toBe('Load plugins from the connected backend')
+    expect(byId.get('setting:notifications.plugin')?.label).toBe('Plugin notifications')
 
     // The row's home page, not a generic "Settings" bucket.
     expect(byId.get('setting:chat.attachment-size')?.context).toBe('Chat')

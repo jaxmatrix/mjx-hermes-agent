@@ -22,6 +22,7 @@ export const zh: Translations = {
     copy: '复制',
     copyFailed: '复制失败',
     delete: '删除',
+    deleteNamed: (name: string) => `删除 ${name}？`,
     docs: '文档',
     done: '完成',
     error: '错误',
@@ -225,6 +226,41 @@ export const zh: Translations = {
     previous: '上一个匹配项'
   },
 
+  pluginInstall: {
+    title: '安装插件',
+    fromDeepLink: '某个链接请求 Hermes 安装此插件。在你确认之前不会安装任何内容。',
+    fromSettings: 'Hermes 会在网关上克隆该仓库并安装其中的内容。',
+    repoLabel: '仓库',
+    repoPlaceholder: 'owner/repo、owner/repo/subdir 或 git URL',
+    sourceLink: '查看源代码',
+    invalidIdentifier: 'Hermes 无法安装该仓库 — 请使用 owner/repo、owner/repo/subdir 或 git URL。',
+    insecureWarning: url => `${url} 不是经过验证的来源 — 能访问该网络的任何人都可以决定安装什么。`,
+    targetProfile: '安装到配置',
+    authorityNotice:
+      '安装会以代理的完整权限在网关上运行该仓库的代码，其桌面端部分会以应用的完整权限在 Hermes 内运行。插件之间只做错误隔离，并非彼此隔离。',
+    enableAfterInstall: '安装后启用',
+    forceReinstall: '强制重新安装',
+    forceReinstallHint: '将替换此插件的现有副本。',
+    waitingForGateway: '正在等待网关 — 连接后即可安装。',
+    install: '安装',
+    installing: '正在安装…',
+    agentSuccess: name => `已安装 ${name}。`,
+    warningsTitle: '插件安装警告',
+    missingEnv: list => `已安装，但在设置以下项之前不会生效：${list}。`,
+    noIdentifier: '该链接没有指明仓库。',
+    stillRunning: '网关没有响应。安装可能仍在进行 — 重试前请重新打开“设置 ▸ 插件”查看。',
+    restDoorOff: '此网关是远程的，且网关插件通道已关闭，因此该插件的桌面端部分不会在此加载。'
+  },
+
+  deepLink: {
+    title: 'Hermes 链接',
+    badUrl: '这不是 Hermes 能打开的链接。',
+    unsafePath: '该链接指向应用之外，已被忽略。',
+    unknownPath: path => `${path} 没有对应的页面 — 该链接可能属于尚未安装的插件。`,
+    reservedKind: kind => `Hermes 无法处理“${kind}”类型的链接。`,
+    routeConflict: '两个处理器声明了同一个 Hermes 链接'
+  },
+
   keybinds: {
     title: '键盘快捷键',
     subtitle: open => `点击快捷键即可重新绑定 · ${open} 可重新打开此面板。`,
@@ -370,6 +406,8 @@ export const zh: Translations = {
       title: '插件',
       blurb: '随构建捆绑，或放入 desktop-plugins 文件夹。禁用会即时卸载。',
       count: (n: number) => `已安装 ${n} 个`,
+      installFromGit: '从 Git 安装…',
+      installFromGitHint: '将插件仓库克隆到网关。安装前会先告知它获得的权限。',
       openFolder: '打开插件文件夹',
       rescan: '重新扫描',
       reveal: '在文件管理器中显示',
@@ -378,6 +416,8 @@ export const zh: Translations = {
       failed: '失败',
       empty: '尚未安装插件。',
       kinds: { bundled: '内置', disk: '磁盘', runtime: '运行时' },
+      roots: { 'agent-packages': '代理插件包', 'desktop-plugins': 'desktop-plugins' },
+      agentPackagesNotice: '已安装代理插件包的桌面端部分默认关闭：其代理端需要先加入允许列表才会运行，桌面端同理。',
       sourceLocal: '正在从本设备读取',
       sourceGateway: '正在从已连接的后端读取',
       sourceNone: '没有可用的插件文件夹',
@@ -404,6 +444,7 @@ export const zh: Translations = {
       enableAll: '启用通知',
       enableAllDesc: '总开关。关闭后将静音下方所有通知。',
       focusedHint: '完成提醒仅在 Hermes 处于后台时触发。',
+      noActionsNotice: '此平台的通知没有按钮 — 提供按钮的插件会回退为应用内提示。',
       kinds: {
         approval: {
           label: '需要批准',

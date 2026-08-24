@@ -42,7 +42,13 @@ import './app/right-pane/terminal/terminal-font-sync'
 // chat surface has mounted — a tile restored into a layout, a session resumed by
 // the HUD. This import IS the wiring.
 import './store/transcript-cache-sync'
+// And the core `hermes://` route table (MJXHRM-455). The registrations have to
+// exist before `startDeepLinkRouter` drains Rust's cold-start buffer, and a
+// link that cold-started the app is delivered within milliseconds of the first
+// paint — so this import IS the wiring, exactly like the event router above.
+import './store/deep-link-builtins'
 
+import { installNotificationActivation } from './store/plugin-notify-handlers'
 import { installTourDriver } from './store/tour-bridge'
 import { installWindowBelowReader } from './store/window-below'
 
@@ -55,6 +61,11 @@ installWindowBelowReader()
 // component happens to mount. driver.js itself stays off this path — the driver
 // dynamic-imports `@/lib/tour` on the first request.
 installTourDriver()
+// And the notification tap listeners (MJXHRM-455). A tap can arrive while the
+// app is cold — the notification outlives the process that sent it — so the
+// listener has to exist before any surface mounts. A no-op on desktop, where the
+// notification plugin registers no click hook at all.
+installNotificationActivation()
 
 import { QueryClientProvider } from '@tanstack/react-query'
 import { createRoot } from 'react-dom/client'

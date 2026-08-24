@@ -29,6 +29,7 @@ export const ar = defineLocale({
     copy: 'نسخ',
     copyFailed: 'فشل النسخ',
     delete: 'حذف',
+    deleteNamed: (name: string) => `حذف ${name}؟`,
     docs: 'الوثائق',
     done: 'تم',
     error: 'خطأ',
@@ -162,6 +163,41 @@ export const ar = defineLocale({
     connectionFailed: 'تعذر على هيرميس الوصول إلى البوابة.',
     expandReply: 'إظهار الرد',
     collapseReply: 'إخفاء الرد'
+  },
+
+  pluginInstall: {
+    title: 'تثبيت إضافة',
+    fromDeepLink: 'طلب رابط من Hermes تثبيت هذه الإضافة. لن يُثبَّت أي شيء حتى توافق.',
+    fromSettings: 'ينسخ Hermes المستودع على البوابة ويثبّت ما يجده.',
+    repoLabel: 'المستودع',
+    repoPlaceholder: 'owner/repo أو owner/repo/subdir أو عنوان git',
+    sourceLink: 'عرض المصدر',
+    invalidIdentifier: 'هذا ليس مستودعًا يمكن لـ Hermes تثبيته — استخدم owner/repo أو owner/repo/subdir أو عنوان git.',
+    insecureWarning: url => `${url} ليس مصدرًا موثّقًا — يمكن لأي شخص يصل إلى تلك الشبكة أن يقرّر ما يُثبَّت.`,
+    targetProfile: 'التثبيت في الملف',
+    authorityNotice:
+      'يؤدي التثبيت إلى تشغيل شفرة هذا المستودع على البوابة بكامل صلاحيات الوكيل، ويعمل نصفه المكتبي داخل Hermes بكامل صلاحيات التطبيق. الإضافات معزولة عن أخطاء بعضها، لا عن بعضها.',
+    enableAfterInstall: 'التفعيل بعد التثبيت',
+    forceReinstall: 'إعادة التثبيت بالقوة',
+    forceReinstallHint: 'يستبدل نسخة موجودة من هذه الإضافة.',
+    waitingForGateway: 'في انتظار البوابة — يصبح التثبيت متاحًا بعد الاتصال.',
+    install: 'تثبيت',
+    installing: 'جارٍ التثبيت…',
+    agentSuccess: name => `تم تثبيت ${name}.`,
+    warningsTitle: 'تحذير تثبيت الإضافة',
+    missingEnv: list => `تم التثبيت، لكنه معطّل حتى تُضبط هذه: ${list}.`,
+    noIdentifier: 'لم يحدّد الرابط أي مستودع.',
+    stillRunning: 'لم تستجب البوابة. قد يكون التثبيت ما زال جاريًا — افتح الإعدادات ▸ الإضافات للتحقق قبل إعادة المحاولة.',
+    restDoorOff: 'هذه البوابة بعيدة وباب إضافات البوابة مغلق، لذا لن يُحمَّل النصف المكتبي لهذه الإضافة هنا.'
+  },
+
+  deepLink: {
+    title: 'رابط Hermes',
+    badUrl: 'هذا ليس رابط Hermes يمكن فتحه.',
+    unsafePath: 'يشير هذا الرابط إلى خارج التطبيق وتم تجاهله.',
+    unknownPath: path => `لا توجد صفحة عند ${path} — قد يكون الرابط لإضافة لم تثبّتها.`,
+    reservedKind: kind => `لا يوجد في Hermes ما يعالج رابط "${kind}".`,
+    routeConflict: 'طلب معالجان الرابط نفسه'
   },
 
   keybinds: {
@@ -303,6 +339,11 @@ export const ar = defineLocale({
       blurb:
         'امتدادات واجهة تُحمّل داخل هذا التطبيق — إما مضمّنة مع البناء، أو موضوعة في مجلد desktop-plugins (بما فيها التي يكتبها Hermes). تعطيل الإضافة يفرغها مباشرة ويبقى بعد إعادة التشغيل.',
       count: n => `${n} مثبتة`,
+      roots: { 'agent-packages': 'حزمة وكيل', 'desktop-plugins': 'desktop-plugins' },
+      agentPackagesNotice:
+        'يبدأ النصف المكتبي لحزمة الوكيل المثبَّتة مُعطَّلًا: نصفها الوكيل يحتاج إذنًا قبل التشغيل، وكذلك هذا.',
+      installFromGit: 'التثبيت من Git…',
+      installFromGitHint: 'استنساخ مستودع إضافة على البوابة. ستُعرض عليك الصلاحيات الممنوحة أولًا.',
       openFolder: 'فتح مجلد الإضافات',
       rescan: 'إعادة الفحص',
       reveal: 'إظهار في مدير الملفات',
@@ -323,6 +364,7 @@ export const ar = defineLocale({
       enableAll: 'تفعيل الإشعارات',
       enableAllDesc: 'إيقافه يصمت كل الإشعارات أدناه.',
       focusedHint: 'تنبيهات الاكتمال تظهر فقط عندما يكون Hermes في الخلفية.',
+      noActionsNotice: 'لا تحتوي الإشعارات على هذه المنصة على أزرار — تعود الإضافة التي توفّرها إلى رسالة داخل التطبيق.',
       kinds: {
         approval: {
           label: 'يلزم الموافقة',

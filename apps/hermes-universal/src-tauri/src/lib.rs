@@ -15,6 +15,7 @@ mod artifact;
 mod background;
 mod cloud;
 mod data_url_read_max;
+mod deep_link;
 #[cfg(desktop)]
 mod external_terminal;
 mod find_in_page;
@@ -48,6 +49,7 @@ use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
 };
 use data_url_read_max::{read_capped_file_base64, set_data_url_read_max, DataUrlReadMaxState};
+use deep_link::{deep_link_ready, DeepLinkState};
 #[cfg(desktop)]
 use external_terminal::open_in_terminal;
 use find_in_page::{find_in_page, stop_find_in_page};
@@ -161,6 +163,18 @@ pub fn run() {
 
     let builder = tauri::Builder::default();
 
+    // FIRST in the chain, and that is load-bearing: on Windows/Linux a
+    // `hermes://` link launches a SECOND process with the URL as its only
+    // argument, and this plugin is what kills that process and hands its argv to
+    // the running one. Registering it after another plugin would let that
+    // plugin's setup run in the losing instance first. Our callback body is
+    // deliberately empty — the plugin's own default already calls the deep-link
+    // plugin's `handle_cli_arguments`, and desktop's Electron `app.exit(0)`
+    // teardown maps to "do nothing but hand over the argv" here, because nothing
+    // in the loser owns anything yet.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.plugin(tauri_plugin_single_instance::Builder::new().build());
+
     // OS-level hotkeys (MJXHRM-55). Desktop only — no mobile OS lets an app claim
     // a system-wide chord, and the crate isn't in the mobile dependency set at
     // all, so this is a compile-time branch rather than a runtime capability
@@ -178,6 +192,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
+        // `hermes://` — the OS front door (see deep_link.rs). Registered on both
+        // targets: the scheme is claimed by the bundler on desktop and by the
+        // Android intent-filter / iOS CFBundleURLTypes on mobile.
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(TransportState::new())
         .manage(MediaState::default())
@@ -189,6 +207,10 @@ pub fn run() {
         // the machine even if the webview never turned the preference back off.
         .manage(KeepAwakeState::default())
         .manage(DataUrlReadMaxState::default())
+        // The deep-link cold-start buffer. Managed on BOTH targets so the builder
+        // chain has one shape — and it does real work on mobile, where a cold
+        // launch from a tapped link races the WebView every time.
+        .manage(DeepLinkState::default())
         .manage(VoiceState::default())
         .manage(UpdateState::default())
         // Live SSH sessions. Unlike desktop's on-disk control socket, nothing
@@ -269,6 +291,8 @@ pub fn run() {
 
                 app.state::<BackgroundState>().set_tray_ready(ready);
             }
+
+            deep_link::setup(app.handle());
 
             let _ = app;
             Ok(())
@@ -370,7 +394,8 @@ pub fn run() {
             tray_set_labels,
             tray_set_status,
             global_shortcuts_sync,
-            global_shortcut_take_pending
+            global_shortcut_take_pending,
+            deep_link_ready
         ]))
         // `.build(...).run(closure)` (rather than the terminal `.run(context)`) so
         // we can observe `RunEvent`s. On iOS this catches scenes the *system*
@@ -433,6 +458,15 @@ pub fn run() {
                 pty::reap_window_ptys(app_handle, label);
 
                 transport::reap_window_sockets(app_handle, label);
+
+                // The main webview is gone (a reload, an Android process
+                // recreation). Stop claiming a listener exists, so the next link
+                // buffers until its replacement calls `deep_link_ready` again —
+                // without this, an F5 during development silently swallows every
+                // later link.
+                if label == "main" {
+                    deep_link::forget_ready(app_handle);
+                }
 
                 if window::is_tile_window_label(label) {
                     let _ = app_handle.emit(window::TILE_WINDOW_CLOSED_EVENT, label.clone());

@@ -105,4 +105,105 @@ describe('@hermes/plugin-sdk', () => {
   it('rejects host.request when the gateway is not connected', async () => {
     await expect(viaAlias.host.request('sessions.list')).rejects.toThrow(/not connected/i)
   })
+
+  // MJXHRM-471's fork invariant: `packages/hermes-sample-plugins/kanban` imports
+  // these three, and universal is the app whose vitest suite runs the sample's
+  // own tests. An SDK edit that drops one stops the shared samples compiling.
+  it('keeps the fork-invariant exports the shared samples import', () => {
+    for (const name of ['formatModifierToken', 'FadeScroll', 'useGrabScroll', 'compactNumber'] as const) {
+      expect(viaAlias[name], name).toBeTruthy()
+    }
+  })
+
+  // ── MJXHRM-455's surface ───────────────────────────────────────────────────
+
+  it('carries the host doors a plugin needs to reach a session, a pane or a profile', () => {
+    for (const door of [
+      'agents',
+      'connections',
+      'ensureAgent',
+      'getGateway',
+      'newChat',
+      'openSession',
+      'openWorkspace',
+      'paneVisibility',
+      'profileRoutes',
+      'requestProfile',
+      'sessionMessages',
+      'sessionProfile',
+      'warmAgent',
+      'warmProfile'
+    ] as const) {
+      expect(viaAlias.host[door], door).toBeTypeOf('function')
+    }
+  })
+
+  it('exposes the focused-session state as ATOMS, not snapshots', () => {
+    for (const key of [
+      'awaitingResponse',
+      'busy',
+      'busyBySession',
+      'connectionId',
+      'focusedSessionId',
+      'focusedSessionProfile',
+      'focusedStoredSessionId',
+      'focusedUsage',
+      'ready',
+      'selectedStoredSessionId',
+      'sessions'
+    ] as const) {
+      expect(viaAlias.host.state[key].get, key).toBeTypeOf('function')
+    }
+  })
+
+  // The architecture doc calls this structurally impossible ("universal's
+  // gateway lives in Rust and there is no JS instance to hand out"). Only the
+  // SOCKET is in Rust — and this must be the app's OWN client, not a fresh one,
+  // or `McpTab` would drive a second, unconnected gateway.
+  it('hands out the app\u2019s live gateway client, and null when closed', async () => {
+    const { $gateway } = await import('@/store/gateway')
+
+    expect(viaAlias.host.getGateway()).toBeNull()
+
+    const stub = { request: () => Promise.resolve() } as unknown as NonNullable<ReturnType<typeof $gateway.get>>
+    $gateway.set(stub)
+
+    expect(viaAlias.host.getGateway()).toBe(stub)
+
+    $gateway.set(null)
+  })
+
+  it('reports readiness through the SAME atom core surfaces read', async () => {
+    const { $connectionReady } = await import('@/store/connection-ready')
+
+    expect(viaAlias.host.state.ready).toBe($connectionReady)
+  })
+
+  it('carries the surfaces, contracts and helpers 445 and 446 build on', () => {
+    for (const name of [
+      'AGENT_ROUTING_UNAVAILABLE',
+      'Blobatar',
+      'blobatarSvg',
+      'confirm',
+      'confirmDelete',
+      'createBudgetedLoop',
+      'isSafeAppPath',
+      'MAX_NOTIFICATION_ACTIONS',
+      'MarkdownTextContent',
+      'McpTab',
+      'nativeNotificationCapabilities',
+      'resolveHermesOpenPath',
+      'setPluginConnectionSource',
+      'SkillsView',
+      'startPointerDrag',
+      'Streamdown',
+      'ToolsetConfigPanel'
+    ] as const) {
+      expect(viaAlias[name], name).toBeTruthy()
+    }
+  })
+
+  it('offers the composer @-completions area a plugin contributes into', () => {
+    expect(viaAlias.COMPOSER_AREAS.atCompletions).toBe('composer.atCompletions')
+  })
 })

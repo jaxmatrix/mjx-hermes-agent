@@ -13,6 +13,7 @@
  *   data kinds (`data`):      composer.middleware    (ComposerMiddleware)
  *                             composer.attachments   (ComposerAttachmentProvider)
  *                             composer.microActions  (ComposerMicroActionProvider)
+ *                             composer.atCompletions (ComposerAtCompletionSource)
  *
  * Core keeps ownership of the transcript, input, and submit engine — these
  * seams AUGMENT the composer, they never replace it. Middleware runs as an
@@ -35,7 +36,8 @@ export const COMPOSER_AREAS = {
   actions: 'composer.actions',
   middleware: 'composer.middleware',
   attachments: 'composer.attachments',
-  microActions: 'composer.microActions'
+  microActions: 'composer.microActions',
+  atCompletions: 'composer.atCompletions'
 } as const
 
 export interface ComposerDraft {
@@ -47,6 +49,34 @@ export interface ComposerDraft {
 export interface ComposerMiddleware {
   /** Rewrite (return a draft), pass through (same draft), or cancel (null). */
   handler: (draft: ComposerDraft) => ComposerDraft | null | Promise<ComposerDraft | null>
+}
+
+/** One row a `composer.atCompletions` source offers for the current query. */
+export interface ComposerAtCompletionItem {
+  /** Text inserted into the draft when picked (e.g. `@researcher`). */
+  insert: string
+  /** Row label; defaults to `insert`. */
+  display?: string
+  /** Secondary line (e.g. "Bot · Homelab"). */
+  meta?: string
+  /** Icon slug the completion popover understands; defaults to 'simple'. */
+  icon?: string
+}
+
+/**
+ * Payload of a `composer.atCompletions` data contribution — an extra source
+ * merged into the composer's `@` popover ABOVE the path/reference results.
+ * `query` is the text typed after `@` (no leading `@`).
+ *
+ * SYNCHRONOUS, and that is the contract rather than a simplification: `provide`
+ * runs on every keystroke past the debounce, so a source that could await would
+ * need a budget and a race to keep the popover from stalling — while a
+ * synchronous one cannot stall it at all. A slow lookup belongs behind the
+ * source's own cache, with `provide` answering from whatever that cache holds.
+ * Desktop's shape, verbatim, so a source written for one app works in the other.
+ */
+export interface ComposerAtCompletionSource {
+  provide: (query: string) => ComposerAtCompletionItem[]
 }
 
 export interface ComposerAttachmentContext {

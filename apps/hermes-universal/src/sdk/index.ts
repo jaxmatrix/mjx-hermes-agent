@@ -34,16 +34,34 @@
  *    app. Branch on the result; never assume the door opened.
  */
 
-import { atom, type ReadableAtom } from 'nanostores'
+import { atom, computed, type ReadableAtom } from 'nanostores'
 
+import { registerPaneCloser, revealTreePane } from '@/components/pane-shell/tree/store'
 import { $narrowViewport } from '@/components/pane-shell/tree/store'
 import { onGatewayEvent } from '@/contrib/events'
+import { registry } from '@/contrib/registry'
+import type { HermesGateway } from '@/hermes'
 import { getLogs, getStatus } from '@/hermes'
+import { connectionIdOf } from '@/lib/backend-scope'
+import type { ChatMessage } from '@/lib/chat-messages'
 import { $currentCwd, $sessionId } from '@/store/chat'
-import { $gatewayState, requestGateway } from '@/store/gateway'
+import { $connection } from '@/store/connection'
+import { $connectionReady } from '@/store/connection-ready'
+import { $gateway, $gatewayState, requestGateway } from '@/store/gateway'
 import { $currentModel } from '@/store/model'
+import { startNewSession } from '@/store/new-session'
 import { notify, notifyError } from '@/store/notifications'
+import { $paneVisible } from '@/store/pane-visibility-store'
+import {
+  pluginConnectionSource,
+  type PluginProfileRoute,
+  requestPluginProfile
+} from '@/store/plugin-connection-source'
+import { openPluginSession, type PluginOpenSessionOptions, warmProfile } from '@/store/plugin-open-session'
 import { $activeGatewayProfile } from '@/store/profile'
+import { $activeStoredSessionId, knownSessionProfile } from '@/store/session'
+import { $sessionStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
+import { $focusedRuntimeId, $focusedSessionState, $focusedStoredSessionId } from '@/store/session-states'
 import { runGatewayRestart } from '@/store/system-status'
 
 // -- state: readonly views over the app's live atoms -------------------------
@@ -72,6 +90,52 @@ if (typeof window !== 'undefined') {
   $narrowViewport.listen(refresh)
 }
 
+/** One session, as a plugin sees it. Deliberately small: every field here is a
+ *  standing compatibility promise. */
+export interface PluginSessionSummary {
+  storedSessionId: string
+  runtimeSessionId: null | string
+  title: string
+  cwd: string
+  busy: boolean
+}
+
+/**
+ * `$sessions` and `$messages` are NOT exported, and that is a decision rather
+ * than an omission. Universal has no `$sessions` list atom, and `$messages` is a
+ * projection of the ACTIVE slice (rule 16) — handing either to a plugin gives it
+ * a lie on a multi-tile screen, where the session it cares about is very often
+ * not the active one. Both are answered from `$sessionStates`, the source of
+ * truth for EVERY session, instead.
+ */
+const $pluginSessions = computed($sessionStates, states =>
+  Object.values(states)
+    .filter(state => state.storedSessionId)
+    .map(state => ({
+      busy: state.busy,
+      cwd: state.cwd,
+      runtimeSessionId: state.runtimeSessionId,
+      storedSessionId: state.storedSessionId!,
+      title: state.liveTitle
+    }))
+)
+
+const $busyBySession = computed($sessionStates, states => {
+  const busy: Record<string, boolean> = {}
+
+  for (const state of Object.values(states)) {
+    if (state.storedSessionId) {
+      busy[state.storedSessionId] = state.busy
+    }
+  }
+
+  return busy
+})
+
+/** Per-session transcripts, memoised so a subscriber taken once keeps working.
+ *  Bounded by the number of sessions a plugin actually asks about. */
+const sessionMessageAtoms = new Map<string, ReadableAtom<ChatMessage[]>>()
+
 export const host = {
   state: {
     /** Runtime id of the active chat session (null on a fresh draft). */
@@ -86,7 +150,46 @@ export const host = {
     /** Profile the live gateway is routed to. */
     profile: readonlyAtom<string>($activeGatewayProfile),
     /** Window geometry ({ width, height, narrow }). */
-    viewport: readonlyAtom<ViewportRect>($viewport)
+    viewport: readonlyAtom<ViewportRect>($viewport),
+
+    // ── the FOCUSED session ──────────────────────────────────────────────────
+    // The focused chat, NOT a "primary" one. On a multi-tile screen the session
+    // you are looking at is frequently not the selected one, and a surface that
+    // follows the wrong one is `28fc9d9c0d`'s bug.
+
+    /** A turn is running in the FOCUSED session. */
+    busy: computed($focusedSessionState, state => state.busy),
+    /** The focused session is waiting on the model's first token. */
+    awaitingResponse: computed($focusedSessionState, state => state.awaitingResponse),
+    /** `storedSessionId` → busy, for EVERY open session. */
+    busyBySession: readonlyAtom<Record<string, boolean>>($busyBySession),
+    /** Session KEY of the focused chat (a draft has one; a runtime id does not). */
+    focusedSessionId: readonlyAtom<null | string>($focusedRuntimeId),
+    focusedStoredSessionId: readonlyAtom<null | string>($focusedStoredSessionId),
+    /** Owning profile of the focused session, or '' when it is not known yet. */
+    focusedSessionProfile: computed($focusedStoredSessionId, id => (id ? (knownSessionProfile(id) ?? '') : '')),
+    /** Cumulative token usage for the focused session. */
+    focusedUsage: computed($focusedSessionState, state => state.usage),
+    /** Stored id of the SELECTED session (desktop's `$selectedStoredSessionId`). */
+    selectedStoredSessionId: readonlyAtom<null | string>($activeStoredSessionId),
+    /** Every open session, from `$sessionStates`. */
+    sessions: readonlyAtom<PluginSessionSummary[]>($pluginSessions),
+
+    /**
+     * Is the app usable right now?
+     *
+     * A RE-EXPORT of `store/connection-ready.ts`, which derives it from the six
+     * connection flags — not a seventh flag (rule 12). Core surfaces read the
+     * same atom, so a plugin and the app can never disagree about it.
+     */
+    ready: readonlyAtom<boolean>($connectionReady),
+
+    /**
+     * Which connection the app is routed to. `'local'` for the primary,
+     * whatever its gateway MODE — a phone has no local spawn and is still the
+     * primary connection.
+     */
+    connectionId: computed($connection, connection => connectionIdOf(connection))
   },
 
   /** Toast into the app's notification stack. */
@@ -123,7 +226,128 @@ export const host = {
    *  itself uses. Lazy: resolves the LIVE socket per call, and rejects when the
    *  gateway is not connected. */
   request: async <T>(method: string, params: Record<string, unknown> = {}): Promise<T> =>
-    requestGateway<T>(method, params)
+    requestGateway<T>(method, params),
+
+  /**
+   * The live JSON-RPC client, for the app COMPONENTS that take one (`McpTab`).
+   *
+   * Not an escalation: `host.request` already reaches every method, so this is
+   * the same authority with a nicer handle. Null until connected — and a fresh
+   * one after a gateway switch, so hold the atom rather than the instance.
+   *
+   * (The architecture doc calls this structurally impossible — "universal's
+   * gateway lives in Rust and there is no JS instance to hand out". Only the
+   * SOCKET is in Rust; the client is `src/hermes.ts`'s `HermesGateway` and
+   * `store/gateway.ts` already keeps it in an atom.)
+   */
+  getGateway: (): HermesGateway | null => $gateway.get(),
+
+  /**
+   * Open a conversation. THE door — a plugin never resumes a session itself,
+   * because a bare resume bypasses the three id spaces and the hydration plan
+   * (rules 17, 18).
+   *
+   * Resolves when the transcript is actually PAINTED, not when the request was
+   * sent, and reports why when it is not.
+   */
+  openSession: async (storedSessionId: string, options?: PluginOpenSessionOptions) =>
+    openPluginSession(storedSessionId, options),
+
+  /** The owning profile of a stored session, as far as the client knows. */
+  sessionProfile: (storedSessionId: string): string | undefined => knownSessionProfile(storedSessionId),
+
+  /**
+   * One session's transcript. Read from `$sessionStates` — the source of truth
+   * for EVERY session — rather than from the active-slice projection, which
+   * would answer about a different conversation on a multi-tile screen.
+   */
+  sessionMessages: (storedSessionId: string): ReadableAtom<ChatMessage[]> => {
+    let existing = sessionMessageAtoms.get(storedSessionId)
+
+    if (!existing) {
+      existing = computed($sessionStates, states => {
+        const key = runtimeKeyForStoredSession(storedSessionId)
+
+        return (key ? states[key]?.messages : undefined) ?? []
+      })
+      sessionMessageAtoms.set(storedSessionId, existing)
+    }
+
+    return existing
+  },
+
+  /** Start a fresh chat, optionally in another profile. */
+  newChat: async (profile?: null | string): Promise<void> => {
+    if (profile) {
+      await warmProfile(profile)
+    }
+
+    startNewSession()
+  },
+
+  /** Point the app at a profile and wait for the switch to settle. Resolves
+   *  false when it did not — the caller must not carry on as if it had. */
+  warmProfile: async (profile: null | string): Promise<boolean> => warmProfile(profile),
+
+  /**
+   * A workspace pane owned by this plugin: register the tile, reveal it, and
+   * route its close through the tree's own closer registry so the layout stays
+   * the one authority on what is open.
+   *
+   * Returns a disposer.
+   */
+  openWorkspace: (
+    paneId: string,
+    options: { render: () => React.ReactNode; title?: string; minWidth?: number; onClose?: () => void }
+  ): (() => void) => {
+    const dispose = registry.register({
+      area: PANES_AREA,
+      data: {
+        chrome: { dock: { pane: 'workspace', pos: 'center' } },
+        ...(options.minWidth === undefined ? {} : { sizing: { minWidth: options.minWidth } })
+      },
+      id: paneId,
+      render: options.render,
+      title: options.title
+    })
+
+    registerPaneCloser(paneId, options.onClose)
+    revealTreePane(paneId)
+
+    return () => {
+      registerPaneCloser(paneId)
+      dispose()
+    }
+  },
+
+  /**
+   * Is this pane on screen right now?
+   *
+   * An ATOM, not a `when()` — the registry's `when()` is evaluated only when an
+   * area's snapshot is rebuilt, so a predicate over visibility would never
+   * re-run (rule 28). A pane nobody has published reads false.
+   */
+  paneVisibility: (paneId: string): ReadableAtom<boolean> => $paneVisible(paneId),
+
+  // ── connections (MJXHRM-446 fills the bodies) ──────────────────────────────
+  // The SHAPES ship here so 446 replaces `PluginConnectionSource` from its own
+  // module and edits nothing in this file. Today every one of them answers about
+  // the single live connection, and refuses anything else with a SHAPED error
+  // rather than an empty success.
+
+  connections: async () => pluginConnectionSource().connections(),
+  agents: async () => pluginConnectionSource().agents(),
+  ensureAgent: async (connectionId: string, profile: string) =>
+    pluginConnectionSource().ensureAgent(connectionId, profile),
+  /** Desktop's name for the same act — an agent you intend to talk to shortly. */
+  warmAgent: async (connectionId: string, profile: string) =>
+    pluginConnectionSource().ensureAgent(connectionId, profile),
+  profileRoutes: async () => pluginConnectionSource().profileRoutes(),
+
+  /** JSON-RPC to ONE agent. Dispatched through MJXHRM-480's session router, so
+   *  446 gives it multi-connection reach with no change here. */
+  requestProfile: async <T>(route: PluginProfileRoute, method: string, params: Record<string, unknown> = {}) =>
+    requestPluginProfile<T>(route, method, params)
 }
 
 // -- react bridge -------------------------------------------------------------
@@ -131,7 +355,13 @@ export const host = {
 // Every contribution surface, plugin-reachable: register keybinds, palette
 // commands, routes, themes, panes, composer extensions, and bar items with
 // the same area ids + payload types core uses.
-export { COMPOSER_AREAS, type ComposerAttachmentProvider, type ComposerMiddleware } from '@/app/chat/composer/contrib'
+export {
+  COMPOSER_AREAS,
+  type ComposerAtCompletionItem,
+  type ComposerAtCompletionSource,
+  type ComposerAttachmentProvider,
+  type ComposerMiddleware
+} from '@/app/chat/composer/contrib'
 
 export { PALETTE_AREA, type PaletteContribution } from '@/app/command-palette/contrib'
 /** `statusBar.left` / `statusBar.right` and `titleBar.left/center/right`. A
@@ -143,6 +373,9 @@ export { type RouteContribution, ROUTES_AREA, SIDEBAR_NAV_AREA, type SidebarNavC
  *  canonical one lives in the settings primitives. Same component, same look. */
 export { EmptyState } from '@/app/settings/primitives'
 
+/** The toolset configurator — provider keys, per-tool switches — as Settings
+ *  renders it. */
+export { ToolsetConfigPanel } from '@/app/settings/toolset-config-panel'
 /**
  * THE model catalog menu — the very component the chat composer's model pill
  * renders, so a plugin that lets the user choose a model gets the app's search,
@@ -161,10 +394,35 @@ export {
   ModelMenuCloseContext,
   type ModelMenuController
 } from '@/app/shell/model-catalog-menu'
-export type { StatusbarItem } from '@/app/shell/statusbar-controls'
 
 // -- ui: the design language --------------------------------------------------
 
+export type { StatusbarItem } from '@/app/shell/statusbar-controls'
+/**
+ * The Capabilities view (skills, MCP, hub). Reads the LIVE gateway and the
+ * app's Capabilities scope itself — unlike desktop's, it takes no fixed
+ * connection, so a plugin that wants a pinned one must render its own surface.
+ */
+export { SkillsView } from '@/app/skills'
+/**
+ * THE Capabilities MCP tab — server list, add/edit, OAuth, health probes — the
+ * exact component Settings renders. Takes the live client from
+ * `host.getGateway()`; pass `profile` to scope it to one agent.
+ *
+ * Exportable only because `host.getGateway()` is (P-11): it was the single
+ * thing standing between universal and this export, which is MJXHRM-454's
+ * stated "mcp-tab" gap.
+ */
+export { McpTab } from '@/app/skills/mcp-tab'
+/**
+ * Markdown, rendered THE APP'S WAY: the same streaming pipeline the transcript
+ * uses, with its code fences, math, tables, mermaid and artifact handling.
+ *
+ * Not the bare `streamdown` package, deliberately — a plugin that pulls that in
+ * gets a different renderer with different plugins and its output stops looking
+ * like the app. Aliased as `Streamdown` for desktop source compatibility.
+ */
+export { MarkdownTextContent, MarkdownTextContent as Streamdown } from '@/components/assistant-ui/markdown-text'
 /**
  * A layout TILE — what `ctx.registerTile(...)` takes. Prefer it over
  * `ctx.register({ area: PANES_AREA, … })`, which hands a tile's chrome and
@@ -229,13 +487,13 @@ export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 export { Separator } from '@/components/ui/separator'
 export { Skeleton } from '@/components/ui/skeleton'
 export { Switch } from '@/components/ui/switch'
+
+// -- contracts ----------------------------------------------------------------
+
 export { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 export { Textarea } from '@/components/ui/textarea'
 export { Tip, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 export type { GatewayEventListener } from '@/contrib/events'
-
-// -- contracts ----------------------------------------------------------------
-
 export type {
   HermesPlugin,
   PluginContext,
@@ -269,25 +527,49 @@ export {
   useI18n,
   usePluginI18n
 } from '@/i18n'
+/** A poll that yields to the app: bounded work per tick, backing off while the
+ *  tab is hidden. Don't hand-roll a `setInterval` for a scanning loop. */
+export { type BudgetedLoop, type BudgetedLoopOptions, createBudgetedLoop } from '@/lib/budgeted-loop'
 /** THE compact-number formatter — every user-facing count/token figure goes
  *  through here (1230 → "1.2k", 1_500_000 → "1.5M"). Don't hand-roll `/1000`. */
 export { compactNumber } from '@/lib/format'
 export { triggerHaptic as haptic } from '@/lib/haptics'
+/** A navigation target that also works as a `hermes://` deep link — what a
+ *  notification's `activate` and a context menu's "open in Hermes" both take. */
+export type { HermesOpenTarget } from '@/lib/hermes-open-target'
+
+// -- app surfaces a plugin can host whole ------------------------------------
+
+/** Turn any supported target into an in-app path, or null. THE guard: a path
+ *  that did not come through here must not be navigated to. */
+export { isSafeAppPath, resolveHermesOpenPath } from '@/lib/hermes-open-target'
 /** The app's icon set (RefreshCw, LayoutDashboard, Activity, …). */
 export * as icons from '@/lib/icons'
 export { type KeybindContribution, KEYBINDS_AREA } from '@/lib/keybinds/actions'
 export { formatModifierToken } from '@/lib/keybinds/combo'
+
+// -- host contracts ----------------------------------------------------------
+
 /** Model-id presentation, shared with the composer and the status bar:
  *  `displayModelName` for the friendly name, `modelDisplayParts` to split off a
  *  variant tag, `reasoningEffortLabel` to render a thinking depth ('high' →
  *  'High'). A plugin showing a model should never hand-roll these. */
 export { displayModelName, modelDisplayParts, reasoningEffortLabel } from '@/lib/model-status-label'
+/** What OS notifications can do HERE. Action buttons and tap activation are
+ *  mobile-only — ask before offering them (rule 10). */
+export {
+  type NativeNotificationCapabilities,
+  nativeNotificationCapabilities
+} from '@/lib/native-notification-capabilities'
 /** The app's deterministic identity color for a name (profiles, assignees,
  *  authors) + its translucent tag fill — so plugin-rendered identities read
  *  the same hue as everywhere else. */
+/** Run a pointer drag to its end and unbind every listener — including on
+ *  `pointercancel`, which is how a touch platform ends a gesture it stole. Use
+ *  it for any drag surface (a colour field, a canvas scrub); a hand-rolled
+ *  pointermove/pointerup pair leaks a live handler on every cancelled gesture. */
+export { startPointerDrag } from '@/lib/pointer-drag'
 export { profileColor, profileColorSoft } from '@/lib/profile-color'
-
-export const PANES_AREA = 'panes'
 /** The shared client itself, for invalidation OUTSIDE React (e.g. a
  *  `ctx.socket` frame invalidating a query). Inside components keep using
  *  `useQueryClient`. */
@@ -295,7 +577,6 @@ export { queryClient } from '@/lib/query-client'
 /** The reasoning levels the app offers, and what an unset effort resolves to —
  *  so a plugin storing a thinking depth stores one the app agrees with. */
 export { DEFAULT_REASONING_EFFORT, REASONING_EFFORTS } from '@/lib/reasoning-effort'
-
 /** The app's own gateway-readiness evaluation (setup.status +
  *  setup.runtime_check, reconciled) — pass `host.request`. Don't hand-roll
  *  readiness from raw RPC shapes. */
@@ -311,6 +592,41 @@ export {
   type TranscriptDirectiveProps
 } from '@/lib/transcript-directives'
 export { cn } from '@/lib/utils'
+/**
+ * Ask the user a yes/no question from a plain handler — no component, no state.
+ * `<ConfirmHost/>` is mounted in every window, so this resolves wherever it is
+ * called from.
+ */
+export { confirm, type ConfirmAnswer, type ConfirmRequest } from '@/store/confirm'
+
+export const PANES_AREA = 'panes'
+/** Toast a delete confirmation the way core surfaces do (desktop's
+ *  `useConfirmDelete`, as a plain call — there is no hook state to hold). */
+export { confirmDelete } from '@/store/confirm-delete'
+export {
+  MAX_NOTIFICATION_ACTIONS,
+  type NativeNotifyOutcome,
+  type NativeNotifyRefusal,
+  type PluginNotificationAction
+} from '@/store/native-notifications'
+
+/**
+ * The multi-connection source. MJXHRM-446 registers the registry's
+ * implementation from its own module; until then every answer describes the one
+ * live connection, and refuses anything else with `AGENT_ROUTING_UNAVAILABLE`
+ * rather than an empty success.
+ */
+export {
+  AGENT_ROUTING_UNAVAILABLE,
+  type PluginAgent,
+  type PluginAgentHandle,
+  type PluginAgentRoster,
+  type PluginConnection,
+  type PluginConnectionSource,
+  type PluginProfileRoute,
+  setPluginConnectionSource
+} from '@/store/plugin-connection-source'
+export type { PluginOpenSessionError, PluginOpenSessionOptions, PluginOpenSessionResult } from '@/store/plugin-open-session'
 /** Live accent override — set a hex and the ACTIVE theme repaints with its
  *  accent family re-seeded from it (see `retintTheme`); `null` restores the
  *  authored palette. Deliberately not persisted: it is an authoring knob, not
@@ -343,6 +659,10 @@ export { useStore as useValue } from '@nanostores/react'
  *  the app root, so their queries cache, dedupe, poll (`refetchInterval`), and
  *  invalidate exactly like core screens — no hand-rolled atoms or polls. */
 export { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+/** Deterministic blob avatars — the same generator the profile roster paints,
+ *  so a plugin-rendered identity matches the app's. */
+export { blobatar as blobatarSvg } from 'blobatar/blob'
+export { Blobatar } from 'blobatar/react'
 /** Plugin-local reactive state (share between a trigger and its panel, poll
  *  loops, cross-component signals) — the same primitive `host.state` uses. */
 export { atom, computed } from 'nanostores'

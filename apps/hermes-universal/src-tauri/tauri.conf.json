@@ -29,6 +29,15 @@
     },
     "withGlobalTauri": false
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "hermes"
+        ]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

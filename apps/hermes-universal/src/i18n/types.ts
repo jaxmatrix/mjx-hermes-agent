@@ -68,6 +68,7 @@ export interface Translations {
     copied: string
     copy: string
     copyFailed: string
+    deleteNamed: (name: string) => string
     delete: string
     docs: string
     done: string
@@ -281,6 +282,47 @@ export interface Translations {
     previous: string
   }
 
+  // The consent gate for installing a plugin from git (MJXHRM-455). Every string
+  // here is shown BEFORE anything is installed — a deep link can put an
+  // arbitrary repository in front of the user, so the dialog's job is to say
+  // exactly what is about to be trusted.
+  pluginInstall: {
+    title: string
+    fromDeepLink: string
+    fromSettings: string
+    repoLabel: string
+    repoPlaceholder: string
+    sourceLink: string
+    invalidIdentifier: string
+    insecureWarning: (url: string) => string
+    targetProfile: string
+    authorityNotice: string
+    enableAfterInstall: string
+    forceReinstall: string
+    forceReinstallHint: string
+    waitingForGateway: string
+    install: string
+    installing: string
+    agentSuccess: (name: string) => string
+    warningsTitle: string
+    missingEnv: (list: string) => string
+    noIdentifier: string
+    stillRunning: string
+    restDoorOff: string
+  }
+
+  // `hermes://` deep links (MJXHRM-455). Every message here is what the user
+  // sees when a link the OS handed us does NOT lead anywhere — the refusals are
+  // the whole surface, because a link that works just opens what it named.
+  deepLink: {
+    title: string
+    badUrl: string
+    unsafePath: string
+    unknownPath: (path: string) => string
+    reservedKind: (kind: string) => string
+    routeConflict: string
+  }
+
   // The rebindable keyboard-shortcuts panel (Settings → Keyboard shortcuts).
   // `categories` and `actions` are keyed by the ids in lib/keybinds/actions.ts.
   keybinds: {
@@ -345,6 +387,8 @@ export interface Translations {
       title: string
       blurb: string
       count: (n: number) => string
+      installFromGit: string
+      installFromGitHint: string
       openFolder: string
       rescan: string
       reveal: string
@@ -353,6 +397,8 @@ export interface Translations {
       failed: string
       empty: string
       kinds: { bundled: string; disk: string; runtime: string }
+      roots: { 'agent-packages': string; 'desktop-plugins': string }
+      agentPackagesNotice: string
       sourceLocal: string
       sourceGateway: string
       sourceNone: string
@@ -377,6 +423,7 @@ export interface Translations {
       intro: string
       enableAll: string
       enableAllDesc: string
+      noActionsNotice: string
       focusedHint: string
       kinds: Record<
         'approval' | 'backgroundDone' | 'credits' | 'input' | 'plugin' | 'turnDone' | 'turnError',
