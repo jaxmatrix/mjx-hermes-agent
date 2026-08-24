@@ -854,6 +854,16 @@ export interface Translations {
       useDifferentGateway: string
       startOver: string
     }
+    /** Settings ▸ Gateways — the multi-connection registry (MJXHRM-446). */
+    connections: {
+      degradedTitle: string
+      degradedMessage: string
+      latchedTitle: string
+      latchedMessage: (reason: string) => string
+      switchFailed: string
+      midDialTitle: string
+      midDialMessage: (label: string) => string
+    }
     keys: {
       loading: string
       failedLoad: string

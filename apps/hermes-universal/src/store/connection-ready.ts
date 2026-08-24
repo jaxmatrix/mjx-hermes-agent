@@ -1,6 +1,7 @@
 import { computed } from '@/store/atom'
 
-import { $connection, $connectionPhase, $hasConnected } from './connection'
+import { $activeConnection } from './active-connection'
+import { $connection, $connectionPhase, $hasConnected } from './connection-atoms'
 import { $gatewayState } from './gateway'
 import { $restoring } from './gateway-restore'
 import { $gatewaySwitching } from './gateway-switch'
@@ -33,11 +34,21 @@ import { $gatewaySwitching } from './gateway-switch'
  * itself — this atom exists for the far more common question, which is whether
  * it is safe to fire an RPC.
  *
- * MJXHRM-446 adds `$activeConnection` as a seventh INPUT here rather than
- * minting a second derivation elsewhere (reconciliation C3).
+ * MJXHRM-446 added `$activeConnection` as a seventh INPUT here rather than
+ * minting a second derivation elsewhere (reconciliation C3). It is an input, not
+ * a flag: with a registry, "there is a descriptor" and "we know WHICH source it
+ * is" are different facts, and an RPC fired between them lands on whichever
+ * backend the previous source's atoms still describe. `publishActiveConnection`
+ * writes both in one `batch()`, so this can never observe them half-applied.
  */
 export const $connectionReady = computed(
-  [$connection, $connectionPhase, $gatewayState, $hasConnected, $gatewaySwitching, $restoring],
-  (connection, phase, socket, hasConnected, switching, restoring) =>
-    Boolean(connection) && hasConnected && phase === 'ready' && socket === 'open' && !switching && !restoring
+  [$activeConnection, $connection, $connectionPhase, $gatewayState, $hasConnected, $gatewaySwitching, $restoring],
+  (active, connection, phase, socket, hasConnected, switching, restoring) =>
+    Boolean(active) &&
+    Boolean(connection) &&
+    hasConnected &&
+    phase === 'ready' &&
+    socket === 'open' &&
+    !switching &&
+    !restoring
 )

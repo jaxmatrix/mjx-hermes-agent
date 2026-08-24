@@ -314,6 +314,20 @@ export const ja = defineLocale({
   },
 
   settings: {
+    connections: {
+      degradedTitle: 'ゲートウェイ一覧を修復しました',
+      degradedMessage: '保存済みゲートウェイの一部を読み込めなかったため再作成しました。下の一覧を確認してください。',
+      latchedTitle: 'このゲートウェイは停止中です',
+      latchedMessage: reason =>
+        reason === 'host-key-changed'
+          ? 'ホストキーが変更されたため、Hermes は再試行を停止しました。新しいキーを信頼すると続行できます。'
+          : reason === 'reauth-required'
+            ? '保存されたサインインが拒否されました。再度サインインしてください。'
+            : 'このゲートウェイの起動に失敗しました。自動では再試行されません。',
+      switchFailed: 'ゲートウェイを切り替えられませんでした',
+      midDialTitle: 'ゲートウェイは変更されていません',
+      midDialMessage: label => `接続中に ${label} が変更されたため、前のゲートウェイのままです。`
+    },
     profileScope: {
       appliesTo: '適用先',
       editsProfile: profile => `このページでの変更は「${profile}」プロファイルに適用されます。`

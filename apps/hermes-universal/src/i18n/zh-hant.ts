@@ -303,6 +303,20 @@ export const zhHant = defineLocale({
   },
 
   settings: {
+    connections: {
+      degradedTitle: '閘道清單已修復',
+      degradedMessage: '部分已儲存的閘道無法讀取，已重新建立。請檢查下方清單。',
+      latchedTitle: '該閘道已暫停',
+      latchedMessage: reason =>
+        reason === 'host-key-changed'
+          ? '此閘道的主機金鑰已變更，Hermes 已停止重試。信任新金鑰後即可繼續。'
+          : reason === 'reauth-required'
+            ? '此閘道拒絕了已儲存的登入資訊。請重新登入後繼續。'
+            : '此閘道啟動失敗，不會自動重試。',
+      switchFailed: '無法切換閘道',
+      midDialTitle: '閘道未變更',
+      midDialMessage: label => `${label} 在連線期間被修改，因此仍停留在先前的閘道。`
+    },
     profileScope: {
       appliesTo: '套用於',
       editsProfile: profile => `本頁的變更將套用於「${profile}」設定檔。`

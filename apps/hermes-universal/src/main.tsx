@@ -47,8 +47,18 @@ import './store/transcript-cache-sync'
 // link that cold-started the app is delivered within milliseconds of the first
 // paint — so this import IS the wiring, exactly like the event router above.
 import './store/deep-link-builtins'
+// And the multi-connection registry's two hook fills (MJXHRM-446). Both are
+// LAST-WRITER-WINS module side effects — MJXHRM-480 registers the
+// single-gateway `SessionRequestRouter` and MJXHRM-455 the single-connection
+// `PluginConnectionSource` at THEIR module load — so these two imports must be
+// ordered AFTER them or the registry's implementations lose the race and every
+// cross-source dispatch silently falls back to the ambient socket. The ordering
+// is pinned by `main-boot-order.test.ts`.
+import './store/connection-session-router'
+import './store/connection-plugin-source'
 
 import { installContextMenuBridge } from './app/context-menu/bridge'
+import { initializeConnectionsRegistry, startConnectionsWatcher } from './store/connections'
 import { installNotificationActivation } from './store/plugin-notify-handlers'
 import { installTourDriver } from './store/tour-bridge'
 import { installWindowBelowReader } from './store/window-below'
@@ -161,10 +171,23 @@ initTranslucency()
 // `openSatelliteWindow`, because a window that claims a satellite has to be able
 // to close it; a satellite never gets that far (`canOpenSatelliteWindow` is false
 // inside one).
+// Every window follows the registry: a rename made in a settings Activity has to
+// reach the shell painting the source chip. Outside the `ownsPersistedAppState`
+// block on purpose — following is not restoring.
+startConnectionsWatcher()
+
 if (ownsPersistedAppState()) {
   void installWindowCloseGuard()
   initBackgroundMode()
   initTray()
+
+  // The gateway registry (MJXHRM-446). Deliberately AFTER the restore above and
+  // deliberately not awaited: `autoRestoreConnection()` has already dialled the
+  // saved target, and this only re-points it when the launch mode disagrees.
+  // Firing its own dial here is how desktop ends up with two sockets and a
+  // flickering picker at launch. Satellites and activity screens skip it — they
+  // follow the switch broadcast instead of replaying a restore.
+  void initializeConnectionsRegistry()
 
   // `hermes:surface-grant:<surface>` is localStorage and outlives the PROCESS,
   // so an explicit Quit (or a crash) leaves one behind with nothing alive to

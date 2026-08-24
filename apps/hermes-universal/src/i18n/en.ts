@@ -986,6 +986,20 @@ export const en: Translations = {
       useDifferentGateway: 'Use a different gateway',
       startOver: 'Start over'
     },
+    connections: {
+      degradedTitle: 'Gateway list repaired',
+      degradedMessage: 'Some saved gateways could not be read and were rebuilt. Check the list below.',
+      latchedTitle: 'That gateway is on hold',
+      latchedMessage: reason =>
+        reason === 'host-key-changed'
+          ? "The host key for this gateway changed, so Hermes stopped trying. Trust the new key to continue."
+          : reason === 'reauth-required'
+            ? 'This gateway refused the saved sign-in. Sign in again to continue.'
+            : 'This gateway failed to start and will not be retried automatically.',
+      switchFailed: 'Could not switch gateway',
+      midDialTitle: 'Gateway unchanged',
+      midDialMessage: label => `${label} was changed while connecting, so you are still on the previous gateway.`
+    },
     keys: {
       loading: 'Loading API keys and credentials...',
       failedLoad: 'API keys failed to load',

@@ -49,6 +49,33 @@ describe('backendScopeKey', () => {
 
     expect(bodies(mine)).toBe(bodies(shared))
   })
+
+  // M1 (reconciliation). MJXHRM-446 mirrors these three functions in Rust for
+  // `ssh::registry_scope_of` and `ssh_ownership_id`; nothing else pins the two
+  // languages to each other, and a drift is silent until an upgrade orphans a
+  // running remote backend. So ONE table is read from the Rust test and
+  // evaluated here — the `data_url_read_max.rs` precedent, one level up.
+  it('agrees with the Rust mirror on every row of one shared table', () => {
+    const rust = fs.readFileSync(
+      path.resolve(process.cwd(), 'src-tauri/src/connections/registry.rs'),
+      'utf8'
+    )
+
+    const table = rust.slice(rust.indexOf('fn scope_key_pin'), rust.indexOf('];', rust.indexOf('fn scope_key_pin')))
+    const rows = [...table.matchAll(/\(\s*(None|Some\("([^"]*)"\)),\s*(None|Some\("([^"]*)"\)),\s*"([^"]*)",\s*"([^"]*)"\s*\)/g)]
+
+    expect(rows.length).toBeGreaterThanOrEqual(8)
+    expect(rust).toContain('pub const LOCAL_CONNECTION_ID: &str = "local"')
+    expect(LOCAL_CONNECTION_ID).toBe('local')
+
+    for (const [, idKind, idValue, profileKind, profileValue, pooled, registry] of rows) {
+      const id = idKind === 'None' ? null : idValue
+      const profile = profileKind === 'None' ? null : profileValue
+
+      expect(backendScopeKey(id, profile)).toBe(pooled)
+      expect(registryBackendScopeKey(id, profile)).toBe(registry)
+    }
+  })
 })
 
 describe('connectionIdOf', () => {

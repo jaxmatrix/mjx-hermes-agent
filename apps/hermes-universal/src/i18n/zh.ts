@@ -1141,6 +1141,20 @@ export const zh: Translations = {
       useDifferentGateway: '使用其他网关',
       startOver: '重新开始'
     },
+    connections: {
+      degradedTitle: '网关列表已修复',
+      degradedMessage: '部分已保存的网关无法读取，已重新生成。请检查下面的列表。',
+      latchedTitle: '该网关已暂停',
+      latchedMessage: reason =>
+        reason === 'host-key-changed'
+          ? '该网关的主机密钥已更改，Hermes 已停止重试。信任新密钥后可继续。'
+          : reason === 'reauth-required'
+            ? '该网关拒绝了已保存的登录信息。请重新登录后继续。'
+            : '该网关启动失败，不会自动重试。',
+      switchFailed: '无法切换网关',
+      midDialTitle: '网关未更改',
+      midDialMessage: label => `${label} 在连接过程中被修改，因此仍停留在之前的网关。`
+    },
     keys: {
       loading: '正在加载 API 密钥和凭据...',
       failedLoad: 'API 密钥加载失败',

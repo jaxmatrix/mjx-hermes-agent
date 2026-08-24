@@ -336,6 +336,20 @@ export const ar = defineLocale({
     noResults: 'لا توجد لغة مطابقة'
   },
   settings: {
+    connections: {
+      degradedTitle: 'تم إصلاح قائمة البوابات',
+      degradedMessage: 'تعذّرت قراءة بعض البوابات المحفوظة وأُعيد إنشاؤها. راجع القائمة أدناه.',
+      latchedTitle: 'تم إيقاف هذه البوابة مؤقتًا',
+      latchedMessage: reason =>
+        reason === 'host-key-changed'
+          ? 'تغيّر مفتاح مضيف هذه البوابة، لذا توقف هيرميس عن المحاولة. وثّق المفتاح الجديد للمتابعة.'
+          : reason === 'reauth-required'
+            ? 'رفضت هذه البوابة بيانات الدخول المحفوظة. سجّل الدخول مجددًا للمتابعة.'
+            : 'فشل تشغيل هذه البوابة ولن تُعاد المحاولة تلقائيًا.',
+      switchFailed: 'تعذّر تبديل البوابة',
+      midDialTitle: 'لم تتغيّر البوابة',
+      midDialMessage: label => `تم تعديل ${label} أثناء الاتصال، لذا ما زلت على البوابة السابقة.`
+    },
     profileScope: {
       appliesTo: 'يُطبّق على',
       editsProfile: profile => `تُطبّق تغييرات هذه الصفحة على الملف الشخصي «${profile}».`

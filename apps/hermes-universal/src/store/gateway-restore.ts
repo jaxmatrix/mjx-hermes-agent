@@ -32,6 +32,16 @@ const TARGET_KEY = 'hermes.connection.last'
  *  token/password live in the OS keyring, the session cookie jar in Rust. */
 export interface GatewayTarget {
   mode: GatewayMode
+  /**
+   * Which REGISTERED connection this target is (MJXHRM-446).
+   *
+   * Additive and optional: a target written by a pre-registry build has none,
+   * and the restore falls back to exactly what it did before. It matters for the
+   * ROLLBACK of a failed switch — without it the rollback re-dials whatever
+   * `hermes.connection.last` happens to say rather than the source the user
+   * actually came from.
+   */
+  connectionId?: string
   /** remote: the backend URL + (optional) username for the password path. */
   url?: string
   username?: string
@@ -106,6 +116,16 @@ export interface PendingOAuth {
   base: string
   provider?: string
   username?: string
+  /**
+   * The registry row this sign-in belongs to.
+   *
+   * On mobile an interactive sign-in navigates the app's only webview away and
+   * back, destroying the JS context that held the editor draft — so the source
+   * is SAVED first and its id parked here, and the post-reload resume selects
+   * it. Without the id the resume can only guess, which on a multi-source
+   * install means coming back on the wrong machine.
+   */
+  connectionId?: string
 }
 
 /** Queue an OAuth resume for the next boot (best-effort). Mobile only. */
