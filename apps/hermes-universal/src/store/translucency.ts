@@ -23,7 +23,7 @@ import type * as TauriCore from '@tauri-apps/api/core'
 
 import { applyGlassSurfaces } from '@/lib/glass-surfaces'
 import { readKey } from '@/lib/persist'
-import { IS_MAC, IS_TAURI, PLATFORM } from '@/lib/platform'
+import { IS_DESKTOP, IS_MAC, IS_TAURI, PLATFORM } from '@/lib/platform'
 import { readJson, writeJson } from '@/lib/storage'
 import type { Support } from '@/lib/surface'
 import {
@@ -201,7 +201,11 @@ export async function applyGlass(half: NativeHalf): Promise<GlassOutcome> {
 }
 
 function pushNative(state: TranslucencyState, force = false): void {
-  if (!IS_TAURI || !isGlassBackedWindow()) {
+  // `IS_DESKTOP`, not the capability report: this is "is there a window manager
+  // here at all", a compile-time fact. A phone would get one rejected IPC per
+  // window at boot for a control it does not render. WHICH desktop rows appear
+  // is still the probe's answer, not this one.
+  if (!IS_DESKTOP || !isGlassBackedWindow()) {
     return
   }
 

@@ -13,6 +13,7 @@ import type * as Platform from '@/lib/platform'
 import type { TranslucencyBook } from '@/lib/translucency-model'
 import type * as Store from '@/store/translucency'
 
+const { desktop } = vi.hoisted(() => ({ desktop: { value: true } }))
 const invoke = vi.fn()
 const broadcastToPeers = vi.fn()
 let peerHandler: ((payload: unknown) => void) | null = null
@@ -21,6 +22,9 @@ let glassBacked = true
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }))
 vi.mock('@/lib/platform', async importOriginal => ({
   ...(await importOriginal<typeof Platform>()),
+  get IS_DESKTOP() {
+    return desktop.value
+  },
   IS_MAC: true,
   IS_TAURI: true,
   PLATFORM: 'macos'
@@ -82,6 +86,7 @@ beforeEach(() => {
   invoke.mockReset()
   broadcastToPeers.mockReset()
   glassBacked = true
+  desktop.value = true
   answer()
 })
 
@@ -260,6 +265,21 @@ describe('the native push', () => {
     expect(glassCalls().at(-1)).toMatchObject({ intensity: 90 })
     // An appearance switch is not an edit.
     expect(localStorage.getItem('hermes.translucency.v2')).toBe(written)
+  })
+
+  it('stays silent on a phone — there is no window manager to show through', async () => {
+    desktop.value = false
+
+    const store = await load()
+
+    store.setTranslucencyMode('clear')
+    store.setTranslucency(40)
+    store.initTranslucency()
+    await vi.runAllTimersAsync()
+
+    expect(glassCalls()).toEqual([])
+    // The probe still runs: it is what tells the settings page to render no row.
+    expect(invoke.mock.calls.map(call => call[0])).toEqual(['appearance_capabilities'])
   })
 
   it('stays silent in a window that hosts no field of its own', async () => {
