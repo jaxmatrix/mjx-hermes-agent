@@ -1282,6 +1282,27 @@ export const ja = defineLocale({
     settings: '設定',
     changeTheme: 'テーマを変更',
     changeColorMode: 'カラーモードを変更…',
+    tour: {
+      label: 'ツアーを開始',
+      steps: {
+        sidebar: {
+          title: 'セッション',
+          text: 'すべての会話はここにあります。新規作成、切り替え、アーカイブしたものの再開ができます。'
+        },
+        composer: {
+          title: '入力欄',
+          text: 'ここから何でも依頼できます。ファイルの添付、モデルの選択、/ でコマンドも使えます。'
+        },
+        statusbar: {
+          title: 'ステータス',
+          text: 'ゲートウェイ・モデル・コンテキスト残量が一目でわかります。右クリックで表示項目を選べます。'
+        },
+        palette: {
+          title: 'その他すべて',
+          text: 'いつでも ⌘K（Ctrl+K）。設定・セッション・テーマ・このツアーもすべてそこにあります。'
+        }
+      }
+    },
     pets: {
       title: 'ペット',
       placeholder: 'ペットを検索…',

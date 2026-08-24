@@ -111,7 +111,10 @@ export function ConfigField({
   )
 
   const row = (action: ReactNode, wide = false) => (
-    <ListRow action={action} description={descriptionNode} title={label} wide={wide} />
+    // `data-tour="field-<schema key>"`: a tour (or the agent) can point at one
+    // setting without hunting through the section for an nth-child path. The
+    // schema key is the stable identity here — the LABEL is translated.
+    <ListRow action={action} data-tour={`field-${schemaKey}`} description={descriptionNode} title={label} wide={wide} />
   )
 
   // Structured provider+model chain editor (replaces the generic comma-list input,

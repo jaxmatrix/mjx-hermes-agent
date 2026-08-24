@@ -5,7 +5,8 @@ import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 /**
- * Shiki must never be reachable from the app entry through STATIC imports.
+ * Shiki and driver.js must never be reachable from the app entry through STATIC
+ * imports.
  *
  * This is the assertion MJXHRM-380 was closed without. That ticket put
  * `lazy()` / dynamic `import()` in front of all four of the app's own shiki
@@ -18,6 +19,13 @@ import { describe, expect, it } from 'vitest'
  *
  * So the property worth asserting is reachability, not size — and it has to
  * cover node_modules, because that is where the defeat came from.
+ *
+ * driver.js joined the list with the tour engine (MJXHRM-473). It is the same
+ * shape of risk with a shorter fuse: `lib/tour/index.ts` pulls driver.js AND
+ * two stylesheets, and the module that registers the tour driver is imported by
+ * `main.tsx` at boot — so a `import { runTour } from '@/lib/tour'` written for
+ * convenience instead of the dynamic import inside the driver would put the
+ * whole engine on every cold start, silently.
  *
  * How it works: parse every module reachable from `src/main.tsx` following
  * static edges only (import declarations, side-effect imports, `export … from`
@@ -36,7 +44,7 @@ const SRC = path.join(APP_DIR, 'src')
 const ENTRY = path.join(SRC, 'main.tsx')
 
 /** Package names that must not appear on the entry's static graph. */
-const FORBIDDEN = ['shiki', 'react-shiki', '@shikijs', '@streamdown/code']
+const FORBIDDEN = ['shiki', 'react-shiki', '@shikijs', '@streamdown/code', 'driver.js']
 
 /**
  * Specifiers this walker cannot resolve, each verified by hand to be incapable
@@ -389,7 +397,7 @@ describe('entry import graph', () => {
     expect([...graph.unresolved].sort()).toEqual(UNRESOLVED_ALLOWLIST)
   })
 
-  it('never reaches shiki through a static import', () => {
+  it('never reaches a lazy-only library through a static import', () => {
     const detail = graph.forbidden
       .map(
         hit =>
@@ -400,7 +408,7 @@ describe('entry import graph', () => {
     expect(detail).toBe('')
   })
 
-  it('never fires a shiki import() at module initialization', () => {
+  it('never fires a lazy-only import() at module initialization', () => {
     // A top-level `void import('shiki')` is dynamic to the bundler and eager to
     // the user: own chunk, still fetched during boot. Reachability alone can't
     // tell the two apart, so say so separately.
@@ -409,22 +417,27 @@ describe('entry import graph', () => {
     expect(detail).toEqual([])
   })
 
-  it('never pulls a shiki module itself onto the entry graph', () => {
+  it('never pulls a lazy-only module itself onto the entry graph', () => {
     const modules = [...graph.reached]
-      .filter(file => /node_modules\/(shiki|react-shiki|@shikijs|@streamdown\/code)\//.test(file))
+      .filter(file => /node_modules\/(shiki|react-shiki|@shikijs|@streamdown\/code|driver\.js)\//.test(file))
       .map(file => `${path.relative(REPO_ROOT, file)}\n  ${chainTo(graph, file).join('\n  -> ')}`)
 
     expect(modules).toEqual([])
   })
 
-  it('keeps the shiki entry points behind a dynamic boundary', () => {
+  it('keeps the lazy-only entry points behind a dynamic boundary', () => {
     // The complement of the assertions above: the seams must still EXIST, or
     // "not statically reachable" would be satisfied by deleting highlighting.
     const seams = [
       ['components/chat/shiki-highlighter.tsx', "lazy(() => import('@/components/chat/shiki-block'))"],
       ['components/chat/diff-lines.tsx', "React.lazy(() => import('@/components/chat/diff-lines-shiki'))"],
       ['components/chat/diff-lines.tsx', "import('shiki')"],
-      ['app/right-pane/preview/preview-file.tsx', "lazy(() => import('@/app/right-pane/preview/preview-shiki-block'))"]
+      ['app/right-pane/preview/preview-file.tsx', "lazy(() => import('@/app/right-pane/preview/preview-shiki-block'))"],
+      // The tour engine's two doors: the agent bridge (registered at boot from
+      // main.tsx, so its import MUST be inside the driver callback) and the
+      // curated tour the ⌘K palette runs.
+      ['store/tour-bridge.ts', "await import('@/lib/tour')"],
+      ['app/command-palette/curated-tour.ts', "await import('@/lib/tour')"]
     ] as const
 
     for (const [file, seam] of seams) {

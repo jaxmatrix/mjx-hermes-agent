@@ -1239,6 +1239,27 @@ export const zhHant = defineLocale({
     settings: '設定',
     changeTheme: '變更主題',
     changeColorMode: '變更色彩模式…',
+    tour: {
+      label: '開始導覽',
+      steps: {
+        sidebar: {
+          title: '工作階段',
+          text: '所有對話都在這裡。開新對話、在對話間切換，或重新開啟已封存的內容。'
+        },
+        composer: {
+          title: '輸入框',
+          text: '在這裡提出任何請求。可附加檔案、選擇模型，或輸入 / 使用指令。'
+        },
+        statusbar: {
+          title: '狀態',
+          text: '一眼掌握閘道、模型與脈絡用量。按右鍵可選擇顯示哪些項目。'
+        },
+        palette: {
+          title: '其他一切',
+          text: '隨時按 ⌘K（Ctrl+K）——設定、工作階段、佈景主題與本導覽都在裡面。'
+        }
+      }
+    },
     pets: {
       title: '寵物',
       placeholder: '搜尋寵物…',

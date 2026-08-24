@@ -75,6 +75,7 @@ export function ListRow({
   action,
   below,
   id,
+  'data-tour': dataTour,
   wide = false,
   className
 }: {
@@ -86,13 +87,15 @@ export function ListRow({
   /** DOM id for ⌘K deep links — `settingRowElementId(...)` from settings-search.
    *  Carrying one also opts the row into the scroll offset + flash target. */
   id?: string
+  /** Durable handle for tours (see lib/tour) — usually the field's schema key. */
+  'data-tour'?: string
   wide?: boolean
   className?: string
 }) {
   return (
     // Container-queried (not viewport): the label/control split keys on the row's
     // own pane width, so a narrow detail column stacks instead of squishing.
-    <div className={cn('@container', id && 'scroll-mt-6 rounded-lg', className)} id={id}>
+    <div className={cn('@container', id && 'scroll-mt-6 rounded-lg', className)} data-tour={dataTour} id={id}>
       <div
         className={cn(
           'grid gap-3 py-3',

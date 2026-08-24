@@ -1257,6 +1257,15 @@ export interface Translations {
     settings: string
     changeTheme: string
     changeColorMode: string
+    tour: {
+      label: string
+      steps: {
+        sidebar: { title: string; text: string }
+        composer: { title: string; text: string }
+        statusbar: { title: string; text: string }
+        palette: { title: string; text: string }
+      }
+    }
     pets: {
       title: string
       placeholder: string

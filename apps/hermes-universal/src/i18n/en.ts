@@ -1403,6 +1403,27 @@ export const en: Translations = {
     settings: 'Settings',
     changeTheme: 'Change theme',
     changeColorMode: 'Change color mode…',
+    tour: {
+      label: 'Take a tour',
+      steps: {
+        sidebar: {
+          title: 'Sessions',
+          text: 'Every conversation lives here. Start a new one, jump between them, or reopen something you archived.'
+        },
+        composer: {
+          title: 'Composer',
+          text: 'Ask for anything here. Attach files, pick a model, or type / for a command.'
+        },
+        statusbar: {
+          title: 'Status',
+          text: 'Your gateway, model and context budget at a glance. Right-click to choose what it shows.'
+        },
+        palette: {
+          title: 'Everything else',
+          text: 'Press ⌘K (Ctrl+K) any time — settings, sessions, themes and this tour all live in there.'
+        }
+      }
+    },
     pets: {
       title: 'Pets',
       placeholder: 'Search pets…',
