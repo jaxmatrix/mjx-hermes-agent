@@ -175,3 +175,51 @@ describe('the journaling pass', () => {
     getItem.mockRestore()
   })
 })
+
+
+// ---------------------------------------------------------------------------
+// I2 / I3 (MJXHRM-480): the paint lane is structurally invisible here.
+//
+// `reconcileResumeMessages` pairs rows BY ROLE ORDINAL, so if a cached tail
+// reached this hook as `previous.messages`, the cache's first assistant row
+// would be paired with the authoritative transcript's first assistant row —
+// different turns entirely — and `preserveStructuralParts` would graft one
+// turn's reasoning and tool calls onto another's, permanently.
+// ---------------------------------------------------------------------------
+describe('a painted cold open', () => {
+  it('hands the reconcile an empty `previous`, and journals nothing', async () => {
+    const { __resetTranscriptTailCache, saveTranscriptTail } = await import('@/lib/transcript-tail-cache')
+    const { __resetTranscriptPaint, paintCachedTail } = await import('@/store/transcript-paint')
+
+    localStorage.clear()
+    __resetInFlightTurnJournalCache()
+    __resetTranscriptTailCache()
+    __resetTranscriptPaint()
+
+    const storedId = 'stored-painted'
+    const key = hydratingKey(storedId)
+
+    saveTranscriptTail(storedId, [user('cached-u', 'a question from last week')])
+    ensureSessionSlice(key, { busy: true, storedSessionId: storedId })
+    expect(paintCachedTail(key, storedId)).toBe(true)
+
+    // The placeholder slice is `busy: true`, which is exactly the condition the
+    // journal writes on — so if the cache were IN the slice it would be
+    // journaled as a live in-flight turn and folded back in as recovered work.
+    await Promise.resolve()
+    expect(readInFlightTurnJournal(storedId)).toBeNull()
+
+    rekeySession(key, 'runtime-painted', {
+      busy: false,
+      messages: [user('h1', 'a completely different question'), { id: 'h2', parts: [{ text: 'the real answer', type: 'text' }], role: 'assistant' }],
+      runtimeSessionId: 'runtime-painted',
+      storedSessionId: storedId
+    })
+
+    // The authoritative rows stand, untouched by anything cached.
+    const messages = $sessionStates.get()['runtime-painted'].messages
+
+    expect(messages.map(m => m.id)).toEqual(['h1', 'h2'])
+    expect(messages.some(m => m.id === 'cached-u')).toBe(false)
+  })
+})
