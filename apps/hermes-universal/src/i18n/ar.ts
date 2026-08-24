@@ -164,6 +164,15 @@ export const ar = defineLocale({
     collapseReply: 'إخفاء الرد'
   },
 
+  deepLink: {
+    title: 'رابط Hermes',
+    badUrl: 'هذا ليس رابط Hermes يمكن فتحه.',
+    unsafePath: 'يشير هذا الرابط إلى خارج التطبيق وتم تجاهله.',
+    unknownPath: path => `لا توجد صفحة عند ${path} — قد يكون الرابط لإضافة لم تثبّتها.`,
+    reservedKind: kind => `لا يوجد في Hermes ما يعالج رابط "${kind}".`,
+    routeConflict: 'طلب معالجان الرابط نفسه'
+  },
+
   keybinds: {
     title: 'اختصارات لوحة المفاتيح',
     subtitle: open => `انقر على اختصار لإعادة تعيينه \xB7 ${open} يعيد فتح هذه اللوحة.`,

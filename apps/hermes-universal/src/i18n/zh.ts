@@ -225,6 +225,15 @@ export const zh: Translations = {
     previous: '上一个匹配项'
   },
 
+  deepLink: {
+    title: 'Hermes 链接',
+    badUrl: '这不是 Hermes 能打开的链接。',
+    unsafePath: '该链接指向应用之外，已被忽略。',
+    unknownPath: path => `${path} 没有对应的页面 — 该链接可能属于尚未安装的插件。`,
+    reservedKind: kind => `Hermes 无法处理“${kind}”类型的链接。`,
+    routeConflict: '两个处理器声明了同一个 Hermes 链接'
+  },
+
   keybinds: {
     title: '键盘快捷键',
     subtitle: open => `点击快捷键即可重新绑定 · ${open} 可重新打开此面板。`,

@@ -281,6 +281,18 @@ export interface Translations {
     previous: string
   }
 
+  // `hermes://` deep links (MJXHRM-455). Every message here is what the user
+  // sees when a link the OS handed us does NOT lead anywhere — the refusals are
+  // the whole surface, because a link that works just opens what it named.
+  deepLink: {
+    title: string
+    badUrl: string
+    unsafePath: string
+    unknownPath: (path: string) => string
+    reservedKind: (kind: string) => string
+    routeConflict: string
+  }
+
   // The rebindable keyboard-shortcuts panel (Settings → Keyboard shortcuts).
   // `categories` and `actions` are keyed by the ids in lib/keybinds/actions.ts.
   keybinds: {

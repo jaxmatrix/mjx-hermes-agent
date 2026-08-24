@@ -63,6 +63,15 @@ export const ja = defineLocale({
 
   // The read-only `shortcuts` reference became the full rebindable `keybinds`
   // panel; only its title is translated here, the rest falls back to English.
+  deepLink: {
+    title: 'Hermes リンク',
+    badUrl: 'これは Hermes が開けるリンクではありません。',
+    unsafePath: 'このリンクはアプリの外を指しているため無視されました。',
+    unknownPath: path => `${path} に該当するページがありません。未インストールのプラグイン用のリンクかもしれません。`,
+    reservedKind: kind => `Hermes は「${kind}」リンクを処理できません。`,
+    routeConflict: '2 つのハンドラーが同じ Hermes リンクを要求しました'
+  },
+
   keybinds: {
     title: 'キーボードショートカット',
     globalTag: 'システム全体',

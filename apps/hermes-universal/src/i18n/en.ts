@@ -230,6 +230,15 @@ export const en: Translations = {
     previous: 'Previous match'
   },
 
+  deepLink: {
+    title: 'Hermes link',
+    badUrl: 'That link is not a Hermes link Hermes can open.',
+    unsafePath: 'That link points outside the app and was ignored.',
+    unknownPath: path => `No page at ${path} — the link may be for a plugin you have not installed.`,
+    reservedKind: kind => `Nothing in Hermes handles a "${kind}" link.`,
+    routeConflict: 'Two handlers claimed the same Hermes link'
+  },
+
   keybinds: {
     title: 'Keyboard shortcuts',
     subtitle: open => `Click a shortcut to rebind it · ${open} reopens this panel.`,

@@ -133,7 +133,12 @@ export function WorkspaceRoutes() {
             />
           }
           key={route.key}
-          path={route.path}
+          // `/*` so a page owns everything under it: a contributed route
+          // registers ONE segment, but a deep link may address a sub-path
+          // (`hermes://index-network/intent/1`), and react-router hands the
+          // remainder to the page through the usual router hooks. Strictly
+          // additive — a page that ignores the remainder behaves as before.
+          path={`${route.path}/*`}
         />
       ))}
       {MarkdownBench && (

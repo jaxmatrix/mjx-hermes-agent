@@ -63,6 +63,15 @@ export const zhHant = defineLocale({
 
   // The read-only `shortcuts` reference became the full rebindable `keybinds`
   // panel; only its title is translated here, the rest falls back to English.
+  deepLink: {
+    title: 'Hermes 連結',
+    badUrl: '這不是 Hermes 能開啟的連結。',
+    unsafePath: '該連結指向應用程式之外，已被忽略。',
+    unknownPath: path => `${path} 沒有對應的頁面 — 該連結可能屬於尚未安裝的外掛。`,
+    reservedKind: kind => `Hermes 無法處理「${kind}」類型的連結。`,
+    routeConflict: '兩個處理常式宣告了同一個 Hermes 連結'
+  },
+
   keybinds: {
     title: '鍵盤快速鍵',
     globalTag: '系統層級',

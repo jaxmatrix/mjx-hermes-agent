@@ -125,11 +125,44 @@ export function contributedRoutes(items: readonly Contribution[] = registry.getA
     )
 }
 
+/**
+ * The first path segment, with its leading slash.
+ *
+ * A contributed page REGISTERS one segment (`contributedRoutes` still refuses a
+ * multi-segment registration — that invariant is what protects the session
+ * parser), but it RENDERS at `<path>/*`, so `/index-network/intent/1` belongs to
+ * the `/index-network` page. Matching on the head is what makes a
+ * desktop-portable plugin deep link (`hermes://index-network/intent/1`) mean the
+ * same thing here.
+ */
+export function routeHead(pathname: string): string {
+  const path = pathname.split(/[?#]/)[0] ?? pathname
+
+  return `/${path.replace(/^\/+/, '').split('/')[0] ?? ''}`
+}
+
 /** A page that is NOT one of the app's own — i.e. a plugin page, which has no
  *  AppView of its own and classifies as `'extension'`. A core page keeps its
  *  APP_ROUTES view (`/skills` is `skills`, never `extension`). */
 function isContributedPath(pathname: string): boolean {
-  return !RESERVED_PATHS.has(pathname) && contributedRoutes().some(route => route.path === pathname)
+  const head = routeHead(pathname)
+
+  return !RESERVED_PATHS.has(head) && contributedRoutes().some(route => route.path === head)
+}
+
+/**
+ * Does this path lead to a page that EXISTS?
+ *
+ * The guard `store/deep-link.ts` needs and desktop does not: universal's session
+ * route is `/<id>` at the root (`SESSION_ROUTE_PREFIX`), so an unrecognised path
+ * is not a harmless 404 — it is read as a session id and the app tries to
+ * hydrate a conversation by that name. Anything turning untrusted text into a
+ * navigation asks this first.
+ */
+export function isKnownRoutePath(pathname: string): boolean {
+  const head = routeHead(pathname)
+
+  return RESERVED_PATHS.has(head) || contributedRoutes().some(route => route.path === head)
 }
 
 // ── Sidebar nav — the `sidebar.nav` registry area ────────────────────────────

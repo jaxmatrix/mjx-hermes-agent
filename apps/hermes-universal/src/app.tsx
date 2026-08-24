@@ -13,7 +13,7 @@ import { WakeIndicatorOverlay } from '@/app/wake-indicator-overlay'
 import { WakeIndicatorWindowRoot } from '@/app/wake-indicator/wake-indicator-window'
 import { ConfirmHost } from '@/components/confirm-host'
 import { FindBar } from '@/components/find-bar'
-import { startMcpDeepLinkListener } from '@/store/mcp-deeplink-install'
+import { startDeepLinkRouter } from '@/store/deep-link'
 import { startMcpHealthChecker } from '@/store/mcp-health'
 import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFACE } from '@/store/windows'
 
@@ -64,13 +64,15 @@ import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFAC
  * `ConfirmHost` case again from outside the app: a `hermes://mcp/install` link
  * is opened by the OS, so whichever window happens to be listening has to be
  * able to draw the confirmation — and nothing is written to config until it is
- * answered. The listener is armed here for the same reason.
+ * answered. The router is armed here for the same reason — and it claims only
+ * the window that owns the app's persisted state, so a detached tile cannot
+ * race the main shell for the same link (MJXHRM-455).
  *
  * Mounted HERE rather than once per root so the next root cannot forget them —
  * the failure mode is silence, which is the kind that ships.
  */
 export function App() {
-  startMcpDeepLinkListener()
+  startDeepLinkRouter()
   // Both are idempotent and refuse to arm twice; the health checker also
   // refuses in a satellite window, so the fleet gets ONE sweeper.
   startMcpHealthChecker()

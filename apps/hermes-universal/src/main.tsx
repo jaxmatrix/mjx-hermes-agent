@@ -42,6 +42,11 @@ import './app/right-pane/terminal/terminal-font-sync'
 // chat surface has mounted — a tile restored into a layout, a session resumed by
 // the HUD. This import IS the wiring.
 import './store/transcript-cache-sync'
+// And the core `hermes://` route table (MJXHRM-455). The registrations have to
+// exist before `startDeepLinkRouter` drains Rust's cold-start buffer, and a
+// link that cold-started the app is delivered within milliseconds of the first
+// paint — so this import IS the wiring, exactly like the event router above.
+import './store/deep-link-builtins'
 
 import { installTourDriver } from './store/tour-bridge'
 import { installWindowBelowReader } from './store/window-below'
