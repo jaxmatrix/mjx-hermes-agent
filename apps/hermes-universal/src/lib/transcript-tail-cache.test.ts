@@ -157,11 +157,17 @@ describe('corruption', () => {
     saveTranscriptTail('stored-1', [text('m1', 'one')])
     saveTranscriptTail('stored-2', [text('m2', 'two')])
     localStorage.setItem('hermes.universal.transcriptTail.v1-index', '{{{ truncated')
+
+    // A fresh window: the next touch of the cache runs the once-per-window
+    // housekeeping, which is the pass that reads the index.
     __resetTranscriptTailCache()
+    saveTranscriptTail('stored-3', [text('m3', 'three')])
 
     expect(readTranscriptTail('stored-1')?.map(m => m.id)).toEqual(['m1'])
     expect(readTranscriptTail('stored-2')?.map(m => m.id)).toEqual(['m2'])
-    expect(transcriptTailCacheStatus().entries).toBe(2)
+    expect(readTranscriptTail('stored-3')?.map(m => m.id)).toEqual(['m3'])
+    expect(transcriptTailCacheStatus().entries).toBe(3)
+    expect(localStorage.getItem('hermes.universal.transcriptTail.v1-index')).toContain('"stored-2"')
   })
 })
 
@@ -199,6 +205,20 @@ describe('bounds', () => {
     expect(transcriptTailCacheStatus().bytes).toBeLessThanOrEqual(__TAIL_CACHE_BOUNDS.MAX_TOTAL_BYTES)
     expect(readTranscriptTail('stored-0')).toBeNull()
     expect(readTranscriptTail(`stored-${count - 1}`)).not.toBeNull()
+  })
+
+  it('refuses an entry older than the TTL on the read, before any sweep has run', () => {
+    saveTranscriptTail('stored-1', [text('m1', 'one')])
+
+    const aged = JSON.parse(localStorage.getItem(key('stored-1')) as string) as { savedAt: number }
+
+    aged.savedAt = Date.now() - __TAIL_CACHE_BOUNDS.MAX_AGE_MS - 1
+    localStorage.setItem(key('stored-1'), JSON.stringify(aged))
+    // A fresh window whose FIRST touch is the boot paint — no save, so no sweep.
+    __resetTranscriptTailCache()
+
+    expect(readTranscriptTail('stored-1')).toBeNull()
+    expect(localStorage.getItem(key('stored-1'))).toBeNull()
   })
 
   it('sweeps an entry older than the TTL on the next housekeeping', () => {

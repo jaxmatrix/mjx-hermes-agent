@@ -373,6 +373,18 @@ export function readTranscriptTail(storedSessionId: null | string): ChatMessage[
     return null
   }
 
+  // The age check has to happen HERE, not only in the sweep: the boot paint is
+  // the first thing that touches the cache in a new window, before any save has
+  // run housekeeping, so a sweep-only TTL would let a month-old tail paint
+  // exactly once — on the launch it was written to prevent. Free, because the
+  // entry is already parsed.
+  if (Date.now() - resolved.savedAt > MAX_AGE_MS) {
+    store.removeItem(entryKey(resolved.storedSessionId))
+    indexedIds?.delete(resolved.storedSessionId)
+
+    return null
+  }
+
   // A mis-filed entry — the payload names a different session than the key — is
   // detectable precisely because the id is written twice.
   const expected = record?.kind === 'alias' ? record.alias : storedSessionId
