@@ -1066,17 +1066,22 @@ export function installAgentPlugin(
    */
   timeoutMs?: number
 ): Promise<PluginInstallResult> {
-  return requestGateway<PluginInstallResult>(
-    'plugins.manage',
-    {
-      action: 'install',
-      identifier: params.identifier,
-      ...scoped(params.profile),
-      ...(params.force ? { force: true } : {}),
-      ...(params.enable === undefined ? {} : { enable: params.enable })
-    },
-    timeoutMs
-  )
+  const payload = {
+    action: 'install',
+    identifier: params.identifier,
+    ...scoped(params.profile),
+    ...(params.force ? { force: true } : {}),
+    ...(params.enable === undefined ? {} : { enable: params.enable })
+  }
+
+  // The timeout is passed only when the caller HAS one. Behaviourally identical
+  // to sending `undefined` — `requestGateway`'s own default covers it — but a
+  // different CALL, and `gateway-rpc.test.ts` pins that this helper sends a
+  // method and a payload and nothing else, which is the assertion that keeps an
+  // extra argument from silently joining the frozen wire contract.
+  return timeoutMs === undefined
+    ? requestGateway<PluginInstallResult>('plugins.manage', payload)
+    : requestGateway<PluginInstallResult>('plugins.manage', payload, timeoutMs)
 }
 
 // --- cron.manage -----------------------------------------------------------
