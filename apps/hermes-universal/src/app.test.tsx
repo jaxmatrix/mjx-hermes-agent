@@ -29,7 +29,13 @@ vi.mock('@/app/close-confirm', () => ({ CloseConfirm: () => <div data-testid="cl
 // this file stays about WHICH roots mount — the real ones reach the gateway,
 // @/store/windows and the Tauri event bus (MJXHRM-454).
 vi.mock('@/app/mcp-install-deeplink-dialog', () => ({ McpInstallDeepLinkDialog: () => null }))
-vi.mock('@/store/mcp-deeplink-install', () => ({ startMcpDeepLinkListener: vi.fn() }))
+// MJXHRM-455's twin of the line above, and it is load-bearing for more than
+// tidiness: the real modal reaches `contrib/runtime-loader` → `sdk/index.ts` →
+// `pane-shell/tree/store`, whose module scope calls `isSecondaryWindow()`. That
+// widened THIS file's import graph into the partial `@/store/windows` mock
+// below and turned the whole file into a collect-time crash.
+vi.mock('@/app/settings/plugin-install-modal', () => ({ PluginInstallModal: () => null }))
+vi.mock('@/store/deep-link', () => ({ startDeepLinkRouter: vi.fn() }))
 vi.mock('@/store/mcp-health', () => ({ startMcpHealthChecker: vi.fn() }))
 
 let activity = false
@@ -46,8 +52,14 @@ vi.mock('@/store/windows', () => ({
   closeSatelliteWindow: async () => undefined,
   isActivityWindow: () => activity,
   isSatelliteWindow: () => surface !== null,
+  // Read at MODULE SCOPE by `pane-shell/tree/store`, so its absence is a
+  // collect-time crash rather than a failed assertion the moment anything in
+  // this file's graph reaches the layout tree — which is exactly what the
+  // comment above predicted and what MJXHRM-455 triggered.
+  isSecondaryWindow: () => tile || surface !== null,
   isTileWindow: () => tile,
   openSatelliteWindow: async () => null,
+  ownsPersistedAppState: () => !activity && !tile && surface === null,
   satelliteSurface: () => surface
 }))
 
