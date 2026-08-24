@@ -357,6 +357,7 @@ export const ja = defineLocale({
       enableAll: '通知を有効にする',
       enableAllDesc: 'マスタースイッチ。オフにすると以下のすべての通知を無効にします。',
       focusedHint: '完了通知は Hermes がバックグラウンドにあるときのみ表示されます。',
+      noActionsNotice: 'このプラットフォームの通知にはボタンがありません。ボタンを使うプラグインはアプリ内メッセージにフォールバックします。',
       kinds: {
         approval: {
           label: '承認が必要',

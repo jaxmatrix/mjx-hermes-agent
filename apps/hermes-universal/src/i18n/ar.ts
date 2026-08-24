@@ -363,6 +363,7 @@ export const ar = defineLocale({
       enableAll: 'تفعيل الإشعارات',
       enableAllDesc: 'إيقافه يصمت كل الإشعارات أدناه.',
       focusedHint: 'تنبيهات الاكتمال تظهر فقط عندما يكون Hermes في الخلفية.',
+      noActionsNotice: 'لا تحتوي الإشعارات على هذه المنصة على أزرار — تعود الإضافة التي توفّرها إلى رسالة داخل التطبيق.',
       kinds: {
         approval: {
           label: 'يلزم الموافقة',

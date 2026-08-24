@@ -464,6 +464,8 @@ export const en: Translations = {
       enableAll: 'Enable notifications',
       enableAllDesc: 'Master switch. Turn this off to silence every notification below.',
       focusedHint: 'Completion alerts only fire while Hermes is in the background.',
+      noActionsNotice:
+        'On this platform notifications have no buttons — a plugin that offers them falls back to an in-app message.',
       kinds: {
         approval: {
           label: 'Approval needed',

@@ -344,6 +344,7 @@ export const zhHant = defineLocale({
       enableAll: '啟用通知',
       enableAllDesc: '總開關。關閉後會靜音下方所有通知。',
       focusedHint: '完成提醒僅在 Hermes 位於背景時觸發。',
+      noActionsNotice: '此平台的通知沒有按鈕 — 提供按鈕的外掛會回退為應用程式內提示。',
       kinds: {
         approval: {
           label: '需要核准',

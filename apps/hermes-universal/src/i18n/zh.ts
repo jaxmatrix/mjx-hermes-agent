@@ -443,6 +443,7 @@ export const zh: Translations = {
       enableAll: '启用通知',
       enableAllDesc: '总开关。关闭后将静音下方所有通知。',
       focusedHint: '完成提醒仅在 Hermes 处于后台时触发。',
+      noActionsNotice: '此平台的通知没有按钮 — 提供按钮的插件会回退为应用内提示。',
       kinds: {
         approval: {
           label: '需要批准',
