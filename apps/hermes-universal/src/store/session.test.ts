@@ -1688,6 +1688,8 @@ describe('openSession — the cached-tail paint', () => {
 
     const reported = vi.spyOn(notifications, 'notifyError').mockImplementation(() => {
       paintedWhenReported = Object.keys($transcriptPaint.get())
+
+      return ''
     })
 
     await openSession('stored-9')
