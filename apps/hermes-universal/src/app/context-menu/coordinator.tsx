@@ -183,6 +183,11 @@ function installGestureListeners(): () => void {
     }
 
     if (press.fired() || Date.now() < suppressUntil) {
+      // CONSUME the suppression. `fired()` stays true until the next `down()`,
+      // and a fine pointer never arms one — so leaving it set would swallow
+      // every later right-click on a touchscreen laptop that once long-pressed.
+      press.cancel()
+      suppressUntil = 0
       event.preventDefault()
 
       return
@@ -220,7 +225,14 @@ function installGestureListeners(): () => void {
   const onPointerMove = (event: PointerEvent) => press.move(event.clientX, event.clientY)
   const onPointerUp = () => press.up()
 
-  const onScroll = () => {
+  const onScroll = (event: Event) => {
+    // A menu with more rows than fit scrolls itself; that must not dismiss it.
+    if (event.target instanceof Element && event.target.closest('[data-slot="dropdown-menu-content"]')) {
+      return
+    }
+
+    // A menu pinned over a page that scrolled out from under it points at
+    // nothing, so a finger that keeps moving closes it.
     press.cancel()
     closeContextMenu()
   }

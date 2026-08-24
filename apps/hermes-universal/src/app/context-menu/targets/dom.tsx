@@ -147,6 +147,11 @@ function spellingSection(context: ContextMenuItemContext<ContextMenuDomTarget>):
     return []
   }
 
+  // Five, not the whole dictionary — desktop's cap, and a menu is not a word
+  // list. The engine adapter that fills `native.spelling` must also deliver the
+  // misspelled word's RANGE for the replace to be exact; until then this inserts
+  // at the caret, which is only ever reached with the engine's own selection
+  // still on the word.
   return spelling.suggestions.slice(0, 5).map(word => ({
     key: `spell-${word}`,
     label: word,

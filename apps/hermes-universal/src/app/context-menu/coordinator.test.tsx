@@ -31,6 +31,7 @@ const { AppContextMenu } = await import('./coordinator')
 const { registry } = await import('@/contrib/registry')
 const { registerTerminalContextMenu } = await import('@/app/right-pane/terminal/context-menu')
 const { LONG_PRESS_MS } = await import('@/lib/long-press')
+const { TAP_MAX_MS } = await import('@/lib/touch')
 const { __resetContextMenu } = await import('./store')
 const { I18nProvider } = await import('@/i18n')
 
@@ -332,6 +333,29 @@ describe('AppContextMenu — the coarse-pointer path', () => {
     const trailing = rightClick(link)
 
     expect(trailing.defaultPrevented).toBe(true)
+  })
+
+  it('does not swallow the NEXT right-click once the trailing one is consumed', () => {
+    vi.useFakeTimers()
+    mountMenu()
+
+    const link = fixture('<a href="https://example.test/">link</a>').firstElementChild as HTMLElement
+
+    document.elementFromPoint = () => link
+
+    fireEvent.pointerDown(link, { clientX: 20, clientY: 30 })
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS))
+    rightClick(link)
+
+    // `fired()` stays true until the next `down()`, and a fine pointer never
+    // arms one — so an unconsumed flag would swallow every later right-click on
+    // a touchscreen laptop that once long-pressed. `defaultPrevented` cannot
+    // tell the two apart (a swallow prevents it too), so assert the MENU.
+    act(() => vi.advanceTimersByTime(TAP_MAX_MS + 1))
+    act(() => void rightClick(fixture('<textarea>draft</textarea>').firstElementChild as Element))
+
+    expect(screen.getByText('Select all')).toBeTruthy()
+    expect(screen.queryByText('Copy URL')).toBeNull()
   })
 
   it('cancels the press when the finger moves — a slow scroll is not a menu', () => {
