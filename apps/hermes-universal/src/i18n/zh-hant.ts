@@ -63,6 +63,32 @@ export const zhHant = defineLocale({
 
   // The read-only `shortcuts` reference became the full rebindable `keybinds`
   // panel; only its title is translated here, the rest falls back to English.
+  pluginInstall: {
+    title: '安裝外掛',
+    fromDeepLink: '某個連結請求 Hermes 安裝此外掛。在你確認之前不會安裝任何內容。',
+    fromSettings: 'Hermes 會在閘道上複製該儲存庫並安裝其中的內容。',
+    repoLabel: '儲存庫',
+    repoPlaceholder: 'owner/repo、owner/repo/subdir 或 git URL',
+    sourceLink: '檢視原始碼',
+    invalidIdentifier: 'Hermes 無法安裝該儲存庫 — 請使用 owner/repo、owner/repo/subdir 或 git URL。',
+    insecureWarning: url => `${url} 不是經過驗證的來源 — 能存取該網路的任何人都可以決定安裝什麼。`,
+    targetProfile: '安裝到設定檔',
+    authorityNotice:
+      '安裝會以代理的完整權限在閘道上執行該儲存庫的程式碼，其桌面端部分會以應用程式的完整權限在 Hermes 內執行。外掛之間只做錯誤隔離，並非彼此隔離。',
+    enableAfterInstall: '安裝後啟用',
+    forceReinstall: '強制重新安裝',
+    forceReinstallHint: '將取代此外掛的現有副本。',
+    waitingForGateway: '正在等待閘道 — 連線後即可安裝。',
+    install: '安裝',
+    installing: '正在安裝…',
+    agentSuccess: name => `已安裝 ${name}。`,
+    warningsTitle: '外掛安裝警告',
+    missingEnv: list => `已安裝，但在設定以下項目之前不會生效：${list}。`,
+    noIdentifier: '該連結沒有指明儲存庫。',
+    stillRunning: '閘道沒有回應。安裝可能仍在進行 — 重試前請重新開啟「設定 ▸ 外掛」查看。',
+    restDoorOff: '此閘道是遠端的，且閘道外掛通道已關閉，因此該外掛的桌面端部分不會在此載入。'
+  },
+
   deepLink: {
     title: 'Hermes 連結',
     badUrl: '這不是 Hermes 能開啟的連結。',
@@ -280,6 +306,8 @@ export const zhHant = defineLocale({
       title: '外掛',
       blurb: '隨建置捆綁，或放入 desktop-plugins 資料夾。停用會即時卸載。',
       count: (n: number) => `已安裝 ${n} 個`,
+      installFromGit: '從 Git 安裝…',
+      installFromGitHint: '將外掛儲存庫複製到閘道。安裝前會先告知它取得的權限。',
       openFolder: '開啟外掛資料夾',
       rescan: '重新掃描',
       reveal: '在檔案管理員中顯示',

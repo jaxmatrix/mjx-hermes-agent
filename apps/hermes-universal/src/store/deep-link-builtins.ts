@@ -13,9 +13,11 @@
  */
 
 import { requestComposerFocus, requestComposerInsert } from '@/app/chat/composer/focus'
+import { resolveDeepLinkAction } from '@/lib/deep-link-routes'
 
 import { registerDeepLinkRoute } from './deep-link'
 import { requestMcpInstallFromDeepLink } from './mcp-deeplink-install'
+import { openPluginInstallRequest } from './plugin-install-request'
 
 /** Quote a slot value only when it needs it, so the command stays readable. */
 function slotArg(key: string, value: string): string {
@@ -61,6 +63,34 @@ export function registerBuiltinDeepLinkRoutes(): void {
     },
     kind: 'blueprint'
   })
+
+  // `hermes://plugin/install?repo=owner/repo`, plus desktop's two historical
+  // aliases. All three go through the same classifier, so the repo resolution
+  // and the enable/force defaults cannot drift between them.
+  for (const kind of ['plugin', 'plugin-agent', 'plugin-desktop'] as const) {
+    registerDeepLinkRoute({
+      handle: payload => {
+        const action = resolveDeepLinkAction(payload)
+
+        if (action.type !== 'plugin-install') {
+          // A `plugin/` link that named no repository. Declining lets the
+          // router say WHY rather than opening a dialog for nothing.
+          return false
+        }
+
+        openPluginInstallRequest({
+          enable: action.enable,
+          force: action.force,
+          legacyHint: action.legacyHint,
+          origin: 'deep-link',
+          repo: action.repo
+        })
+
+        return true
+      },
+      kind
+    })
+  }
 }
 
 registerBuiltinDeepLinkRoutes()

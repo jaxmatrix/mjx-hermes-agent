@@ -63,6 +63,35 @@ export const ja = defineLocale({
 
   // The read-only `shortcuts` reference became the full rebindable `keybinds`
   // panel; only its title is translated here, the rest falls back to English.
+  pluginInstall: {
+    title: 'プラグインをインストール',
+    fromDeepLink: 'リンクがこのプラグインのインストールを要求しました。承認するまで何もインストールされません。',
+    fromSettings: 'Hermes はゲートウェイ上でリポジトリをクローンし、見つかったものをインストールします。',
+    repoLabel: 'リポジトリ',
+    repoPlaceholder: 'owner/repo、owner/repo/subdir、または git URL',
+    sourceLink: 'ソースを表示',
+    invalidIdentifier:
+      'Hermes がインストールできるリポジトリではありません。owner/repo、owner/repo/subdir、または git URL を使ってください。',
+    insecureWarning: url => `${url} は認証されたソースではありません。そのネットワークに到達できる誰もが内容を決められます。`,
+    targetProfile: 'インストール先プロファイル',
+    authorityNotice:
+      'インストールすると、このリポジトリのコードがエージェントの完全な権限でゲートウェイ上で実行され、デスクトップ側はアプリの完全な権限で Hermes 内で実行されます。プラグインは互いのエラーからは隔離されますが、互いからは隔離されません。',
+    enableAfterInstall: 'インストール後に有効化',
+    forceReinstall: '強制的に再インストール',
+    forceReinstallHint: 'このプラグインの既存のコピーを置き換えます。',
+    waitingForGateway: 'ゲートウェイを待機中 — 接続するとインストールできます。',
+    install: 'インストール',
+    installing: 'インストール中…',
+    agentSuccess: name => `${name} をインストールしました。`,
+    warningsTitle: 'プラグインインストールの警告',
+    missingEnv: list => `インストールされましたが、次が設定されるまで動作しません: ${list}。`,
+    noIdentifier: 'リンクにリポジトリが指定されていません。',
+    stillRunning:
+      'ゲートウェイから応答がありませんでした。インストールはまだ進行中の可能性があります。再試行の前に「設定 ▸ プラグイン」で確認してください。',
+    restDoorOff:
+      'このゲートウェイはリモートで、ゲートウェイのプラグインドアが無効なため、このプラグインのデスクトップ側はここでは読み込まれません。'
+  },
+
   deepLink: {
     title: 'Hermes リンク',
     badUrl: 'これは Hermes が開けるリンクではありません。',
@@ -289,6 +318,8 @@ export const ja = defineLocale({
       blurb:
         'ビルドに同梱されたもの、または desktop-plugins フォルダーに置いたもの。無効にすると即座にアンロードされます。',
       count: (n: number) => `${n} 個インストール済み`,
+      installFromGit: 'Git からインストール…',
+      installFromGitHint: 'プラグインのリポジトリをゲートウェイにクローンします。付与される権限を先に確認できます。',
       openFolder: 'プラグインフォルダーを開く',
       rescan: '再スキャン',
       reveal: 'ファイルマネージャーで表示',

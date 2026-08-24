@@ -9,7 +9,7 @@ import { $pluginRecords, type PluginRecord, setPluginEnabled } from '@/contrib/p
 import { discoverRuntimePlugins } from '@/contrib/runtime-loader'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
-import { Package, Plug } from '@/lib/icons'
+import { Download, Package, Plug } from '@/lib/icons'
 import { IS_DESKTOP } from '@/lib/platform'
 import { revealPathInFileManager } from '@/lib/reveal-path'
 import { normalize } from '@/lib/text'
@@ -28,6 +28,7 @@ import { $connection } from '@/store/connection'
 import { $gatewayState, requestGateway } from '@/store/gateway'
 import { modeIsRemoteLike } from '@/store/gateway-config'
 import { notifyError } from '@/store/notifications'
+import { openPluginInstallRequest } from '@/store/plugin-install-request'
 
 import {
   EmptyState,
@@ -38,6 +39,7 @@ import {
   SettingsContent,
   SettingsSection
 } from './primitives'
+import { settingRowElementId } from './settings-search'
 
 // Ported from apps/desktop/src/app/settings/plugins-settings.tsx. Universal adds
 // the dual-door surface: the active door and its root are always named, and the
@@ -387,6 +389,30 @@ export function PluginsSettings() {
         </p>
       )}
 
+      {/* The primary door for adding a plugin, above the inventory it adds to.
+          The dialog is what asks for the identifier and shows what the install
+          grants — this row only opens it. */}
+      <div className="mb-4">
+        <ListRow
+          action={
+            <Button
+              onClick={() => {
+                triggerHaptic('selection')
+                openPluginInstallRequest({ origin: 'settings', repo: '' })
+              }}
+              size="sm"
+              variant="outline"
+            >
+              <Download size="0.8rem" />
+              {p.installFromGit}
+            </Button>
+          }
+          description={p.installFromGitHint}
+          id={settingRowElementId('plugins.install')}
+          title={p.installFromGit}
+        />
+      </div>
+
       <div className="mb-4">
         <ListRow
           action={
@@ -400,6 +426,7 @@ export function PluginsSettings() {
             />
           }
           description={restEnabled && !loading && !disk ? p.gatewayDoorUnavailable : p.gatewayDoorHint}
+          id={settingRowElementId('plugins.gatewayDoor')}
           title={p.gatewayDoor}
         />
       </div>

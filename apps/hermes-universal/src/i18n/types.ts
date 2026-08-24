@@ -281,6 +281,35 @@ export interface Translations {
     previous: string
   }
 
+  // The consent gate for installing a plugin from git (MJXHRM-455). Every string
+  // here is shown BEFORE anything is installed — a deep link can put an
+  // arbitrary repository in front of the user, so the dialog's job is to say
+  // exactly what is about to be trusted.
+  pluginInstall: {
+    title: string
+    fromDeepLink: string
+    fromSettings: string
+    repoLabel: string
+    repoPlaceholder: string
+    sourceLink: string
+    invalidIdentifier: string
+    insecureWarning: (url: string) => string
+    targetProfile: string
+    authorityNotice: string
+    enableAfterInstall: string
+    forceReinstall: string
+    forceReinstallHint: string
+    waitingForGateway: string
+    install: string
+    installing: string
+    agentSuccess: (name: string) => string
+    warningsTitle: string
+    missingEnv: (list: string) => string
+    noIdentifier: string
+    stillRunning: string
+    restDoorOff: string
+  }
+
   // `hermes://` deep links (MJXHRM-455). Every message here is what the user
   // sees when a link the OS handed us does NOT lead anywhere — the refusals are
   // the whole surface, because a link that works just opens what it named.
@@ -357,6 +386,8 @@ export interface Translations {
       title: string
       blurb: string
       count: (n: number) => string
+      installFromGit: string
+      installFromGitHint: string
       openFolder: string
       rescan: string
       reveal: string

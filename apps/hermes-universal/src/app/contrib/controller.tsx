@@ -54,6 +54,7 @@ import {
   SIDEBAR_MAX_WIDTH
 } from '@/store/layout'
 import { startNewSession, startNewSessionTab } from '@/store/new-session'
+import { openPluginInstallRequest } from '@/store/plugin-install-request'
 import { $reviewOpen, closeReview, REVIEW_PANE_ID } from '@/store/review'
 import { $activeStoredSessionId, openSession, setBranchedSessionOpener } from '@/store/session'
 import { chatTabTitle, SESSION_ROW_SOURCES, sessionRowFor } from '@/store/session-lookup'
@@ -349,6 +350,20 @@ registry.registerMany([
       run: discoverRuntimePlugins
     } satisfies PaletteContribution,
     id: 'plugins.reload'
+  },
+  // The other door to the install dialog (Settings ▸ Plugins is the first).
+  // Deliberately NOT a keybind: installing a plugin is not a chord-worthy
+  // action, and a `KEYBIND_ACTIONS` row costs an i18n key and a check:i18n gate.
+  {
+    area: PALETTE_AREA,
+    data: {
+      icon: Plug,
+      id: 'plugins.install',
+      keywords: ['plugin', 'install', 'git', 'repository', 'clone', 'add'],
+      labelKey: 'settings.plugins.installFromGit',
+      run: () => openPluginInstallRequest({ origin: 'settings', repo: '' })
+    } satisfies PaletteContribution,
+    id: 'plugins.install'
   }
 ])
 

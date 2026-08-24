@@ -8,6 +8,7 @@ import { MobileController } from '@/app/mobile-controller'
 import { QUICK_ENTRY_SURFACE } from '@/app/quick-entry/quick-entry'
 import { QuickEntryWindowRoot } from '@/app/quick-entry/quick-entry-window'
 import { RemoteFolderPicker } from '@/app/right-pane/files/remote-picker'
+import { PluginInstallModal } from '@/app/settings/plugin-install-modal'
 import { TileWindowRoot } from '@/app/tile-window'
 import { WakeIndicatorOverlay } from '@/app/wake-indicator-overlay'
 import { WakeIndicatorWindowRoot } from '@/app/wake-indicator/wake-indicator-window'
@@ -60,6 +61,10 @@ import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFAC
  * and a sidebar row each reach it from a different shell, so the shell level is
  * again one level too low.
  *
+ * `PluginInstallModal` (MJXHRM-455) is the eighth, and it is the seventh's
+ * twin: `hermes://plugin/install` is the same "an outside link asked for
+ * something" shape, and the same window must be able to draw the question.
+ *
  * `McpInstallDeepLinkDialog` (MJXHRM-454) is the seventh, and it is the
  * `ConfirmHost` case again from outside the app: a `hermes://mcp/install` link
  * is opened by the OS, so whichever window happens to be listening has to be
@@ -86,6 +91,7 @@ export function App() {
       <BackgroundCloseDialog />
       <ConfirmHost />
       <McpInstallDeepLinkDialog />
+      <PluginInstallModal />
       <WakeIndicatorOverlay />
     </>
   )

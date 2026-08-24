@@ -230,6 +230,35 @@ export const en: Translations = {
     previous: 'Previous match'
   },
 
+  pluginInstall: {
+    title: 'Install a plugin',
+    fromDeepLink: 'A link asked Hermes to install this plugin. Nothing is installed until you choose to.',
+    fromSettings: 'Hermes clones the repository on the gateway and installs what it finds.',
+    repoLabel: 'Repository',
+    repoPlaceholder: 'owner/repo, owner/repo/subdir, or a git URL',
+    sourceLink: 'View the source',
+    invalidIdentifier: 'That is not a repository Hermes can install — use owner/repo, owner/repo/subdir, or a git URL.',
+    insecureWarning: url =>
+      `${url} is not an authenticated source — anyone who can reach that network can decide what gets installed.`,
+    targetProfile: 'Installs into profile',
+    authorityNotice:
+      'Installing runs code from this repository on the gateway with the agent\u2019s full authority, and its desktop half runs inside Hermes with the app\u2019s full authority. Plugins are isolated from each other\u2019s errors, not from each other.',
+    enableAfterInstall: 'Enable after install',
+    forceReinstall: 'Force reinstall',
+    forceReinstallHint: 'Replaces an existing copy of this plugin.',
+    waitingForGateway: 'Waiting for the gateway — Install becomes available once it connects.',
+    install: 'Install',
+    installing: 'Installing\u2026',
+    agentSuccess: name => `Installed ${name}.`,
+    warningsTitle: 'Plugin install warning',
+    missingEnv: list => `Installed, but inert until these are set: ${list}.`,
+    noIdentifier: 'The link did not name a repository.',
+    stillRunning:
+      'The gateway did not answer. The install may still be running — reopen Settings \u25b8 Plugins to check before retrying.',
+    restDoorOff:
+      'This gateway is remote and the gateway plugin door is off, so a desktop half of this plugin will not load here.'
+  },
+
   deepLink: {
     title: 'Hermes link',
     badUrl: 'That link is not a Hermes link Hermes can open.',
@@ -392,6 +421,8 @@ export const en: Translations = {
       title: 'Plugins',
       blurb: 'Bundled, or dropped into the desktop-plugins folder. Disable to unload live.',
       count: (n: number) => `${n} installed`,
+      installFromGit: 'Install from Git\u2026',
+      installFromGitHint: 'Clone a plugin repository onto the gateway. You will be shown what it grants first.',
       openFolder: 'Open plugins folder',
       rescan: 'Rescan',
       reveal: 'Reveal in file manager',

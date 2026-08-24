@@ -225,6 +225,32 @@ export const zh: Translations = {
     previous: '上一个匹配项'
   },
 
+  pluginInstall: {
+    title: '安装插件',
+    fromDeepLink: '某个链接请求 Hermes 安装此插件。在你确认之前不会安装任何内容。',
+    fromSettings: 'Hermes 会在网关上克隆该仓库并安装其中的内容。',
+    repoLabel: '仓库',
+    repoPlaceholder: 'owner/repo、owner/repo/subdir 或 git URL',
+    sourceLink: '查看源代码',
+    invalidIdentifier: 'Hermes 无法安装该仓库 — 请使用 owner/repo、owner/repo/subdir 或 git URL。',
+    insecureWarning: url => `${url} 不是经过验证的来源 — 能访问该网络的任何人都可以决定安装什么。`,
+    targetProfile: '安装到配置',
+    authorityNotice:
+      '安装会以代理的完整权限在网关上运行该仓库的代码，其桌面端部分会以应用的完整权限在 Hermes 内运行。插件之间只做错误隔离，并非彼此隔离。',
+    enableAfterInstall: '安装后启用',
+    forceReinstall: '强制重新安装',
+    forceReinstallHint: '将替换此插件的现有副本。',
+    waitingForGateway: '正在等待网关 — 连接后即可安装。',
+    install: '安装',
+    installing: '正在安装…',
+    agentSuccess: name => `已安装 ${name}。`,
+    warningsTitle: '插件安装警告',
+    missingEnv: list => `已安装，但在设置以下项之前不会生效：${list}。`,
+    noIdentifier: '该链接没有指明仓库。',
+    stillRunning: '网关没有响应。安装可能仍在进行 — 重试前请重新打开“设置 ▸ 插件”查看。',
+    restDoorOff: '此网关是远程的，且网关插件通道已关闭，因此该插件的桌面端部分不会在此加载。'
+  },
+
   deepLink: {
     title: 'Hermes 链接',
     badUrl: '这不是 Hermes 能打开的链接。',
@@ -379,6 +405,8 @@ export const zh: Translations = {
       title: '插件',
       blurb: '随构建捆绑，或放入 desktop-plugins 文件夹。禁用会即时卸载。',
       count: (n: number) => `已安装 ${n} 个`,
+      installFromGit: '从 Git 安装…',
+      installFromGitHint: '将插件仓库克隆到网关。安装前会先告知它获得的权限。',
       openFolder: '打开插件文件夹',
       rescan: '重新扫描',
       reveal: '在文件管理器中显示',

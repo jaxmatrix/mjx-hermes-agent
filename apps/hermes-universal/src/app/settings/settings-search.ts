@@ -185,6 +185,24 @@ export const CLIENT_PREF_SETTINGS: ReadonlyArray<{
     keywords: ['shell', 'terminal', 'runs on', 'device', 'gateway', 'remote'],
     label: t => t.settings.workspace.terminalHostTitle,
     view: 'workspace'
+  },
+  {
+    id: 'plugins.install',
+    keywords: ['plugin', 'install', 'git', 'repository', 'clone', 'add'],
+    label: t => t.settings.plugins.installFromGit,
+    view: 'plugins'
+  },
+  {
+    id: 'plugins.gatewayDoor',
+    keywords: ['plugin', 'gateway', 'backend', 'door', 'remote', 'load'],
+    label: t => t.settings.plugins.gatewayDoor,
+    view: 'plugins'
+  },
+  {
+    id: 'notifications.plugin',
+    keywords: ['plugin', 'notification', 'native', 'os', 'alert'],
+    label: t => t.settings.notifications.kinds.plugin.label,
+    view: 'notifications'
   }
 ]
 
