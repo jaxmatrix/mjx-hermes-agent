@@ -100,6 +100,14 @@ pub struct SshConnectConfig {
     /// Without it a running backend cannot be reattached to, only replaced.
     #[serde(default)]
     pub reuse_token: Option<String>,
+    /// Which REGISTERED connection this dial belongs to (MJXHRM-446).
+    ///
+    /// Absent for the connection that inherited the pre-registry world, and that
+    /// absence is what collapses the scope — see `registry_scope_of`. Two ssh
+    /// sources on one profile name therefore keep two independent sessions,
+    /// forwards and remote backends instead of evicting each other.
+    #[serde(default)]
+    pub connection_id: Option<String>,
 }
 
 /// A live SSH-backed gateway connection, as the frontend sees it.
@@ -187,9 +195,28 @@ pub struct SshState {
     attempts: Mutex<HashMap<String, Arc<Attempt>>>,
 }
 
-/// The scope key for a connection. An empty profile is the default scope.
-fn scope_of(profile: Option<&str>) -> String {
-    profile.unwrap_or("").to_string()
+/// The scope key for a connection — live sessions, forwards AND, through
+/// `ownership::ssh_ownership_id`, the identity written into the remote lockfile.
+///
+/// Before the registry (MJXHRM-446) this was the profile alone, so two ssh
+/// SOURCES on the same profile name evicted each other's session, shared one
+/// watcher slot and — worst — shared one remote backend.
+///
+/// The `None` arm is BYTE-IDENTICAL to what that did, and that is the single
+/// most load-bearing compatibility property in the registry: the connection that
+/// inherited the pre-registry world dials with no id, so its ownership id still
+/// hashes the bare profile, the lockfile still matches, and an upgrade
+/// REATTACHES to the running remote backend instead of orphaning it. Connections
+/// 2..N get `conn:<id>::<profile>`, which has never been hashed before, so their
+/// first connect is a clean spawn — correct, because they *are* new backends.
+/// Colons are invalid in profile names, so the two spaces cannot collide.
+pub fn registry_scope_of(connection_id: Option<&str>, profile: Option<&str>) -> String {
+    match connection_id.map(str::trim).filter(|id| !id.is_empty()) {
+        None => profile.unwrap_or("").to_string(),
+        // The composite grammar is shared with the frontend's `backendScopeKey`
+        // so a forward lease (MJXHRM-447) and this session key are one string.
+        Some(id) => crate::connections::registry_backend_scope_key(Some(id), profile),
+    }
 }
 
 /// The user's home directory, if there is one. Mobile has none, and every caller
@@ -727,8 +754,9 @@ pub async fn ssh_cancel(state: State<'_, SshState>, attempt_id: String) -> Resul
 pub async fn ssh_disconnect(
     state: State<'_, SshState>,
     profile: Option<String>,
+    connection_id: Option<String>,
 ) -> Result<(), SshError> {
-    let scope = scope_of(profile.as_deref());
+    let scope = registry_scope_of(connection_id.as_deref(), profile.as_deref());
     state.forwards.lock().await.remove(&scope);
 
     if let Some(session) = state.sessions.lock().await.remove(&scope) {
@@ -808,10 +836,10 @@ pub async fn ssh_connect(
     app: AppHandle,
     state: State<'_, SshState>,
     attempt_id: String,
-    config: SshConnectConfig,
+    mut config: SshConnectConfig,
 ) -> Result<SshConnection, SshError> {
     let reporter = ProgressReporter::new(app.clone(), &attempt_id);
-    let scope = scope_of(config.profile.as_deref());
+    let scope = registry_scope_of(config.connection_id.as_deref(), config.profile.as_deref());
 
     let installation_id = config.installation_id.as_deref().ok_or_else(|| {
         SshError::new(
@@ -822,14 +850,28 @@ pub async fn ssh_connect(
 
     let ownership_id = ownership::ssh_ownership_id(installation_id, &scope)?;
 
+    // A REGISTERED connection's credentials live under keyring accounts the
+    // webview cannot name, so Rust reads them here rather than being handed them
+    // (rule 4 — a PEM stops crossing IPC). The legacy owner sends no id and
+    // keeps passing its arguments, so its dial is unchanged.
+    let stored = config
+        .connection_id
+        .as_deref()
+        .and_then(|id| crate::connections::ssh_credentials(&app, id))
+        .unwrap_or_default();
+
     let (target, user, mut credentials) = resolve_target(&config.target)?;
     // Normalized, not copied: an untouched secret row reaches us as `""`, and
     // `Some("")` is not `None` downstream — an empty passphrase makes russh
     // attempt a decrypt rather than report `KeyIsEncrypted`, which silently
     // discarded every encrypted key.
-    credentials.private_key_pem = auth::nonempty(config.private_key_pem.clone());
-    credentials.passphrase = auth::nonempty(config.passphrase.clone());
-    credentials.password = auth::nonempty(config.password.clone());
+    credentials.private_key_pem =
+        auth::nonempty(config.private_key_pem.clone()).or(stored.private_key_pem);
+    credentials.passphrase = auth::nonempty(config.passphrase.clone()).or(stored.passphrase);
+    credentials.password = auth::nonempty(config.password.clone()).or(stored.password);
+    // The reattach token travels on the config because `establish` reads it
+    // there; filling it here keeps that one reader unchanged.
+    config.reuse_token = auth::nonempty(config.reuse_token.clone()).or(stored.reuse_token);
 
     let (prompter, policy, _attempt) =
         arm_prompts(&app, &state, &attempt_id, config.interactive).await;
@@ -880,6 +922,14 @@ pub async fn ssh_connect(
             }
 
             state.forwards.lock().await.insert(scope.clone(), forward);
+
+            // Remember the token this backend is running with, per connection.
+            // Before the registry this was one global `SecretKey::Token`, so an
+            // ssh reattach token clobbered a remote gateway's token and
+            // vice-versa (D-4); a registered connection now writes its own.
+            if let Some(id) = config.connection_id.as_deref() {
+                crate::connections::remember_reuse_token(&app, id, &connection.token);
+            }
 
             // Watch for the tunnel dying, which the WS-level reconnect cannot
             // recover from on its own.
@@ -1486,10 +1536,25 @@ mod tests {
     fn the_default_profile_and_an_empty_profile_share_one_scope() {
         // Ownership is keyed on this, so two spellings of "no profile" must not
         // produce two remote backends.
-        assert_eq!(scope_of(None), "");
-        assert_eq!(scope_of(Some("")), "");
-        assert_eq!(scope_of(Some("work")), "work");
-        assert_ne!(scope_of(Some("work")), scope_of(Some("home")));
+        // The legacy arm is byte-identical to the pre-registry `scope_of`.
+        assert_eq!(registry_scope_of(None, None), "");
+        assert_eq!(registry_scope_of(None, Some("")), "");
+        assert_eq!(registry_scope_of(None, Some("work")), "work");
+        assert_ne!(registry_scope_of(None, Some("work")), registry_scope_of(None, Some("home")));
+        // …and an empty id is the same as no id, so a frontend that sends `""`
+        // does not silently mint a second backend.
+        assert_eq!(registry_scope_of(Some(""), Some("work")), "work");
+        assert_eq!(registry_scope_of(Some("  "), Some("work")), "work");
+
+        // Two REGISTERED sources on one profile name never share a scope.
+        assert_ne!(
+            registry_scope_of(Some("box-a"), Some("work")),
+            registry_scope_of(Some("box-b"), Some("work"))
+        );
+        assert_ne!(registry_scope_of(Some("box-a"), Some("work")), "work");
+        // A composite can never collide with a bare profile: ':' is invalid in
+        // a profile name.
+        assert_eq!(registry_scope_of(Some("box-a"), Some("work")), "conn:box-a::work");
     }
 
     #[test]
