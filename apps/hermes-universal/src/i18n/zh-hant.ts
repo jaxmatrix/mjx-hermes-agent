@@ -64,6 +64,33 @@ export const zhHant = defineLocale({
 
   // The read-only `shortcuts` reference became the full rebindable `keybinds`
   // panel; only its title is translated here, the rest falls back to English.
+  contextMenu: {
+    link: {
+      openExternal: '在外部瀏覽器中開啟',
+      copyUrl: '複製連結',
+      openInApp: '在應用程式內瀏覽器中開啟',
+      copyResolvedUrl: '複製解析後的連結'
+    },
+    image: {
+      copyImage: '複製圖片',
+      copyImageAddress: '複製圖片位址',
+      saveImageAs: '圖片另存新檔…',
+      copyFailed: '無法複製圖片',
+      saveFailed: '無法儲存圖片'
+    },
+    edit: {
+      cut: '剪下',
+      paste: '貼上',
+      selectAll: '全選',
+      addToDictionary: '新增至字典'
+    },
+    page: {
+      inspectElement: '檢查元素'
+    },
+    checkForUpdates: '檢查更新',
+    someItemsFailed: '部分項目無法載入'
+  },
+
   pluginInstall: {
     title: '安裝外掛',
     fromDeepLink: '某個連結請求 Hermes 安裝此外掛。在你確認之前不會安裝任何內容。',

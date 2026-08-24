@@ -226,6 +226,33 @@ export const zh: Translations = {
     previous: '上一个匹配项'
   },
 
+  contextMenu: {
+    link: {
+      openExternal: '在外部浏览器中打开',
+      copyUrl: '复制链接',
+      openInApp: '在应用内浏览器中打开',
+      copyResolvedUrl: '复制解析后的链接'
+    },
+    image: {
+      copyImage: '复制图片',
+      copyImageAddress: '复制图片地址',
+      saveImageAs: '图片另存为…',
+      copyFailed: '无法复制图片',
+      saveFailed: '无法保存图片'
+    },
+    edit: {
+      cut: '剪切',
+      paste: '粘贴',
+      selectAll: '全选',
+      addToDictionary: '添加到词典'
+    },
+    page: {
+      inspectElement: '检查元素'
+    },
+    checkForUpdates: '检查更新',
+    someItemsFailed: '部分项目无法加载'
+  },
+
   pluginInstall: {
     title: '安装插件',
     fromDeepLink: '某个链接请求 Hermes 安装此插件。在你确认之前不会安装任何内容。',

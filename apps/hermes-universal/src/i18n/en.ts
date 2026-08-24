@@ -231,6 +231,39 @@ export const en: Translations = {
     previous: 'Previous match'
   },
 
+  // The app-wide right-click / long-press menu (MJXHRM-478). `Copy` is
+  // deliberately absent: it is `common.copy`, the same string every other
+  // surface uses. Four keys are declared before their consumer exists —
+  // `link.openInApp` and `page.inspectElement` are MJXHRM-447's rows,
+  // `link.copyResolvedUrl` waits on a reach helper universal does not have, and
+  // `edit.addToDictionary` waits on a dictionary nothing in the stack owns.
+  contextMenu: {
+    link: {
+      openExternal: 'Open in external browser',
+      copyUrl: 'Copy URL',
+      openInApp: 'Open in in-app browser',
+      copyResolvedUrl: 'Copy resolved URL'
+    },
+    image: {
+      copyImage: 'Copy image',
+      copyImageAddress: 'Copy image address',
+      saveImageAs: 'Save image as…',
+      copyFailed: 'Could not copy the image',
+      saveFailed: 'Could not save the image'
+    },
+    edit: {
+      cut: 'Cut',
+      paste: 'Paste',
+      selectAll: 'Select all',
+      addToDictionary: 'Add to dictionary'
+    },
+    page: {
+      inspectElement: 'Inspect element'
+    },
+    checkForUpdates: 'Check for updates',
+    someItemsFailed: 'Some items could not be loaded'
+  },
+
   pluginInstall: {
     title: 'Install a plugin',
     fromDeepLink: 'A link asked Hermes to install this plugin. Nothing is installed until you choose to.',

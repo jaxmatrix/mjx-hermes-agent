@@ -165,6 +165,33 @@ export const ar = defineLocale({
     collapseReply: 'إخفاء الرد'
   },
 
+  contextMenu: {
+    link: {
+      openExternal: 'فتح في المتصفح الخارجي',
+      copyUrl: 'نسخ الرابط',
+      openInApp: 'فتح في المتصفح الداخلي',
+      copyResolvedUrl: 'نسخ الرابط المُحلَّل'
+    },
+    image: {
+      copyImage: 'نسخ الصورة',
+      copyImageAddress: 'نسخ عنوان الصورة',
+      saveImageAs: 'حفظ الصورة باسم…',
+      copyFailed: 'تعذّر نسخ الصورة',
+      saveFailed: 'تعذّر حفظ الصورة'
+    },
+    edit: {
+      cut: 'قص',
+      paste: 'لصق',
+      selectAll: 'تحديد الكل',
+      addToDictionary: 'إضافة إلى القاموس'
+    },
+    page: {
+      inspectElement: 'فحص العنصر'
+    },
+    checkForUpdates: 'التحقق من التحديثات',
+    someItemsFailed: 'تعذّر تحميل بعض العناصر'
+  },
+
   pluginInstall: {
     title: 'تثبيت إضافة',
     fromDeepLink: 'طلب رابط من Hermes تثبيت هذه الإضافة. لن يُثبَّت أي شيء حتى توافق.',

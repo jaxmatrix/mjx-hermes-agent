@@ -282,6 +282,34 @@ export interface Translations {
     previous: string
   }
 
+  // The app-wide right-click / long-press menu (MJXHRM-478).
+  contextMenu: {
+    link: {
+      openExternal: string
+      copyUrl: string
+      openInApp: string
+      copyResolvedUrl: string
+    }
+    image: {
+      copyImage: string
+      copyImageAddress: string
+      saveImageAs: string
+      copyFailed: string
+      saveFailed: string
+    }
+    edit: {
+      cut: string
+      paste: string
+      selectAll: string
+      addToDictionary: string
+    }
+    page: {
+      inspectElement: string
+    }
+    checkForUpdates: string
+    someItemsFailed: string
+  }
+
   // The consent gate for installing a plugin from git (MJXHRM-455). Every string
   // here is shown BEFORE anything is installed — a deep link can put an
   // arbitrary repository in front of the user, so the dialog's job is to say
