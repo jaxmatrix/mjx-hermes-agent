@@ -14,6 +14,7 @@ mod appearance;
 mod artifact;
 mod background;
 mod cloud;
+mod context_menu;
 mod data_url_read_max;
 mod deep_link;
 #[cfg(desktop)]
@@ -47,6 +48,10 @@ use artifact::{artifact_release, artifact_stage, ArtifactState, ARTIFACT_SCHEME}
 use background::{get_background_mode, quit_app, set_background_mode, BackgroundState};
 use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
+};
+use context_menu::{
+    context_menu_copy_image, context_menu_install, context_menu_save_image,
+    context_menu_set_suppressed, ContextMenuState,
 };
 use data_url_read_max::{read_capped_file_base64, set_data_url_read_max, DataUrlReadMaxState};
 use deep_link::{deep_link_ready, DeepLinkState};
@@ -207,6 +212,10 @@ pub fn run() {
         // the machine even if the webview never turned the preference back off.
         .manage(KeepAwakeState::default())
         .manage(DataUrlReadMaxState::default())
+        // Which windows already have the context-menu bridge installed
+        // (MJXHRM-478). Managed on BOTH targets so the builder chain has one
+        // shape; the set is empty and harmless where no adapter exists yet.
+        .manage(ContextMenuState::default())
         // The deep-link cold-start buffer. Managed on BOTH targets so the builder
         // chain has one shape — and it does real work on mobile, where a cold
         // launch from a tapped link races the WebView every time.
@@ -382,6 +391,10 @@ pub fn run() {
             secrets_lock,
             find_in_page,
             stop_find_in_page,
+            context_menu_install,
+            context_menu_set_suppressed,
+            context_menu_copy_image,
+            context_menu_save_image,
             surface_capabilities,
             surface_set_interactive_rect,
             read_window_below,
