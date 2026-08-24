@@ -27,7 +27,10 @@ vi.mock('@/store/gateway', async () => {
 })
 
 vi.mock('@/hermes', () => ({
-  getSessionMessages: (...args: unknown[]) => getSessionMessages(...args)
+  getSessionMessages: (...args: unknown[]) => getSessionMessages(...args),
+  // `store/profiles.ts` calls this at module scope, and the session request
+  // router pulls `store/profile` → `store/profiles` in for the ambient route.
+  setApiRequestProfile: vi.fn()
 }))
 
 vi.mock('@/store/notifications', () => ({

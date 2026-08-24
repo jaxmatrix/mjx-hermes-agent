@@ -20,6 +20,7 @@ import {
   type ToolCallPart,
   withActiveAssistant
 } from '@/lib/chat-messages'
+import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { stopSpeaking } from '@/lib/tts'
 import {
   isVoicePlaybackActive,
@@ -66,6 +67,7 @@ import {
   updateSession
 } from '@/store/session-state-types'
 import { clearSessionSubagents } from '@/store/subagents'
+import { $transcriptPaint } from '@/store/transcript-paint'
 import { beginTurn, getInflightTurn, recordTurnCorrection, settleTurn } from '@/store/turn-lifecycle'
 import type { SessionCreateResponse, SessionRedirectResponse, UsageStats } from '@/types/hermes'
 
@@ -138,6 +140,27 @@ export const $messages = computed($active, state => state.messages ?? EMPTY_MESS
 export const $busy = computed($active, state => state.busy)
 
 export const $messagesEmpty = computed($messages, messages => messages.length === 0)
+
+/**
+ * The transcript AS PIXELS: the slice's messages, or — while it has none — the
+ * cached tail the paint lane is holding for this key (MJXHRM-480).
+ *
+ * `$messages` is knowledge and `$paintedMessages` is pixels. Only
+ * `app/chat/runtime.tsx` reads this one; everything that reconciles, journals,
+ * narrates, branches or submits reads `$messages`, and cannot see a cached row
+ * because the lane is not in `$sessionStates` at all.
+ *
+ * Returns the IDENTICAL array reference as `$messages` whenever the lane is
+ * empty — which is the ordinary case for every session in the app. A fresh `[]`
+ * here would break nanostores' dedupe and re-render every transcript on every
+ * token.
+ */
+export const $paintedMessages = computed(
+  [$messages, $transcriptPaint, $activeSessionKey],
+  (messages, paint, key) => (messages.length ? messages : (paint[key]?.messages ?? messages))
+)
+
+export const $paintedMessagesEmpty = computed($paintedMessages, messages => messages.length === 0)
 
 /** The last non-system message is the user's — i.e. we're waiting on the agent
  *  to start responding (used for the "thinking" placeholder). */
@@ -285,8 +308,12 @@ export async function ensureSession(): Promise<{ created: boolean; id: string; s
   const cwd = $currentCwd.get().trim() || resolveNewSessionCwd()
   const draftKey = $activeSessionKey.get()
 
+  // `source: 'desktop'` (MJXHRM-480), gated on IS_TAURI: it is what the gateway
+  // stamps on the row and later reads back as the session's PLATFORM, and it is
+  // the literal that unlocks the `desktop_ui` toolset. See `lib/session-source.ts`.
   const created = await requestGateway<SessionCreateResponse>('session.create', {
     cols: 96,
+    ...SESSION_SOURCE_PARAMS,
     ...(cwd && { cwd })
   })
 

@@ -37,6 +37,11 @@ import './themes/appearance-sync'
 // Without this, changing the font only repainted whichever WebView the picker
 // happened to be in.
 import './app/right-pane/terminal/terminal-font-sync'
+// And the transcript tail cache's lifecycle (MJXHRM-480): it hangs off the
+// cold-open rekey and the turn-settle edge, both of which can fire before any
+// chat surface has mounted — a tile restored into a layout, a session resumed by
+// the HUD. This import IS the wiring.
+import './store/transcript-cache-sync'
 
 import { installTourDriver } from './store/tour-bridge'
 import { installWindowBelowReader } from './store/window-below'

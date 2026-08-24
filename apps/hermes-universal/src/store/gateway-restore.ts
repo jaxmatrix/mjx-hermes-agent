@@ -1,5 +1,6 @@
 import { oauthStatus } from '@/lib/auth'
 import { loadString, removeKey, saveString } from '@/lib/persist'
+import { clearTranscriptTails } from '@/lib/transcript-tail-cache'
 import { atom } from '@/store/atom'
 import {
   connect,
@@ -81,6 +82,11 @@ export function loadGatewayTarget(): GatewayTarget | null {
 /** Forget the saved target (an explicit "use a different gateway" / reset). */
 export function clearGatewayTarget(): void {
   removeKey(TARGET_KEY)
+  // The user is LEAVING this backend, by hand — the same re-home
+  // `wipeSessionListsForGatewaySwitch()` covers for a soft switch. Stored ids are
+  // unique per backend database, so a tail left behind here can only paint the
+  // wrong machine's conversation on the next launch.
+  clearTranscriptTails()
 }
 
 // --- Mobile OAuth resume marker -----------------------------------------------------

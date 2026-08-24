@@ -24,6 +24,10 @@ const view = await vi.hoisted(async () => {
     // the intro splash — a `$messages`-derived computed here, so the mock cannot
     // drift into claiming a transcript is empty while it holds messages.
     $messagesEmpty: computed($messages, messages => messages.length === 0),
+    // The splash gate reads the PAINTED emptiness (MJXHRM-480), so a cached tail
+    // counts as a transcript. With no paint lane in play here it is the same
+    // derivation.
+    $paintedMessagesEmpty: computed($messages, messages => messages.length === 0),
     $runtimeId: atom<null | string>(null)
   }
 })

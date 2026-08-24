@@ -32,12 +32,16 @@ vi.mock('@/store/gateway', async () => {
 
 import { deleteSession, getSession, getSessionMessages, listAllProfileSessions, renameSession } from '@/hermes'
 import { ApiError } from '@/lib/api'
+import type { ChatMessage } from '@/lib/chat-messages'
+import { __resetTranscriptTailCache, readTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
 import { $busy, $currentCwd, $messages, $sessionId } from '@/store/chat'
 import { confirm } from '@/store/confirm'
 import { requestGateway } from '@/store/gateway'
+import * as notifications from '@/store/notifications'
 import { $showAllProfiles } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
 import { $sessionStates, hydratingKey, updateSession } from '@/store/session-state-types'
+import { $transcriptPaint, __resetTranscriptPaint } from '@/store/transcript-paint'
 import { clearAllTurns, getInflightTurn } from '@/store/turn-lifecycle'
 import { resetSessionStates, seedActiveSession, seedSession } from '@/test-sessions'
 import type { PaginatedSessions, SessionInfo } from '@/types/hermes'
@@ -467,10 +471,13 @@ describe('reclaimSessionTransport', () => {
     resolveProbe()
     await reclaiming
 
+    // NO `profile`: the owner ('default') is the ambient route here, and a route
+    // that matches the ambient one dispatches unscoped so the reauth-aware
+    // reconnect path in the ambient dispatcher still applies
+    // (`sessionRpcNeedsProfileRoute`).
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-popped',
-      cols: 96,
-      profile: 'default'
+      cols: 96
     })
   })
 
@@ -1619,5 +1626,120 @@ describe('isSessionPinned', () => {
   it('treats a gateway that predates the column as unpinned', () => {
     $pinnedSessionIds.set([])
     expect(isSessionPinned({ id: 'a' } as unknown as SessionInfo)).toBe(false)
+  })
+})
+
+
+// ---------------------------------------------------------------------------
+// The paint lane on the cold-open path (MJXHRM-480). The rows go on screen
+// through `$paintedMessages` BEFORE any I/O and are gone the moment the
+// authority lands — or the moment the open fails, which is the half that
+// matters most.
+// ---------------------------------------------------------------------------
+describe('openSession — the cached-tail paint', () => {
+  const cached = (id: string, body: string): ChatMessage => ({
+    id,
+    parts: [{ text: body, type: 'text' }],
+    role: 'user'
+  })
+
+  const seedTail = (storedId: string, body = 'last screen') => {
+    __resetTranscriptTailCache()
+    __resetTranscriptPaint()
+    localStorage.clear()
+    saveTranscriptTail(storedId, [cached('cached-1', body)])
+  }
+
+  it('paints the cached tail before any I/O, and the REST transcript replaces it', async () => {
+    seedTail('stored-9')
+
+    let painted: string[] = []
+
+    vi.mocked(getSessionMessages).mockImplementation(async () => {
+      // Called after the paint, by construction: the paint is synchronous and
+      // precedes both promises.
+      painted = ($transcriptPaint.get()[hydratingKey('stored-9')]?.messages ?? []).map(m => m.id)
+
+      return { messages: [{ content: 'authoritative', role: 'user' }], session_id: 'stored-9' } as never
+    })
+    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1' })
+
+    await openSession('stored-9')
+
+    expect(painted).toEqual(['cached-1'])
+    // Replaced wholesale, and the lane is empty again.
+    expect($messages.get().map(m => m.parts[0])).toEqual([{ text: 'authoritative', type: 'text' }])
+    expect($transcriptPaint.get()).toEqual({})
+  })
+
+  // A paint left behind on a session whose resume failed is a transcript that
+  // looks healthy and cannot receive a message — and typing into it would open a
+  // brand-new chat. So the catch clears FIRST, before the fallback and before
+  // the toast.
+  it('clears the paint BEFORE the error is surfaced, leaving no ghost transcript', async () => {
+    seedTail('stored-9')
+    vi.mocked(getSessionMessages).mockResolvedValue(null as never)
+    vi.mocked(requestGateway).mockRejectedValue(new Error('session not found'))
+
+    // The ORDERING is the assertion: a toast raised while a healthy-looking
+    // transcript is still on screen tells the user the chat is fine and the
+    // error is incidental — the opposite of the truth.
+    let paintedWhenReported: string[] = []
+
+    const reported = vi.spyOn(notifications, 'notifyError').mockImplementation(() => {
+      paintedWhenReported = Object.keys($transcriptPaint.get())
+
+      return ''
+    })
+
+    await openSession('stored-9')
+
+    expect(reported).toHaveBeenCalled()
+    expect(paintedWhenReported).toEqual([])
+    expect($transcriptPaint.get()).toEqual({})
+    expect($messages.get()).toEqual([])
+    reported.mockRestore()
+  })
+
+  // Warm promote is synchronous and lossless (MJX-132): the slice is already
+  // whole, so a paint there would be a flicker on top of correct rows.
+  // Deliberately an EMPTY warm slice: a session opened, found empty and parked
+  // is still authoritative about being empty, and `paintCachedTail`'s own
+  // has-messages guard cannot save this path. Promotion is synchronous and
+  // lossless (MJX-132) — a paint here is a flicker on top of a correct answer.
+  it('paints nothing on a warm promote', async () => {
+    seedTail('stored-9')
+    seedSession('runtime-1', { messages: [], storedSessionId: 'stored-9' })
+
+    await openSession('stored-9')
+
+    expect($transcriptPaint.get()).toEqual({})
+    expect(requestGateway).not.toHaveBeenCalled()
+  })
+
+  // A transport-only rebind: the transcript on screen is already correct and
+  // richer than any cache.
+  it('paints nothing on a warm reclaim', async () => {
+    seedTail('stored-9')
+    seedSession('runtime-1', { messages: [], storedSessionId: 'stored-9' })
+    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1' })
+
+    await openSession('stored-9', { forceResume: true })
+
+    expect($transcriptPaint.get()).toEqual({})
+  })
+
+  // A deleted conversation must not be able to paint itself back onto the next
+  // launch — under ANY of its lineage aliases.
+  it('drops the cached tail when the session is deleted', async () => {
+    seedTail('stored-9')
+    $sessions.set([{ _lineage_root_id: 'stored-root', id: 'stored-9' } as unknown as SessionInfo])
+    saveTranscriptTail('stored-root', [cached('cached-root', 'older identity')])
+    vi.mocked(deleteSession).mockResolvedValue(undefined as never)
+
+    await deleteSessionLocal('stored-9')
+
+    expect(readTranscriptTail('stored-9')).toBeNull()
+    expect(readTranscriptTail('stored-root')).toBeNull()
   })
 })

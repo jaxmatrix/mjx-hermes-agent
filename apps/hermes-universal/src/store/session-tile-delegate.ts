@@ -32,6 +32,7 @@
 
 import { getSessionMessages } from '@/hermes'
 import { appendLiveSessionProjection, toChatMessages } from '@/lib/session-history'
+import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import {
   isVoicePlaybackActive,
   markVoicePlaybackInterrupted,
@@ -51,6 +52,7 @@ import {
   sessionProfileIsAmbiguous
 } from '@/store/session'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
+import { requestForSession } from '@/store/session-request-router'
 import {
   $sessionStates,
   dropSessionState,
@@ -61,6 +63,7 @@ import {
   runtimeKeyForStoredSession
 } from '@/store/session-state-types'
 import { closeSessionTile, openBranchTile, setSessionTileDelegate, updateSession } from '@/store/session-states'
+import { clearTranscriptPaint, paintCachedTail } from '@/store/transcript-paint'
 import { adoptResumedTurn, beginTurn, resumedTurnIsLive, settleTurn } from '@/store/turn-lifecycle'
 import type { SessionResumeResponse } from '@/types/hermes'
 
@@ -133,16 +136,34 @@ async function hydrateSessionToState(storedId: string): Promise<string> {
     model: stored?.model ?? ''
   })
 
+  // BEFORE ANY I/O, per tile: a QUAD layout restored at boot paints each cold
+  // tile's own cached tail rather than leaving four blank panes. Pixels, never
+  // knowledge — the lane lives outside `$sessionStates` (store/transcript-paint).
+  paintCachedTail(key, storedId)
+
   try {
-    const transcript = await Promise.resolve()
+    // CONCURRENT, matching the main pane (`store/session.ts#hydrateColdSession`):
+    // the REST transcript and the resume RPC are independent, so wall time is
+    // max(), not sum(). Awaiting the transcript first and only then resuming made
+    // a tile cold open pay both round trips end to end.
+    const transcriptPromise = Promise.resolve()
       .then(() => getSessionMessages(storedId, profile))
       .catch(() => null)
 
-    const resumed = await requestGateway<SessionResumeResponse>('session.resume', {
+    // ROUTED: `profile` was resolved before a possible await, and the route can
+    // move across it (see `store/session-request-router.ts`).
+    const resumePromise = requestForSession<SessionResumeResponse>(storedId, 'session.resume', {
       session_id: storedId,
       cols: 96,
-      ...(profile ? { profile } : {})
+      ...SESSION_SOURCE_PARAMS
     })
+
+    // Consumed by the `await` below; this only keeps a rejection from surfacing
+    // as an unhandled one while the transcript fetch settles.
+    resumePromise.catch(() => undefined)
+
+    const transcript = await transcriptPromise
+    const resumed = await resumePromise
 
     const restMessages = transcript?.messages?.length ? toChatMessages(transcript.messages) : null
     const messages = appendLiveSessionProjection(restMessages ?? toChatMessages(resumed.messages ?? []), resumed)
@@ -166,12 +187,19 @@ async function hydrateSessionToState(storedId: string): Promise<string> {
     // the set `reconcileInflightTurns` walks on every WS re-open — without it a
     // tile's live turn was invisible to reconnect reconciliation.
     adoptResumedTurn(runtimeId, resumed)
+    // The authority has landed; the picture of it is spent.
+    clearTranscriptPaint(key)
 
     return runtimeId
   } catch (err) {
-    // Nothing bound. Leave no orphan placeholder behind: it holds the stored-id
-    // index entry, which would make the next `resumeTile` short-circuit onto a
-    // slice with no runtime id at all.
+    // Nothing bound. CLEAR THE PAINT FIRST: a tile showing a healthy transcript
+    // that can neither stream nor submit is worse than an empty one, and typing
+    // into it would open a new chat.
+    clearTranscriptPaint(key)
+
+    // Leave no orphan placeholder behind: it holds the stored-id index entry,
+    // which would make the next `resumeTile` short-circuit onto a slice with no
+    // runtime id at all.
     dropSessionState(key)
 
     throw err

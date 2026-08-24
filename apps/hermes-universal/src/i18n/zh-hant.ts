@@ -402,6 +402,8 @@ export const zhHant = defineLocale({
       backdropDesc: '對話後方那張淡淡的雕像圖。',
       introSplashTitle: '開場畫面',
       introSplashDesc: '新建的空白對話中顯示的字標與標語。',
+      restorePaintTitle: '重新連線時顯示上一次對話',
+      restorePaintDesc: '在閘道就緒之前，於連線畫面後方繪製最近一次聊天的最後畫面。',
       reactionsTitle: '訊息回應',
       reactionsDesc: 'iMessage 風格的表情回應 — 你可以對訊息做出回應，Hermes 也能回應你的訊息。',
       uiScaleTitle: '介面縮放',

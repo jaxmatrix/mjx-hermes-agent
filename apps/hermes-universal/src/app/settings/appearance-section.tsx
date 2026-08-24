@@ -28,6 +28,7 @@ import { $embedAllowed, $embedMode, clearEmbedAllowed, type EmbedMode, setEmbedM
 import { $introSplash, setIntroSplash } from '@/store/intro-splash'
 import { installFromMarketplace, type MarketplaceSearchItem, searchMarketplace } from '@/store/marketplace'
 import { $reactionsEnabled, setReactionsEnabled } from '@/store/reactions-enabled'
+import { $restorePaintEnabled, setRestorePaintEnabled } from '@/store/restore-paint'
 import { $toolViewMode, setToolViewMode, type ToolViewMode } from '@/store/tool-view'
 import { $translucency, setTranslucency } from '@/store/translucency'
 import { $zoomPercent, setZoomPercent } from '@/store/zoom'
@@ -254,6 +255,7 @@ export function AppearanceSection() {
   const toolViewMode = useStore($toolViewMode)
   const backdrop = useStore($backdrop)
   const introSplash = useStore($introSplash)
+  const restorePaint = useStore($restorePaintEnabled)
   const reactionsEnabled = useStore($reactionsEnabled)
   const zoomPercent = useStore($zoomPercent)
   const embedMode = useStore($embedMode)
@@ -516,6 +518,29 @@ export function AppearanceSection() {
             description={a.introSplashDesc}
             id={settingRowElementId('appearance.intro-splash')}
             title={a.introSplashTitle}
+          />
+
+          {/* Last conversation while reconnecting (MJXHRM-480). Sits beside the
+              intro splash because it is the same kind of pref: what the app
+              paints when there is no conversation on screen yet. Off restores
+              today's behaviour exactly — a connecting card and nothing else. */}
+          <ListRow
+            action={
+              <SegmentedControl
+                onChange={id => {
+                  triggerHaptic('selection')
+                  setRestorePaintEnabled(id === 'on')
+                }}
+                options={[
+                  { id: 'off', label: t.common.off },
+                  { id: 'on', label: t.common.on }
+                ]}
+                value={restorePaint ? 'on' : 'off'}
+              />
+            }
+            description={a.restorePaintDesc}
+            id={settingRowElementId('appearance.restore-paint')}
+            title={a.restorePaintTitle}
           />
 
           {/* Message reactions — opt-in. Off by default: it adds an affordance

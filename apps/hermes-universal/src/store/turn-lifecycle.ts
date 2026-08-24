@@ -34,10 +34,12 @@ import type { GatewayEvent } from '@/gateway'
 import type { ChatMessage } from '@/lib/chat-messages'
 import { isLiveTailRow, reconcileLiveTail } from '@/lib/live-tail'
 import { appendLiveSessionProjection } from '@/lib/session-history'
+import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { applyResumedApproval } from '@/store/approvals'
 import { applyResumedClarify } from '@/store/clarify'
-import { $gatewayState, requestGateway } from '@/store/gateway'
+import { $gatewayState } from '@/store/gateway'
 import { applyResumedMcpSetup } from '@/store/mcp-setup'
+import { requestForSession } from '@/store/session-request-router'
 import {
   $sessionStates,
   addSessionKeyHooks,
@@ -773,19 +775,21 @@ export async function reconcileSessionTurn(key: string): Promise<TurnReconciliat
   reconciling.add(key)
 
   try {
-    // No `source`, deliberately (MJXHRM-472). The gateway uses this field as the
-    // session's PLATFORM (`_resolve_agent_platform` → `_load_enabled_toolsets`),
-    // and the only platform that unlocks the `desktop_ui` toolset — read_terminal,
-    // close_terminal, focus_pane, apply_layout, drive_preview, tour, read_preview,
-    // read_window_below, react_to_message — is the literal string "desktop"
-    // (`_gui_surface_toolsets`). The string "universal" appears nowhere in the
-    // backend, so passing it here rebuilt every cold-resumed session with all nine
-    // stripped and the agent's platform hint mis-tagged, while the SAME chat
-    // created through `session.create` (which sends no source) had them all.
-    // Omitting it lets the backend resolve the platform the same way for both.
-    const resumed = await requestGateway<SessionResumeResponse>('session.resume', {
+    // ROUTED, and that is a correctness fix, not a latency one: this was the ONE
+    // resume site that sent no `profile` at all, so a reconnect reconciliation
+    // for a session owned by a NON-ACTIVE profile resumed against the ambient
+    // backend's database. `requestForSession` resolves the owner the same way
+    // every other site does, and re-reads the route inside the dispatch.
+    //
+    // `source` (MJXHRM-472 / MJXHRM-480): the gateway reads this field as the
+    // session's PLATFORM (`_resolve_session_source` → `_resolve_agent_platform`
+    // → `_gui_surface_toolsets`), and "desktop" is the literal that unlocks the
+    // `desktop_ui` toolset this app answers every bridge of. See
+    // `lib/session-source.ts` for why the old omission was only half a fix.
+    const resumed = await requestForSession<SessionResumeResponse>(storedId, 'session.resume', {
       session_id: storedId,
-      omit_messages: true
+      omit_messages: true,
+      ...SESSION_SOURCE_PARAMS
     })
 
     // A gateway that RESTARTED (a supervised local backend, a redeployed remote)

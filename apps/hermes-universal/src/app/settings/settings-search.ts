@@ -124,6 +124,12 @@ export const CLIENT_PREF_SETTINGS: ReadonlyArray<{
     view: 'appearance'
   },
   {
+    id: 'appearance.restore-paint',
+    keywords: ['restore', 'reconnect', 'last conversation', 'cold start', 'launch', 'transcript'],
+    label: t => t.settings.appearance.restorePaintTitle,
+    view: 'appearance'
+  },
+  {
     id: 'appearance.reactions',
     keywords: ['reactions', 'emoji', 'messages'],
     label: t => t.settings.appearance.reactionsTitle,

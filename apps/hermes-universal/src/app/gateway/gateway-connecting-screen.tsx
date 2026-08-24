@@ -1,15 +1,23 @@
 import { useEffect, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 
 import { GatewayConfigurator } from '@/app/gateway/gateway-configurator'
 import { sshStepLabel } from '@/app/gateway/ssh-copy'
+import { landingSessionId, resolveSessionLanding } from '@/app/session-landing'
+import { CachedTranscriptPreview } from '@/components/chat/cached-transcript-preview'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
+import type { ChatMessage } from '@/lib/chat-messages'
 import { Loader2 } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $connectionError } from '@/store/connection'
 import { cancelRestore, loadGatewayTarget } from '@/store/gateway-restore'
+import { $restorePaintEnabled } from '@/store/restore-paint'
+import { lastOpenedSessionId } from '@/store/session'
 import { $sshStep } from '@/store/ssh-backend'
+import { $transcriptPaint, BOOT_PAINT_KEY, clearTranscriptPaint, paintCachedTail } from '@/store/transcript-paint'
+import { ownsPersistedAppState } from '@/store/windows'
 
 // Full-screen "reconnecting to the last gateway" screen (D8). Shown by
 // MobileController while the boot-time auto-connect dials, and while an in-session
@@ -59,10 +67,51 @@ function hostOf(url?: string): null | string {
   }
 }
 
+/**
+ * The cached tail of the conversation this launch will land on, read ONCE, in
+ * the first render (MJXHRM-480).
+ *
+ * Synchronous by construction — one `getItem` and one `JSON.parse` — because an
+ * effect would paint one blank frame first, and the blank frame is the thing
+ * this feature exists to remove. `resolveSessionLanding` is the ONE answer to
+ * "which conversation does a standing start land on" (MJXHRM-438); asking it
+ * here rather than re-deriving is what keeps this surface from disagreeing with
+ * the shell that is about to open the same chat.
+ *
+ * `ownsPersistedAppState()` gates it: "which conversation you were last in" is
+ * single-writer app state, so a detached tile window or an Android
+ * `ScreenActivity` must not paint a boot transcript of its own. (The COLD-OPEN
+ * paint is not gated that way — a session's tail is not that kind of value.)
+ */
+function useBootPaint(): ChatMessage[] | null {
+  const { pathname } = useLocation()
+  const enabled = useStore($restorePaintEnabled)
+
+  // The initializer runs once. `paintCachedTail` refuses a second paint for the
+  // same key, so a StrictMode double-invoke is a no-op rather than a double read.
+  const [messages] = useState<ChatMessage[] | null>(() => {
+    if (!enabled || !ownsPersistedAppState()) {
+      return null
+    }
+
+    const landing = landingSessionId(resolveSessionLanding(pathname, lastOpenedSessionId()))
+
+    return paintCachedTail(BOOT_PAINT_KEY, landing) ? ($transcriptPaint.get()[BOOT_PAINT_KEY]?.messages ?? null) : null
+  })
+
+  // The root gate swaps this whole screen out when the connection is ready; the
+  // paint must not outlive it, or `awaitSessionPainted` would answer for a
+  // surface nobody is looking at.
+  useEffect(() => () => clearTranscriptPaint(BOOT_PAINT_KEY), [])
+
+  return enabled ? messages : null
+}
+
 export function GatewayConnectingScreen() {
   const { t } = useI18n()
   const g = t.settings.gateway
   const error = useStore($connectionError)
+  const bootPaint = useBootPaint()
   // An SSH connect spawns a process on the remote and waits for it to bind, which
   // can take 45-90s. Without the step the screen is a motionless spinner for long
   // enough to read as a hang.
@@ -81,8 +130,9 @@ export function GatewayConnectingScreen() {
   }, [error])
 
   return (
-    <main className="connect">
-      <div className={cn('connect-card items-center text-center', configuratorOpen && 'max-w-lg')}>
+    <main className="connect relative">
+      {bootPaint ? <CachedTranscriptPreview messages={bootPaint} /> : null}
+      <div className={cn('connect-card relative items-center text-center', configuratorOpen && 'max-w-lg')}>
         <div className="brand">Hermes</div>
         <h1 className="connect-title">{g.connectingTitle}</h1>
 

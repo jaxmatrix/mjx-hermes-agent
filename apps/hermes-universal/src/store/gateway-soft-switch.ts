@@ -1,5 +1,6 @@
 import { translateNow } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
+import { clearTranscriptTails } from '@/lib/transcript-tail-cache'
 import { clearArtifactRegistry } from '@/store/artifacts'
 import { resetChat } from '@/store/chat'
 import { resetRepoStatusForBackendSwitch } from '@/store/coding-status'
@@ -25,6 +26,7 @@ import {
   $sessionsTotal,
   $unreadFinishedSessionIds,
   clearPinnedSessionCache,
+  forgetLastSessionMarkers,
   refreshMessagingSessions,
   refreshSessions,
   resetSessionsPaging,
@@ -33,6 +35,7 @@ import {
 import { resetSessionPinMirror } from '@/store/session-pin-sync'
 import { clearAllSessionStates, resetTileRuntimeBindings } from '@/store/session-states'
 import { resetArchivedSessionsForBackendSwitch } from '@/store/sidebar-archive'
+import { clearTranscriptPaint } from '@/store/transcript-paint'
 import { resetWorkspaceCwd } from '@/store/workspace-events'
 
 // The soft gateway switch: re-home the running app onto another gateway in place.
@@ -92,6 +95,16 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // heard of, and re-opens as "artifact unavailable" — or worse, silently
   // collides with a same-shaped id over there.
   clearArtifactRegistry()
+
+  // Another backend can recycle stored ids, so a cached tail from the previous
+  // one would paint ANOTHER MACHINE'S conversation under a same-named id — worse
+  // than a loader. The remembered-chat marker goes with it: setting
+  // `$activeStoredSessionId` to null below does not clear it (the subscriber
+  // ignores null), so without this the next boot opens backend A's id on
+  // backend B.
+  clearTranscriptTails()
+  clearTranscriptPaint()
+  forgetLastSessionMarkers()
 
   // BEFORE `resetChat`, which reads it. The project tree is the OLD gateway's
   // filesystem — `projects.tree` is a gateway RPC — and the sidebar only

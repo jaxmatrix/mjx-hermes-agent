@@ -423,6 +423,8 @@ describe('a slash command typed in a tile', () => {
     $busy: computed($sessionStates, states => Boolean(states[key]?.busy)),
     $awaitingResponse: atom(false),
     $messagesEmpty: atom(false),
+    $paintedMessages: computed($sessionStates, states => states[key]?.messages ?? []),
+    $paintedMessagesEmpty: atom(false),
     $lastVisibleIsUser: atom(false),
     $statusLine: atom(''),
     $cwd: atom(''),
