@@ -623,7 +623,31 @@ export const en: Translations = {
       terminalFontPreview: 'Glyph preview',
       terminalFontReset: 'Use default',
       translucencyTitle: 'Window Translucency',
-      translucencyDesc: 'See your desktop through the whole window. macOS and Windows only.',
+      translucencyDesc: 'Let the desktop behind Hermes show through. Tuned separately for light and dark.',
+      glass: {
+        modeOff: 'Off',
+        modeClear: 'Clear',
+        modeGlass: 'Glass',
+        tintTitle: 'Tint',
+        tintDesc: 'How much of the theme colour comes off the window. At 100% only the frost is left.',
+        frostTitle: 'Frost',
+        frostDesc: 'How heavy the window material reads, from sheer to opaque.',
+        frost: {
+          underWindow: 'Sheer',
+          popover: 'Soft',
+          titlebar: 'Frosted',
+          header: 'Heavy'
+        },
+        areaTitle: 'Area',
+        areaWindow: 'Whole window',
+        areaSidebar: 'Sidebar only',
+        fadeTitle: 'Fade Window',
+        fadeDesc: 'Fades the window itself on top of the frost — text included. Leave at 0 to keep full contrast.',
+        clearDesc: 'Fades the whole window, text included.',
+        unsupportedLinux: 'Glass needs a window material this desktop does not provide.',
+        unsupportedWindows: (build: string) =>
+          `Glass needs Windows 11 22H2 (build 22621); this system reports ${build}.`
+      },
       embedsTitle: 'Inline Embeds',
       embedsDesc:
         'Rich previews load from third-party sites (YouTube, X, …). Ask shows a placeholder until you allow each one; Always loads them automatically; Off keeps plain links.',

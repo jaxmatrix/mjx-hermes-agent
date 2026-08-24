@@ -590,7 +590,30 @@ export const zh: Translations = {
       terminalFontPreview: '字形预览',
       terminalFontReset: '使用默认字体',
       translucencyTitle: '窗口透明',
-      translucencyDesc: '让整个窗口透出桌面。仅支持 macOS 和 Windows。',
+      translucencyDesc: '让 Hermes 背后的桌面透出来。浅色和深色分别调节。',
+      glass: {
+        modeOff: '关闭',
+        modeClear: '透明',
+        modeGlass: '毛玻璃',
+        tintTitle: '色调',
+        tintDesc: '从窗口上去除多少主题颜色。100% 时只剩下毛玻璃本身。',
+        frostTitle: '磨砂强度',
+        frostDesc: '窗口材质的厚重程度，从通透到不透明。',
+        frost: {
+          underWindow: '通透',
+          popover: '柔和',
+          titlebar: '磨砂',
+          header: '厚重'
+        },
+        areaTitle: '范围',
+        areaWindow: '整个窗口',
+        areaSidebar: '仅侧边栏',
+        fadeTitle: '淡化窗口',
+        fadeDesc: '在毛玻璃之上再淡化窗口本身，文字也会一起变淡。保持 0 可获得完整对比度。',
+        clearDesc: '淡化整个窗口，文字也包括在内。',
+        unsupportedLinux: '毛玻璃需要此桌面环境未提供的窗口材质。',
+        unsupportedWindows: (build: string) => `毛玻璃需要 Windows 11 22H2（版本 22621）；当前系统报告为 ${build}。`
+      },
       embedsTitle: '内嵌预览',
       embedsDesc:
         '富预览会从第三方网站（YouTube、X 等）加载。询问会在你允许前显示占位符；总是会自动加载；关闭则保留纯链接。',

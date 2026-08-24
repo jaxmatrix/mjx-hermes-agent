@@ -213,6 +213,9 @@ function SidebarSessionRowImpl({
           dragging && 'z-10 cursor-grabbing bg-(--ui-sidebar-surface-background)',
           className
         )}
+        // A row lifted out of the list floats OVER its neighbours, so under
+        // glass it has to stay opaque or it reads as two rows at once.
+        data-glass-opaque={dragging ? '' : undefined}
         data-working={isWorking ? 'true' : undefined}
         ref={ref}
         style={style}

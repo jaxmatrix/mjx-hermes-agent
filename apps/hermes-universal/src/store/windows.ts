@@ -120,6 +120,20 @@ export function ownsPersistedAppState(): boolean {
   return !isSecondaryWindow() && !isActivityWindow()
 }
 
+/**
+ * Whether this window HOSTS the app's field — the surface window glass is for.
+ *
+ * True for main, tiles, session and instance pop-outs; false for satellites and
+ * activity screens. The HUD is an output-sized wlr-layer-shell surface with no
+ * material to give it and the wake indicator is a light that must never dim, so
+ * neither takes a native lever; a phone's activity screens are opaque WebViews
+ * with nothing behind them. Both still receive the setting and carry the tint
+ * token, so a later HUD band can paint the app's field mix with no store change.
+ */
+export function isGlassBackedWindow(): boolean {
+  return !isSatelliteWindow() && !isActivityWindow()
+}
+
 // --------------------------------------------------------------------------
 // Activity screens (MJX-141 Android / MJX-176 iOS). Windowable surfaces (Settings,
 // Command Center, Profiles, Cron) open in ONE native screen activity / scene — a separate

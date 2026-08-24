@@ -326,6 +326,13 @@ webkit2gtk = { version = "2.0", features = ["v2_8"] }
 # CGWindowListCopyWindowInfo needs NO grant for owner/bounds/z-order, and titles
 # need Screen Recording. This build PREFLIGHTS that grant and never requests it.
 [target.'cfg(target_os = "macos")'.dependencies]
+# Window glass (src/appearance/mac.rs). Called DIRECTLY rather than through
+# Tauri's `Window::set_effects`, which drops this crate's `Result` and reports
+# success on every platform including Linux — the capability report exists so
+# nothing has to infer a material from a call that did not throw. Already in the
+# tree as tauri's own dependency at this exact version, so naming it adds no
+# crate and leaves Cargo.lock untouched.
+window-vibrancy = "0.6"
 # The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
 # plugin that used to wrap them — see the keyring-core note under [dependencies].
 # `protected` selects the Protected Data keychain. Required on iOS (the crate
@@ -340,6 +347,9 @@ core-foundation-sys = "0.8"
 # Windows stack; these features are declaration-only bindings, so enabling them
 # adds no crate and no runtime cost.
 [target.'cfg(target_os = "windows")'.dependencies]
+# DWM system backdrops for window glass (src/appearance/win.rs) — same crate,
+# same reason, same "already tauri's dependency" note as the macOS block above.
+window-vibrancy = "0.6"
 # The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
 # plugin that used to wrap them — see the keyring-core note under [dependencies].
 windows-native-keyring-store = "1.1"

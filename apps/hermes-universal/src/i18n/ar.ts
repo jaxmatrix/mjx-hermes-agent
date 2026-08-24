@@ -490,7 +490,31 @@ export const ar = defineLocale({
       toolViewTitle: 'عرض الأدوات',
       toolViewDesc: 'تحكم في كيفية عرض نشاط الأدوات داخل المحادثة.',
       translucencyTitle: 'شفافية النافذة',
-      translucencyDesc: 'إظهار سطح المكتب من خلال النافذة بالكامل. متاح على macOS وWindows فقط.',
+      translucencyDesc: 'اسمح لسطح المكتب خلف Hermes بالظهور. يُضبط بشكل منفصل للوضع الفاتح والداكن.',
+      glass: {
+        modeOff: 'إيقاف',
+        modeClear: 'شفاف',
+        modeGlass: 'زجاجي',
+        tintTitle: 'درجة اللون',
+        tintDesc: 'مقدار لون السمة الذي يُزال من النافذة. عند 100% لا يتبقى سوى التأثير الزجاجي.',
+        frostTitle: 'كثافة الزجاج',
+        frostDesc: 'مدى كثافة مادة النافذة، من خفيفة إلى معتمة.',
+        frost: {
+          underWindow: 'خفيف',
+          popover: 'ناعم',
+          titlebar: 'ضبابي',
+          header: 'كثيف'
+        },
+        areaTitle: 'النطاق',
+        areaWindow: 'النافذة بالكامل',
+        areaSidebar: 'الشريط الجانبي فقط',
+        fadeTitle: 'تعتيم النافذة',
+        fadeDesc: 'يخفت النافذة نفسها فوق التأثير الزجاجي، بما في ذلك النص. اتركه عند 0 للحفاظ على وضوح كامل.',
+        clearDesc: 'يخفت النافذة بالكامل، بما في ذلك النص.',
+        unsupportedLinux: 'يحتاج الوضع الزجاجي إلى مادة نافذة لا يوفرها سطح المكتب هذا.',
+        unsupportedWindows: (build: string) =>
+          `يحتاج الوضع الزجاجي إلى Windows 11 22H2 (الإصدار 22621)؛ هذا النظام يُبلغ عن ${build}.`
+      },
       backdropTitle: 'خلفية النافذة',
       backdropDesc: 'اختيار مقدار مزج خلفية سطح المكتب مع سطح Hermes.',
       introSplashTitle: 'شاشة البداية',

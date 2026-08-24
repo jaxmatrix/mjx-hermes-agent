@@ -484,7 +484,30 @@ export const zhHant = defineLocale({
       terminalFontPreview: '字形預覽',
       terminalFontReset: '使用預設字型',
       translucencyTitle: '視窗透明',
-      translucencyDesc: '讓整個視窗透出桌面。僅支援 macOS 與 Windows。',
+      translucencyDesc: '讓 Hermes 背後的桌面透出來。淺色與深色分別調整。',
+      glass: {
+        modeOff: '關閉',
+        modeClear: '透明',
+        modeGlass: '毛玻璃',
+        tintTitle: '色調',
+        tintDesc: '從視窗上移除多少主題顏色。100% 時只剩下毛玻璃本身。',
+        frostTitle: '霧面強度',
+        frostDesc: '視窗材質的厚重程度，從通透到不透明。',
+        frost: {
+          underWindow: '通透',
+          popover: '柔和',
+          titlebar: '霧面',
+          header: '厚重'
+        },
+        areaTitle: '範圍',
+        areaWindow: '整個視窗',
+        areaSidebar: '僅側邊欄',
+        fadeTitle: '淡化視窗',
+        fadeDesc: '在毛玻璃之上再淡化視窗本身，文字也會一起變淡。保持 0 可獲得完整對比。',
+        clearDesc: '淡化整個視窗，文字也包含在內。',
+        unsupportedLinux: '毛玻璃需要此桌面環境未提供的視窗材質。',
+        unsupportedWindows: (build: string) => `毛玻璃需要 Windows 11 22H2（版本 22621）；目前系統回報為 ${build}。`
+      },
       embedsTitle: '內嵌預覽',
       embedsDesc:
         '豐富預覽會從第三方網站（YouTube、X 等）載入。詢問會在你允許前顯示佔位符；一律會自動載入；關閉則保留純連結。',

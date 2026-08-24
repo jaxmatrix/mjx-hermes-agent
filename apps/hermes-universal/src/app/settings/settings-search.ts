@@ -69,6 +69,14 @@ export const credentialRowElementId = (key: string): string => `credential-row-$
 export const CLIENT_PREF_SETTINGS: ReadonlyArray<{
   /** Hidden on mobile — the row itself is `IS_DESKTOP`-gated. */
   desktopOnly?: boolean
+  /**
+   * Hidden wherever window glass is unsupported. Not the same question as
+   * `desktopOnly`: Linux is a desktop and has no compositor material, and an
+   * older Windows 11 is a desktop below the backdrop build floor. Answered by
+   * `appearance_capabilities`, so ⌘K can never land on a row the OS refuses to
+   * render (a deep link would poll for a DOM id that is not coming).
+   */
+  glassOnly?: boolean
   id: string
   keywords: string[]
   label: (t: Translations) => string
@@ -95,8 +103,39 @@ export const CLIENT_PREF_SETTINGS: ReadonlyArray<{
   {
     desktopOnly: true,
     id: 'appearance.translucency',
-    keywords: ['blur', 'transparent', 'vibrancy', 'window'],
+    keywords: ['blur', 'transparent', 'vibrancy', 'window', 'glass', 'clear', 'opacity'],
     label: t => t.settings.appearance.translucencyTitle,
+    view: 'appearance'
+  },
+  {
+    desktopOnly: true,
+    id: 'appearance.tint',
+    keywords: ['tint', 'translucency', 'glass', 'transparent', 'window'],
+    label: t => t.settings.appearance.glass.tintTitle,
+    view: 'appearance'
+  },
+  {
+    desktopOnly: true,
+    glassOnly: true,
+    id: 'appearance.frost',
+    keywords: ['frost', 'material', 'vibrancy', 'acrylic', 'mica', 'blur', 'glass'],
+    label: t => t.settings.appearance.glass.frostTitle,
+    view: 'appearance'
+  },
+  {
+    desktopOnly: true,
+    glassOnly: true,
+    id: 'appearance.area',
+    keywords: ['area', 'scope', 'sidebar', 'glass', 'window'],
+    label: t => t.settings.appearance.glass.areaTitle,
+    view: 'appearance'
+  },
+  {
+    desktopOnly: true,
+    glassOnly: true,
+    id: 'appearance.fade',
+    keywords: ['fade', 'opacity', 'dim', 'glass', 'window'],
+    label: t => t.settings.appearance.glass.fadeTitle,
     view: 'appearance'
   },
   {
@@ -321,14 +360,23 @@ export function buildCredentialSearchEntries(
 
 /**
  * One entry per device-local row from `CLIENT_PREF_SETTINGS`. Desktop-only rows
- * are dropped on mobile so a result can never land on a row that never renders
- * (the deep-link would poll for a DOM id that is not coming).
+ * are dropped on mobile, and glass-only rows wherever the platform reports no
+ * window material, so a result can never land on a row that never renders (the
+ * deep-link would poll for a DOM id that is not coming).
+ *
+ * `glassSupported` comes from `appearance_capabilities`, not from the platform
+ * constants: on Linux Clear works and Glass does not, and on Windows the answer
+ * depends on the build number. It defaults to false so a caller that has not
+ * asked yet shows the rows it is sure of rather than ones it is guessing at.
  */
 export function buildClientPrefSearchEntries(
   t: Translations,
-  sectionLabels: Record<string, string>
+  sectionLabels: Record<string, string>,
+  glassSupported = false
 ): SettingsSearchEntry[] {
-  return CLIENT_PREF_SETTINGS.filter(pref => IS_DESKTOP || !pref.desktopOnly).map(pref => ({
+  return CLIENT_PREF_SETTINGS.filter(
+    pref => (IS_DESKTOP || !pref.desktopOnly) && (glassSupported || !pref.glassOnly)
+  ).map(pref => ({
     context: sectionLabels[pref.view] ?? pref.view,
     icon: Settings2,
     id: `setting:${pref.id}`,

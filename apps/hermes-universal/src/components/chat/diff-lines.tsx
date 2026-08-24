@@ -668,8 +668,13 @@ export function FileDiffPanel({
       >
         {showLineNumbers ? (
           <div className="grid min-w-max grid-cols-[auto_minmax(0,1fr)]">
-            {/* eslint-disable-next-line better-tailwindcss/no-restricted-classes -- this surface is itself pinned left-to-right — see the [dir='rtl'] block in styles.css */}
-            <div className="sticky left-0 z-1 select-none bg-(--ui-editor-surface-background) py-3 text-muted-foreground/55">
+            <div
+              // eslint-disable-next-line better-tailwindcss/no-restricted-classes -- this surface is itself pinned left-to-right — see the [dir='rtl'] block in styles.css
+              className="sticky left-0 z-1 select-none bg-(--ui-editor-surface-background) py-3 text-muted-foreground/55"
+              // The gutter scrolls over its own code, so it stays opaque under
+              // glass rather than letting the diff read through itself.
+              data-glass-opaque=""
+            >
               {beforeRows > 0 && <div aria-hidden style={{ height: beforeRows * PREVIEW_LINE_PX }} />}
               {visibleLineChunks.map(chunk => (
                 <div className="block" key={chunk.start}>

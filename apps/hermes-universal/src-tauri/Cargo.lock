@@ -2577,6 +2577,7 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "webkit2gtk",
+ "window-vibrancy",
  "windows-native-keyring-store",
  "windows-sys 0.61.2",
  "x11rb",

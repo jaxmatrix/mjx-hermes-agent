@@ -158,6 +158,12 @@ describe('buildClientPrefSearchEntries', () => {
       appearance: {
         backdropTitle: 'Chat Backdrop',
         embedsTitle: 'Inline Embeds',
+        glass: {
+          areaTitle: 'Area',
+          fadeTitle: 'Fade Window',
+          frostTitle: 'Frost',
+          tintTitle: 'Tint'
+        },
         introSplashTitle: 'Intro Splash',
         reactionsTitle: 'Message Reactions',
         resizeCalmTitle: 'Settle Before Showing',
@@ -235,6 +241,23 @@ describe('buildClientPrefSearchEntries', () => {
     expect(byId.get('setting:advanced.background-mode')?.label).toBe('Keep running in the background')
     expect(byId.get('setting:advanced.quick-entry')?.label).toBe('Quick Entry')
     expect(byId.get('setting:appearance.translucency')?.label).toBe('Window Translucency')
+
+    // The glass-only rows are gated on the capability report, NOT on the
+    // platform: Linux is a desktop with no window material, and an older
+    // Windows 11 is a desktop below the backdrop build floor. A ⌘K hit that
+    // landed on one of those would poll forever for a DOM id that is not coming.
+    expect(byId.get('setting:appearance.tint')?.label).toBe('Tint')
+    expect(byId.has('setting:appearance.frost')).toBe(false)
+    expect(byId.has('setting:appearance.area')).toBe(false)
+    expect(byId.has('setting:appearance.fade')).toBe(false)
+
+    const withGlass = new Map(
+      desktop.buildClientPrefSearchEntries(t, { advanced: 'Advanced' }, true).map(entry => [entry.id, entry])
+    )
+
+    expect(withGlass.get('setting:appearance.frost')?.label).toBe('Frost')
+    expect(withGlass.get('setting:appearance.area')?.label).toBe('Area')
+    expect(withGlass.get('setting:appearance.fade')?.label).toBe('Fade Window')
 
     vi.doUnmock('@/lib/platform')
     vi.resetModules()
