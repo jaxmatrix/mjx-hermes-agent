@@ -86,7 +86,11 @@ describe('the in-tree accent plugin', () => {
     // The trigger always shows the painted accent as a hex — never a word — so
     // the label cannot change width mid-drag. Reading one back proves the
     // component resolved `useTheme()` through the SDK's live module instance.
-    expect(screen.getByTitle('Accent color (dev)').textContent).toMatch(/#[0-9a-f]{6}/i)
+    //
+    // Asserted on the RENDERED HEX rather than a `title=`: universal sweeps
+    // `src/` for native tooltips (`components/ui/no-native-title.test.ts`), so
+    // the ported trigger carries a `<Tip>` and has no title attribute to find.
+    expect(screen.getByRole('button').textContent).toMatch(/#[0-9a-f]{6}/i)
   })
 
   it('drives the SAME atom the app paints from', () => {
