@@ -528,6 +528,8 @@ export const en: Translations = {
       backdropDesc: 'The faint statue image behind the conversation.',
       introSplashTitle: 'Intro Splash',
       introSplashDesc: 'The wordmark and tagline shown on a new, empty chat.',
+      restorePaintTitle: 'Show Your Last Conversation While Reconnecting',
+      restorePaintDesc: 'Paint the last screen of your most recent chat behind the connecting screen, before the gateway is up.',
       reactionsTitle: 'Message Reactions',
       reactionsDesc: 'iMessage-style emoji tapbacks — react to messages, and Hermes can react to yours.',
       uiScaleTitle: 'UI Scale',

@@ -508,6 +508,8 @@ export const zh: Translations = {
       backdropDesc: '对话后方那张淡淡的雕像图。',
       introSplashTitle: '开场画面',
       introSplashDesc: '新建的空对话中显示的字标和标语。',
+      restorePaintTitle: '重新连接时显示上一次对话',
+      restorePaintDesc: '在网关就绪之前，于连接界面后方绘制最近一次聊天的最后画面。',
       reactionsTitle: '消息回应',
       reactionsDesc: 'iMessage 风格的表情回应 — 你可以给消息添加回应，Hermes 也能回应你的消息。',
       uiScaleTitle: '界面缩放',

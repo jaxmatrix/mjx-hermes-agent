@@ -437,6 +437,8 @@ export interface Translations {
       backdropDesc: string
       introSplashTitle: string
       introSplashDesc: string
+      restorePaintTitle: string
+      restorePaintDesc: string
       reactionsTitle: string
       reactionsDesc: string
       uiScaleTitle: string

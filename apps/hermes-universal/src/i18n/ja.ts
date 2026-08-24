@@ -417,6 +417,8 @@ export const ja = defineLocale({
       backdropDesc: '会話の背後にうっすら見える彫像の画像。',
       introSplashTitle: 'イントロ画面',
       introSplashDesc: '新しい空のチャットに表示されるワードマークとタグライン。',
+      restorePaintTitle: '再接続中に直前の会話を表示',
+      restorePaintDesc: 'ゲートウェイの接続が完了する前に、直近のチャットの最後の画面を接続画面の背後に表示します。',
       reactionsTitle: 'メッセージリアクション',
       reactionsDesc:
         'iMessage 風の絵文字リアクション — メッセージにリアクションでき、Hermes もあなたのメッセージにリアクションできます。',
