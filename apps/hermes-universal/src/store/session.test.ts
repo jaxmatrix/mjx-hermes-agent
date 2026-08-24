@@ -37,6 +37,7 @@ import { __resetTranscriptTailCache, readTranscriptTail, saveTranscriptTail } fr
 import { $busy, $currentCwd, $messages, $sessionId } from '@/store/chat'
 import { confirm } from '@/store/confirm'
 import { requestGateway } from '@/store/gateway'
+import * as notifications from '@/store/notifications'
 import { $showAllProfiles } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
 import { $sessionStates, hydratingKey, updateSession } from '@/store/session-state-types'
@@ -1675,22 +1676,38 @@ describe('openSession — the cached-tail paint', () => {
   // looks healthy and cannot receive a message — and typing into it would open a
   // brand-new chat. So the catch clears FIRST, before the fallback and before
   // the toast.
-  it('clears the paint before the failure path, leaving no ghost transcript', async () => {
+  it('clears the paint BEFORE the error is surfaced, leaving no ghost transcript', async () => {
     seedTail('stored-9')
     vi.mocked(getSessionMessages).mockResolvedValue(null as never)
     vi.mocked(requestGateway).mockRejectedValue(new Error('session not found'))
 
+    // The ORDERING is the assertion: a toast raised while a healthy-looking
+    // transcript is still on screen tells the user the chat is fine and the
+    // error is incidental — the opposite of the truth.
+    let paintedWhenReported: string[] = []
+
+    const reported = vi.spyOn(notifications, 'notifyError').mockImplementation(() => {
+      paintedWhenReported = Object.keys($transcriptPaint.get())
+    })
+
     await openSession('stored-9')
 
+    expect(reported).toHaveBeenCalled()
+    expect(paintedWhenReported).toEqual([])
     expect($transcriptPaint.get()).toEqual({})
     expect($messages.get()).toEqual([])
+    reported.mockRestore()
   })
 
   // Warm promote is synchronous and lossless (MJX-132): the slice is already
   // whole, so a paint there would be a flicker on top of correct rows.
+  // Deliberately an EMPTY warm slice: a session opened, found empty and parked
+  // is still authoritative about being empty, and `paintCachedTail`'s own
+  // has-messages guard cannot save this path. Promotion is synchronous and
+  // lossless (MJX-132) — a paint here is a flicker on top of a correct answer.
   it('paints nothing on a warm promote', async () => {
     seedTail('stored-9')
-    seedSession('runtime-1', { messages: [cached('live-1', 'live')], storedSessionId: 'stored-9' })
+    seedSession('runtime-1', { messages: [], storedSessionId: 'stored-9' })
 
     await openSession('stored-9')
 
@@ -1702,7 +1719,7 @@ describe('openSession — the cached-tail paint', () => {
   // richer than any cache.
   it('paints nothing on a warm reclaim', async () => {
     seedTail('stored-9')
-    seedSession('runtime-1', { messages: [cached('live-1', 'live')], storedSessionId: 'stored-9' })
+    seedSession('runtime-1', { messages: [], storedSessionId: 'stored-9' })
     vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1' })
 
     await openSession('stored-9', { forceResume: true })
