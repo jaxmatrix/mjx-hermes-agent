@@ -9,7 +9,7 @@ import { BOT_CHAT_TITLE, botHandle, groupSessionTitle, isOwnedSessionTitle } fro
 import { type CanonicalAction, maySweep, resolveCanonicalChat } from '../model/canonical'
 import { type BotMeta, classifyWrite } from '../model/meta'
 import { liveRooms, roomsFromRoster, rosterMetaSource } from '../model/rooms'
-import { handleIndex, mergeMultiSourceRoster, type RosterRow, sortRoster } from '../model/roster'
+import { handleIndex, mergeMultiSourceRoster, type RosterRow, type RosterRowInput, sortRoster } from '../model/roster'
 
 import { $botProtocolSupported, $rooms, $roster, $rosterError, $rosterLoading } from './atoms'
 import { type AgentRoute, createSession, findBotChat, listProfiles, setSessionHidden, writeBotMeta } from './rpc'
@@ -103,16 +103,47 @@ function pinnedChats(): Record<string, string> {
   return out
 }
 
-async function remoteRosters(): Promise<{ connectionId: string; label: string; rows: never[] }[]> {
+/**
+ * The agents reachable on OTHER connections.
+ *
+ * `host.agents()` is the cheap enumeration — one call for the whole registry,
+ * with a per-connection outcome, so a machine that is down carries its error
+ * rather than vanishing. That distinction is the point: a missing row and a
+ * broken row are different facts, and only one of them means "this agent does
+ * not exist".
+ *
+ * Each remote agent's own `ui_meta` is NOT fetched here. Reading it would be one
+ * `profiles.list` per connection on every roster refresh — a room's record is
+ * already replicated onto the LOCAL members, so the rooms rebuild without it,
+ * and a remote agent's look is a cosmetic the local blobatar covers.
+ */
+async function remoteRosters(): Promise<{ connectionId: string; label: string; rows: RosterRowInput[] }[]> {
   try {
-    const connections = await host.connections()
+    const [roster, connections] = await Promise.all([host.agents(), host.connections()])
+    const labelOf = new Map(connections.map(connection => [connection.id, connection.label]))
+    const failed = new Set(roster.sources.filter(source => !source.ok).map(source => source.connectionId))
 
-    return connections
-      .filter(connection => !connection.primary)
-      .map(connection => ({ connectionId: connection.id, label: connection.label, rows: [] as never[] }))
+    const byConnection = new Map<string, RosterRowInput[]>()
+
+    for (const agent of roster.agents) {
+      if (failed.has(agent.connectionId)) {
+        continue
+      }
+
+      const rows = byConnection.get(agent.connectionId) ?? []
+
+      rows.push({ display_name: agent.label, is_default: agent.isDefault, name: agent.profile })
+      byConnection.set(agent.connectionId, rows)
+    }
+
+    return [...byConnection.entries()].map(([connectionId, rows]) => ({
+      connectionId,
+      label: labelOf.get(connectionId) ?? connectionId,
+      rows
+    }))
   } catch {
     // A registry that will not answer is not a roster failure — the local half
-    // is still the roster.
+    // is still the roster, and a room with only local members still works.
     return []
   }
 }

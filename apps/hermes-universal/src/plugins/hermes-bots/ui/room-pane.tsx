@@ -26,11 +26,22 @@ import { useEffect, useMemo, useState } from 'react'
 import { MAIN_THREAD } from '../ids'
 import type { Room } from '../model/rooms'
 import { $roomLogs, $roomRuntime, $rooms, $roster, roomRuntime } from '../store/atoms'
-import { rebuildRoomLog, roomIsDriving, sendToRoom } from '../store/rooms'
+import { rebuildRoomLog, roomIsDriving, sendToRoom, setRoomAttachments } from '../store/rooms'
 
 import { BotAvatar, RoomAvatar } from './avatar'
 
 const roomPaneId = (roomId: string): string => `room:${roomId}`
+
+/** Bytes → data URL, which is what `file.attach` takes for a file that never
+ *  had a path this machine can name (an Android SAF pick, a browser dev run). */
+const readAsDataUrl = (file: File): Promise<{ dataUrl: string; name: string }> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onerror = () => reject(reader.error ?? new Error('could not read the file'))
+    reader.onload = () => resolve({ dataUrl: String(reader.result), name: file.name })
+    reader.readAsDataURL(file)
+  })
 
 /** Open (or reveal) a room's pane. Registered dynamically, so N rooms are N
  *  tabs rather than one pane that switches. */
@@ -124,6 +135,7 @@ export function RoomPane({ roomId }: { roomId: string }) {
   const logs = useValue($roomLogs)
   const runtimes = useValue($roomRuntime)
   const [draft, setDraft] = useState('')
+  const [files, setFiles] = useState<{ dataUrl: string; name: string }[]>([])
   const room = rooms.find(candidate => candidate.id === roomId)
   const runtime = runtimes[roomId] ?? roomRuntime(roomId)
   const thread = runtime.thread || MAIN_THREAD
@@ -158,6 +170,8 @@ export function RoomPane({ roomId }: { roomId: string }) {
     }
 
     setDraft('')
+    setRoomAttachments(room.id, files)
+    setFiles([])
     void sendToRoom(room, text, thread)
   }
 
@@ -197,7 +211,42 @@ export function RoomPane({ roomId }: { roomId: string }) {
           ))}
         </div>
 
+        {files.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {files.map(file => (
+              <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs" key={file.name}>
+                {file.name}
+                <button
+                  aria-label={`Remove ${file.name}`}
+                  className="ps-1"
+                  onClick={() => setFiles(files.filter(other => other.name !== file.name))}
+                  type="button"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-end gap-1">
+          {/* A plain file input, not a Tauri picker: it works in the desktop
+              webview, in the Android WebView (which routes it through SAF) and
+              in a browser dev run, with no capability to declare. */}
+          <label className="cursor-pointer rounded-md p-1.5 hover:bg-accent" title="Attach">
+            <Codicon name="attach" />
+            <input
+              className="hidden"
+              multiple
+              onChange={async event => {
+                const picked = [...(event.target.files ?? [])]
+
+                event.target.value = ''
+                setFiles([...files, ...(await Promise.all(picked.map(readAsDataUrl)))])
+              }}
+              type="file"
+            />
+          </label>
           <Textarea
             onChange={event => setDraft(event.target.value)}
             onKeyDown={event => {

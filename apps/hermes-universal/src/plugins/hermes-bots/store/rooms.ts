@@ -231,6 +231,19 @@ export async function rebuildRoomLog(room: Room): Promise<RoomLog> {
 
 const driveControllers = new Map<string, AbortController>()
 
+/**
+ * Files the user attached to the NEXT room send, per room.
+ *
+ * Held here rather than in the composer's React state because the DRIVE is what
+ * stages them, one member at a time, and the drive outlives the pane.
+ */
+const pendingRefs = new Map<string, { dataUrl: string; name: string }[]>()
+
+export const setRoomAttachments = (roomId: string, files: { dataUrl: string; name: string }[]): void =>
+  void (files.length ? pendingRefs.set(roomId, files) : pendingRefs.delete(roomId))
+
+export const roomAttachments = (roomId: string): { dataUrl: string; name: string }[] => pendingRefs.get(roomId) ?? []
+
 /** Is a drive in flight for this room? */
 export const roomIsDriving = (roomId: string): boolean => driveControllers.has(roomId)
 
@@ -253,6 +266,8 @@ export async function sendToRoom(room: Room, text: string, thread = MAIN_THREAD)
   const log = await rebuildRoomLog(room)
   const addressed = addressedMembers(room, text)
 
+  const files = roomAttachments(room.id)
+
   await Promise.allSettled(
     addressed.map(async ({ row, storedId }) => {
       const bound = await host.bindSession(storedId, { profile: row.profile })
@@ -261,12 +276,24 @@ export async function sendToRoom(room: Room, text: string, thread = MAIN_THREAD)
         return
       }
 
-      const runtimeId = host.state.sessions.get().find(session => session.storedSessionId === storedId)?.runtimeSessionId
+      // Staged per member, into the member's OWN session, before the prompt
+      // that references them goes out.
+      const staged = (
+        await Promise.all(
+          files.map(file =>
+            host.attachToSession(storedId, { dataUrl: file.dataUrl, name: file.name, profile: row.profile })
+          )
+        )
+      ).filter((ref): ref is { name: string; ref: string } => ref !== null)
 
-      await submitPrompt(runtimeId ?? storedId, prompt, routeOf(row))
+      const withRefs = staged.length ? `${prompt}\n\n${staged.map(ref => ref.ref).join(' ')}` : prompt
+
+      await submitPrompt(bound.sessionKey, withRefs, routeOf(row))
       setWatermark(room.id, thread, row.key, at)
     })
   )
+
+  setRoomAttachments(room.id, [])
 
   void log
 
@@ -352,7 +379,30 @@ export function driveDeps(room: Room, thread: string): RoomDriveDeps {
     },
     roomId: room.id,
     roomName: room.name,
-    stageRefs: async () => [],
+    // Mention-scoped: an attachment reaches only the members the message
+    // addressed. `host.attachToSession` targets the session it is GIVEN — the
+    // composer's own stagers resolve the active session, which would have put
+    // all six copies in the user's own chat.
+    stageRefs: async member => {
+      const row = rowOf(member)
+      const pending = pendingRefs.get(room.id)
+
+      if (!row || !pending?.length) {
+        return []
+      }
+
+      const staged = await Promise.all(
+        pending.map(file =>
+          host.attachToSession(member.storedSessionId, {
+            dataUrl: file.dataUrl,
+            name: file.name,
+            profile: row.profile
+          })
+        )
+      )
+
+      return staged.filter((ref): ref is { name: string; ref: string } => ref !== null)
+    },
     stranded: {
       clear: member => setStranded(room.id, keyOf(member), null),
       get: member => readStranded(room.id, keyOf(member)),
