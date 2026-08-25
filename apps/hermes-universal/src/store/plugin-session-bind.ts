@@ -45,7 +45,19 @@ export interface BindSessionOptions {
   timeoutMs?: number
 }
 
-export type BindSessionResult = { error: string; ok: false } | { ok: true; sessionKey: string }
+/** One message of the gateway's display projection (`_history_to_messages`).
+ *  `timestamp` is Unix SECONDS and display-only; `ChatMessage` drops it, which
+ *  is why a caller that needs to ORDER messages across sessions reads the raw
+ *  payload here rather than `host.sessionMessages`. */
+export interface BoundMessage {
+  role: string
+  text: string
+  timestamp?: number
+}
+
+export type BindSessionResult =
+  | { error: string; ok: false }
+  | { messages?: BoundMessage[]; ok: true; sessionKey: string }
 
 /**
  * Idempotent: a session already bound resolves its existing key without a
@@ -59,7 +71,9 @@ export async function bindSessionSlice(
 ): Promise<BindSessionResult> {
   const existing = runtimeKeyForStoredSession(storedSessionId)
 
-  if (existing && $sessionStates.get()[existing]?.runtimeSessionId) {
+  // Already bound — unless the caller wants the transcript, which the first
+  // bind may not have asked for.
+  if (existing && $sessionStates.get()[existing]?.runtimeSessionId && !options.withHistory) {
     return { ok: true, sessionKey: existing }
   }
 
@@ -75,7 +89,7 @@ export async function bindSessionSlice(
     ensureSessionSlice(placeholder, { busy: false, storedSessionId })
 
     try {
-      const res = await requestForSession<{ session_id?: string }>(
+      const res = await requestForSession<{ messages?: BoundMessage[]; session_id?: string }>(
         storedSessionId,
         'session.resume',
         {
@@ -97,7 +111,7 @@ export async function bindSessionSlice(
 
       rekeySession(placeholder, runtimeSessionId, { runtimeSessionId, storedSessionId })
 
-      return { ok: true, sessionKey: runtimeSessionId }
+      return { ...(options.withHistory ? { messages: res.messages ?? [] } : {}), ok: true, sessionKey: runtimeSessionId }
     } catch (error) {
       // The placeholder is dropped rather than left behind: a slice with no
       // transport is exactly the lie this module exists to avoid.

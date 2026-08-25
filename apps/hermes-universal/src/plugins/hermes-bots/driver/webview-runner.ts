@@ -12,8 +12,6 @@
  * failed. It keeps its turn up to the hard cap, and only then is stranded.
  */
 
-import type { ReadableAtom } from '@hermes/plugin-sdk'
-
 import { isPassText } from '../model/mentions'
 
 import type { RoomTurnOutcome, RoomTurnPlan, RoomTurnRunner } from './types'
@@ -25,10 +23,23 @@ export interface WebviewRunnerDeps {
   submit(plan: RoomTurnPlan): Promise<void>
   /** The member's slice: message count, busy flag, and whether it is parked on
    *  a question. */
-  observe(plan: RoomTurnPlan): ReadableAtom<MemberTurnState>
+  observe(plan: RoomTurnPlan): TurnObserver
   /** The newest settled assistant text after `before` messages, or null. */
   settledText(plan: RoomTurnPlan, before: number): null | string
   now(): number
+}
+
+/**
+ * The two things the wait needs: read now, and tell me when it changes.
+ *
+ * Narrower than `ReadableAtom` on purpose — a member's state is stitched
+ * together from THREE host atoms (its messages, the busy map, its prompts), and
+ * demanding a single atom would force the caller to mint a `computed` whose
+ * only purpose is to satisfy a type.
+ */
+export interface TurnObserver {
+  get(): MemberTurnState
+  listen(fn: () => void): () => void
 }
 
 export interface MemberTurnState {
@@ -71,7 +82,7 @@ export function createWebviewRunner(deps: WebviewRunnerDeps): RoomTurnRunner {
 async function waitForTurn(
   deps: WebviewRunnerDeps,
   plan: RoomTurnPlan,
-  state: ReadableAtom<MemberTurnState>,
+  state: TurnObserver,
   before: number,
   startedAt: number,
   signal: AbortSignal
