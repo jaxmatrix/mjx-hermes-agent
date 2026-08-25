@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+
 import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/i18n'
 import { clearGuestData } from '@/lib/browser/host'
@@ -36,9 +38,12 @@ export function BrowserRows() {
   const consoleOpen = useStore($browserConsoleOpen)
 
   // The descriptor is asked for lazily everywhere else; the settings page is a
-  // place the user has deliberately opened, so paying one IPC round-trip to
-  // know whether to render at all is honest.
-  void ensureBrowserCapabilities()
+  // place the user deliberately opened, so paying one IPC round-trip to know
+  // whether to render at all is honest. In an EFFECT, not in render: it is a
+  // side effect, and React runs a render body more than once.
+  useEffect(() => {
+    void ensureBrowserCapabilities()
+  }, [])
 
   if (!supported) {
     return null

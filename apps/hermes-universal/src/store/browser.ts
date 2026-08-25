@@ -121,7 +121,11 @@ export const $openLinksInApp = persistentAtom(
 )
 
 export const $browserConsoleOpen = persistentAtom('hermes.browser.consoleOpen', false, Codecs.bool)
-export const $browserDevtoolsOpen = persistentAtom('hermes.browser.devtoolsOpen', false, Codecs.bool)
+
+// There is deliberately no `hermes.browser.devtoolsOpen`. Tauri exposes no
+// `is_devtools_open` for a child webview, so a persisted flag would be a
+// remembered REQUEST rather than a remembered state — and restoring it would
+// re-open the inspector over a page the user had not asked to inspect.
 
 function matchesCoarsePointer(): boolean {
   return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
@@ -190,7 +194,22 @@ export async function reachUrl(url: string): Promise<ReachOutcome> {
  */
 export function forgetBrowserForGatewaySwitch(): void {
   void resetReach().catch(() => undefined)
+
+  // The tab AND the guest, and the guest UNCONDITIONALLY.
+  // `wipeSessionListsForGatewaySwitch` already ran `closeAllPreviewTabs()` by
+  // the time it calls this, so a tab-guarded close would be a no-op there and
+  // leave a live webview still showing the old machine's page — while
+  // `clearGatewayTarget`, the OTHER wipe door, sweeps no tabs at all.
   closeInAppBrowser()
+  teardownGuest()
+}
+
+function teardownGuest(): void {
+  $browserState.set({ ...EMPTY_BROWSER_STATE })
+  $browserRestoredTab.set(null)
+  void closeGuest().catch(() => undefined)
+  guestIsOpen = false
+  pendingNavigation = null
 }
 
 // --- the tab ---------------------------------------------------------------
@@ -252,6 +271,9 @@ export async function openInAppBrowser(url: string, label?: string): Promise<boo
   pendingNavigation = reach.url
 
   if (guestIsOpen) {
+    // Consume the handoff: the guest is live, so the pane has nothing left to
+    // open — and leaving it set would make a later remount load the page again.
+    takePendingNavigation()
     await navigateBrowser(reach.url, address)
   }
 
@@ -352,6 +374,7 @@ export function closeInAppBrowser(): void {
   $browserState.set({ ...EMPTY_BROWSER_STATE })
   void closeGuest().catch(() => undefined)
   guestIsOpen = false
+  pendingNavigation = null
 }
 
 /** Test seam: reset the module-level caches this store keeps. */

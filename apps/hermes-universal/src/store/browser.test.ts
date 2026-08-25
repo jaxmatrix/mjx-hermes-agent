@@ -115,6 +115,19 @@ describe('the browser tab', () => {
     expect($browserState.get().url).toBe('')
   })
 
+  it('kills the GUEST on a gateway switch even after the tab was already swept', async () => {
+    // `wipeSessionListsForGatewaySwitch` runs `closeAllPreviewTabs()` first, so
+    // a tab-guarded teardown would be a no-op here and leave a live webview
+    // still showing the old machine's page.
+    await openInAppBrowser('https://example.com')
+    $previewTabs.set([])
+    host.closeGuest.mockClear()
+
+    forgetBrowserForGatewaySwitch()
+
+    expect(host.closeGuest).toHaveBeenCalled()
+  })
+
   it('closing when no browser tab is open is a no-op, not a stray guest close', () => {
     closeInAppBrowser()
 
