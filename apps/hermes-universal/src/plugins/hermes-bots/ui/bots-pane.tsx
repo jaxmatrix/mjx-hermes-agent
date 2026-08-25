@@ -22,6 +22,7 @@ import {
   isCoarsePointer,
   SearchField,
   StatusDot,
+  usePluginI18n,
   useValue
 } from '@hermes/plugin-sdk'
 import { useCallback, useMemo, useState } from 'react'
@@ -41,27 +42,35 @@ import { openBotChat, refreshRoster, saveBotMeta } from '../store/bots'
 import { disbandRoom } from '../store/rooms'
 
 import { BotAvatar, RoomAvatar } from './avatar'
+import { CreateRoomDialog } from './create-room-dialog'
 import { openRoomPane } from './room-pane'
 
 /** The verbs on a bot row. ONE declaration, three surfaces (kebab, right-click,
  *  long-press) — see `plugin.tsx`, which feeds the same list to 478's area. */
-export function botRowVerbs(row: RosterRow): { danger?: boolean; icon: string; label: string; run: () => void }[] {
+export function botRowVerbs(
+  row: RosterRow,
+  t: (key: string, ...args: unknown[]) => string
+): { danger?: boolean; icon: string; label: string; run: () => void }[] {
   return [
-    { icon: 'edit', label: 'Edit bot…', run: () => host.navigate(`/profiles?name=${encodeURIComponent(row.profile)}`) },
+    {
+      icon: 'edit',
+      label: t('roster.editBot'),
+      run: () => host.navigate(`/profiles?name=${encodeURIComponent(row.profile)}`)
+    },
     {
       icon: 'eye-closed',
-      label: row.meta.hidden ? 'Show in roster' : 'Hide from roster',
+      label: row.meta.hidden ? t('roster.show') : t('roster.hide'),
       run: () => void saveBotMeta(row, { ...row.meta, hidden: !row.meta.hidden })
     },
     {
       icon: 'comment-discussion',
-      label: 'Open chat',
+      label: t('roster.openChat'),
       run: () => void openBotChat(row)
     },
     {
       danger: true,
       icon: 'trash',
-      label: 'Delete bot…',
+      label: t('roster.deleteBot'),
       // Deletion stays a CORE, confirmed flow: a plugin-callable profile
       // destructor is the one door whose blast radius is a user's whole agent
       // directory (§2.3 A-2).
@@ -71,6 +80,7 @@ export function botRowVerbs(row: RosterRow): { danger?: boolean; icon: string; l
 }
 
 function BotRow({ row }: { row: RosterRow }) {
+  const t = usePluginI18n('hermes-bots')
   const selected = useValue($selectedBot) === row.key
   const [warmed, setWarmed] = useState(false)
 
@@ -137,12 +147,12 @@ function BotRow({ row }: { row: RosterRow }) {
         <DropdownMenuTrigger asChild>
           {/* Always rendered, never hover-gated: a verb behind `hover:` does
               not exist on a touch device. */}
-          <Button aria-label={`Actions for ${row.name}`} size="icon" variant="ghost">
+          <Button aria-label={t('roster.actionsFor', row.name)} size="icon" variant="ghost">
             <Codicon name="ellipsis" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          {botRowVerbs(row).map(verb => (
+          {botRowVerbs(row, t).map(verb => (
             <DropdownMenuItem key={verb.label} onSelect={verb.run}>
               <Codicon name={verb.icon} />
               {verb.label}
@@ -155,6 +165,8 @@ function BotRow({ row }: { row: RosterRow }) {
 }
 
 function RoomRow({ id, name }: { id: string; name: string }) {
+  const t = usePluginI18n('hermes-bots')
+
   return (
     <div className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm">
       <RoomAvatar name={name} roomId={id} />
@@ -163,12 +175,12 @@ function RoomRow({ id, name }: { id: string; name: string }) {
       </button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button aria-label={`Actions for ${name}`} size="icon" variant="ghost">
+          <Button aria-label={t('roster.actionsFor', name)} size="icon" variant="ghost">
             <Codicon name="ellipsis" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => openRoomPane(id)}>Open room</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => openRoomPane(id)}>{t('room.open')}</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={() => {
@@ -179,7 +191,7 @@ function RoomRow({ id, name }: { id: string; name: string }) {
               }
             }}
           >
-            Disband…
+            {t('room.disband')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -188,6 +200,7 @@ function RoomRow({ id, name }: { id: string; name: string }) {
 }
 
 export function BotsPane() {
+  const t = usePluginI18n('hermes-bots')
   const roster = useValue($roster)
   const rooms = useValue($rooms)
   const loading = useValue($rosterLoading)
@@ -195,6 +208,7 @@ export function BotsPane() {
   const showHidden = useValue($showHidden)
   const protocol = useValue($botProtocolSupported)
   const [query, setQuery] = useState('')
+  const [creatingRoom, setCreatingRoom] = useState(false)
 
   const visible = useMemo(() => {
     const rows = visibleRoster(roster, showHidden)
@@ -205,12 +219,12 @@ export function BotsPane() {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 p-2" data-glass-raised="">
-      <SearchField onChange={setQuery} placeholder="Find an agent" value={query} />
+      <SearchField onChange={setQuery} placeholder={t('roster.search')} value={query} />
 
       {error && (
-        <ErrorState description={error} title="Could not load the roster">
+        <ErrorState description={error} title={t('roster.loadFailed')}>
           <Button onClick={() => void refreshRoster()} size="sm">
-            Retry
+            {t('roster.retry')}
           </Button>
         </ErrorState>
       )}
@@ -220,36 +234,41 @@ export function BotsPane() {
         // user's SOUL.md when the gateway did not support it, which is
         // destructive, racy across clients, and was never traced back.
         <p className="rounded-md bg-muted/50 px-2 py-1.5 text-xs text-muted-foreground">
-          This gateway does not support agent-to-agent messages.
+          {t('errors.noProtocol')}
         </p>
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {rooms.length > 0 && (
           <>
-            <p className="px-2 pb-1 pt-2 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Rooms</p>
+            <p className="px-2 pb-1 pt-2 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">{t('roster.rooms')}</p>
             {rooms.map(room => (
               <RoomRow id={room.id} key={room.id} name={room.name} />
             ))}
           </>
         )}
 
-        <p className="px-2 pb-1 pt-2 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">Agents</p>
+        <p className="px-2 pb-1 pt-2 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">{t('roster.agents')}</p>
         {visible.map(row => (
           <BotRow key={row.key} row={row} />
         ))}
 
-        {visible.length === 0 && !loading && <p className="px-2 py-4 text-xs text-muted-foreground">No agents yet.</p>}
+        {visible.length === 0 && !loading && <p className="px-2 py-4 text-xs text-muted-foreground">{t('roster.empty')}</p>}
       </div>
 
+      <CreateRoomDialog onOpenChange={setCreatingRoom} open={creatingRoom} />
+
       <div className="flex items-center gap-1">
+        <Button className="flex-1" onClick={() => setCreatingRoom(true)} size="sm" variant="outline">
+          <Codicon name="comment-discussion" /> {t('roster.newRoom')}
+        </Button>
         <Button
           className="flex-1"
           onClick={async () => {
             const answer = await confirm({
-              confirmLabel: 'Open Agents',
-              description: 'Agents are created in the Agents view, where you can clone an existing one.',
-              title: 'Create a new agent?'
+              confirmLabel: t('roster.createAgentConfirm'),
+              description: t('roster.createAgentBody'),
+              title: t('roster.createAgentTitle')
             })
 
             if (answer === true) {
@@ -259,10 +278,10 @@ export function BotsPane() {
           size="sm"
           variant="outline"
         >
-          <Codicon name="add" /> New agent
+          <Codicon name="add" /> {t('roster.newAgent')}
         </Button>
         <Button
-          aria-label={showHidden ? 'Hide hidden agents' : 'Show hidden agents'}
+          aria-label={showHidden ? t('roster.hideHidden') : t('roster.showHidden')}
           onClick={() => $showHidden.set(!showHidden)}
           size="icon"
           variant="ghost"

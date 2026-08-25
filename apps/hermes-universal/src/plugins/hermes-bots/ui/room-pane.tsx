@@ -19,6 +19,7 @@ import {
   SessionThread,
   StatusDot,
   Textarea,
+  usePluginI18n,
   useValue
 } from '@hermes/plugin-sdk'
 import { useEffect, useMemo, useState } from 'react'
@@ -86,6 +87,7 @@ export function closeAllRoomPanes(): void {
 }
 
 function MemberCard({ room, memberKey }: { memberKey: string; room: Room }) {
+  const t = usePluginI18n('hermes-bots')
   const roster = useValue($roster)
   const row = roster.find(candidate => candidate.key === memberKey)
   const storedId = room.sessions[memberKey]
@@ -112,10 +114,10 @@ function MemberCard({ room, memberKey }: { memberKey: string; room: Room }) {
       >
         <BotAvatar row={row} size={22} />
         <span className="min-w-0 flex-1 truncate">{row.name}</span>
-        {row.connectionId && <Codicon className="opacity-60" name="remote" title="on another machine" />}
-        {needsYou && <StatusDot title="needs you" tone="warn" />}
-        {working && <StatusDot title="working" tone="good" />}
-        {runtime?.turn === row.profile && <span className="text-xs text-muted-foreground">thinking…</span>}
+        {row.connectionId && <Codicon className="opacity-60" name="remote" title={t('dialog.otherMachine')} />}
+        {needsYou && <StatusDot title={t('room.memberNeedsYou')} tone="warn" />}
+        {working && <StatusDot title={t('room.memberBusy')} tone="good" />}
+        {runtime?.turn === row.profile && <span className="text-xs text-muted-foreground">{t('room.thinking')}</span>}
         <Codicon name={expanded ? 'chevron-up' : 'chevron-down'} />
       </button>
 
@@ -131,6 +133,7 @@ function MemberCard({ room, memberKey }: { memberKey: string; room: Room }) {
 }
 
 export function RoomPane({ roomId }: { roomId: string }) {
+  const t = usePluginI18n('hermes-bots')
   const rooms = useValue($rooms)
   const logs = useValue($roomLogs)
   const runtimes = useValue($roomRuntime)
@@ -159,7 +162,7 @@ export function RoomPane({ roomId }: { roomId: string }) {
   )
 
   if (!room) {
-    return <p className="p-4 text-sm text-muted-foreground">This room was disbanded.</p>
+    return <p className="p-4 text-sm text-muted-foreground">{t('room.disbanded')}</p>
   }
 
   const send = () => {
@@ -180,15 +183,15 @@ export function RoomPane({ roomId }: { roomId: string }) {
       <header className="flex items-center gap-2 border-b border-border/60 px-3 py-2" data-glass-raised="">
         <RoomAvatar name={room.name} roomId={room.id} size={22} />
         <span className="min-w-0 flex-1 truncate font-medium">{room.name}</span>
-        {runtime.running && <span className="text-xs text-muted-foreground">running…</span>}
+        {runtime.running && <span className="text-xs text-muted-foreground">{t('room.running')}</span>}
       </header>
 
       {runtime.paused && (
         // Rule 9: the drive stopped and the user is told why, with what to do.
         <p className="border-b border-border/60 bg-muted/50 px-3 py-1.5 text-xs">
           {runtime.paused === 'backgrounded'
-            ? 'Paused — reopen Hermes to continue. The agent that was thinking is still working.'
-            : 'Paused — the gateway is offline. It will pick up where it left off.'}
+            ? t('room.pausedBackground')
+            : t('room.pausedOffline')}
         </p>
       )}
 
@@ -201,7 +204,7 @@ export function RoomPane({ roomId }: { roomId: string }) {
             <span className="whitespace-pre-wrap">{line.text}</span>
           </p>
         ))}
-        {lines.length === 0 && <p className="py-4 text-xs text-muted-foreground">Nothing said yet.</p>}
+        {lines.length === 0 && <p className="py-4 text-xs text-muted-foreground">{t('room.empty')}</p>}
       </div>
 
       <div className="flex flex-col gap-1 border-t border-border/60 px-3 py-2">
@@ -233,7 +236,7 @@ export function RoomPane({ roomId }: { roomId: string }) {
           {/* A plain file input, not a Tauri picker: it works in the desktop
               webview, in the Android WebView (which routes it through SAF) and
               in a browser dev run, with no capability to declare. */}
-          <label className="cursor-pointer rounded-md p-1.5 hover:bg-accent" title="Attach">
+          <label className="cursor-pointer rounded-md p-1.5 hover:bg-accent" title={t('room.attach')}>
             <Codicon name="attach" />
             <input
               className="hidden"
@@ -255,12 +258,12 @@ export function RoomPane({ roomId }: { roomId: string }) {
                 send()
               }
             }}
-            placeholder="Message the room — @mention to address one agent"
+            placeholder={t('room.placeholder')}
             rows={2}
             value={draft}
           />
           <Button disabled={roomIsDriving(room.id)} onClick={send} size="sm">
-            Send
+            {t('room.send')}
           </Button>
         </div>
       </div>

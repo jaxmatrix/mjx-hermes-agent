@@ -169,7 +169,9 @@ const plugin: HermesPlugin = {
           // The SAME declaration the kebab renders — one verb list, three
           // surfaces, so they can never disagree.
           return [
-            botRowVerbs(row).map(verb => ({
+            // `ctx.i18n.t`, not `usePluginI18n`: this runs outside React, in a
+            // gesture handler. Both resolve against the app's live locale.
+            botRowVerbs(row, ctx.i18n.t).map(verb => ({
               icon: verb.icon,
               label: verb.label,
               onSelect: () => {

@@ -12,6 +12,15 @@
 import type { PluginLocaleBundles } from '@hermes/plugin-sdk'
 
 const en = {
+  dialog: {
+    cancel: 'Cancel',
+    create: 'Create',
+    newRoomLimits: (members: number, remote: number) =>
+      `Up to ${members} agents, of which at most ${remote} may live on other machines.`,
+    newRoomTitle: 'New room',
+    otherMachine: 'other machine',
+    roomName: 'Room name'
+  },
   errors: {
     full: "This bot's settings are full — remove a room to make space.",
     noProtocol: 'This gateway does not support agent-to-agent messages.',
@@ -19,6 +28,7 @@ const en = {
     unreachable: 'That machine is unreachable right now.'
   },
   room: {
+    attach: 'Attach',
     disband: 'Disband…',
     disbandBody: 'It will disappear from every machine. The agents keep their own transcripts.',
     disbandTitle: 'Disband this room?',
@@ -30,6 +40,8 @@ const en = {
     pausedBackground: 'Paused — reopen Hermes to continue.',
     pausedOffline: 'Paused — the gateway is offline.',
     placeholder: 'Message the room — @mention to address one agent',
+    disbanded: 'This room was disbanded.',
+    open: 'Open room',
     running: 'running…',
     send: 'Send',
     thinking: 'thinking…',
@@ -37,7 +49,16 @@ const en = {
     tooManyRemote: (limit: number) => `At most ${limit} agents in a room may live on other machines.`
   },
   roster: {
+    actionsFor: (name: string) => `Actions for ${name}`,
     agents: 'Agents',
+    createAgentBody: 'Agents are created in the Agents view, where you can clone an existing one.',
+    createAgentConfirm: 'Open Agents',
+    createAgentTitle: 'Create a new agent?',
+    deleteBot: 'Delete bot…',
+    editBot: 'Edit bot…',
+    hideHidden: 'Hide hidden agents',
+    loadFailed: 'Could not load the roster',
+    newRoom: 'New room',
     empty: 'No agents yet.',
     hide: 'Hide from roster',
     newAgent: 'New agent',
@@ -51,6 +72,10 @@ const en = {
   },
   routines: {
     add: 'Add routine',
+    delete: 'Delete',
+    loadFailed: 'Could not load routines',
+    pause: 'Pause',
+    resume: 'Resume',
     empty: 'No routines yet.',
     name: 'Name',
     pick: 'Pick an agent to see its routines.',
