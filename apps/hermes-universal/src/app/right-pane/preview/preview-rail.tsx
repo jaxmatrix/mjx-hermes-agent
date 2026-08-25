@@ -11,6 +11,7 @@ import {
   $activePreviewTarget,
   $previewTabs,
   isArtifactTab,
+  isBrowserTab,
   previewCloseTargets,
   type PreviewTarget,
   requestCloseAllPreviewTabs,
@@ -20,6 +21,8 @@ import {
   selectPreviewTab
 } from '@/store/preview'
 import { $dirtyPreviewPaths } from '@/store/preview-edit'
+
+import { BrowserPane } from '@/app/browser/browser-pane'
 
 import { ArtifactPreview } from './preview-artifact'
 import { PreviewFile } from './preview-file'
@@ -50,7 +53,12 @@ export function PreviewRail() {
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {active ? (
-          // An artifact tab names a registry entry, not a file on disk — a
+          // The browser tab renders here too: the phone's Workspace shell and
+          // the narrow drawer have no layout tree, and a browser only reachable
+          // from the tree would be a desktop-only feature by accident.
+          isBrowserTab(active.path) ? (
+            <BrowserPane key={active.path} />
+          ) : // An artifact tab names a registry entry, not a file on disk — a
           // different reader entirely, sharing only the tab strip above.
           isArtifactTab(active.path) ? (
             <ArtifactPreview key={active.path} target={active} />

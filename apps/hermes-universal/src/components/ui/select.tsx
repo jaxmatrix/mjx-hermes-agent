@@ -3,6 +3,7 @@ import * as React from 'react'
 
 import { Codicon } from '@/components/ui/codicon'
 import { type ControlVariantProps, controlVariants } from '@/components/ui/control'
+import { useGuestOcclusion } from '@/store/browser-occlusion'
 import { cn } from '@/lib/utils'
 
 function Select({ ...props }: React.ComponentProps<typeof SelectPrimitive.Root>) {
@@ -43,6 +44,11 @@ function SelectContent({
   position = 'popper',
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
+  // The in-app browser's guest is a NATIVE view the compositor paints above the
+  // whole DOM, so a portalled surface renders BEHIND it unless the guest is
+  // hidden first (MJXHRM-447). One line per primitive; the arbiter counts.
+  useGuestOcclusion('select')
+
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content

@@ -2796,6 +2796,31 @@ export const ja = defineLocale({
     addToChat: 'チャットに追加'
   },
 
+  browser: {
+    back: '戻る',
+    forward: '進む',
+    reload: '再読み込み',
+    stop: '停止',
+    addressLabel: 'アドレス',
+    addressPlaceholder: '検索またはアドレスを入力',
+    copyUrl: 'アドレスをコピー',
+    openExternally: 'ブラウザで開く',
+    unsupportedTitle: 'この環境ではアプリ内ブラウザを起動できませんでした',
+    resume: '再開',
+    paletteOpen: 'アプリ内ブラウザを開く',
+    openLinksInApp: 'Web リンクを Hermes 内で開く',
+    openLinksInAppDescription: 'Web リンクはアプリ内ブラウザで開きます。⌘/Ctrl を押しながら、または中クリックすると通常のブラウザで開きます。',
+    isolatedStore: 'アプリ内ブラウザの Cookie を分離する',
+    isolatedStoreDescription: 'ペインでサイトにサインインしても、Hermes 自身のアカウントには影響しません。変更すると保存済みのデータは消去されます。',
+    consoleDefault: 'プレビューコンソールを既定で表示',
+    consoleDefaultDescription: 'アプリ内ブラウザを開いたときに常にコンソールを表示します。',
+    clearData: '閲覧データを消去',
+    clearDataDescription: 'アプリ内ブラウザの Cookie・ストレージ・キャッシュのみが対象です。',
+    clearDataConfirm: 'アプリ内ブラウザの Cookie、ストレージ、キャッシュを消去しますか？',
+    cleared: '閲覧データを消去しました',
+    sharedCookies: 'このブラウザはこの端末で Hermes と Cookie を共有します。',
+    ephemeralStore: 'このブラウザは Hermes の再起動時にログイン状態を破棄します。'
+  },
   preview: {
     tab: 'プレビュー',
     closeTab: label => `${label} を閉じる`,
@@ -2887,7 +2912,10 @@ export const ja = defineLocale({
       loadFailedConsole: (code, message) => `読み込みに失敗しました${code ? ` (${code})` : ''}: ${message}`,
       unreachableDescription: 'プレビューページに到達できませんでした。',
       openTarget: url => `${url} を開く`,
-      fallbackTitle: 'プレビュー'
+      fallbackTitle: 'プレビュー',
+      // The ONE key desktop has that universal lacked: why a loopback
+      // address cannot load when the gateway is somewhere else.
+      remoteLoopback: 'このアドレスは Hermes の接続先マシンを指していますが、このゲートウェイにはそこへのトンネルがありません。SSH で接続するか、そのマシン上でページを開いてください。'
     }
   },
 

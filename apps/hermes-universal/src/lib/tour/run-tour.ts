@@ -5,13 +5,13 @@
  * the named verbs below are the ergonomic API — used by the agent's `tour` tool
  * through `store/tour-bridge.ts`, and by any curated in-app tour.
  *
- * Ported from desktop `lib/tour/run-tour.ts` minus its preview branch: desktop
- * routes `surface: 'preview'` into `runPreviewTour`, which injects the engine
- * source into the preview pane's guest page. Universal has no browser preview
- * (`store/preview.ts` is files-only), so that branch would highlight the APP
- * chrome while the agent believed it was pointing at a web page — a wrong
- * answer is worse than a refusal. It returns a shaped refusal instead, and
- * MJXHRM-447 replaces exactly that one branch when the preview pane lands.
+ * Ported from desktop `lib/tour/run-tour.ts`. Its preview branch was a refusal
+ * until MJXHRM-447 gave universal a guest page to run in; it now routes
+ * `surface: 'preview'` into `./preview-tour`, which drives the in-app browser's
+ * own act engine. The refusal string survives for the case that still deserves
+ * one — no guest host on this platform — because a tour that highlighted the
+ * APP chrome while the agent believed it was pointing at a web page is a wrong
+ * answer, and a wrong answer is worse than a refusal.
  *
  * Dynamic-imported by `store/tour-bridge.ts` and by the palette row, so
  * driver.js and its CSS stay off the boot path — asserted by
@@ -38,13 +38,12 @@ import {
 } from './engine'
 import { type Stage, stopSpotlightBlur, syncSpotlightBlur } from './spotlight-blur'
 
-/** Which document a tour runs against. `preview` is declared but refused until
- *  MJXHRM-447 gives universal a guest page to run in. */
+/** Which document a tour runs against. */
 export type TourSurface = 'app' | 'preview'
 
-/** The refusal a `surface: 'preview'` action gets today. An agent-facing wire
- *  string, not UI copy — deliberately not i18n'd, exactly like the unsupported
- *  strings in `store/agent-read-requests.ts`. */
+/** The refusal a `surface: 'preview'` action gets on a build with no guest
+ *  host. An agent-facing wire string, not UI copy — deliberately not i18n'd,
+ *  exactly like the unsupported strings in `store/agent-read-requests.ts`. */
 const PREVIEW_SURFACE_UNSUPPORTED =
   'This Hermes client has no in-app browser pane, so there is no page to tour. ' +
   "Nothing was highlighted. Use surface='app' to tour Hermes itself."
@@ -90,7 +89,17 @@ const appHolder: TourHolder = {}
 export async function runTour(action: TourAction, surface: TourSurface = 'app'): Promise<TourResult> {
   try {
     if (surface === 'preview') {
-      return { error: PREVIEW_SURFACE_UNSUPPORTED, success: false }
+      // Lazily imported so the browser store stays out of this chunk for an
+      // ordinary app tour.
+      const { $browserSupported } = await import('@/store/browser')
+
+      if (!$browserSupported.get()) {
+        return { error: PREVIEW_SURFACE_UNSUPPORTED, success: false }
+      }
+
+      const { runPreviewTour } = await import('./preview-tour')
+
+      return runPreviewTour(action)
     }
 
     const result = runTourEngine(driverFactory, appHolder, action, collectTourTargets, document, TOUR_STYLE, APP_HOST)

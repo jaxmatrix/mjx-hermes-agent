@@ -9,6 +9,7 @@ import { setCronJobs } from '@/store/cron'
 import { closeGateway } from '@/store/gateway'
 import type { Connection, GatewayMode } from '@/store/gateway-config'
 import { dialSavedTarget, type GatewayTarget, loadGatewayTarget } from '@/store/gateway-restore'
+import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import { closeAllSecondaries } from '@/store/gateway-secondaries'
 import { $gatewayMode, $gatewaySwitching } from '@/store/gateway-switch'
 import { resetLiveRuntimeTracking } from '@/store/live-session-status'
@@ -155,6 +156,11 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // A registered source's credentials are attached per BASE URL in Rust, so the
   // secondaries opened against the source we are leaving have to go with it.
   closeAllSecondaries()
+  // And the in-app browser (MJXHRM-447): a browsed `localhost:5173` names the
+  // OLD machine, and the SSH forward lease behind it is a tunnel into a host we
+  // have stopped talking to. A new host never inherits a tunnel into the old
+  // one (rule 20).
+  forgetBrowserForGatewaySwitch()
 
   // Sidebar skeletons until refreshSessions lands.
   $sessionsLoading.set(true)

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { commandFocusedBrowser } from '@/app/browser/browser-nav'
 import { toggleHud } from '@/app/hud/hud'
 import { toggleQuickEntry } from '@/app/quick-entry/quick-entry'
 import {
@@ -14,6 +15,7 @@ import { contributedKeybindHandler, PROFILE_SLOT_COUNT, SESSION_SLOT_COUNT } fro
 import { comboAllowedInInput, comboFromEvent, isEditableTarget, isShiftPrintableCombo } from '@/lib/keybinds/combo'
 import { composerFocusKeysAllowed, isComposerFocusSoftCombo, typeToFocusChar } from '@/lib/keybinds/composer-focus-keys'
 import { setGlobalShortcutDispatch, startGlobalShortcuts } from '@/lib/keybinds/global-shortcut'
+import { toggleInAppBrowser } from '@/store/browser'
 import { openWorktreeDialog } from '@/store/coding-status'
 import { toggleCommandPalette } from '@/store/command-palette'
 import {
@@ -218,6 +220,17 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
     // ⌘J toggles the file browser — the "secondary panel" toggle.
     'view.toggleRightSidebar': toggleRightEdge,
     'view.toggleReview': toggleReview,
+
+    // ⌘⇧L — the in-app browser (MJXHRM-447). A fresh one lands on about:blank,
+    // where the pane's address field invites an address.
+    'view.toggleBrowser': () => void toggleInAppBrowser(),
+    // The three PAGE chords only answer while focus is inside the pane, so ⌘R
+    // still reloads the window everywhere else. Once focus is inside the GUEST
+    // the host document never sees the key at all — those are handled by the
+    // injected guest script.
+    'browser.back': () => commandFocusedBrowser()?.back(),
+    'browser.forward': () => commandFocusedBrowser()?.forward(),
+    'browser.reload': () => commandFocusedBrowser()?.reload(),
     'view.toggleStatusbar': toggleStatusbarVisible,
     'view.showFiles': showFiles,
     // ⌘F opens the bar; ⌘G / ⌘⇧G step from anywhere once it is open (the bar

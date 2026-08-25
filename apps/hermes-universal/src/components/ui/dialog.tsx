@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { X } from '@/lib/icons'
+import { useGuestOcclusion } from '@/store/browser-occlusion'
 import { cn } from '@/lib/utils'
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
@@ -81,6 +82,11 @@ function DialogContent({
   banner?: React.ReactNode
   bannerTone?: DialogBannerTone
 }) {
+  // The in-app browser's guest is a NATIVE view the compositor paints above the
+  // whole DOM, so a portalled surface renders BEHIND it unless the guest is
+  // hidden first (MJXHRM-447). One line per primitive; the arbiter counts.
+  useGuestOcclusion('dialog')
+
   const { t } = useI18n()
 
   const widthClass = fitContent ? 'w-auto max-w-[92vw]' : 'w-full max-w-lg'

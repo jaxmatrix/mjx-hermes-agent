@@ -86,6 +86,67 @@ const GUEST_INIT: &str = r#"(function(){
     ring.push({ level: 'error', text: String(e && e.message || e), source: e && e.filename, line: e && e.lineno, at: Date.now() });
     if (ring.length > LIMIT) { ring.shift() }
   }, true);
+  // The guest's OWN context menu.
+  //
+  // A right-click inside a child webview never produces a `contextmenu` event
+  // in the HOST document, so the app-wide menu's window-level listener cannot
+  // see it, and giving the guest a push channel just for that would be the IPC
+  // surface the navigation guard exists to avoid. So the guest draws its own,
+  // from the same verbs, and the two rows that need the host go through the
+  // refused-navigation channel above.
+  var menu = null;
+  function closeMenu() { if (menu) { menu.remove(); menu = null } }
+  window.addEventListener('scroll', closeMenu, true);
+  window.addEventListener('click', closeMenu, true);
+  window.addEventListener('contextmenu', function (e) {
+    var editable = e.target && (e.target.isContentEditable || /^(input|textarea)$/i.test(e.target.tagName || ''));
+    // A text field keeps the platform's own selection/edit menu: it is better
+    // than ours and it is the one place the user expects the native one.
+    if (editable) { return }
+
+    e.preventDefault();
+    closeMenu();
+
+    var link = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    var image = e.target && /^img$/i.test(e.target.tagName || '') ? e.target : null;
+    var rows = [
+      ['Back', function () { history.back() }, history.length > 1],
+      ['Forward', function () { history.forward() }, history.length > 1],
+      ['Reload', function () { location.reload() }, true]
+    ];
+    if (link) {
+      rows.push(['Copy link address', function () { copy(link.href) }, true]);
+      rows.push(['Open link in your browser', function () { window.__hermesGuest.send('open?url=' + encodeURIComponent(link.href)) }, true]);
+    }
+    if (image) {
+      rows.push(['Copy image address', function () { copy(image.currentSrc || image.src) }, true]);
+    }
+
+    menu = document.createElement('div');
+    menu.style.cssText = 'position:fixed;z-index:2147483647;min-width:12rem;padding:4px;border-radius:8px;background:#1c1c1e;color:#f2f2f7;box-shadow:0 8px 24px rgba(0,0,0,.4);font:13px/1.4 system-ui,sans-serif';
+    menu.style.left = Math.min(e.clientX, window.innerWidth - 220) + 'px';
+    menu.style.top = Math.min(e.clientY, window.innerHeight - rows.length * 28 - 12) + 'px';
+
+    rows.forEach(function (row) {
+      var item = document.createElement('div');
+      item.textContent = row[0];
+      item.style.cssText = 'padding:5px 10px;border-radius:5px;cursor:default' + (row[2] ? '' : ';opacity:.4;pointer-events:none');
+      item.addEventListener('mouseenter', function () { item.style.background = '#3a3a3c' });
+      item.addEventListener('mouseleave', function () { item.style.background = '' });
+      item.addEventListener('mouseup', function (ev) { ev.stopPropagation(); closeMenu(); row[1]() });
+      menu.appendChild(item);
+    });
+
+    document.documentElement.appendChild(menu);
+  }, true);
+
+  function copy(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text); return }
+    } catch (e) {}
+    window.__hermesGuest.send('copy?text=' + encodeURIComponent(text));
+  }
+
   window.addEventListener('keydown', function (e) {
     var mod = e.metaKey || e.ctrlKey;
     if (mod && !e.shiftKey && (e.code === 'KeyR')) { e.preventDefault(); location.reload(); return }

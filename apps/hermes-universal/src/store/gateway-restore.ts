@@ -1,5 +1,6 @@
 import { oauthStatus } from '@/lib/auth'
 import { loadString, removeKey, saveString } from '@/lib/persist'
+import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import { clearTranscriptTails } from '@/lib/transcript-tail-cache'
 import { atom } from '@/store/atom'
 import {
@@ -97,6 +98,10 @@ export function clearGatewayTarget(): void {
   // unique per backend database, so a tail left behind here can only paint the
   // wrong machine's conversation on the next launch.
   clearTranscriptTails()
+  // Same reasoning for the in-app browser's tab and its SSH forward leases
+  // (MJXHRM-447/G4): this is the OTHER wipe door, and a lease that survives
+  // "use a different gateway" is a tunnel into a machine the user has left.
+  forgetBrowserForGatewaySwitch()
 }
 
 // --- Mobile OAuth resume marker -----------------------------------------------------

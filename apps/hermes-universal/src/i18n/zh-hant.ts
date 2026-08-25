@@ -2706,6 +2706,31 @@ export const zhHant = defineLocale({
     addToChat: '新增至聊天'
   },
 
+  browser: {
+    back: '上一頁',
+    forward: '下一頁',
+    reload: '重新載入',
+    stop: '停止',
+    addressLabel: '網址',
+    addressPlaceholder: '搜尋或輸入網址',
+    copyUrl: '複製網址',
+    openExternally: '在瀏覽器中開啟',
+    unsupportedTitle: '此環境無法啟動內建瀏覽器',
+    resume: '繼續',
+    paletteOpen: '開啟內建瀏覽器',
+    openLinksInApp: '在 Hermes 中開啟網頁連結',
+    openLinksInAppDescription: '網頁連結會在內建瀏覽器中開啟。按住 ⌘/Ctrl 或用中鍵點擊可改用系統瀏覽器。',
+    isolatedStore: '將內建瀏覽器的 Cookie 分開保存',
+    isolatedStoreDescription: '在面板中登入網站不會影響 Hermes 自己使用的帳號。變更此項會清除已保存的資料。',
+    consoleDefault: '預設顯示預覽主控台',
+    consoleDefaultDescription: '每次開啟內建瀏覽器時都展開主控台。',
+    clearData: '清除瀏覽資料',
+    clearDataDescription: '僅清除內建瀏覽器的 Cookie、儲存空間與快取。',
+    clearDataConfirm: '要清除內建瀏覽器的 Cookie、儲存空間與快取嗎？',
+    cleared: '已清除瀏覽資料',
+    sharedCookies: '此瀏覽器在本裝置上與 Hermes 共用 Cookie。',
+    ephemeralStore: '重新啟動 Hermes 後，此瀏覽器會忘記登入狀態。'
+  },
   preview: {
     tab: '預覽',
     closeTab: label => `關閉 ${label}`,
@@ -2794,7 +2819,10 @@ export const zhHant = defineLocale({
       loadFailedConsole: (code, message) => `載入失敗${code ? ` (${code})` : ''}：${message}`,
       unreachableDescription: '無法連線至預覽頁面。',
       openTarget: url => `開啟 ${url}`,
-      fallbackTitle: '預覽'
+      fallbackTitle: '預覽',
+      // The ONE key desktop has that universal lacked: why a loopback
+      // address cannot load when the gateway is somewhere else.
+      remoteLoopback: '此網址指向 Hermes 所連線的那台機器，而目前的閘道沒有通往它的通道。請改用 SSH 連線，或在那台機器上開啟該頁面。'
     }
   },
 

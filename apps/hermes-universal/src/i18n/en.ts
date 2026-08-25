@@ -3087,6 +3087,34 @@ export const en: Translations = {
     missingBody: 'This artifact is no longer in the local registry.'
   },
 
+  // The in-app browser's own chrome (MJXHRM-447). The pane's error and restart
+  // copy lives under `preview.web.*`, which was ported with the chat UI and had
+  // no consumer until this ticket.
+  browser: {
+    back: 'Back',
+    forward: 'Forward',
+    reload: 'Reload',
+    stop: 'Stop',
+    addressLabel: 'Address',
+    addressPlaceholder: 'Search or enter address',
+    copyUrl: 'Copy address',
+    openExternally: 'Open in your browser',
+    unsupportedTitle: 'The in-app browser could not start here',
+    resume: 'Resume',
+    paletteOpen: 'Open in-app browser',
+    openLinksInApp: 'Open web links in Hermes',
+    openLinksInAppDescription: 'Web links open in the in-app browser. Hold ⌘/Ctrl or middle-click to use your own browser instead.',
+    isolatedStore: 'Keep the in-app browser\'s cookies separate',
+    isolatedStoreDescription: 'Signing in to a site in the pane never touches the account Hermes itself uses. Changing this clears what is already stored.',
+    consoleDefault: 'Show the preview console by default',
+    consoleDefaultDescription: 'Open the console deck whenever the in-app browser opens.',
+    clearData: 'Clear browsing data',
+    clearDataDescription: 'Cookies, storage and cache for the in-app browser only.',
+    clearDataConfirm: 'Clear the in-app browser\'s cookies, storage and cache?',
+    cleared: 'Browsing data cleared',
+    sharedCookies: 'This browser shares cookies with Hermes on this device.',
+    ephemeralStore: 'This browser forgets logins when Hermes restarts.'
+  },
   preview: {
     tab: 'Preview',
     closeTab: label => `Close ${label}`,
@@ -3177,7 +3205,10 @@ export const en: Translations = {
       loadFailedConsole: (code, message) => `Load failed${code ? ` (${code})` : ''}: ${message}`,
       unreachableDescription: 'The preview page could not be reached.',
       openTarget: url => `Open ${url}`,
-      fallbackTitle: 'Preview'
+      fallbackTitle: 'Preview',
+      // The ONE key desktop has that universal lacked: why a loopback
+      // address cannot load when the gateway is somewhere else.
+      remoteLoopback: 'This address points at the machine Hermes is talking to, and this gateway has no tunnel to it. Connect over SSH, or open the page on that machine.'
     }
   },
 

@@ -2657,6 +2657,34 @@ export interface Translations {
     missingBody: string
   }
 
+  /** The in-app browser's own chrome (MJXHRM-447). Its error and restart copy
+   *  lives under `preview.web.*`, which was ported with the chat UI and had no
+   *  consumer until this ticket. */
+  browser: {
+    back: string
+    forward: string
+    reload: string
+    stop: string
+    addressLabel: string
+    addressPlaceholder: string
+    copyUrl: string
+    openExternally: string
+    unsupportedTitle: string
+    resume: string
+    paletteOpen: string
+    openLinksInApp: string
+    openLinksInAppDescription: string
+    isolatedStore: string
+    isolatedStoreDescription: string
+    consoleDefault: string
+    consoleDefaultDescription: string
+    clearData: string
+    clearDataDescription: string
+    clearDataConfirm: string
+    cleared: string
+    sharedCookies: string
+    ephemeralStore: string
+  }
   preview: {
     tab: string
     closeTab: (label: string) => string
@@ -2745,6 +2773,8 @@ export interface Translations {
       unreachableDescription: string
       openTarget: (url: string) => string
       fallbackTitle: string
+      /** Why a loopback address cannot load when the gateway is somewhere else. */
+      remoteLoopback: string
     }
   }
 
