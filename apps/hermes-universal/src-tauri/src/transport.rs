@@ -322,6 +322,44 @@ fn url_is_under(url: &str, base: &str) -> bool {
 /// way: `oauth_status` registers its base the first time the webview probes it.
 const GATEWAY_PATH_PREFIXES: &[&str] = &["/api/", "/auth/"];
 
+/// What a REGISTERED connection (MJXHRM-446) attaches to every call under its
+/// base URL: its gateway session token, and any extra request header the user
+/// configured (a Cloudflare Access service token is the motivating case).
+///
+/// This is NOT an "active gateway" object — rule 3 still holds. It is a table of
+/// base URL → credential, structurally identical to `BearerBases` beside it, and
+/// the webview owns which connection is active. Nothing here knows or cares.
+#[derive(Debug, Clone, Default)]
+pub struct ConnectionAuth {
+    pub connection_id: String,
+    /// The gateway session token, attached as `X-Hermes-Session-Token`. Held
+    /// here rather than in JS: this is what closes MJXHRM-413.
+    pub token: Option<String>,
+    /// Extra request headers, names already lowercased and allow-listed by
+    /// `connections::registry::normalize_remote_headers`.
+    pub headers: Vec<(String, String)>,
+}
+
+/// Base URL → the credential a registered connection attaches under it.
+#[derive(Default)]
+struct ConnectionAuthTable {
+    entries: Vec<(String, ConnectionAuth)>,
+}
+
+impl ConnectionAuthTable {
+    /// Longest-prefix-first, through the SAME `url_is_under` the bearer table
+    /// uses. Deliberately a shared function rather than a second matcher: a
+    /// `starts_with` copy here would reintroduce the `https://gw.evil.com`
+    /// against base `https://gw.ev` hole in a table that carries session tokens.
+    fn for_url(&self, url: &str) -> Option<&ConnectionAuth> {
+        self.entries
+            .iter()
+            .filter(|(base, _)| url_is_under(url, base))
+            .max_by_key(|(base, _)| base.len())
+            .map(|(_, auth)| auth)
+    }
+}
+
 /// A live raw WebSocket: `tx` feeds the writer task; the two task handles are
 /// aborted on close.
 pub struct SocketHandle {
@@ -352,6 +390,10 @@ pub struct TransportState {
     /// `std::sync::Mutex` on purpose: every access is a set lookup with no await
     /// inside, so the async-aware lock would buy nothing.
     bearer_bases: std::sync::Mutex<BearerBases>,
+    /// Per-connection credentials, keyed by base URL (MJXHRM-446). Same lock
+    /// shape and same reason as `bearer_bases`: every access is a short lookup
+    /// with no await inside.
+    connection_auth: std::sync::Mutex<ConnectionAuthTable>,
     sockets: Mutex<HashMap<String, SocketHandle>>,
 }
 
@@ -377,6 +419,7 @@ impl TransportState {
             http_no_redirect,
             cookies,
             bearer_bases: std::sync::Mutex::new(BearerBases::default()),
+            connection_auth: std::sync::Mutex::new(ConnectionAuthTable::default()),
             sockets: Mutex::new(HashMap::new()),
         }
     }
@@ -475,6 +518,51 @@ impl TransportState {
         }
 
         Some(origin)
+    }
+
+    /// Register (or replace) what one connection attaches under `base`.
+    ///
+    /// Replacing by connection id rather than by base is what makes an EDIT
+    /// correct: a source moved to a new URL must stop attaching its token at the
+    /// old one, and a table keyed only by base would keep doing so forever.
+    pub fn set_connection_auth(&self, base: &str, auth: ConnectionAuth) {
+        let base = base.trim_end_matches('/').to_string();
+
+        if let Ok(mut table) = self.connection_auth.lock() {
+            table.entries.retain(|(existing, held)| {
+                existing != &base && held.connection_id != auth.connection_id
+            });
+            table.entries.push((base, auth));
+        }
+    }
+
+    /// Forget one connection's credentials (removed, signed out, recycled).
+    pub fn forget_connection_auth(&self, connection_id: &str) {
+        if let Ok(mut table) = self.connection_auth.lock() {
+            table
+                .entries
+                .retain(|(_, auth)| auth.connection_id != connection_id);
+        }
+    }
+
+    /// What this URL's connection attaches, if it belongs to one.
+    pub fn connection_auth_for_url(&self, url: &str) -> Option<ConnectionAuth> {
+        self.connection_auth
+            .lock()
+            .ok()
+            .and_then(|table| table.for_url(url).cloned())
+    }
+
+    /// What connection `id` attaches, wherever it lives. Used by `ws_open`, which
+    /// is handed the id rather than having to re-derive it from the URL.
+    pub fn connection_auth_by_id(&self, connection_id: &str) -> Option<ConnectionAuth> {
+        self.connection_auth.lock().ok().and_then(|table| {
+            table
+                .entries
+                .iter()
+                .find(|(_, auth)| auth.connection_id == connection_id)
+                .map(|(_, auth)| auth.clone())
+        })
     }
 }
 
@@ -639,16 +727,53 @@ fn upload_lost_to_redirect(req: &HttpReq, final_url: &reqwest::Url) -> bool {
 }
 
 /// Issue `req` once, with `bearer` attached when there is one.
+/// Attach a registered connection's credentials, never over a caller's own.
+///
+/// The caller wins for the same reason `caller_set_authorization` exists: an MCP
+/// or marketplace panel talking to a third-party service with its own key must
+/// not have it overwritten by a credential meant for somewhere else.
+fn apply_connection_auth(
+    mut builder: reqwest::RequestBuilder,
+    caller_headers: &HashMap<String, String>,
+    auth: Option<&ConnectionAuth>,
+) -> reqwest::RequestBuilder {
+    let Some(auth) = auth else {
+        return builder;
+    };
+
+    let caller_set = |name: &str| {
+        caller_headers
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case(name))
+    };
+
+    if let Some(token) = &auth.token {
+        if !caller_set("x-hermes-session-token") {
+            builder = builder.header("X-Hermes-Session-Token", token);
+        }
+    }
+
+    for (name, value) in &auth.headers {
+        if !caller_set(name) {
+            builder = builder.header(name.as_str(), value);
+        }
+    }
+
+    builder
+}
+
 async fn send_http(
     client: &reqwest::Client,
     method: &reqwest::Method,
     req: &HttpReq,
     bearer: Option<&str>,
+    connection: Option<&ConnectionAuth>,
 ) -> Result<reqwest::Response, String> {
     let mut builder = client.request(method.clone(), &req.url);
     for (key, value) in &req.headers {
         builder = builder.header(key, value);
     }
+    builder = apply_connection_auth(builder, &req.headers, connection);
     if let Some(upload) = &req.upload {
         // `multipart` sets Content-Type itself, boundary included — a caller
         // header would produce a boundary that does not match the body.
@@ -699,7 +824,16 @@ pub async fn http_request(
         None => None,
     };
 
-    let mut resp = send_http(&state.http, &method, &req, bearer.as_deref()).await?;
+    let connection = state.connection_auth_for_url(&req.url);
+
+    let mut resp = send_http(
+        &state.http,
+        &method,
+        &req,
+        bearer.as_deref(),
+        connection.as_ref(),
+    )
+    .await?;
 
     // A bearer the gateway refuses is normally one rotated or revoked out from
     // under us between the keyring read and the send, so force a rotation and
@@ -711,7 +845,14 @@ pub async fn http_request(
             let rotated = crate::oauth::gateway_bearer(&app, state.inner(), base, true).await;
 
             if rotated.is_some() && rotated != bearer {
-                resp = send_http(&state.http, &method, &req, rotated.as_deref()).await?;
+                resp = send_http(
+                    &state.http,
+                    &method,
+                    &req,
+                    rotated.as_deref(),
+                    connection.as_ref(),
+                )
+                .await?;
             }
         }
     }
@@ -873,6 +1014,229 @@ where
     sink.close(close_code, close_reason);
 }
 
+/// Append the connection's `?token=` to a ws URL, unless one is already there.
+///
+/// PURE and separate so the "the token never enters JS" invariant is testable
+/// without a socket. A URL that already carries an auth param is left alone: the
+/// caller minted a ticket, which is a fresher credential than a stored token.
+fn apply_ws_token(url: &str, token: Option<&str>) -> String {
+    let Some(token) = token.filter(|value| !value.is_empty()) else {
+        return url.to_string();
+    };
+
+    if url.contains("token=") || url.contains("ticket=") {
+        return url.to_string();
+    }
+
+    let separator = if url.contains('?') { '&' } else { '?' };
+    let encoded = percent_encoding::utf8_percent_encode(token, percent_encoding::NON_ALPHANUMERIC)
+        .to_string();
+
+    format!("{url}{separator}token={encoded}")
+}
+
+/// The headers to put on an upgrade: the caller's, then the connection's for any
+/// name the caller did not set. Same precedence rule as `apply_connection_auth`.
+fn ws_upgrade_headers(
+    caller: Option<&HashMap<String, String>>,
+    connection: Option<&ConnectionAuth>,
+) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = caller
+        .map(|headers| {
+            headers
+                .iter()
+                .map(|(name, value)| (name.to_ascii_lowercase(), value.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if let Some(auth) = connection {
+        for (name, value) in &auth.headers {
+            if !out.iter().any(|(existing, _)| existing == name) {
+                out.push((name.clone(), value.clone()));
+            }
+        }
+    }
+
+    out
+}
+
+/// One credential-bearing GET, for the registry's health probe (leg 1).
+///
+/// Goes through the same client and the same auth table as `http_request`, so a
+/// probe sees exactly what a real call would see — a probe that authenticated
+/// differently from the app would be a probe of something else.
+pub async fn probe_get_json(
+    app: &AppHandle,
+    url: &str,
+    timeout: Duration,
+) -> Result<(u16, serde_json::Value), String> {
+    use tauri::Manager;
+
+    let state = app.state::<TransportState>();
+    let req = HttpReq {
+        method: "GET".to_string(),
+        url: url.to_string(),
+        headers: HashMap::new(),
+        body: None,
+        upload: None,
+        timeout_ms: Some(timeout.as_millis() as u64),
+    };
+
+    let bearer = match state.bearer_base_for_url(url) {
+        Some(base) => crate::oauth::gateway_bearer(app, state.inner(), &base, false).await,
+        None => None,
+    };
+    let connection = state.connection_auth_for_url(url);
+
+    let resp = send_http(
+        state.client(),
+        &reqwest::Method::GET,
+        &req,
+        bearer.as_deref(),
+        connection.as_ref(),
+    )
+    .await?;
+
+    let status = resp.status().as_u16();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| redact_error(e.to_string(), url))?;
+
+    Ok((
+        status,
+        serde_json::from_str(&body).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
+/// One credential-bearing POST with no body, for the probe's ws-ticket mint and
+/// the update fan-out. Same client, same auth table as `probe_get_json`.
+pub async fn probe_post_json(
+    app: &AppHandle,
+    url: &str,
+    timeout: Duration,
+) -> Result<(u16, serde_json::Value), String> {
+    use tauri::Manager;
+
+    let state = app.state::<TransportState>();
+    let req = HttpReq {
+        method: "POST".to_string(),
+        url: url.to_string(),
+        // The gateway guards this route on Origin; the real mint sends the
+        // gateway's own base, so the probe has to as well or it is testing a
+        // different door.
+        headers: HashMap::from([("Origin".to_string(), origin_of(url))]),
+        body: Some(serde_json::json!({})),
+        upload: None,
+        timeout_ms: Some(timeout.as_millis() as u64),
+    };
+
+    let bearer = match state.bearer_base_for_url(url) {
+        Some(base) => crate::oauth::gateway_bearer(app, state.inner(), &base, false).await,
+        None => None,
+    };
+    let connection = state.connection_auth_for_url(url);
+
+    let resp = send_http(
+        state.client(),
+        &reqwest::Method::POST,
+        &req,
+        bearer.as_deref(),
+        connection.as_ref(),
+    )
+    .await?;
+
+    let status = resp.status().as_u16();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| redact_error(e.to_string(), url))?;
+
+    Ok((
+        status,
+        serde_json::from_str(&body).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
+fn origin_of(url: &str) -> String {
+    Url::parse(url)
+        .map(|parsed| parsed.origin().ascii_serialization())
+        .unwrap_or_else(|_| url.to_string())
+}
+
+/// One WS upgrade, watched (leg 2). Returns what was OBSERVED; the verdict is
+/// `connections::probe::classify_probe`'s to decide.
+pub async fn probe_ws(
+    _app: &AppHandle,
+    url: &str,
+    headers: Vec<(String, String)>,
+    connect_timeout: Duration,
+    grace: Duration,
+) -> Result<crate::connections::probe::WsObservation, String> {
+    use crate::connections::probe::WsObservation;
+
+    let mut request = url
+        .to_string()
+        .into_client_request()
+        .map_err(|e| redact_message(format!("invalid ws url {}: {e}", redact_url(url))))?;
+
+    // Desktop sends `Origin: null` for native clients and gateways accept it;
+    // sending the gateway's own origin is what reverse proxies guarding /api/ws
+    // reject. The probe must handshake exactly like the real connect or it is
+    // testing a different door.
+    if let Ok(value) = "null".parse() {
+        request.headers_mut().insert("Origin", value);
+    }
+
+    for (name, value) in headers {
+        if let (Ok(name), Ok(value)) = (
+            reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+            reqwest::header::HeaderValue::from_str(&value),
+        ) {
+            request.headers_mut().insert(name, value);
+        }
+    }
+
+    let connected =
+        tokio::time::timeout(connect_timeout, tokio_tungstenite::connect_async(request)).await;
+
+    let (stream, _) = match connected {
+        Err(_) => {
+            return Ok(WsObservation {
+                timed_out: true,
+                ..WsObservation::default()
+            })
+        }
+        Ok(Err(err)) => return Err(redact_error(err.to_string(), url)),
+        Ok(Ok(pair)) => pair,
+    };
+
+    let (mut write, mut read) = stream.split();
+    let mut observation = WsObservation {
+        opened: true,
+        ..WsObservation::default()
+    };
+
+    // The grace window is the whole point of leg 2: a gateway that refuses the
+    // credential completes the upgrade first and closes immediately after, which
+    // is indistinguishable from success until you wait.
+    match tokio::time::timeout(grace, read.next()).await {
+        Ok(Some(Ok(Message::Close(_))) | Some(Err(_)) | None) => {
+            observation.closed_after_open = true
+        }
+        // Any frame at all is the strongest evidence there is.
+        Ok(Some(Ok(_))) => observation.frame = true,
+        // Still open, still silent: healthy. The gateway speaks first only after
+        // a subscribe, which a probe deliberately does not send.
+        Err(_) => {}
+    }
+
+    let _ = write.close().await;
+
+    Ok(observation)
+}
+
 /// Open a raw WebSocket. The *client* supplies `id` (a uuid) and subscribes to
 /// `ws://{id}/open|message|close|error` BEFORE calling this, so no frame is
 /// missed. `origin` is set on the upgrade to whatever the JS caller passes — the
@@ -885,6 +1249,17 @@ where
 /// event. A packaged app can outlive its bundled Rust core in either direction
 /// across a JS-only update, so both halves of the seam tolerate the other being
 /// a release behind.
+///
+/// `headers` and `connection_id` are MJXHRM-446's, both optional and both
+/// no-ops when absent, so today's callers behave byte-for-byte as before:
+///
+///  * `headers` — a gateway behind Cloudflare Access needs its service-token
+///    header on the UPGRADE, not just on REST. Before this there was no header
+///    path to a WS upgrade at all, on any platform, so such a gateway could pass
+///    every REST call and still never open a chat socket.
+///  * `connection_id` — in token mode Rust appends the `?token=` itself, from
+///    the registry's credential table. The token therefore never enters JS,
+///    which is what closes MJXHRM-413.
 #[tauri::command]
 pub async fn ws_open(
     app: AppHandle,
@@ -894,6 +1269,8 @@ pub async fn ws_open(
     url: String,
     origin: Option<String>,
     binary_channel: Option<JavaScriptChannelId>,
+    headers: Option<HashMap<String, String>>,
+    connection_id: Option<String>,
 ) -> Result<(), String> {
     // Resolved against the INVOKING webview, not an arbitrary one: this app runs
     // many windows (session-*, tile-*, sat-*) and the frames belong to whichever
@@ -903,6 +1280,16 @@ pub async fn ws_open(
     let owner = webview.window().label().to_string();
     let binary: Option<Channel<InvokeResponseBody>> =
         binary_channel.map(|channel| channel.channel_on(webview));
+
+    // The registered connection's credentials, resolved BEFORE the URL is built
+    // so the token can go into the query without ever having been in JS.
+    let connection = connection_id
+        .as_deref()
+        .and_then(|id| state.connection_auth_by_id(id));
+    let url = match &connection {
+        Some(auth) => apply_ws_token(&url, auth.token.as_deref()),
+        None => url,
+    };
 
     // The URL carries the ws auth param, so it is redacted before it can reach
     // an error string — this one bubbles all the way to $connectionError and is
@@ -914,6 +1301,15 @@ pub async fn ws_open(
     if let Some(origin) = origin {
         if let Ok(value) = origin.parse() {
             request.headers_mut().insert("Origin", value);
+        }
+    }
+
+    for (name, value) in ws_upgrade_headers(headers.as_ref(), connection.as_ref()) {
+        if let (Ok(name), Ok(value)) = (
+            reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+            reqwest::header::HeaderValue::from_str(&value),
+        ) {
+            request.headers_mut().insert(name, value);
         }
     }
 
@@ -1131,11 +1527,11 @@ mod tests {
     use tauri::ipc::{Channel, InvokeResponseBody};
 
     use super::{
-        apply_gateway_bearer, caller_set_authorization, forget_socket, pump_reader, redact_bearer,
-        redact_error, redact_message, redact_secret, redact_url, safe_upload_filename,
-        send_binary_frame, take_window_sockets, upload_form, upload_lost_to_redirect,
-        visible_response_headers, HashMap, HttpReq, HttpUpload, Message, ReaderSink, SocketHandle,
-        TransportState,
+        apply_connection_auth, apply_gateway_bearer, apply_ws_token, caller_set_authorization,
+        forget_socket, pump_reader, redact_bearer, redact_error, redact_message, redact_secret,
+        redact_url, safe_upload_filename, send_binary_frame, take_window_sockets, upload_form,
+        upload_lost_to_redirect, visible_response_headers, ws_upgrade_headers, ConnectionAuth,
+        HashMap, HttpReq, HttpUpload, Message, ReaderSink, SocketHandle, TransportState,
     };
 
     /// A registry entry shaped exactly like a live one: a writer task parked on
@@ -1943,5 +2339,167 @@ mod tests {
         // Reaping a window with nothing open is a no-op, not a wipe.
         assert!(take_window_sockets(&mut sockets, "sat-xyz").is_empty());
         assert_eq!(sockets.len(), 1);
+    }
+
+    // --- the registered-connection attach table (MJXHRM-446) ---------------
+
+    fn auth(id: &str, token: Option<&str>) -> ConnectionAuth {
+        ConnectionAuth {
+            connection_id: id.to_string(),
+            headers: vec![("cf-access-client-id".to_string(), "svc".to_string())],
+            token: token.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn the_attach_table_matches_longest_prefix_first() {
+        let state = TransportState::new();
+
+        state.set_connection_auth("https://host", auth("bare", Some("bare-token")));
+        state.set_connection_auth(
+            "https://host/hermes",
+            auth("prefixed", Some("prefixed-token")),
+        );
+
+        assert_eq!(
+            state
+                .connection_auth_for_url("https://host/hermes/api/status")
+                .expect("prefixed")
+                .connection_id,
+            "prefixed"
+        );
+        assert_eq!(
+            state
+                .connection_auth_for_url("https://host/api/status")
+                .expect("bare")
+                .connection_id,
+            "bare"
+        );
+    }
+
+    #[test]
+    fn a_look_alike_host_never_matches_a_registered_base() {
+        let state = TransportState::new();
+
+        state.set_connection_auth("https://gw.ev", auth("real", Some("t")));
+
+        // The `url_is_under` guard, shared with the bearer table: a `starts_with`
+        // copy here would hand this connection's session token to an attacker's
+        // host on the first REST call.
+        assert!(state
+            .connection_auth_for_url("https://gw.evil.com/api/status")
+            .is_none());
+        assert!(state
+            .connection_auth_for_url("https://gw.ev/api/status")
+            .is_some());
+    }
+
+    #[test]
+    fn re_registering_a_connection_drops_its_old_base() {
+        let state = TransportState::new();
+
+        state.set_connection_auth("https://old", auth("box", Some("t")));
+        state.set_connection_auth("https://new", auth("box", Some("t")));
+
+        // A source moved to a new URL must stop attaching its token at the old
+        // one — a table keyed only by base would go on doing so forever.
+        assert!(state
+            .connection_auth_for_url("https://old/api/status")
+            .is_none());
+        assert!(state
+            .connection_auth_for_url("https://new/api/status")
+            .is_some());
+
+        state.forget_connection_auth("box");
+        assert!(state
+            .connection_auth_for_url("https://new/api/status")
+            .is_none());
+    }
+
+    #[test]
+    fn a_callers_own_headers_win_over_the_connections() {
+        let client = reqwest::Client::new();
+        let mut caller = HashMap::new();
+        caller.insert("X-Hermes-Session-Token".to_string(), "mine".to_string());
+        caller.insert("CF-Access-Client-Id".to_string(), "also-mine".to_string());
+
+        let built = apply_connection_auth(
+            client.get("https://gw/api/status"),
+            &caller,
+            Some(&auth("box", Some("theirs"))),
+        )
+        .build()
+        .expect("build");
+
+        // Nothing was added: an MCP or marketplace panel talking to a third
+        // party with its own key must not have it overwritten.
+        assert!(built.headers().get("x-hermes-session-token").is_none());
+        assert!(built.headers().get("cf-access-client-id").is_none());
+    }
+
+    #[test]
+    fn a_connections_token_and_headers_are_attached_when_the_caller_set_none() {
+        let client = reqwest::Client::new();
+        let built = apply_connection_auth(
+            client.get("https://gw/api/status"),
+            &HashMap::new(),
+            Some(&auth("box", Some("theirs"))),
+        )
+        .build()
+        .expect("build");
+
+        assert_eq!(built.headers()["x-hermes-session-token"], "theirs");
+        assert_eq!(built.headers()["cf-access-client-id"], "svc");
+    }
+
+    #[test]
+    fn the_ws_token_is_appended_in_rust_and_never_over_a_fresher_credential() {
+        assert_eq!(
+            apply_ws_token("ws://gw/api/ws", Some("a b")),
+            "ws://gw/api/ws?token=a%20b"
+        );
+        assert_eq!(
+            apply_ws_token("ws://gw/api/ws?profile=work", Some("t")),
+            "ws://gw/api/ws?profile=work&token=t"
+        );
+        // A minted ticket is fresher than a stored token; never stack both.
+        assert_eq!(
+            apply_ws_token("ws://gw/api/ws?ticket=fresh", Some("t")),
+            "ws://gw/api/ws?ticket=fresh"
+        );
+        assert_eq!(apply_ws_token("ws://gw/api/ws", None), "ws://gw/api/ws");
+        assert_eq!(apply_ws_token("ws://gw/api/ws", Some("")), "ws://gw/api/ws");
+    }
+
+    #[test]
+    fn the_upgrade_carries_the_callers_headers_then_the_connections() {
+        let mut caller = HashMap::new();
+        caller.insert("CF-Access-Client-Id".to_string(), "mine".to_string());
+
+        let merged = ws_upgrade_headers(Some(&caller), Some(&auth("box", None)));
+
+        assert_eq!(
+            merged,
+            vec![("cf-access-client-id".to_string(), "mine".to_string())]
+        );
+        assert_eq!(
+            ws_upgrade_headers(None, Some(&auth("box", None))),
+            vec![("cf-access-client-id".to_string(), "svc".to_string())]
+        );
+        assert!(ws_upgrade_headers(None, None).is_empty());
+    }
+
+    #[test]
+    fn a_probe_ws_url_is_still_redacted() {
+        // The probe builds `?token=`/`?ticket=` itself, so the redaction that
+        // keeps $connectionError clean has to cover it.
+        assert_eq!(
+            redact_url("wss://gw/api/ws?token=supersecret"),
+            "wss://gw/api/ws?token=***"
+        );
+        assert_eq!(
+            redact_url("wss://gw/api/ws?ticket=supersecret"),
+            "wss://gw/api/ws?ticket=***"
+        );
     }
 }

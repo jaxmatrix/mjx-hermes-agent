@@ -93,11 +93,34 @@ impl SecretKey {
 /// Deliberately not reachable from IPC: these hold live bearer and refresh
 /// tokens, and no webview surface has a reason to read one. Kept in the same
 /// service so the user still sees a single credential group they can revoke.
+/// The per-connection variants (MJXHRM-446) are here rather than on `SecretKey`
+/// deliberately. `SecretKey` is *everything the webview may name*, so a variant
+/// parameterised by a connection id would re-create the arbitrary-account hole
+/// this module exists to close: the id would come from JS, and any window in the
+/// glob list could then read any connection's credential. `NativeAuth` is the
+/// exact precedent — Rust-only and already scope-parameterised.
+///
+/// The PRIMARY connection deliberately has NO entry here: it keeps the seven
+/// bare `SecretKey` accounts, so an upgrade re-requests nothing and a downgrade
+/// still finds its credentials (the §6.2 carve-out that also keeps
+/// `ssh_ownership_id` byte-identical).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnedKey {
     /// One gateway's OAuth token set, scoped by its base URL so two gateways
     /// keep separate sessions.
     NativeAuth,
+    /// A registered connection's gateway session token.
+    ConnectionToken,
+    /// One extra request header's VALUE. The scope is `<id>/header/<name>` — the
+    /// NAME is non-secret and lives in the registry document; only the value is
+    /// a credential (a Cloudflare Access service token is one).
+    ConnectionHeader,
+    ConnectionSshKey,
+    ConnectionSshPassphrase,
+    ConnectionSshPassword,
+    /// The token that lets a re-dial REATTACH to a still-running remote backend
+    /// instead of spawning a second one.
+    ConnectionReuseToken,
 }
 
 impl OwnedKey {
@@ -105,6 +128,15 @@ impl OwnedKey {
         match self {
             // Namespaced so it can never collide with a `SecretKey` account.
             Self::NativeAuth => format!("nativeAuth:{}", scope.trim_end_matches('/')),
+            // `conn:` is the second reserved namespace. `scope` is the
+            // connection id (plus `/header/<name>` for `ConnectionHeader`), and
+            // `connections::secrets` is the only caller that builds one.
+            Self::ConnectionToken => format!("conn:{scope}/token"),
+            Self::ConnectionHeader => format!("conn:{scope}"),
+            Self::ConnectionSshKey => format!("conn:{scope}/sshKey"),
+            Self::ConnectionSshPassphrase => format!("conn:{scope}/sshPassphrase"),
+            Self::ConnectionSshPassword => format!("conn:{scope}/sshPassword"),
+            Self::ConnectionReuseToken => format!("conn:{scope}/reuseToken"),
         }
     }
 }

@@ -39,6 +39,7 @@ import { invalidateSlashCompletions } from '@/lib/slash-completion-cache'
 import { type DeltaChannel, flushDeltas, queueDelta, setStreamBatchSink } from '@/lib/stream-batch'
 import { prettyName } from '@/lib/text'
 import { stopSpeaking } from '@/lib/tts'
+import { $activeConnectionId } from '@/store/active-connection'
 import { type AgentNoticePayload, clearAgentNotice, nativeNoticeInput, showAgentNotice } from '@/store/agent-notices'
 import { reconcileApprovalModeForProfile } from '@/store/approval-mode'
 import { ackApprovalReceived, readApprovalPayload } from '@/store/approvals'
@@ -257,6 +258,17 @@ function applySessionTitle(payload: Record<string, unknown>): void {
 
 /** Fold one gateway event into the session that owns it. */
 export function routeGatewayEvent(event: GatewayEvent): void {
+  // A frame stamped with a connection id that is not the ACTIVE one belongs to a
+  // secondary socket (MJXHRM-446), and its consumers were already offered it by
+  // `addConnectionEventListener`. Dropping it here is rule 7: another machine's
+  // session id must not reach `$sessionStates`, where ids can collide across
+  // backends. An unstamped frame is the ambient socket's and routes as always.
+  const stamped = (event as { connectionId?: string }).connectionId
+
+  if (stamped && stamped !== $activeConnectionId.get()) {
+    return
+  }
+
   // Arm reconnect reconciliation on the first frame rather than at import.
   // A socket that drops mid-turn and comes back is the window where a terminal
   // frame goes missing, and this is the first moment we know there is a socket

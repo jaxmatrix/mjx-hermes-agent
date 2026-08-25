@@ -9,6 +9,7 @@ import { setCronJobs } from '@/store/cron'
 import { closeGateway } from '@/store/gateway'
 import type { Connection, GatewayMode } from '@/store/gateway-config'
 import { dialSavedTarget, type GatewayTarget, loadGatewayTarget } from '@/store/gateway-restore'
+import { closeAllSecondaries } from '@/store/gateway-secondaries'
 import { $gatewayMode, $gatewaySwitching } from '@/store/gateway-switch'
 import { resetLiveRuntimeTracking } from '@/store/live-session-status'
 import { resetLiveSync } from '@/store/live-sync'
@@ -35,6 +36,7 @@ import {
 import { resetSessionPinMirror } from '@/store/session-pin-sync'
 import { clearAllSessionStates, resetTileRuntimeBindings } from '@/store/session-states'
 import { resetArchivedSessionsForBackendSwitch } from '@/store/sidebar-archive'
+import { resetSystemStatusForBackendSwitch } from '@/store/system-status'
 import { clearTranscriptPaint } from '@/store/transcript-paint'
 import { resetWorkspaceCwd } from '@/store/workspace-events'
 
@@ -144,6 +146,15 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // one here. The artifact half of this was already handled above
   // (`clearArtifactRegistry`); file tabs were the half that wasn't.
   closeAllPreviewTabs()
+
+  // The statusbar's gateway health, inference readiness and backend VERSION all
+  // came from the previous backend, and `system-status.ts` only re-polls every
+  // 30 s behind a `$gatewayState === 'open'` guard — so without this the new
+  // gateway is described by the old one's numbers until the next tick (D-1).
+  resetSystemStatusForBackendSwitch()
+  // A registered source's credentials are attached per BASE URL in Rust, so the
+  // secondaries opened against the source we are leaving have to go with it.
+  closeAllSecondaries()
 
   // Sidebar skeletons until refreshSessions lands.
   $sessionsLoading.set(true)

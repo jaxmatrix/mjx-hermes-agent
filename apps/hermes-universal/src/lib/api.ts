@@ -1,4 +1,4 @@
-import { $connection } from '@/store/connection'
+import { $connection } from '@/store/connection-atoms'
 import { httpRequest, type HttpUpload } from '@/transport/http'
 
 // REST helper scoped to the active connection. Mirrors the desktop's
@@ -18,6 +18,41 @@ export interface ApiRequest {
   // backend scopes that request to the named profile's HERMES_HOME
   // (web_server.py _profile_scope). null/"current" = the gateway's own profile.
   profile?: string | null
+  /**
+   * Send this to a REGISTERED gateway other than the active one (MJXHRM-446).
+   *
+   * Only the BASE URL changes. The credential is attached in Rust from that
+   * connection's own entry in the transport's auth table, so nothing about the
+   * token reaches this file — and with the field unset every call is
+   * byte-identical to what it was.
+   */
+  connectionId?: string
+}
+
+/**
+ * Where a registered connection lives.
+ *
+ * A registration hook rather than an import: `store/connections.ts` is a store
+ * that transitively imports `@/hermes`, which imports this file. Recipe 6.4's
+ * answer to an unavoidable cycle is a hook (`setSessionRequestRouter`,
+ * `setConnectionIdResolver`, `setApiRequestProfile`), and this is the same
+ * shape. With none registered, a `connectionId` is simply ignored — which is
+ * exactly right in a build with no registry.
+ */
+type ConnectionBaseResolver = (connectionId: string) => null | string | undefined
+
+let connectionBaseResolver: ConnectionBaseResolver | null = null
+
+export function setConnectionBaseResolver(resolver: ConnectionBaseResolver): () => void {
+  const previous = connectionBaseResolver
+
+  connectionBaseResolver = resolver
+
+  return () => {
+    if (connectionBaseResolver === resolver) {
+      connectionBaseResolver = previous
+    }
+  }
 }
 
 /**
@@ -68,12 +103,18 @@ export async function api<T = unknown>({
   body,
   upload,
   timeoutMs,
-  profile
+  profile,
+  connectionId
 }: ApiRequest): Promise<T> {
   const conn = $connection.get()
+  // Read at CALL TIME, never captured (rule 13) — a switch mid-flight must not
+  // be able to send the rest of a batch to the previous backend.
+  const base = connectionId ? connectionBaseResolver?.(connectionId) : conn?.baseUrl
 
-  if (!conn) {
-    throw new Error('Not connected to a Hermes backend')
+  if (!base) {
+    throw new Error(
+      connectionId ? `No gateway registered as ${connectionId}` : 'Not connected to a Hermes backend'
+    )
   }
 
   const headers: Record<string, string> = {}
@@ -84,11 +125,15 @@ export async function api<T = unknown>({
     headers['Content-Type'] = 'application/json'
   }
 
-  if (conn.token) {
+  // A REGISTERED connection's token is attached in Rust (`ConnectionAuthTable`),
+  // so it is never in a JS value — that is MJXHRM-413. The branch below is the
+  // pre-registry path, kept for the legacy owner whose descriptor still carries
+  // one, and skipped entirely for a cross-connection call.
+  if (!connectionId && conn?.token) {
     headers['X-Hermes-Session-Token'] = conn.token
   }
 
-  const res = await httpRequest(method, `${conn.baseUrl}${withProfile(path, profile)}`, {
+  const res = await httpRequest(method, `${base}${withProfile(path, profile)}`, {
     headers,
     body,
     upload,

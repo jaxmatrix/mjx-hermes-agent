@@ -5,7 +5,8 @@ const listProfilesRich = vi.fn()
 vi.mock('@/lib/gateway-rpc', () => ({ listProfilesRich: () => listProfilesRich() }))
 vi.mock('@/hermes', () => ({ getStatus: vi.fn(), setApiRequestProfile: vi.fn() }))
 
-import { $connection, $connectionPhase, $hasConnected } from './connection'
+import { describeConnection, publishActiveConnection } from './active-connection'
+import { $connectionPhase, $hasConnected } from './connection'
 import { $gatewayState } from './gateway'
 import { $restoring } from './gateway-restore'
 import { $gatewaySwitching } from './gateway-switch'
@@ -23,7 +24,11 @@ const ROSTER = {
 }
 
 function connect() {
-  $connection.set({ baseUrl: 'https://gw.test', mode: 'remote' } as never)
+  // Published, not assigned. MJXHRM-446 made `publishActiveConnection` the ONE
+  // writer of `$connection`, and it writes the source identity in the same
+  // `batch()` — so "usable" now means "usable AND we know which machine".
+  // Setting the descriptor by hand reaches a state production cannot be in.
+  publishActiveConnection(describeConnection({ baseUrl: 'https://gw.test', mode: 'remote' } as never))
   $connectionPhase.set('ready')
   $gatewayState.set('open')
   $hasConnected.set(true)

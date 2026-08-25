@@ -32,6 +32,16 @@ const TARGET_KEY = 'hermes.connection.last'
  *  token/password live in the OS keyring, the session cookie jar in Rust. */
 export interface GatewayTarget {
   mode: GatewayMode
+  /**
+   * Which REGISTERED connection this target is (MJXHRM-446).
+   *
+   * Additive and optional: a target written by a pre-registry build has none,
+   * and the restore falls back to exactly what it did before. It matters for the
+   * ROLLBACK of a failed switch — without it the rollback re-dials whatever
+   * `hermes.connection.last` happens to say rather than the source the user
+   * actually came from.
+   */
+  connectionId?: string
   /** remote: the backend URL + (optional) username for the password path. */
   url?: string
   username?: string
@@ -106,6 +116,16 @@ export interface PendingOAuth {
   base: string
   provider?: string
   username?: string
+  /**
+   * The registry row this sign-in belongs to.
+   *
+   * On mobile an interactive sign-in navigates the app's only webview away and
+   * back, destroying the JS context that held the editor draft — so the source
+   * is SAVED first and its id parked here, and the post-reload resume selects
+   * it. Without the id the resume can only guess, which on a multi-source
+   * install means coming back on the wrong machine.
+   */
+  connectionId?: string
 }
 
 /** Queue an OAuth resume for the next boot (best-effort). Mobile only. */
@@ -261,6 +281,25 @@ export async function autoRestoreConnection(): Promise<void> {
     const status = await oauthStatus(pending.base).catch(() => ({ signedIn: false }))
 
     if (status.signedIn) {
+      // The sign-in was for a REGISTERED source: finish on that one rather than
+      // re-dialling its URL as an anonymous remote (MJXHRM-446 §8.5). The source
+      // was saved BEFORE the navigation, so it is already in the registry — and
+      // `selectConnection` broadcasts the switch itself, which is what re-homes
+      // the other WebViews (on Android, Settings runs in its own activity).
+      if (pending.connectionId) {
+        try {
+          // Imported lazily: `store/connections.ts` reads `loadGatewayTarget`
+          // from this module, and a static import would close that cycle.
+          const { selectConnection } = await import('@/store/connections')
+
+          await selectConnection(pending.connectionId)
+        } finally {
+          $restoring.set(false)
+        }
+
+        return
+      }
+
       $gatewayMode.set('remote')
 
       try {

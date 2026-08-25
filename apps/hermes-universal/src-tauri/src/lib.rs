@@ -14,6 +14,7 @@ mod appearance;
 mod artifact;
 mod background;
 mod cloud;
+mod connections;
 mod context_menu;
 mod data_url_read_max;
 mod deep_link;
@@ -48,6 +49,11 @@ use artifact::{artifact_release, artifact_stage, ArtifactState, ARTIFACT_SCHEME}
 use background::{get_background_mode, quit_app, set_background_mode, BackgroundState};
 use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
+};
+use connections::{
+    connections_list, connections_migrate, connections_remove, connections_resolve,
+    connections_roster, connections_save, connections_set_last_used, connections_set_launch_mode,
+    connections_set_primary, connections_test, connections_update_all, ConnectionsState,
 };
 use context_menu::{
     context_menu_copy_image, context_menu_install, context_menu_save_image,
@@ -219,6 +225,10 @@ pub fn run() {
         // (MJXHRM-478). Managed on BOTH targets so the builder chain has one
         // shape; the set is empty and harmless where no adapter exists yet.
         .manage(ContextMenuState::default())
+        // The connection registry (MJXHRM-446). Managed on BOTH targets: the
+        // document, the credentials and the probe are platform-identical, and
+        // only the `local` KIND is desktop-only.
+        .manage(ConnectionsState::default())
         // The deep-link cold-start buffer. Managed on BOTH targets so the builder
         // chain has one shape — and it does real work on mobile, where a cold
         // launch from a tapped link races the WebView every time.
@@ -342,6 +352,17 @@ pub fn run() {
             read_capped_file_base64,
             get_app_flag,
             set_app_flag,
+            connections_list,
+            connections_migrate,
+            connections_save,
+            connections_remove,
+            connections_set_primary,
+            connections_set_launch_mode,
+            connections_set_last_used,
+            connections_resolve,
+            connections_test,
+            connections_roster,
+            connections_update_all,
             marketplace_search,
             marketplace_fetch,
             artifact_release,

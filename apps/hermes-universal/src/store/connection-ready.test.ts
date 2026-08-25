@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/hermes', () => ({ getStatus: vi.fn(), setApiRequestProfile: vi.fn() }))
 
+import { $activeConnection, describeConnection } from './active-connection'
 import { $connection, $connectionPhase, $hasConnected } from './connection'
 import { $connectionReady } from './connection-ready'
 import { $gatewayState } from './gateway'
@@ -12,6 +13,7 @@ const CONNECTION = { baseUrl: 'https://gw.test', mode: 'remote' } as never
 
 /** Every flag in the state that means "usable". Each case below moves ONE. */
 function makeReady() {
+  $activeConnection.set(describeConnection(CONNECTION))
   $connection.set(CONNECTION)
   $connectionPhase.set('ready')
   $gatewayState.set('open')
@@ -23,7 +25,7 @@ function makeReady() {
 beforeEach(makeReady)
 
 describe('$connectionReady', () => {
-  it('is true only when all six agree', () => {
+  it('is true only when all seven agree', () => {
     expect($connectionReady.get()).toBe(true)
   })
 
@@ -31,6 +33,10 @@ describe('$connectionReady', () => {
   // derivation is that no single one of these can be dropped from it.
   it.each([
     ['no connection', () => $connection.set(null)],
+    // MJXHRM-446's seventh input. "There is a descriptor" and "we know WHICH
+    // source it is" are different facts once a registry exists, and an RPC fired
+    // between them lands on whichever backend the previous source described.
+    ['no source identity', () => $activeConnection.set(null)],
     ['the probe has not settled', () => $connectionPhase.set('probing')],
     ['the socket is not open', () => $gatewayState.set('connecting')],
     ['nothing has connected this session', () => $hasConnected.set(false)],

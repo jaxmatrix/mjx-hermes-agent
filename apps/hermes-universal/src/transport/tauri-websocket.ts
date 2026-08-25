@@ -35,14 +35,27 @@ export class TauriWebSocket {
   private readonly id = crypto.randomUUID()
   private readonly url: string
   private readonly origin?: string
+  private readonly connectionId?: string
   private readonly listeners = new Map<string, Set<EventListenerLike>>()
   private unlisten: UnlistenFn[] = []
   private sendQueue: string[] = []
   private closed = false
 
-  constructor(url: string, origin?: string) {
+  /**
+   * `options.connectionId` names a REGISTERED gateway (MJXHRM-446).
+   *
+   * When present, Rust appends that connection's `?token=` and its configured
+   * upgrade headers itself — so a Cloudflare-Access gateway can finally pass its
+   * WS leg, and a token never enters JS. Absent (every call site today) the
+   * upgrade is byte-identical to what it was.
+   *
+   * The second parameter still accepts a bare origin string, because that is
+   * what every existing caller passes.
+   */
+  constructor(url: string, origin?: string | { origin?: string; connectionId?: string }) {
     this.url = url
-    this.origin = origin
+    this.origin = typeof origin === 'string' ? origin : origin?.origin
+    this.connectionId = typeof origin === 'string' ? undefined : origin?.connectionId
     void this.init()
   }
 
@@ -62,9 +75,10 @@ export class TauriWebSocket {
       }
 
       await invoke('ws_open', {
+        connectionId: this.connectionId ?? null,
         id: this.id,
-        url: this.url,
-        origin: this.origin ?? NATIVE_ORIGIN
+        origin: this.origin ?? NATIVE_ORIGIN,
+        url: this.url
       })
 
       const queued = this.sendQueue

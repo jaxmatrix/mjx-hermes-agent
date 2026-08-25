@@ -314,6 +314,73 @@ export const ja = defineLocale({
   },
 
   settings: {
+    connections: {
+      title: 'ゲートウェイ',
+      switchTo: label => `ソースを切り替え: ${label}`,
+      noSource: 'ゲートウェイなし',
+      connecting: label => `${label} に接続中…`,
+      searchPlaceholder: 'ゲートウェイを検索…',
+      searchEmpty: term => `「${term}」に一致するゲートウェイはありません。`,
+      add: 'ゲートウェイを追加',
+      pickOne: '設定を表示するゲートウェイを選んでください。',
+      readOnly: 'このゲートウェイ一覧は新しいバージョンの Hermes で書かれているため、ここでは読み取り専用です。',
+      degradedReason: reason => `保存されたファイルが使用できませんでした（${reason}）。以前のファイルは隣に残してあります。`,
+      fieldLabel: '名前',
+      fieldLabelPlaceholder: 'studio-box',
+      fieldUrl: 'ゲートウェイ URL',
+      fieldHost: 'SSH ホスト',
+      fieldRemoteProfile: 'リモートプロファイル',
+      fieldToken: 'ゲートウェイトークン',
+      fieldTokenPlaceholder: 'このゲートウェイに必要な場合のみ',
+      noKeyring: 'この端末には資格情報ストアがないため、ゲートウェイトークンを保存できません。ブラウザーでのサインイン、または認証不要のゲートウェイをご利用ください。',
+      localUnsupported: 'この端末では Hermes バックエンドを実行できません。SSH または URL で接続してください。',
+      kindHint: kind =>
+        kind === 'ssh' ? 'Hermes がそのホスト上でバックエンドを起動（または再接続）し、トンネルを張ります。' : kind === 'cloud' ? 'ポータル経由で到達する Hermes Cloud エージェントです。' : 'URL で到達できる Hermes バックエンドです。',
+      save: '保存',
+      saved: 'ゲートウェイを保存しました',
+      saveFailed: 'このゲートウェイを保存できませんでした',
+      removeFailed: 'このゲートウェイを削除できませんでした',
+      test: 'テスト',
+      testFailed: 'このゲートウェイをテストできませんでした',
+      connect: '接続',
+      setPrimary: 'プライマリに設定',
+      remove: '削除',
+      droppedHeaders: names => `これらのヘッダーはトランスポートが管理しているため保存されませんでした: ${names}。`,
+      verdict: verdict =>
+        verdict === 'ok'
+          ? '到達できます。'
+          : verdict === 'credential-rejected'
+            ? 'ゲートウェイは接続を受け入れた後に切断しました（資格情報が拒否された可能性があります）'
+            : verdict === 'auth-required'
+              ? '続行するにはこのゲートウェイにサインインしてください。'
+              : verdict === 'skipped-no-token'
+                ? '到達できます。トークンが保存されていないため、ソケットはテストしていません。'
+                : verdict === 'timeout'
+                  ? 'ゲートウェイが時間内に応答しませんでした。'
+                  : verdict === 'ws-unreachable'
+                    ? 'ゲートウェイは応答しましたが、ソケットが接続を拒否しました。'
+                    : 'このゲートウェイに到達できませんでした。',
+      legHttp: (ok, status, ms) => `HTTP ${ok ? status || 'ok' : 'failed'} · ${ms}ms`,
+      legWs: (ok, ms) => `WebSocket ${ok ? 'ok' : 'failed'} · ${ms}ms`,
+      launchMode: '起動時:',
+      launchPrimary: 'プライマリ',
+      launchLastUsed: '最後に使用したもの',
+      updateAll: 'すべて更新',
+      updateAllSummary: (total, failed) =>
+        failed > 0 ? `${total} 個のターゲットのうち ${failed} 個に到達できませんでした。` : `${total} 個のターゲットを更新しました。`,
+      degradedTitle: 'ゲートウェイ一覧を修復しました',
+      degradedMessage: '保存済みゲートウェイの一部を読み込めなかったため再作成しました。下の一覧を確認してください。',
+      latchedTitle: 'このゲートウェイは停止中です',
+      latchedMessage: reason =>
+        reason === 'host-key-changed'
+          ? 'ホストキーが変更されたため、Hermes は再試行を停止しました。新しいキーを信頼すると続行できます。'
+          : reason === 'reauth-required'
+            ? '保存されたサインインが拒否されました。再度サインインしてください。'
+            : 'このゲートウェイの起動に失敗しました。自動では再試行されません。',
+      switchFailed: 'ゲートウェイを切り替えられませんでした',
+      midDialTitle: 'ゲートウェイは変更されていません',
+      midDialMessage: label => `接続中に ${label} が変更されたため、前のゲートウェイのままです。`
+    },
     profileScope: {
       appliesTo: '適用先',
       editsProfile: profile => `このページでの変更は「${profile}」プロファイルに適用されます。`

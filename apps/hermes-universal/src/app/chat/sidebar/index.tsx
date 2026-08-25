@@ -2,6 +2,7 @@ import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $panesFlipped, $sidebarOpen, $sidebarOverlayMounted } from '@/store/layout'
 
+import { ConnectionSwitcher } from './connection-switcher'
 import { SidebarNavRail } from './nav-rail'
 import { ProfileRail } from './profile-switcher'
 import { SidebarScrollBody } from './sidebar-content'
@@ -31,8 +32,11 @@ function SidebarBody({ variant, onNavigate }: { variant: 'pane' | 'sheet'; onNav
       {/* Scroll body: search + pinned + sessions/projects + messaging + cron. */}
       <SidebarScrollBody onNavigate={onNavigate} />
 
-      {/* Fixed footer: the profile rail. */}
+      {/* Fixed footer: the SOURCE (which machine), then the profile rail (which
+          persona). Absent entirely with one source — a single-source install
+          keeps today's exact sidebar. */}
       <div className="shrink-0 px-2 pb-1 pt-0.5">
+        <ConnectionSwitcher />
         <ProfileRail />
       </div>
     </>
