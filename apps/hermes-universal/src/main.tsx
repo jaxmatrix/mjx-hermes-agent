@@ -57,7 +57,9 @@ import './store/deep-link-builtins'
 import './store/connection-session-router'
 import './store/connection-plugin-source'
 
+import { registerBrowserContributions } from './app/browser/context-target'
 import { installContextMenuBridge } from './app/context-menu/bridge'
+import { installBrowserBridge } from './store/browser-bridge'
 import { initializeConnectionsRegistry, startConnectionsWatcher } from './store/connections'
 import { installNotificationActivation } from './store/plugin-notify-handlers'
 import { installTourDriver } from './store/tour-bridge'
@@ -83,6 +85,16 @@ installNotificationActivation()
 // not re-wire them. In v1 every platform answers "nothing suppressed, nothing
 // promised", which is a true answer rather than a stub that lies.
 installContextMenuBridge()
+// And the in-app browser's agent half (MJXHRM-447): `preview.open`/`close`, the
+// page reader behind `read_preview`, and the actor behind `drive_preview`. Same
+// reason as the tour driver — the frame parks a BLOCKED tool, so a registration
+// that waited for a component to mount would burn the gateway's 45 s budget on
+// every early call. The act engine itself stays off this path (the actor
+// dynamic-imports it), which `entry-graph.test.ts` pins.
+installBrowserBridge()
+// Its contributions: the `webview` context-menu target kind, the "Open in
+// in-app browser" row on every web link, and the ⌘K palette row.
+registerBrowserContributions()
 
 import { QueryClientProvider } from '@tanstack/react-query'
 import { createRoot } from 'react-dom/client'

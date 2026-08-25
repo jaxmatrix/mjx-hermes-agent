@@ -2,6 +2,7 @@ import { translateNow } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 import { clearTranscriptTails } from '@/lib/transcript-tail-cache'
 import { clearArtifactRegistry } from '@/store/artifacts'
+import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import { resetChat } from '@/store/chat'
 import { resetRepoStatusForBackendSwitch } from '@/store/coding-status'
 import { $connection, beginGatewaySwitch, disconnect, endGatewaySwitch } from '@/store/connection'
@@ -155,6 +156,11 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // A registered source's credentials are attached per BASE URL in Rust, so the
   // secondaries opened against the source we are leaving have to go with it.
   closeAllSecondaries()
+  // And the in-app browser (MJXHRM-447): a browsed `localhost:5173` names the
+  // OLD machine, and the SSH forward lease behind it is a tunnel into a host we
+  // have stopped talking to. A new host never inherits a tunnel into the old
+  // one (rule 20).
+  forgetBrowserForGatewaySwitch()
 
   // Sidebar skeletons until refreshSessions lands.
   $sessionsLoading.set(true)

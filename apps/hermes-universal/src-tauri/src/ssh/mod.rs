@@ -195,6 +195,18 @@ pub struct SshState {
     attempts: Mutex<HashMap<String, Arc<Attempt>>>,
 }
 
+impl SshState {
+    /// The live session for a scope, if there is one.
+    ///
+    /// Exposed for the in-app browser's forward lease (MJXHRM-447), which opens
+    /// a SECOND forward ABOVE `SshState.forwards` rather than re-keying it:
+    /// that map holds exactly one forward per scope — the gateway's own — and a
+    /// dev-server tunnel must not evict it.
+    pub(crate) async fn session_for_scope(&self, scope: &str) -> Option<Arc<SshSession>> {
+        self.sessions.lock().await.get(scope).map(Arc::clone)
+    }
+}
+
 /// The scope key for a connection — live sessions, forwards AND, through
 /// `ownership::ssh_ownership_id`, the identity written into the remote lockfile.
 ///
@@ -752,12 +764,17 @@ pub async fn ssh_cancel(state: State<'_, SshState>, attempt_id: String) -> Resul
 /// ownership is proven, may terminate it.
 #[tauri::command]
 pub async fn ssh_disconnect(
+    app: AppHandle,
     state: State<'_, SshState>,
     profile: Option<String>,
     connection_id: Option<String>,
 ) -> Result<(), SshError> {
     let scope = registry_scope_of(connection_id.as_deref(), profile.as_deref());
     state.forwards.lock().await.remove(&scope);
+
+    // The in-app browser's dev-server tunnels ride this session too
+    // (MJXHRM-447). A new host must never inherit a tunnel into the old one.
+    crate::browser::drop_reach_scope(&app, &scope).await;
 
     if let Some(session) = state.sessions.lock().await.remove(&scope) {
         let _ = session.close().await;
@@ -796,6 +813,11 @@ async fn watch_session(app: AppHandle, scope: String, session: std::sync::Weak<S
 
         if !session.is_alive() {
             log::warn!("ssh: the session for scope {scope:?} died; the tunnel is gone");
+
+            // Same reason as `ssh_disconnect`: the browser's leases died with
+            // the session, and their ephemeral ports are gone forever.
+            crate::browser::drop_reach_scope(&app, &scope).await;
+
             let _ = app.emit(&format!("ssh://{scope}/disconnected"), ());
 
             return;

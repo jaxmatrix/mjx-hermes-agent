@@ -2520,6 +2520,31 @@ export const ar = defineLocale({
     terminalHide: 'إخفاء الطرفية',
     addToChat: 'إضافة للمحادثة'
   },
+  browser: {
+    back: 'رجوع',
+    forward: 'تقدم',
+    reload: 'إعادة التحميل',
+    stop: 'إيقاف',
+    addressLabel: 'العنوان',
+    addressPlaceholder: 'ابحث أو أدخل عنوانًا',
+    copyUrl: 'نسخ العنوان',
+    openExternally: 'فتح في متصفحك',
+    unsupportedTitle: 'تعذر تشغيل المتصفح المدمج هنا',
+    resume: 'استئناف',
+    paletteOpen: 'فتح المتصفح المدمج',
+    openLinksInApp: 'فتح روابط الويب داخل Hermes',
+    openLinksInAppDescription: 'تُفتح روابط الويب في المتصفح المدمج. اضغط ⌘/Ctrl أو استخدم زر الفأرة الأوسط لفتحها في متصفحك.',
+    isolatedStore: 'إبقاء ملفات تعريف الارتباط للمتصفح المدمج منفصلة',
+    isolatedStoreDescription: 'تسجيل الدخول إلى موقع في اللوحة لا يمس الحساب الذي يستخدمه Hermes. تغيير هذا الخيار يمسح ما هو مخزَّن.',
+    consoleDefault: 'إظهار وحدة تحكم المعاينة افتراضيًا',
+    consoleDefaultDescription: 'افتح لوحة وحدة التحكم كلما فُتح المتصفح المدمج.',
+    clearData: 'مسح بيانات التصفح',
+    clearDataDescription: 'ملفات تعريف الارتباط والتخزين والذاكرة المؤقتة للمتصفح المدمج فقط.',
+    clearDataConfirm: 'مسح ملفات تعريف الارتباط والتخزين والذاكرة المؤقتة للمتصفح المدمج؟',
+    cleared: 'تم مسح بيانات التصفح',
+    sharedCookies: 'يشارك هذا المتصفح ملفات تعريف الارتباط مع Hermes على هذا الجهاز.',
+    ephemeralStore: 'ينسى هذا المتصفح عمليات تسجيل الدخول عند إعادة تشغيل Hermes.'
+  },
   preview: {
     tab: 'معاينة',
     closePane: 'إغلاق جزء المعاينة',
@@ -2608,7 +2633,10 @@ export const ar = defineLocale({
       loadFailedConsole: (code, message) => `فشل التحميل${code ? ` (${code})` : ''}: ${message}`,
       unreachableDescription: 'تعذّر الوصول إلى صفحة المعاينة.',
       openTarget: url => `فتح ${url}`,
-      fallbackTitle: 'معاينة'
+      fallbackTitle: 'معاينة',
+      // The ONE key desktop has that universal lacked: why a loopback
+      // address cannot load when the gateway is somewhere else.
+      remoteLoopback: 'يشير هذا العنوان إلى الجهاز الذي يتحدث إليه Hermes، ولا تملك هذه البوابة نفقًا إليه. اتصل عبر SSH أو افتح الصفحة على ذلك الجهاز.'
     }
   },
   zones: {

@@ -152,6 +152,13 @@ describe('buildCredentialSearchEntries', () => {
 describe('buildClientPrefSearchEntries', () => {
   // MJXHRM-489: these six rows were unfindable because they carry no config key.
   const t = {
+    // MJXHRM-447's four in-app-browser rows.
+    browser: {
+      clearData: 'Clear browsing data',
+      consoleDefault: 'Show the preview console by default',
+      isolatedStore: "Keep the in-app browser's cookies separate",
+      openLinksInApp: 'Open web links in Hermes'
+    },
     language: { label: 'Language' },
     quickEntry: { settingsTitle: 'Quick Entry' },
     settings: {

@@ -3201,6 +3201,31 @@ export const zh: Translations = {
     missingBody: '该工件已不在本地注册表中。'
   },
 
+  browser: {
+    back: '后退',
+    forward: '前进',
+    reload: '重新加载',
+    stop: '停止',
+    addressLabel: '地址',
+    addressPlaceholder: '搜索或输入地址',
+    copyUrl: '复制地址',
+    openExternally: '在浏览器中打开',
+    unsupportedTitle: '此环境无法启动内置浏览器',
+    resume: '继续',
+    paletteOpen: '打开内置浏览器',
+    openLinksInApp: '在 Hermes 中打开网页链接',
+    openLinksInAppDescription: '网页链接将在内置浏览器中打开。按住 ⌘/Ctrl 或使用中键点击可改用系统浏览器。',
+    isolatedStore: '将内置浏览器的 Cookie 单独保存',
+    isolatedStoreDescription: '在面板中登录网站不会影响 Hermes 自身使用的账号。更改此项会清除已保存的数据。',
+    consoleDefault: '默认显示预览控制台',
+    consoleDefaultDescription: '每次打开内置浏览器时都展开控制台。',
+    clearData: '清除浏览数据',
+    clearDataDescription: '仅清除内置浏览器的 Cookie、存储和缓存。',
+    clearDataConfirm: '要清除内置浏览器的 Cookie、存储和缓存吗？',
+    cleared: '已清除浏览数据',
+    sharedCookies: '此浏览器在本设备上与 Hermes 共用 Cookie。',
+    ephemeralStore: '重启 Hermes 后此浏览器会忘记登录状态。'
+  },
   preview: {
     tab: '预览',
     closeTab: label => `关闭 ${label}`,
@@ -3289,7 +3314,10 @@ export const zh: Translations = {
       loadFailedConsole: (code, message) => `加载失败${code ? ` (${code})` : ''}: ${message}`,
       unreachableDescription: '无法访问预览页面。',
       openTarget: url => `打开 ${url}`,
-      fallbackTitle: '预览'
+      fallbackTitle: '预览',
+      // The ONE key desktop has that universal lacked: why a loopback
+      // address cannot load when the gateway is somewhere else.
+      remoteLoopback: '该地址指向 Hermes 所连接的那台机器，而当前网关没有通往它的隧道。请改用 SSH 连接，或在那台机器上打开该页面。'
     }
   },
 

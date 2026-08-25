@@ -4,6 +4,7 @@ import * as React from 'react'
 import { HERMES_CONTEXT_MENU_TRIGGER_ATTR } from '@/app/context-menu/markers'
 import { Codicon } from '@/components/ui/codicon'
 import { cn } from '@/lib/utils'
+import { useGuestOcclusion } from '@/store/browser-occlusion'
 
 function ContextMenu({ ...props }: React.ComponentProps<typeof ContextMenuPrimitive.Root>) {
   return <ContextMenuPrimitive.Root data-slot="context-menu" {...props} />
@@ -34,6 +35,11 @@ function ContextMenuGroup({ ...props }: React.ComponentProps<typeof ContextMenuP
 }
 
 function ContextMenuContent({ className, ...props }: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
+  // The in-app browser's guest is a NATIVE view the compositor paints above the
+  // whole DOM, so a portalled surface renders BEHIND it unless the guest is
+  // hidden first (MJXHRM-447). One line per primitive; the arbiter counts.
+  useGuestOcclusion('radix-context-menu')
+
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.Content

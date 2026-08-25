@@ -44,6 +44,7 @@ import type { HermesGateway } from '@/hermes'
 import { getLogs, getStatus } from '@/hermes'
 import { connectionIdOf } from '@/lib/backend-scope'
 import type { ChatMessage } from '@/lib/chat-messages'
+import { $browserState, type BrowserPageState, openInAppBrowser } from '@/store/browser'
 import { $currentCwd, $sessionId } from '@/store/chat'
 import { $connection } from '@/store/connection'
 import { $connectionReady } from '@/store/connection-ready'
@@ -174,6 +175,17 @@ export const host = {
     selectedStoredSessionId: readonlyAtom<null | string>($activeStoredSessionId),
     /** Every open session, from `$sessionStates`. */
     sessions: readonlyAtom<PluginSessionSummary[]>($pluginSessions),
+
+    /**
+     * The page in the in-app browser (MJXHRM-447), for a plugin that FOLLOWS it
+     * — a bookmark bar, a reader-mode button.
+     *
+     * `browser_eval` and the act engine are deliberately NOT exported. A plugin
+     * already evaluates with the app's full authority, so exporting them would
+     * add no security and would freeze the engine's internals as a published
+     * contract for a subsystem that will change.
+     */
+    browser: readonlyAtom<BrowserPageState>($browserState),
 
     /**
      * Is the app usable right now?
@@ -328,6 +340,17 @@ export const host = {
    * re-run (rule 28). A pane nobody has published reads false.
    */
   paneVisibility: (paneId: string): ReadableAtom<boolean> => $paneVisible(paneId),
+
+  /**
+   * Open a URL in the in-app browser (MJXHRM-447).
+   *
+   * Resolves `false` when there is no guest host or the address was refused —
+   * the `ctx.os.*` result-shaped convention, so a plugin branches on the answer
+   * instead of sniffing the platform. A plugin showing a doc or a dashboard is
+   * the most foreseeable second consumer, and without this every one of them
+   * re-implements "http(s) in-app, else the OS".
+   */
+  openInAppBrowser: (url: string): Promise<boolean> => openInAppBrowser(url),
 
   // ── connections (MJXHRM-446 fills the bodies) ──────────────────────────────
   // The SHAPES ship here so 446 replaces `PluginConnectionSource` from its own
@@ -612,24 +635,31 @@ export {
   type TranscriptDirectiveProps
 } from '@/lib/transcript-directives'
 export { cn } from '@/lib/utils'
+/** Live accent override — set a hex and the ACTIVE theme repaints with its
+ *  accent family re-seeded from it (see `retintTheme`); `null` restores the
+ *  authored palette. Deliberately not persisted: it is an authoring knob, not
+ *  a setting, so a plugin that sets it must clear it on dispose. */
+/** The in-app browser's ONE tab (MJXHRM-447), for a plugin contributing strip
+ *  tools or a pane that needs to recognise it by name. */
+export { BROWSER_TAB_PATH, type BrowserPageState, isBrowserTab } from '@/store/browser'
+
+export const PANES_AREA = 'panes'
 /**
  * Ask the user a yes/no question from a plain handler — no component, no state.
  * `<ConfirmHost/>` is mounted in every window, so this resolves wherever it is
  * called from.
  */
 export { confirm, type ConfirmAnswer, type ConfirmRequest } from '@/store/confirm'
-
-export const PANES_AREA = 'panes'
 /** Toast a delete confirmation the way core surfaces do (desktop's
  *  `useConfirmDelete`, as a plain call — there is no hook state to hold). */
 export { confirmDelete } from '@/store/confirm-delete'
+
 export {
   MAX_NOTIFICATION_ACTIONS,
   type NativeNotifyOutcome,
   type NativeNotifyRefusal,
   type PluginNotificationAction
 } from '@/store/native-notifications'
-
 /**
  * The multi-connection source. MJXHRM-446 registers the registry's
  * implementation from its own module; until then every answer describes the one
@@ -647,10 +677,6 @@ export {
   setPluginConnectionSource
 } from '@/store/plugin-connection-source'
 export type { PluginOpenSessionError, PluginOpenSessionOptions, PluginOpenSessionResult } from '@/store/plugin-open-session'
-/** Live accent override — set a hex and the ACTIVE theme repaints with its
- *  accent family re-seeded from it (see `retintTheme`); `null` restores the
- *  authored palette. Deliberately not persisted: it is an authoring knob, not
- *  a setting, so a plugin that sets it must clear it on dispose. */
 export { $accentOverride, setAccentOverride } from '@/themes/accent-override'
 /** OKLCH colour maths, for anything deriving a palette rather than hardcoding
  *  one: perceptual conversion, the sRGB gamut boundary, WCAG contrast, and

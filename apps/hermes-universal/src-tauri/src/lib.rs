@@ -13,6 +13,7 @@ mod app_state;
 mod appearance;
 mod artifact;
 mod background;
+mod browser;
 mod cloud;
 mod connections;
 mod context_menu;
@@ -47,6 +48,12 @@ use app_state::{get_app_flag, set_app_flag};
 use appearance::{appearance_capabilities, appearance_set_glass, AppearanceState};
 use artifact::{artifact_release, artifact_stage, ArtifactState, ARTIFACT_SCHEME};
 use background::{get_background_mode, quit_app, set_background_mode, BackgroundState};
+use browser::commands::{
+    browser_back, browser_capabilities, browser_clear_data, browser_close, browser_eval,
+    browser_forward, browser_navigate, browser_open, browser_open_devtools, browser_reach_reset,
+    browser_reach_url, browser_reload, browser_set_bounds, browser_set_visible, browser_stop,
+};
+use browser::BrowserState;
 use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
 };
@@ -112,6 +119,21 @@ fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+/// The same handoff, callable from Rust.
+///
+/// `open_external` itself cannot be made `pub(crate)`: `#[tauri::command]`
+/// re-exports its generated `__cmd__*` macros at the visibility of the function
+/// it decorates, and two definitions of that macro in one module do not
+/// compile. The in-app browser's navigation guard needs this door for a
+/// `mailto:`, a refused `window.open`, and a download it will not take.
+pub(crate) fn open_url_externally(app: &tauri::AppHandle, url: &str) {
+    use tauri_plugin_opener::OpenerExt;
+
+    if let Err(err) = app.opener().open_url(url, None::<&str>) {
+        log::warn!("could not hand a url to the system browser: {err}");
+    }
 }
 
 /// Reveal a path in the OS file manager (Finder/Explorer/Files), selecting the
@@ -198,6 +220,10 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_mic::init())
+        // The native WebView guest host. Registered on both targets so the
+        // builder chain has one shape; the desktop half is a refusal stub
+        // nothing calls (desktop uses a child webview instead).
+        .plugin(tauri_plugin_browser::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_haptics::init())
         .plugin(tauri_plugin_dialog::init())
@@ -225,6 +251,11 @@ pub fn run() {
         // (MJXHRM-478). Managed on BOTH targets so the builder chain has one
         // shape; the set is empty and harmless where no adapter exists yet.
         .manage(ContextMenuState::default())
+        // The in-app browser's guests and its SSH forward leases (MJXHRM-447).
+        // Managed on BOTH targets: desktop hosts a child webview, mobile a
+        // native view through tauri-plugin-browser, and the reach lease is
+        // platform-independent because russh is not cfg-gated.
+        .manage(BrowserState::default())
         // The connection registry (MJXHRM-446). Managed on BOTH targets: the
         // document, the credentials and the probe are platform-identical, and
         // only the `local` KIND is desktop-only.
@@ -433,7 +464,22 @@ pub fn run() {
             tray_set_status,
             global_shortcuts_sync,
             global_shortcut_take_pending,
-            deep_link_ready
+            deep_link_ready,
+            browser_capabilities,
+            browser_open,
+            browser_navigate,
+            browser_back,
+            browser_forward,
+            browser_reload,
+            browser_stop,
+            browser_set_bounds,
+            browser_set_visible,
+            browser_eval,
+            browser_clear_data,
+            browser_open_devtools,
+            browser_close,
+            browser_reach_url,
+            browser_reach_reset
         ]))
         // `.build(...).run(closure)` (rather than the terminal `.run(context)`) so
         // we can observe `RunEvent`s. On iOS this catches scenes the *system*
@@ -497,6 +543,10 @@ pub fn run() {
 
                 transport::reap_window_sockets(app_handle, label);
                 appearance::reap_window(app_handle, label);
+                // …and so do the guest webviews it hosted (MJXHRM-447): a child
+                // webview dies with its window, but the Rust-side registry
+                // would keep answering for it.
+                browser::reap_window(app_handle, label);
 
                 // The main webview is gone (a reload, an Android process
                 // recreation). Stop claiming a listener exists, so the next link

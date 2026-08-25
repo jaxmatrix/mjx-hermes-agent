@@ -28,6 +28,7 @@ import { AboutSection } from './about-section'
 import { AppearanceSection } from './appearance-section'
 import { ArchivedSection } from './archived-section'
 import { BillingSettings } from './billing'
+import { BrowserRows } from './browser-rows'
 import { ConfigSection } from './config-section'
 import { ConnectionsSection } from './connections'
 import { KeybindSettings } from './keybind-settings'
@@ -252,13 +253,19 @@ export function SectionBody({ section }: { section: string }) {
       return (
         <ConfigSection
           headerSlot={
-            IS_DESKTOP ? (
-              <>
-                <KeepAwakeRow />
-                <BackgroundModeRow />
-                <QuickEntryRow />
-              </>
-            ) : undefined
+            <>
+              {IS_DESKTOP ? (
+                <>
+                  <KeepAwakeRow />
+                  <BackgroundModeRow />
+                  <QuickEntryRow />
+                </>
+              ) : null}
+              {/* Not desktop-gated: a phone with the native WebView plugin has
+                  a real in-app browser, and the rows hide themselves when the
+                  platform reports no host at all. */}
+              <BrowserRows />
+            </>
           }
           sectionId={group}
         />

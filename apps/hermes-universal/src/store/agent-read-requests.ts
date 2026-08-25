@@ -86,7 +86,23 @@ export interface PreviewActRequest {
   to?: string
 }
 
-export type PreviewActor = (request: PreviewActRequest) => Promise<unknown> | unknown
+/**
+ * Which session asked.
+ *
+ * The gateway puts the id on the event ENVELOPE, not in the payload, so an
+ * actor that only sees the request cannot apply the "act only in the session
+ * the user is looking at" rule at all. Passing it as a context argument keeps
+ * one source of truth — the router already holds it — where an ambient
+ * "current request session" atom would be a second (MJXHRM-447).
+ */
+export interface AgentRequestContext {
+  sessionId: null | string
+}
+
+export type PreviewActor = (
+  request: PreviewActRequest,
+  ctx: AgentRequestContext
+) => Promise<unknown> | unknown
 
 /** One `tour` tool call. `action` is `targets`/`show`/`start`/`next`/`prev`/
  *  `stop`; `surface` picks the app chrome or the preview pane. The answer names
@@ -105,7 +121,7 @@ export interface TourRequest {
   title?: string
 }
 
-export type TourDriver = (request: TourRequest) => Promise<unknown> | unknown
+export type TourDriver = (request: TourRequest, ctx: AgentRequestContext) => Promise<unknown> | unknown
 
 let previewReader: null | PreviewReader = null
 let windowBelowReader: null | WindowBelowReader = null
@@ -226,16 +242,17 @@ const TOUR_UNSUPPORTED =
  * returned otherwise.
  */
 async function drive<T>(
-  driver: null | ((request: T) => Promise<unknown> | unknown),
+  driver: null | ((request: T, ctx: AgentRequestContext) => Promise<unknown> | unknown),
   request: T,
-  unsupported: string
+  unsupported: string,
+  ctx: AgentRequestContext
 ): Promise<unknown> {
   if (!driver) {
     return { error: unsupported, success: false }
   }
 
   try {
-    return (await driver(request)) ?? { error: unsupported, success: false }
+    return (await driver(request, ctx)) ?? { error: unsupported, success: false }
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error), success: false }
   }
@@ -243,6 +260,9 @@ async function drive<T>(
 
 function routeAgentReadRequest(event: GatewayEvent): void {
   const payload = (event.payload ?? {}) as Record<string, unknown>
+  // The id lives on the ENVELOPE. Every drive bridge gets it, so a driver can
+  // refuse to act in a session the user is not looking at.
+  const ctx: AgentRequestContext = { sessionId: event.session_id ?? null }
   const requestId = typeof payload.request_id === 'string' ? payload.request_id : ''
 
   switch (event.type) {
@@ -299,7 +319,7 @@ function routeAgentReadRequest(event: GatewayEvent): void {
 
       void answer(
         requestId,
-        () => drive(actor, request as unknown as PreviewActRequest, PREVIEW_ACT_UNSUPPORTED),
+        () => drive(actor, request as unknown as PreviewActRequest, PREVIEW_ACT_UNSUPPORTED, ctx),
         respondPreviewAct
       )
 
@@ -314,7 +334,7 @@ function routeAgentReadRequest(event: GatewayEvent): void {
       const tour = tourDriver
       const { request_id: _ignored, ...request } = payload
 
-      void answer(requestId, () => drive(tour, request as unknown as TourRequest, TOUR_UNSUPPORTED), respondTour)
+      void answer(requestId, () => drive(tour, request as unknown as TourRequest, TOUR_UNSUPPORTED, ctx), respondTour)
 
       break
     }

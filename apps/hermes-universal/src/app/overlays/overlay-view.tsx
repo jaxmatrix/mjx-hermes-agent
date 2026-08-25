@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { triggerHaptic } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
+import { useGuestOcclusion } from '@/store/browser-occlusion'
 
 // Ported from apps/desktop/src/app/overlays/overlay-view.tsx. The full-screen
 // modal card that hosts an overlay view (settings, …). Adapted for Tauri: the
@@ -40,6 +41,11 @@ export function OverlayView({
   rootClassName,
   variant = 'overlay'
 }: OverlayViewProps) {
+  // Settings, the palette, the agents tree: every one of these is drawn ABOVE
+  // the in-app browser's guest, which the compositor paints above the whole DOM
+  // (MJXHRM-447).
+  useGuestOcclusion('overlay')
+
   const fullscreen = variant === 'fullscreen'
   const fullBleed = variant === 'fullbleed'
 

@@ -2,6 +2,7 @@ import { Popover as PopoverPrimitive } from 'radix-ui'
 import * as React from 'react'
 
 import { cn } from '@/lib/utils'
+import { useGuestOcclusion } from '@/store/browser-occlusion'
 
 // Ported from apps/desktop/src/components/ui/popover.tsx for the plugin SDK —
 // anchored non-menu content, the one primitive universal's kit was missing (core
@@ -38,6 +39,11 @@ function PopoverContent({
   sideOffset = 6,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
+  // The in-app browser's guest is a NATIVE view the compositor paints above the
+  // whole DOM, so a portalled surface renders BEHIND it unless the guest is
+  // hidden first (MJXHRM-447). One line per primitive; the arbiter counts.
+  useGuestOcclusion('popover')
+
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content

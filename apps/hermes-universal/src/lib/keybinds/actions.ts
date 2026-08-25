@@ -186,7 +186,19 @@ export const KEYBIND_ACTIONS: readonly KeybindActionMeta[] = [
   // shortcuts binds this row, validates the combo and shows conflicts, which is
   // also why this port has no bespoke shortcut field of its own.
   { id: 'view.toggleQuickEntry', category: 'view', defaults: [], global: true },
-  { id: 'keybinds.openPanel', category: 'view', defaults: ['mod+/'] }
+  { id: 'keybinds.openPanel', category: 'view', defaults: ['mod+/'] },
+
+  // The in-app browser (MJXHRM-447). None is `global: true` — nothing here is
+  // worth taking a chord from the whole machine.
+  { id: 'view.toggleBrowser', category: 'view', defaults: ['mod+shift+l'] },
+  // Only fires while focus is INSIDE the pane (`commandFocusedBrowser`), so ⌘R
+  // still reloads the window everywhere else.
+  { id: 'browser.reload', category: 'view', defaults: ['mod+r'] },
+  // Shipped unbound: ⌥←/→ and ⌘[ / ⌘] are handled by the guest's own injected
+  // script (a child webview's key events never reach the host document), so a
+  // default here would only ever fire on the pane CHROME.
+  { id: 'browser.back', category: 'view', defaults: [] },
+  { id: 'browser.forward', category: 'view', defaults: [] }
 ]
 
 export const KEYBIND_ACTION_IDS: readonly string[] = KEYBIND_ACTIONS.map(action => action.id)
