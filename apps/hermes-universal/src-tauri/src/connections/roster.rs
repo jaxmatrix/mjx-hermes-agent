@@ -99,7 +99,8 @@ impl RosterCache {
 /// root HERMES_HOME is an agent too, even on a backend that does not list it.
 async fn list_profiles(app: &AppHandle, base_url: &str) -> Result<Vec<String>, String> {
     let url = format!("{}/api/profiles", base_url.trim_end_matches('/'));
-    let (status, body) = crate::transport::probe_get_json(app, &url, Duration::from_secs(8)).await?;
+    let (status, body) =
+        crate::transport::probe_get_json(app, &url, Duration::from_secs(8)).await?;
 
     if !(200..300).contains(&status) {
         return Err(format!("HTTP {status}"));
@@ -143,9 +144,7 @@ async fn enumerate(
 
     let base_url = match connection.kind {
         ConnectionKind::Cloud | ConnectionKind::Remote => connection.url.clone(),
-        ConnectionKind::Local => {
-            local_base_url(&app).await
-        }
+        ConnectionKind::Local => local_base_url(&app).await,
         ConnectionKind::Ssh => None,
     };
 

@@ -121,12 +121,15 @@ mod tests {
 
         // A registered connection is a different backend and must hash apart.
         assert_ne!(
-            ssh_ownership_id(ID, &registry_scope_of(Some("box-2"), Some("default"))).expect("box-2"),
+            ssh_ownership_id(ID, &registry_scope_of(Some("box-2"), Some("default")))
+                .expect("box-2"),
             pre_registry
         );
         assert_ne!(
-            ssh_ownership_id(ID, &registry_scope_of(Some("box-2"), Some("default"))).expect("box-2"),
-            ssh_ownership_id(ID, &registry_scope_of(Some("box-3"), Some("default"))).expect("box-3")
+            ssh_ownership_id(ID, &registry_scope_of(Some("box-2"), Some("default")))
+                .expect("box-2"),
+            ssh_ownership_id(ID, &registry_scope_of(Some("box-3"), Some("default")))
+                .expect("box-3")
         );
     }
 

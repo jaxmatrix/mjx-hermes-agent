@@ -62,7 +62,16 @@ tauri-build = { version = "2", features = [] }
 # crate: `tray-icon`, `muda`, `image` and `png` are already resolved in
 # `Cargo.lock` (both are target-gated to desktop inside tauri, so the mobile
 # builds compile none of it).
-tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
+# `unstable` is what puts `Window::add_child` in scope — the child webview the
+# in-app browser's desktop guest IS (MJXHRM-447). It unlocks nothing at runtime
+# by itself. Two costs, both accepted deliberately:
+#   1. the feature is semver-EXEMPT, so a 2.x patch bump can break the build —
+#      hence the `~2.11` pin rather than the bare `2` every other tauri crate
+#      here uses;
+#   2. it silently removes the `CannotReparentWebviewWindow` guard. Inert today
+#      (nothing calls `reparent`), and pinned by a test in browser/policy.rs
+#      that the guest label can never be a window label.
+tauri = { version = "~2.11", features = ["macos-private-api", "tray-icon", "image-png", "unstable"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -94,6 +103,14 @@ keyring-core = "1.0"
 # is gitignored) + a check/request seam for Android/iOS. Capture itself stays in
 # the webview (getUserMedia); desktop is a no-op. See plugins/tauri-plugin-mic.
 tauri-plugin-mic = { path = "plugins/tauri-plugin-mic" }
+
+# The MOBILE half of the in-app browser (MJXHRM-447). Desktop's guest is a child
+# webview built in src/browser/desktop.rs; a phone has no such thing — a "window"
+# there is an Activity/UIScene — so the Android/iOS guest is a native
+# WebView/WKWebView that only a Kotlin/Swift half can hold at a rect. In-tree,
+# like tauri-plugin-mic, so its manifest and ProGuard rules live somewhere
+# committed rather than in the gitignored gen/ tree.
+tauri-plugin-browser = { path = "plugins/tauri-plugin-browser" }
 
 # Open external links in the system browser (Gc6/R11).
 tauri-plugin-opener = "2"

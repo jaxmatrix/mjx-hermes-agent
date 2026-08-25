@@ -184,7 +184,10 @@ pub struct UpdateTargetResult {
 // --------------------------------------------------------------------------
 
 fn registry_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_data_dir().ok().map(|dir| dir.join(FILE_NAME))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| dir.join(FILE_NAME))
 }
 
 /// Whether this device can host a `local` (spawned) backend.
@@ -401,7 +404,9 @@ fn publish_auth(app: &AppHandle, registry: &Registry, connection: &Connection) {
     };
 
     let scope = scope_for(registry, connection);
-    let token = secrets::read(&scope, ConnectionSecret::Token).ok().flatten();
+    let token = secrets::read(&scope, ConnectionSecret::Token)
+        .ok()
+        .flatten();
     let headers = connection
         .header_names
         .iter()
@@ -856,7 +861,9 @@ pub async fn connections_test(
         });
     }
 
-    let token = secrets::read(&scope, ConnectionSecret::Token).ok().flatten();
+    let token = secrets::read(&scope, ConnectionSecret::Token)
+        .ok()
+        .flatten();
     let headers: Vec<(String, String)> = connection
         .header_names
         .iter()
@@ -1148,7 +1155,10 @@ mod tests {
         assert!(parsed.is_none());
         assert_eq!(degraded.as_deref(), Some("corrupt"));
         assert!(!read_only);
-        assert!(path.with_file_name(BACKUP_NAME).exists(), "kept one .bak generation");
+        assert!(
+            path.with_file_name(BACKUP_NAME).exists(),
+            "kept one .bak generation"
+        );
 
         // A corrupt file must not wedge the registry permanently.
         write_document(&path, &Registry::default()).expect("write over corrupt");
@@ -1168,7 +1178,10 @@ mod tests {
         assert!(parsed.is_some());
         assert_eq!(degraded.as_deref(), Some("future-version"));
         assert!(read_only);
-        assert!(!path.with_file_name(BACKUP_NAME).exists(), "a newer doc is not backed up away");
+        assert!(
+            !path.with_file_name(BACKUP_NAME).exists(),
+            "a newer doc is not backed up away"
+        );
     }
 
     #[test]

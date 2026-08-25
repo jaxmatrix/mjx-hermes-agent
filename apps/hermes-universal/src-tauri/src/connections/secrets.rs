@@ -95,7 +95,10 @@ fn header_scope(id: &str, name: &str) -> String {
     format!("{id}/header/{}", name.trim().to_ascii_lowercase())
 }
 
-pub fn read(scope: &ConnectionScope, secret: ConnectionSecret) -> Result<Option<String>, SecretsError> {
+pub fn read(
+    scope: &ConnectionScope,
+    secret: ConnectionSecret,
+) -> Result<Option<String>, SecretsError> {
     if scope.legacy {
         secrets::read(secret.legacy_key())
     } else {
@@ -106,7 +109,11 @@ pub fn read(scope: &ConnectionScope, secret: ConnectionSecret) -> Result<Option<
 /// Write, or DELETE when the value is empty — the same equivalence `secrets`
 /// itself uses, so clearing a field in the editor clears the credential rather
 /// than storing a blank that reads back as a real, wrong one.
-pub fn write(scope: &ConnectionScope, secret: ConnectionSecret, value: &str) -> Result<(), SecretsError> {
+pub fn write(
+    scope: &ConnectionScope,
+    secret: ConnectionSecret,
+    value: &str,
+) -> Result<(), SecretsError> {
     if scope.legacy {
         return secrets::write(secret.legacy_key(), value);
     }
@@ -153,7 +160,9 @@ pub fn sweep(connection: &Connection, scope: &ConnectionScope) -> Result<(), Sec
     }
 
     for name in &connection.header_names {
-        if let Err(err) = secrets::remove_owned(OwnedKey::ConnectionHeader, &header_scope(&scope.id, name)) {
+        if let Err(err) =
+            secrets::remove_owned(OwnedKey::ConnectionHeader, &header_scope(&scope.id, name))
+        {
             failure.get_or_insert(err);
         }
     }
@@ -200,7 +209,10 @@ mod tests {
 
     #[test]
     fn header_scopes_are_lowercased_and_namespaced_per_connection() {
-        assert_eq!(header_scope("box", "CF-Access-Client-Id"), "box/header/cf-access-client-id");
+        assert_eq!(
+            header_scope("box", "CF-Access-Client-Id"),
+            "box/header/cf-access-client-id"
+        );
         assert_ne!(header_scope("box", "x"), header_scope("other", "x"));
     }
 
