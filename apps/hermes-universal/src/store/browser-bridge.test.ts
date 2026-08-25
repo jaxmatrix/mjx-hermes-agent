@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type * as PaneTreeStore from '@/components/pane-shell/tree/store'
+
 const openInAppBrowser = vi.fn(() => Promise.resolve(true))
 const closeInAppBrowser = vi.fn()
 const previewFile = vi.fn()
@@ -8,7 +10,7 @@ const treePanesWithPrefix = vi.fn(() => [] as string[])
 // PARTIAL: `session-states.ts` subscribes to `$layoutTree` at module scope, so
 // a wholesale mock leaves the real module importing an undefined atom.
 vi.mock('@/components/pane-shell/tree/store', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/components/pane-shell/tree/store')>()),
+  ...(await importOriginal<typeof PaneTreeStore>()),
   treePanesWithPrefix
 }))
 vi.mock('@/store/preview-open', () => ({ previewFile }))

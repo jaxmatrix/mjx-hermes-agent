@@ -311,19 +311,27 @@ export function isWatchWindow(): boolean {
 // we default to allowed and only flip off if the runtime reports single-scene —
 // the affordance shows immediately on iPad and never flickers there.
 let iosSceneCapable = true
-
-if (IS_IOS) {
-  supportsMultipleWindows()
-    .then(ok => {
-      iosSceneCapable = ok
-    })
-    .catch(() => {
-      // Leave the default: if the query fails, still offer the affordance; the
-      // Rust build degrades gracefully (attaches to the main scene) if unsupported.
-    })
-}
+let iosSceneAsked = false
 
 function multiWindowSupported(): boolean {
+  // The probe fires on FIRST ASK, not at import. As a module-scope statement it
+  // was an IPC round-trip every cold start paid before anything asked, and — the
+  // way it surfaced — the one platform read in this file that runs on import, so
+  // any test whose graph reached this module had to mock `IS_IOS` even when it
+  // never touches a window. Same semantics either way: the answer defaults to
+  // true and only flips off if the runtime reports single-scene.
+  if (IS_IOS && !iosSceneAsked) {
+    iosSceneAsked = true
+    supportsMultipleWindows()
+      .then(ok => {
+        iosSceneCapable = ok
+      })
+      .catch(() => {
+        // Leave the default: if the query fails, still offer the affordance; the
+        // Rust build degrades gracefully (attaches to the main scene) if unsupported.
+      })
+  }
+
   return IS_DESKTOP || (IS_IOS && iosSceneCapable)
 }
 

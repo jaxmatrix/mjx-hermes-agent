@@ -39,7 +39,15 @@ const invoke = vi.fn(async (command: string, _args?: unknown): Promise<unknown> 
 })
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
-vi.mock('@tauri-apps/api/app', () => ({ supportsMultipleWindows: async () => true }))
+const scenes = vi.hoisted(() => ({ multiple: true, probes: 0 }))
+
+vi.mock('@tauri-apps/api/app', () => ({
+  supportsMultipleWindows: async () => {
+    scenes.probes++
+
+    return scenes.multiple
+  }
+}))
 vi.mock('@tauri-apps/api/webviewWindow', () => ({
   getCurrentWebviewWindow: () => ({
     close: async () => undefined,
@@ -81,6 +89,7 @@ vi.mock('@/lib/platform', async importOriginal => ({
 
 const {
   addressesThisWindow,
+  canOpenNewWindow,
   openNewWindow,
   openSatelliteWindow,
   openSessionInNewWindow,
@@ -94,6 +103,39 @@ beforeEach(() => {
   invoke.mockClear()
   platform.android = false
   platform.desktop = true
+  platform.ios = false
+  scenes.multiple = true
+  scenes.probes = 0
+})
+
+describe('the iOS multi-scene probe', () => {
+  it('does not fire at IMPORT — a module-scope probe made every cold start pay an IPC', () => {
+    // It was also the one platform read in this file that ran on import, so any
+    // test whose graph reached this module had to mock `IS_IOS` even when it
+    // never touches a window. Six unrelated suites did not, and broke.
+    expect(scenes.probes).toBe(0)
+  })
+
+  it('fires on the first ASK, once, and flips the answer when the runtime says single-scene', async () => {
+    platform.desktop = false
+    platform.ios = true
+    scenes.multiple = false
+
+    // Optimistic first answer: the probe is async, and an affordance that
+    // appears a beat late reads as a bug on the one device that has it.
+    expect(canOpenNewWindow()).toBe(true)
+
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(canOpenNewWindow()).toBe(false)
+    expect(scenes.probes).toBe(1)
+  })
+
+  it('never asks on a platform with no scenes to count', () => {
+    canOpenNewWindow()
+
+    expect(scenes.probes).toBe(0)
+  })
 })
 
 describe('flushing the composer before a window is built', () => {
