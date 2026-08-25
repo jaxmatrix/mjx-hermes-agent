@@ -50,30 +50,31 @@ describe('backendScopeKey', () => {
     expect(bodies(mine)).toBe(bodies(shared))
   })
 
-  // M1 (reconciliation). MJXHRM-446 mirrors these three functions in Rust for
+  // M1 (reconciliation). MJXHRM-446 mirrors these functions in Rust for
   // `ssh::registry_scope_of` and `ssh_ownership_id`; nothing else pins the two
   // languages to each other, and a drift is silent until an upgrade orphans a
-  // running remote backend. So ONE table is read from the Rust test and
-  // evaluated here — the `data_url_read_max.rs` precedent, one level up.
+  // running remote backend. So ONE table lives in `connections/registry.rs` and
+  // is read from here — the `data_url_read_max.rs` precedent, one level up.
+  //
+  // Its rows are flat strings, one per line, precisely so `cargo fmt` cannot
+  // change their shape: an earlier tuple form was reflowed across four lines by
+  // the formatter and this test silently matched three rows out of eight.
   it('agrees with the Rust mirror on every row of one shared table', () => {
-    const rust = fs.readFileSync(
-      path.resolve(process.cwd(), 'src-tauri/src/connections/registry.rs'),
-      'utf8'
-    )
-
-    const table = rust.slice(rust.indexOf('fn scope_key_pin'), rust.indexOf('];', rust.indexOf('fn scope_key_pin')))
-    const rows = [...table.matchAll(/\(\s*(None|Some\("([^"]*)"\)),\s*(None|Some\("([^"]*)"\)),\s*"([^"]*)",\s*"([^"]*)"\s*\)/g)]
+    const rust = fs.readFileSync(path.resolve(process.cwd(), 'src-tauri/src/connections/registry.rs'), 'utf8')
+    const table = rust.slice(rust.indexOf('const SCOPE_KEY_PIN'), rust.indexOf('];', rust.indexOf('const SCOPE_KEY_PIN')))
+    const rows = [...table.matchAll(/^\s*"([^"]*)",$/gmu)].map(match => match[1].split('|'))
 
     expect(rows.length).toBeGreaterThanOrEqual(8)
     expect(rust).toContain('pub const LOCAL_CONNECTION_ID: &str = "local"')
     expect(LOCAL_CONNECTION_ID).toBe('local')
 
-    for (const [, idKind, idValue, profileKind, profileValue, pooled, registry] of rows) {
-      const id = idKind === 'None' ? null : idValue
-      const profile = profileKind === 'None' ? null : profileValue
+    for (const [rawId, rawProfile, pooled, registry] of rows) {
+      // `~` is a `None` argument, which is a different case from `''`.
+      const id = rawId === '~' ? null : rawId
+      const profile = rawProfile === '~' ? null : rawProfile
 
-      expect(backendScopeKey(id, profile)).toBe(pooled)
-      expect(registryBackendScopeKey(id, profile)).toBe(registry)
+      expect(backendScopeKey(id, profile), `backendScopeKey(${rawId}, ${rawProfile})`).toBe(pooled)
+      expect(registryBackendScopeKey(id, profile), `registryBackendScopeKey(${rawId}, ${rawProfile})`).toBe(registry)
     }
   })
 })

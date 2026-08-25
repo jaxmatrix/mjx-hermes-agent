@@ -1249,6 +1249,32 @@ pub fn build_agent_roster(
 mod tests {
     use super::*;
 
+    /// THE cross-language scope-key table (reconciliation M1).
+    ///
+    /// `src/lib/backend-scope.test.ts` reads these lines out of this file and
+    /// asserts the TS functions produce the same answers, because nothing else
+    /// pins the two languages to each other and a drift is silent until an
+    /// upgrade orphans a running remote backend (the `data_url_read_max.rs`
+    /// precedent).
+    ///
+    /// Flat strings rather than tuples ON PURPOSE: rustfmt reflows a tuple
+    /// across four lines the moment it grows past the width, and a table whose
+    /// shape depends on the formatter is a table the other language cannot
+    /// read. One row per line survives `cargo fmt`.
+    ///
+    /// `connectionId|profile|backendScopeKey|registryBackendScopeKey`, with `~`
+    /// for a `None` argument — distinct from `""`, which is its own case.
+    const SCOPE_KEY_PIN: &[&str] = &[
+        "~|~|default|default",
+        "||default|default",
+        "local|default|default|conn:local::default",
+        "local|work|work|conn:local::work",
+        "~|work|work|work",
+        "box-2|default|conn:box-2::default|conn:box-2::default",
+        "box-2|~|conn:box-2::default|conn:box-2::default",
+        " box-2 | work |conn:box-2::work|conn:box-2::work",
+    ];
+
     fn remote(id: &str, label: &str, url: &str, order: u32) -> Connection {
         Connection {
             id: id.to_string(),
@@ -1296,48 +1322,21 @@ mod tests {
     fn scope_key_pin() {
         assert_eq!(LOCAL_CONNECTION_ID, "local");
 
-        let table: &[(Option<&str>, Option<&str>, &str, &str)] = &[
-            // (connectionId, profile, backendScopeKey, registryBackendScopeKey)
-            (None, None, "default", "default"),
-            (Some(""), Some(""), "default", "default"),
-            (
-                Some("local"),
-                Some("default"),
-                "default",
-                "conn:local::default",
-            ),
-            (Some("local"), Some("work"), "work", "conn:local::work"),
-            (None, Some("work"), "work", "work"),
-            (
-                Some("box-2"),
-                Some("default"),
-                "conn:box-2::default",
-                "conn:box-2::default",
-            ),
-            (
-                Some("box-2"),
-                None,
-                "conn:box-2::default",
-                "conn:box-2::default",
-            ),
-            (
-                Some(" box-2 "),
-                Some(" work "),
-                "conn:box-2::work",
-                "conn:box-2::work",
-            ),
-        ];
-
-        for (id, profile, pooled, registry) in table {
-            assert_eq!(
-                &backend_scope_key(*id, *profile),
-                pooled,
-                "backend_scope_key({id:?}, {profile:?})"
+        for row in SCOPE_KEY_PIN {
+            let cells: Vec<&str> = row.split('|').collect();
+            let arg = |cell: &'static str| if cell == "~" { None } else { Some(cell) };
+            let (id, profile, pooled, registry) = (
+                arg(cells[0]),
+                arg(cells[1]),
+                cells[2].to_string(),
+                cells[3].to_string(),
             );
+
+            assert_eq!(backend_scope_key(id, profile), pooled, "row {row}");
             assert_eq!(
-                &registry_backend_scope_key(*id, *profile),
+                registry_backend_scope_key(id, profile),
                 registry,
-                "registry_backend_scope_key({id:?}, {profile:?})"
+                "row {row}"
             );
         }
     }
