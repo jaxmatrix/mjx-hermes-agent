@@ -890,6 +890,12 @@ def worktree_add(cwd: str, options: dict) -> dict:
         for remote in sorted(_remote_names(root), key=lambda name: -len(name)):
             if base.startswith(f"{remote}/"):
                 _git(root, ["fetch", remote, base[len(remote) + 1 :]])
+                # Branching off a remote-tracking ref auto-sets up tracking (the
+                # new branch silently wired to the remote's upstream). The user
+                # wants a standalone local branch — like `git checkout origin/main
+                # && git checkout -b new` — so suppress it (parity with the
+                # Electron op).
+                args.append("--no-track")
                 break
         args.append(base)
     code, err = _worktree_add(root, args)

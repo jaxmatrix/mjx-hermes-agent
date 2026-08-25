@@ -1135,6 +1135,10 @@ export function StarMap({
         // pointer handlers below it is now doing its actual job: suppressing
         // the browser's own pan/zoom so ours can run.
         className="block touch-none select-none text-foreground"
+        // The canvas draws its own node menu. A canvas has no DOM target, so
+        // without this the app-wide coordinator would classify the gesture as
+        // "owns nothing" and paint the shell fallback over the star map.
+        data-context-menu-skip=""
         onContextMenu={onContextMenu}
         onDoubleClick={resetView}
         onPointerCancel={onPointerCancel}

@@ -6,13 +6,11 @@ reached via the late-binding seam in :mod:`hermes_cli.web_deps`, so
 ``monkeypatch.setattr(web_server, ...)`` keeps working.
 """
 
-import asyncio
 from typing import Optional
 
 from fastapi import APIRouter
 
 from hermes_cli import web_git as _web_git  # noqa: F401 — used by handlers
-from hermes_cli import web_repo_scan as _web_repo_scan  # noqa: F401 — used by handlers
 from hermes_cli.web_deps import late
 from hermes_cli.web_models import (
     GitPathBody,
@@ -30,46 +28,63 @@ router = APIRouter()
 # monkeypatch-transparent).
 _git_op = late("_git_op")
 _git_path = late("_git_path")
-_config_profile_scope = late("_config_profile_scope")
-
-
-@router.get("/api/git/scan-repos")
-async def git_scan_repos_route(profile: Optional[str] = None):
-    """Discover git repositories on the *gateway's* filesystem.
-
-    The desktop/Tauri clients crawl their own disk, which is only the gateway's
-    when the backend was spawned locally; a remote gateway owns a different
-    filesystem and a phone has none, so those clients call this instead.
-
-    The crawl takes no roots from the caller — the policy is read from this
-    gateway's own ``desktop.repo_scan_*`` config (see
-    :mod:`hermes_cli.web_repo_scan`), so a client cannot aim a server-side walk
-    at an unconfigured path.  The resolved policy is echoed back so a caller can
-    see what produced this list — an empty ``repos`` with ``enabled: false``, or
-    with roots the operator never set, is a configuration answer rather than "no
-    repos" — without a second round-trip to ``/api/config``.  The client's own
-    ``projects.record_repos`` policy comes from that same config, read under the
-    same ``profile``.
-    """
-    # The policy read resolves HERMES_HOME at call time, so it must run inside
-    # the profile scope. `asyncio.to_thread` copies the contextvar; the executor
-    # `_git_op` uses does not, which is why the crawl takes explicit arguments.
-    with _config_profile_scope(profile):
-        policy = await asyncio.to_thread(_web_repo_scan.configured_policy)
-
-    repos = await _git_op(
-        _web_repo_scan.scan_repos,
-        policy["roots"],
-        None,
-        policy["enabled"],
-        policy["exclude_paths"],
-    )
-    return {"repos": repos, "policy": policy}
 
 
 @router.get("/api/git/status")
 async def git_status_route(path: str):
     return await _git_op(_web_git.repo_status, _git_path(path))
+
+
+# ─── gh CLI auth probe ───────────────────────────────────────────────────────
+# Cached `gh auth status` result. Consumed by the desktop composer's GitHub
+# suggestion pill: GitHub deliberately has NO MCP catalog entry (its hosted
+# MCP requires a per-host OAuth app — generic DCR 404s — and the bundled
+# github/* skills via gh CLI are the more capable integration), so the pill
+# offers the `/github-auth` skill instead, and only to users who aren't
+# already authenticated. The probe is read-only and never prompts.
+
+_GH_AUTH_TTL_S = 300.0
+_gh_auth_cache: Optional[tuple] = None  # (monotonic_ts, payload)
+
+
+@router.get("/api/git/gh-auth")
+async def gh_auth_status_route(refresh: bool = False):
+    """Report whether the `gh` CLI is present and authenticated.
+
+    Returns ``{"available": bool, "authenticated": bool}``. Cached for five
+    minutes (`refresh=true` bypasses — the pill uses it after a completed
+    login so the suggestion withdraws immediately).
+    """
+    global _gh_auth_cache
+    import asyncio
+    import time
+
+    if not refresh and _gh_auth_cache and time.monotonic() - _gh_auth_cache[0] < _GH_AUTH_TTL_S:
+        return _gh_auth_cache[1]
+
+    def _probe() -> dict:
+        import shutil
+        import subprocess
+
+        gh = shutil.which("gh")
+        if not gh:
+            return {"available": False, "authenticated": False}
+        try:
+            # `gh auth status` exits 0 when at least one host is logged in.
+            # Never interactive; DEVNULL stdin guards against any prompt.
+            proc = subprocess.run(
+                [gh, "auth", "status"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=10,
+            )
+            return {"available": True, "authenticated": proc.returncode == 0}
+        except Exception:
+            return {"available": True, "authenticated": False}
+
+    payload = await asyncio.to_thread(_probe)
+    _gh_auth_cache = (time.monotonic(), payload)
+    return payload
 
 
 @router.get("/api/git/worktrees")

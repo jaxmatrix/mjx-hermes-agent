@@ -1,9 +1,11 @@
 import { atom, map } from 'nanostores'
 
 import { getActionStatus, installSkillFromHub, uninstallSkillFromHub, updateSkillsFromHub } from '@/hermes'
+import { stripAnsi } from '@/lib/ansi'
 import { queryClient } from '@/lib/query-client'
 import { upsertDesktopActionTask } from '@/store/activity'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
+import { $settingsScopeOverride } from '@/store/settings-scope'
 
 const POLL_MS = 1200
 
@@ -46,17 +48,35 @@ export const $hubActiveLog = atom<null | string>(null)
 let _hubProfile: null | string = null
 let _hubEpoch = 0
 
+function clearHubState() {
+  _hubEpoch += 1
+  $hubActions.set({})
+  $hubInstalledOverride.set({})
+  $hubActiveLog.set(null)
+}
+
 $activeGatewayProfile.subscribe(value => {
   const key = normalizeProfileKey(value)
 
   if (_hubProfile !== null && _hubProfile !== key) {
-    _hubEpoch += 1
-    $hubActions.set({})
-    $hubInstalledOverride.set({})
-    $hubActiveLog.set(null)
+    clearHubState()
   }
 
   _hubProfile = key
+})
+
+// The Capabilities scope override re-points installs at another profile, which
+// is the same identity hazard as an app-wide switch: entries here are keyed by
+// skill identifier alone, so profile A's running install would otherwise render
+// as a spinner on profile B's row for the same skill (and its poll would write
+// B's store). Same clear, same epoch.
+let _hubScope = $settingsScopeOverride.get()
+
+$settingsScopeOverride.subscribe(value => {
+  if (value !== _hubScope) {
+    _hubScope = value
+    clearHubState()
+  }
 })
 
 // One self-contained task: spawn → tail its own action log into the store →
@@ -100,6 +120,21 @@ async function runHubAction(key: string, kind: HubActionKind, spawn: () => Promi
       $hubInstalledOverride.setKey(key, kind !== 'uninstall')
     }
 
+    // A non-zero exit is a FAILED action, and it has to reach the user. The
+    // spawned CLI reports the reason on its own stdout (unknown skill, network,
+    // a policy block), so the last log line is the closest thing to a message;
+    // throwing hands it to the caller's notifyError instead of leaving the
+    // "Installing…" toast as the last thing anyone saw. The action log pane
+    // starts collapsed, so without this the failure was invisible.
+    if (exitCode !== 0) {
+      const reason = ($hubActions.get()[key]?.lines ?? [])
+        .map(line => stripAnsi(line).trim())
+        .filter(Boolean)
+        .at(-1)
+
+      throw new Error(reason || `Skill ${kind} failed (exit ${exitCode ?? '?'})`)
+    }
+
     // Refresh the hub's installed map AND the Capabilities Skills list — a hub
     // (un)install adds/removes a skill, so its count/rows must update too.
     void queryClient.invalidateQueries({ queryKey: HUB_SOURCES_KEY })
@@ -125,16 +160,19 @@ async function runHubAction(key: string, kind: HubActionKind, spawn: () => Promi
   }
 }
 
-export function installHubSkill(identifier: string): Promise<void> {
-  return runHubAction(identifier, 'install', () => installSkillFromHub(identifier))
+// `profile` is the Capabilities scope the VIEW is showing — the install has to
+// land in that profile, not in whichever one the app happens to be on. `null`/
+// omitted keeps the pre-existing shape (the app-wide active profile).
+export function installHubSkill(identifier: string, profile?: null | string): Promise<void> {
+  return runHubAction(identifier, 'install', () => installSkillFromHub(identifier, profile))
 }
 
-export function uninstallHubSkill(identifier: string, name: string): Promise<void> {
-  return runHubAction(identifier, 'uninstall', () => uninstallSkillFromHub(name))
+export function uninstallHubSkill(identifier: string, name: string, profile?: null | string): Promise<void> {
+  return runHubAction(identifier, 'uninstall', () => uninstallSkillFromHub(name, profile))
 }
 
-export function updateHubSkills(): Promise<void> {
-  return runHubAction(UPDATE_ALL_KEY, 'update', () => updateSkillsFromHub())
+export function updateHubSkills(profile?: null | string): Promise<void> {
+  return runHubAction(UPDATE_ALL_KEY, 'update', () => updateSkillsFromHub(profile))
 }
 
 export function closeHubLog(): void {

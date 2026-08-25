@@ -10,15 +10,12 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/i18n'
-import { normalize } from '@/lib/text'
-
-/** Hermes' real reasoning levels (see VALID_REASONING_EFFORTS); `none` is owned
- *  by the Thinking toggle, not the radio. Each value doubles as its
- *  `t.shell.modelOptions` copy key. */
-export const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
-
-/** What an unset effort means everywhere in the app. */
-export const DEFAULT_REASONING_EFFORT = 'medium'
+import {
+  DEFAULT_REASONING_EFFORT,
+  isThinkingEnabled,
+  REASONING_EFFORTS,
+  resolveReasoningEffort
+} from '@/lib/reasoning-effort'
 
 /** How "fast" is achieved for a given model — two different mechanisms:
  *  - `param`: the Anthropic/OpenAI `speed=fast` request parameter.
@@ -64,6 +61,11 @@ export function resolveFastControl(
 }
 
 interface ModelEditSubmenuProps {
+  /** `false` when the provider catalog marks reasoning MANDATORY for this
+   *  model: the route answers 400 to a disable, so the Thinking toggle is a
+   *  control that can only fail. `undefined` means the catalog did not say —
+   *  keep offering it (mirrors desktop's `d15cd18fa1`). */
+  canDisableReasoning?: boolean
   /** This row's effective reasoning effort (live for the active model, else its
    *  preset) — the submenu shows and edits from this, never the raw session. */
   effort: string
@@ -83,6 +85,7 @@ interface ModelEditSubmenuProps {
 }
 
 export function ModelEditSubmenu({
+  canDisableReasoning,
   effort,
   fastControl,
   isActive,
@@ -93,8 +96,9 @@ export function ModelEditSubmenu({
   const { t } = useI18n()
   const copy = t.shell.modelOptions
 
-  const effortValue = normalizeEffort(effort)
+  const effortValue = resolveReasoningEffort(effort)
   const thinkingOn = isThinkingEnabled(effort)
+  const showThinkingToggle = reasoning && canDisableReasoning !== false
 
   const setFast = (enabled: boolean) => {
     if (fastControl.kind === 'variant') {
@@ -126,7 +130,7 @@ export function ModelEditSubmenu({
       ) : (
         <>
           <DropdownMenuLabel className={dropdownMenuSectionLabel}>{copy.options}</DropdownMenuLabel>
-          {reasoning ? (
+          {showThinkingToggle ? (
             <DropdownMenuItem className={dropdownMenuRow} onSelect={event => event.preventDefault()}>
               {copy.thinking}
               <Switch
@@ -167,20 +171,4 @@ export function ModelEditSubmenu({
       )}
     </DropdownMenuSubContent>
   )
-}
-
-function isThinkingEnabled(effort: string): boolean {
-  // Empty = Hermes default (medium) = on; only an explicit "none" is off.
-  return normalize(effort || DEFAULT_REASONING_EFFORT) !== 'none'
-}
-
-function normalizeEffort(effort: string): string {
-  const value = normalize(effort || DEFAULT_REASONING_EFFORT)
-
-  // Thinking off → no effort selected in the radio group.
-  if (value === 'none') {
-    return ''
-  }
-
-  return (REASONING_EFFORTS as readonly string[]).includes(value) ? value : DEFAULT_REASONING_EFFORT
 }

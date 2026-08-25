@@ -164,6 +164,7 @@ function CredentialDocsLink({ href }: { href: string }) {
 
 /** One credential row — collapsible; description and docs link expand on click. */
 export function CredentialKeyCard({
+  elementId,
   expanded,
   info,
   label,
@@ -180,11 +181,12 @@ export function CredentialKeyCard({
   return (
     <div
       className={cn(
-        '@container group/card rounded-[6px] p-3 transition-colors',
+        '@container group/card scroll-mt-6 rounded-[6px] p-3 transition-colors',
         expandable && 'cursor-pointer',
         expandable && !expanded && 'row-hover',
         expanded && 'bg-(--ui-bg-quaternary) ring-1 ring-(--ui-stroke-secondary)'
       )}
+      id={elementId}
       onClick={expandable ? onToggle : undefined}
       onKeyDown={
         expandable
@@ -383,6 +385,8 @@ export function credentialRowLabel(varKey: string, info: EnvVarInfo): string {
 }
 
 interface CredentialKeyCardProps {
+  /** DOM id for the ⌘K `?key=` deep link — `credentialRowElementId(varKey)`. */
+  elementId?: string
   expanded: boolean
   info: EnvVarInfo
   label: string

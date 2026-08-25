@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { PetSection } from '@/app/pet/pet-section'
 import { QuickEntryRow } from '@/app/quick-entry/quick-entry-row'
+import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/i18n'
@@ -10,6 +12,14 @@ import { ChevronLeft } from '@/lib/icons'
 import { IS_DESKTOP } from '@/lib/platform'
 import { useStore } from '@/store/atom'
 import { $backgroundMode, setBackgroundMode } from '@/store/background-mode'
+import {
+  $dataUrlReadMaxMb,
+  clampDataUrlReadMaxMb,
+  DATA_URL_READ_DEFAULT_MAX_MB,
+  DATA_URL_READ_MAX_MAX_MB,
+  DATA_URL_READ_MIN_MAX_MB,
+  setDataUrlReadMaxMb
+} from '@/store/data-url-read-max'
 import { $keepAwake, setKeepAwake } from '@/store/keep-awake'
 import { $terminalHostPreference, setTerminalHostPreference } from '@/store/terminals'
 import type { TerminalHostPreference } from '@/transport/terminal-transport'
@@ -18,8 +28,9 @@ import { AboutSection } from './about-section'
 import { AppearanceSection } from './appearance-section'
 import { ArchivedSection } from './archived-section'
 import { BillingSettings } from './billing'
+import { BrowserRows } from './browser-rows'
 import { ConfigSection } from './config-section'
-import { GatewaySection } from './gateway-section'
+import { ConnectionsSection } from './connections'
 import { KeybindSettings } from './keybind-settings'
 import { KeysSection } from './keys-section'
 import { MemorySection } from './memory-section'
@@ -29,6 +40,8 @@ import { PluginsSettings } from './plugins-settings'
 import { EmptyState, ListRow, SettingsContent } from './primitives'
 import { ProvidersSection } from './providers-section'
 import { useSettingsNav } from './settings-nav'
+import { settingRowElementId } from './settings-search'
+import { useDeepLinkHighlight } from './use-deep-link-highlight'
 import { VoiceSection } from './voice-section'
 
 // "Shell runs on" override for `resolveTerminalTransportKind` (transport/terminal-
@@ -62,6 +75,7 @@ function TerminalHostRow() {
         </Select>
       }
       description={copy.terminalHostDesc}
+      id={settingRowElementId('workspace.terminal-host')}
       title={copy.terminalHostTitle}
     />
   )
@@ -89,6 +103,7 @@ function KeepAwakeRow() {
         />
       }
       description={copy.keepAwakeDesc}
+      id={settingRowElementId('advanced.keep-awake')}
       title={copy.keepAwakeTitle}
     />
   )
@@ -124,7 +139,79 @@ function BackgroundModeRow() {
         />
       }
       description={copy.backgroundModeDesc}
+      id={settingRowElementId('advanced.background-mode')}
       title={copy.backgroundModeTitle}
+    />
+  )
+}
+
+// Max size for a local file read into memory as a data URL — composer attach and
+// image preview. Desktop's counterpart is `AttachmentSizeSetting` in
+// `app/settings/config-settings.tsx`, and the shape is deliberately the same:
+// a free-form MB number, committed on blur/Enter, clamped optimistically.
+//
+// Like keep-awake it is a device-local preference with nothing to send to the
+// gateway (two devices on one gateway want different answers — a phone's
+// ceiling is not a workstation's), so it rides above the Chat page's schema
+// fields rather than living in `SECTIONS`. NOT desktop-only: the mobile half is
+// the reason it exists, since over the cap an Android attach is a process kill
+// rather than a slow paint.
+function AttachmentSizeRow() {
+  const { t } = useI18n()
+  const copy = t.settings.config
+  const stored = useStore($dataUrlReadMaxMb)
+  const [draft, setDraft] = useState(String(stored))
+
+  // Rust is the one that enforces this, and it can answer with a different
+  // number than was asked for (it re-clamps). Follow the atom rather than the
+  // keystrokes so the field shows what is actually in force.
+  useEffect(() => {
+    setDraft(String(stored))
+  }, [stored])
+
+  const commit = () => {
+    // An empty draft means "back to the default", not the 1 MB floor
+    // (`Number('')` is 0, which would otherwise clamp all the way down).
+    const applied = draft.trim() === '' ? DATA_URL_READ_DEFAULT_MAX_MB : clampDataUrlReadMaxMb(draft)
+
+    if (applied === stored) {
+      setDraft(String(stored))
+
+      return
+    }
+
+    triggerHaptic('selection')
+    setDraft(String(setDataUrlReadMaxMb(applied)))
+  }
+
+  return (
+    <ListRow
+      action={
+        <div className="flex items-center gap-2">
+          <Input
+            aria-label={copy.attachmentSizeLabel}
+            className="w-20"
+            inputMode="numeric"
+            max={DATA_URL_READ_MAX_MAX_MB}
+            min={DATA_URL_READ_MIN_MAX_MB}
+            onBlur={commit}
+            onChange={event => setDraft(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') {
+                event.currentTarget.blur()
+              }
+            }}
+            type="number"
+            value={draft}
+          />
+          <span className="text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
+            {copy.attachmentSizeUnit}
+          </span>
+        </div>
+      }
+      description={copy.attachmentSizeDesc}
+      id={settingRowElementId('chat.attachment-size')}
+      title={copy.attachmentSizeTitle}
     />
   )
 }
@@ -132,17 +219,29 @@ function BackgroundModeRow() {
 // The per-section body. Each Track-J chunk replaces its placeholder case with a
 // real renderer (Jc8 appearance, Jc9 notifications, Jc10 keys, …). Exported so
 // the desktop-style SettingsView overlay renders the active section here too.
+const alwaysReady = () => true
+
 export function SectionBody({ section }: { section: string }) {
   const { t } = useI18n()
+
+  // `?setting=<id>` — the ⌘K deep link for the device-local rows, which have no
+  // config key and so cannot ride config-section's `?field=` path. Mounted once
+  // here rather than per row host: the route already picked the page, and the
+  // hook polls for the DOM id, so it resolves whichever section renders it.
+  useDeepLinkHighlight({ elementId: settingRowElementId, param: 'setting', ready: alwaysReady })
 
   // `section` may carry a sub-tab (`providers/keys`); split so the switch keys off
   // the top-level group and sub-views read the second segment.
   const [group, sub] = section.split('/')
 
   switch (group) {
-    // Schema-driven config sections (Jc4).
+    // Chat: schema fields plus the device-local attachment-size cap, which is
+    // not a schema key (nothing to send to the gateway) — desktop parity, where
+    // the same row sits among Advanced's this-computer-only knobs.
     case 'chat':
+      return <ConfigSection headerSlot={<AttachmentSizeRow />} sectionId={group} />
 
+    // Schema-driven config sections (Jc4).
     case 'safety':
       return <ConfigSection sectionId={group} />
 
@@ -154,13 +253,19 @@ export function SectionBody({ section }: { section: string }) {
       return (
         <ConfigSection
           headerSlot={
-            IS_DESKTOP ? (
-              <>
-                <KeepAwakeRow />
-                <BackgroundModeRow />
-                <QuickEntryRow />
-              </>
-            ) : undefined
+            <>
+              {IS_DESKTOP ? (
+                <>
+                  <KeepAwakeRow />
+                  <BackgroundModeRow />
+                  <QuickEntryRow />
+                </>
+              ) : null}
+              {/* Not desktop-gated: a phone with the native WebView plugin has
+                  a real in-app browser, and the rows hide themselves when the
+                  platform reports no host at all. */}
+              <BrowserRows />
+            </>
           }
           sectionId={group}
         />
@@ -214,9 +319,12 @@ export function SectionBody({ section }: { section: string }) {
     case 'billing':
       return <BillingSettings />
 
-    // Gateway (J10): mode picker + current connection + disconnect/sign-out.
+    // Gateways (MJXHRM-446): the connection registry. The nav id stays
+    // `gateway` so every existing deep link, palette row and plugin
+    // contribution keeps resolving — and with a single source the page renders
+    // exactly today's configurator.
     case 'gateway':
-      return <GatewaySection />
+      return <ConnectionsSection />
 
     // Keyboard shortcuts — the full rebindable panel, ported from desktop.
     // Desktop's nav id for this page is `keybinds`; universal spells it

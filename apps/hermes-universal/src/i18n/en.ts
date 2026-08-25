@@ -22,6 +22,7 @@ export const en: Translations = {
     copy: 'Copy',
     copyFailed: 'Copy failed',
     delete: 'Delete',
+    deleteNamed: (name: string) => `Delete ${name}?`,
     docs: 'Docs',
     done: 'Done',
     error: 'Error',
@@ -158,6 +159,14 @@ export const en: Translations = {
       backgroundDoneTitle: 'Background task finished',
       backgroundFailedTitle: 'Background task failed',
       creditsTitle: 'Credits'
+    },
+    mcp: {
+      needsAuthTitle: 'MCP server needs re-authentication',
+      needsAuthMessage: name => `${name} MCP needs re-authentication.`,
+      errorTitle: 'MCP server unreachable',
+      errorMessage: name => `${name} MCP failed its health check.`,
+      signIn: 'Sign in',
+      view: 'View'
     }
   },
 
@@ -175,6 +184,18 @@ export const en: Translations = {
       `Software rendering active — remote display detected (${reason}). GPU acceleration is disabled to prevent flickering.`
   },
 
+  resourcePressure: {
+    diskCritical: "Your agent's disk is almost full. New messages, memories, and settings may fail to save.",
+    diskElevated: "Your agent's disk is filling up. Consider clearing old sessions or expanding its storage.",
+    diskFree: mb => ` (${mb} MB free)`,
+    dismiss: 'Dismiss warning',
+    memoryCritical:
+      'Your agent is almost out of memory and may restart. Consider closing idle sessions or upgrading its memory.',
+    memoryElevated: 'Your agent is running low on memory.',
+    oomRestart:
+      'Your agent restarted unexpectedly, most likely because it ran out of memory. Long sessions and many concurrent tasks increase memory use.'
+  },
+
   titlebar: {
     hideSidebar: 'Hide sidebar',
     showSidebar: 'Show sidebar',
@@ -184,6 +205,7 @@ export const en: Translations = {
     swapSidebarSidesTitle: 'Swap the sessions and file browser sides',
     hideRightSidebar: 'Hide right sidebar',
     showRightSidebar: 'Show right sidebar',
+    unreadSessions: count => (count === 1 ? '1 unread session' : `${count} unread sessions`),
     muteHaptics: 'Mute haptics',
     unmuteHaptics: 'Unmute haptics',
     openSettings: 'Open settings',
@@ -207,6 +229,77 @@ export const en: Translations = {
     title: 'Find in page',
     next: 'Next match',
     previous: 'Previous match'
+  },
+
+  // The app-wide right-click / long-press menu (MJXHRM-478). `Copy` is
+  // deliberately absent: it is `common.copy`, the same string every other
+  // surface uses. Four keys are declared before their consumer exists —
+  // `link.openInApp` and `page.inspectElement` are MJXHRM-447's rows,
+  // `link.copyResolvedUrl` waits on a reach helper universal does not have, and
+  // `edit.addToDictionary` waits on a dictionary nothing in the stack owns.
+  contextMenu: {
+    link: {
+      openExternal: 'Open in external browser',
+      copyUrl: 'Copy URL',
+      openInApp: 'Open in in-app browser',
+      copyResolvedUrl: 'Copy resolved URL'
+    },
+    image: {
+      copyImage: 'Copy image',
+      copyImageAddress: 'Copy image address',
+      saveImageAs: 'Save image as…',
+      copyFailed: 'Could not copy the image',
+      saveFailed: 'Could not save the image'
+    },
+    edit: {
+      cut: 'Cut',
+      paste: 'Paste',
+      selectAll: 'Select all',
+      addToDictionary: 'Add to dictionary'
+    },
+    page: {
+      inspectElement: 'Inspect element'
+    },
+    checkForUpdates: 'Check for updates',
+    someItemsFailed: 'Some items could not be loaded'
+  },
+
+  pluginInstall: {
+    title: 'Install a plugin',
+    fromDeepLink: 'A link asked Hermes to install this plugin. Nothing is installed until you choose to.',
+    fromSettings: 'Hermes clones the repository on the gateway and installs what it finds.',
+    repoLabel: 'Repository',
+    repoPlaceholder: 'owner/repo, owner/repo/subdir, or a git URL',
+    sourceLink: 'View the source',
+    invalidIdentifier: 'That is not a repository Hermes can install — use owner/repo, owner/repo/subdir, or a git URL.',
+    insecureWarning: url =>
+      `${url} is not an authenticated source — anyone who can reach that network can decide what gets installed.`,
+    targetProfile: 'Installs into profile',
+    authorityNotice:
+      'Installing runs code from this repository on the gateway with the agent\u2019s full authority, and its desktop half runs inside Hermes with the app\u2019s full authority. Plugins are isolated from each other\u2019s errors, not from each other.',
+    enableAfterInstall: 'Enable after install',
+    forceReinstall: 'Force reinstall',
+    forceReinstallHint: 'Replaces an existing copy of this plugin.',
+    waitingForGateway: 'Waiting for the gateway — Install becomes available once it connects.',
+    install: 'Install',
+    installing: 'Installing\u2026',
+    agentSuccess: name => `Installed ${name}.`,
+    warningsTitle: 'Plugin install warning',
+    missingEnv: list => `Installed, but inert until these are set: ${list}.`,
+    noIdentifier: 'The link did not name a repository.',
+    stillRunning:
+      'The gateway did not answer. The install may still be running — reopen Settings \u25b8 Plugins to check before retrying.',
+    restDoorOff:
+      'This gateway is remote and the gateway plugin door is off, so a desktop half of this plugin will not load here.'
+  },
+
+  deepLink: {
+    title: 'Hermes link',
+    badUrl: 'That link is not a Hermes link Hermes can open.',
+    unsafePath: 'That link points outside the app and was ignored.',
+    unknownPath: path => `No page at ${path} — the link may be for a plugin you have not installed.`,
+    reservedKind: kind => `Nothing in Hermes handles a "${kind}" link.`,
+    routeConflict: 'Two handlers claimed the same Hermes link'
   },
 
   keybinds: {
@@ -259,6 +352,7 @@ export const en: Translations = {
       'session.slot.9': 'Switch to recent session 9',
       'session.focusSearch': 'Search sessions',
       'session.togglePin': 'Pin / unpin current session',
+      'session.archive': 'Archive current session',
       'workspace.newWorktree': 'New worktree',
       'workspace.openFolder': 'Open folder as project',
       'view.toggleHud': 'Toggle HUD window',
@@ -330,6 +424,10 @@ export const en: Translations = {
   },
 
   settings: {
+    profileScope: {
+      appliesTo: 'Applies to',
+      editsProfile: profile => `Changes on this page apply to the “${profile}” profile.`
+    },
     closeSettings: 'Close settings',
     exportConfig: 'Export config',
     importConfig: 'Import config',
@@ -342,7 +440,7 @@ export const en: Translations = {
       providerAccounts: 'Accounts',
       providerApiKeys: 'API keys',
       providerCustomEndpoints: 'Custom endpoints',
-      gateway: 'Gateway',
+      gateway: 'Gateways',
       apiKeys: 'Tools & Keys',
       keysTools: 'Tools',
       keysSettings: 'Settings',
@@ -357,6 +455,8 @@ export const en: Translations = {
       title: 'Plugins',
       blurb: 'Bundled, or dropped into the desktop-plugins folder. Disable to unload live.',
       count: (n: number) => `${n} installed`,
+      installFromGit: 'Install from Git\u2026',
+      installFromGitHint: 'Clone a plugin repository onto the gateway. You will be shown what it grants first.',
       openFolder: 'Open plugins folder',
       rescan: 'Rescan',
       reveal: 'Reveal in file manager',
@@ -365,6 +465,11 @@ export const en: Translations = {
       failed: 'failed',
       empty: 'No plugins installed yet.',
       kinds: { bundled: 'bundled', disk: 'on disk', runtime: 'runtime' },
+      // Which ROOT a disk plugin came from — the row's answer to "why is this
+      // one off by default".
+      roots: { 'agent-packages': 'agent package', 'desktop-plugins': 'desktop-plugins' },
+      agentPackagesNotice:
+        'The desktop half of an installed agent package starts OFF: its agent half is allowlisted before it runs, so this one is too.',
       // The dual door (MJX-53): which filesystem plugins are being read from.
       sourceLocal: 'Reading from this device',
       sourceGateway: 'Reading from the connected backend',
@@ -393,6 +498,8 @@ export const en: Translations = {
       enableAll: 'Enable notifications',
       enableAllDesc: 'Master switch. Turn this off to silence every notification below.',
       focusedHint: 'Completion alerts only fire while Hermes is in the background.',
+      noActionsNotice:
+        'On this platform notifications have no buttons — a plugin that offers them falls back to an in-app message.',
       kinds: {
         approval: {
           label: 'Approval needed',
@@ -500,6 +607,10 @@ export const en: Translations = {
       toolViewDesc: 'Product hides raw tool payloads; Technical shows full input/output.',
       backdropTitle: 'Chat Backdrop',
       backdropDesc: 'The faint statue image behind the conversation.',
+      introSplashTitle: 'Intro Splash',
+      introSplashDesc: 'The wordmark and tagline shown on a new, empty chat.',
+      restorePaintTitle: 'Show Your Last Conversation While Reconnecting',
+      restorePaintDesc: 'Paint the last screen of your most recent chat behind the connecting screen, before the gateway is up.',
       reactionsTitle: 'Message Reactions',
       reactionsDesc: 'iMessage-style emoji tapbacks — react to messages, and Hermes can react to yours.',
       uiScaleTitle: 'UI Scale',
@@ -512,7 +623,31 @@ export const en: Translations = {
       terminalFontPreview: 'Glyph preview',
       terminalFontReset: 'Use default',
       translucencyTitle: 'Window Translucency',
-      translucencyDesc: 'See your desktop through the whole window. macOS and Windows only.',
+      translucencyDesc: 'Let the desktop behind Hermes show through. Tuned separately for light and dark.',
+      glass: {
+        modeOff: 'Off',
+        modeClear: 'Clear',
+        modeGlass: 'Glass',
+        tintTitle: 'Tint',
+        tintDesc: 'How much of the theme colour comes off the window. At 100% only the frost is left.',
+        frostTitle: 'Frost',
+        frostDesc: 'How heavy the window material reads, from sheer to opaque.',
+        frost: {
+          underWindow: 'Sheer',
+          popover: 'Soft',
+          titlebar: 'Frosted',
+          header: 'Heavy'
+        },
+        areaTitle: 'Area',
+        areaWindow: 'Whole window',
+        areaSidebar: 'Sidebar only',
+        fadeTitle: 'Fade Window',
+        fadeDesc: 'Fades the window itself on top of the frost — text included. Leave at 0 to keep full contrast.',
+        clearDesc: 'Fades the whole window, text included.',
+        unsupportedLinux: 'Glass needs a window material this desktop does not provide.',
+        unsupportedWindows: (build: string) =>
+          `Glass needs Windows 11 22H2 (build 22621); this system reports ${build}.`
+      },
       embedsTitle: 'Inline Embeds',
       embedsDesc:
         'Rich previews load from third-party sites (YouTube, X, …). Ask shows a placeholder until you allow each one; Always loads them automatically; Off keeps plain links.',
@@ -648,7 +783,12 @@ export const en: Translations = {
       backgroundModeTitle: 'Keep running in the background',
       backgroundModeDesc:
         'Closing the window puts Hermes away instead of quitting it, so a running turn keeps streaming. Use the tray icon to bring it back or to quit.',
-      backgroundModeFailed: "Couldn't keep Hermes running in the background"
+      backgroundModeFailed: "Couldn't keep Hermes running in the background",
+      attachmentSizeTitle: 'Max attachment / preview size',
+      attachmentSizeDesc:
+        'How big a local file Hermes will read into memory to attach or preview, in MB. Default is 16. The whole file is base64-buffered, so setting this high can make a phone kill the app mid-attach.',
+      attachmentSizeUnit: 'MB',
+      attachmentSizeLabel: 'Max attachment / preview size in megabytes'
     },
     credentials: {
       pasteKey: 'Paste key',
@@ -846,6 +986,77 @@ export const en: Translations = {
       useDifferentGateway: 'Use a different gateway',
       startOver: 'Start over'
     },
+    connections: {
+      title: 'Gateways',
+      switchTo: label => `Switch source: ${label}`,
+      noSource: 'No gateway',
+      connecting: label => `Connecting to ${label}…`,
+      searchPlaceholder: 'Search gateways…',
+      searchEmpty: term => `No gateway matches "${term}".`,
+      add: 'Add a gateway',
+      pickOne: 'Pick a gateway to see its settings.',
+      readOnly: 'This gateway list was written by a newer version of Hermes, so it is read-only here.',
+      degradedReason: reason => `The saved file was unusable (${reason}); the previous one was kept alongside it.`,
+      fieldLabel: 'Name',
+      fieldLabelPlaceholder: 'studio-box',
+      fieldUrl: 'Gateway URL',
+      fieldHost: 'SSH host',
+      fieldRemoteProfile: 'Remote profile',
+      fieldToken: 'Gateway token',
+      fieldTokenPlaceholder: 'Only if this gateway needs one',
+      noKeyring: 'This device has no credential store, so a gateway token cannot be saved. Use browser sign-in, or an ungated gateway.',
+      localUnsupported: "This device can't run a Hermes backend — connect to one over SSH or a URL.",
+      kindHint: kind =>
+        kind === 'ssh'
+          ? 'Hermes will start (or reattach to) a backend on that host and tunnel to it.'
+          : kind === 'cloud'
+            ? 'A Hermes Cloud agent, reached through the portal.'
+            : 'A Hermes backend you can reach by URL.',
+      save: 'Save',
+      saved: 'Gateway saved',
+      saveFailed: 'Could not save this gateway',
+      removeFailed: 'Could not remove this gateway',
+      test: 'Test',
+      testFailed: 'Could not test this gateway',
+      connect: 'Connect',
+      setPrimary: 'Set as primary',
+      remove: 'Remove',
+      droppedHeaders: names => `These headers were not saved because the transport owns them: ${names}.`,
+      verdict: verdict =>
+        verdict === 'ok'
+          ? 'Reachable.'
+          : verdict === 'credential-rejected'
+            ? 'The gateway accepted the connection then closed it (credential rejected?)'
+            : verdict === 'auth-required'
+              ? 'Sign in to this gateway to continue.'
+              : verdict === 'skipped-no-token'
+                ? 'Reachable. No token is stored, so the socket was not tested.'
+                : verdict === 'timeout'
+                  ? 'The gateway did not answer in time.'
+                  : verdict === 'ws-unreachable'
+                    ? 'The gateway answered, but its socket refused the connection.'
+                    : 'Could not reach this gateway.',
+      legHttp: (ok, status, ms) => `HTTP ${ok ? status || 'ok' : 'failed'} · ${ms}ms`,
+      legWs: (ok, ms) => `WebSocket ${ok ? 'ok' : 'failed'} · ${ms}ms`,
+      launchMode: 'On launch:',
+      launchPrimary: 'Primary',
+      launchLastUsed: 'Last used',
+      updateAll: 'Update everything',
+      updateAllSummary: (total, failed) =>
+        failed > 0 ? `${total} targets, ${failed} could not be reached.` : `${total} targets updated.`,
+      degradedTitle: 'Gateway list repaired',
+      degradedMessage: 'Some saved gateways could not be read and were rebuilt. Check the list below.',
+      latchedTitle: 'That gateway is on hold',
+      latchedMessage: reason =>
+        reason === 'host-key-changed'
+          ? "The host key for this gateway changed, so Hermes stopped trying. Trust the new key to continue."
+          : reason === 'reauth-required'
+            ? 'This gateway refused the saved sign-in. Sign in again to continue.'
+            : 'This gateway failed to start and will not be retried automatically.',
+      switchFailed: 'Could not switch gateway',
+      midDialTitle: 'Gateway unchanged',
+      midDialMessage: label => `${label} was changed while connecting, so you are still on the previous gateway.`
+    },
     keys: {
       loading: 'Loading API keys and credentials...',
       failedLoad: 'API keys failed to load',
@@ -915,7 +1126,29 @@ export const en: Translations = {
       unsavedConnect: 'Unsaved — save mcp.json to connect.',
       enableTool: tool => `Enable ${tool}`,
       disableTool: tool => `Disable ${tool}`,
-      noOutput: 'No output yet.'
+      noOutput: 'No output yet.',
+      importButton: 'Import',
+      importPlaceholder: 'Paste an mcp.json snippet, npx/docker command, claude mcp add line, URL, or Cursor link…',
+      importNoMatch: 'No server config recognized in the pasted text.',
+      importConfirm: 'Add to mcp.json',
+      importConfirmMany: count => `Add ${count} servers to mcp.json`,
+      deepLinkTitle: 'Add MCP server?',
+      deepLinkDescription:
+        'A link asked to add this MCP server to Hermes. Review the exact configuration below — it comes from the link, not from Hermes.',
+      deepLinkStdioWarning:
+        'This server runs a local process on your machine with the command shown below. Only continue if you trust its source.',
+      deepLinkConfirm: 'Add server',
+      deepLinkNameInvalid: 'Names use 1-64 letters, digits, dots, dashes, or underscores.',
+      deepLinkNameConflict: name => `A server named ${name} already exists — choose a different name or cancel.`,
+      deepLinkErrorTitle: 'MCP install link rejected',
+      deepLinkErrorName: 'The link\u2019s server name is missing or invalid.',
+      deepLinkErrorConfig: 'The link\u2019s config is not valid base64-encoded JSON.',
+      deepLinkErrorShape: 'The config must be a JSON object with a string `url` or `command` field.',
+      deepLinkErrorUrl: 'Only http:// and https:// server URLs are allowed.',
+      deepLinkErrorTooLarge: 'The config payload exceeds the 32KB limit.',
+      costTokens: tokens => `~${tokens} tok/call`,
+      usage30d: uses => `${uses} uses/30d`,
+      unusedPill: 'unused'
     },
     model: {
       loading: 'Loading model configuration...',
@@ -1030,6 +1263,8 @@ export const en: Translations = {
       messages: count => `${count} ${count === 1 ? 'message' : 'messages'}`,
       restored: 'Restored',
       deleteConfirm: title => `Permanently delete "${title}"? This cannot be undone.`,
+      deletePinnedWarning:
+        'This chat is pinned. Pinning marks it as kept — bulk cleanups skip it, but deleting it here is permanent.',
       defaultDirTitle: 'Default project directory',
       defaultDirDesc:
         'New sessions start in this folder unless you pick another. Leave it unset to use your home directory.',
@@ -1187,6 +1422,15 @@ export const en: Translations = {
       noCatalog: 'No catalog entries available.',
       catalogFailed: 'Catalog failed to load'
     },
+    project: {
+      trust: 'Trust this repo',
+      untrust: 'Stop trusting',
+      trustedCount: count => `${count} project skill${count === 1 ? '' : 's'} loaded from this repo`,
+      untrustedCount: count => `${count} skill${count === 1 ? '' : 's'} in this repo are not loaded until you trust it`,
+      quarantinedCount: count => `${count} blocked by the security scan`,
+      disabled: 'Project skill discovery is off for this profile.',
+      title: 'Project skills'
+    },
     hub: {
       searchPlaceholder: 'Search the skill hub',
       search: 'Search',
@@ -1225,6 +1469,10 @@ export const en: Translations = {
       policyBlock: 'Install blocked by policy',
       findings: count => `${count} finding${count === 1 ? '' : 's'}`,
       noFindings: 'No security findings.',
+      advisory: 'SkillEvaluator (advisory)',
+      advisoryPassed: 'no issues',
+      advisoryFlagged: count => `${count} issue${count === 1 ? '' : 's'} flagged`,
+      advisoryIncomplete: count => `${count} check${count === 1 ? '' : 's'} could not run`,
       installStarted: name => `Installing ${name}...`,
       uninstallStarted: name => `Uninstalling ${name}...`,
       updateStarted: 'Updating installed skills...',
@@ -1303,7 +1551,17 @@ export const en: Translations = {
     steerFailed: 'Could not reach the gateway',
     steerGone: 'That subagent is no longer running',
     steerNotOwned: 'That subagent belongs to another chat — steer it from there',
-    steerMissed: (text: string) => `Steer never landed — this subagent finished first: ${text}`
+    steerMissed: (text: string) => `Steer never landed — this subagent finished first: ${text}`,
+    stop: 'Stop',
+    stopRequested: 'Stopping — its partial result still comes back',
+    budgetWrapup: 'Told to wrap up — it ran out of time, not of work',
+    truncatedNotice: 'Ran out of steps — this summary is partial',
+    worktree: 'Worktree',
+    worktreeCommits: (count: number) => `${count} commits`,
+    worktreeDirty: 'uncommitted changes',
+    worktreeKept: 'kept for review',
+    worktreePruned: 'removed — it held no work',
+    worktreeUnknown: 'state unknown — inspect it before assuming no work'
   },
 
   commandCenter: {
@@ -1323,6 +1581,27 @@ export const en: Translations = {
     settings: 'Settings',
     changeTheme: 'Change theme',
     changeColorMode: 'Change color mode…',
+    tour: {
+      label: 'Take a tour',
+      steps: {
+        sidebar: {
+          title: 'Sessions',
+          text: 'Every conversation lives here. Start a new one, jump between them, or reopen something you archived.'
+        },
+        composer: {
+          title: 'Composer',
+          text: 'Ask for anything here. Attach files, pick a model, or type / for a command.'
+        },
+        statusbar: {
+          title: 'Status',
+          text: 'Your gateway, model and context budget at a glance. Right-click to choose what it shows.'
+        },
+        palette: {
+          title: 'Everything else',
+          text: 'Press ⌘K (Ctrl+K) any time — settings, sessions, themes and this tour all live in there.'
+        }
+      }
+    },
     pets: {
       title: 'Pets',
       placeholder: 'Search pets…',
@@ -1382,6 +1661,9 @@ export const en: Translations = {
     },
     commands: 'Commands',
     settingsFields: 'Settings fields',
+    settingsPreferences: 'Preferences',
+    settingsSearchPlaceholder: 'Search settings…',
+    settingsSearchPill: 'Search settings',
     mcpServers: 'MCP servers',
     archivedChats: 'Archived chats',
     sections: { maintenance: 'Maintenance', sessions: 'Sessions', system: 'System', usage: 'Usage' },
@@ -1627,6 +1909,34 @@ export const en: Translations = {
   },
 
   profiles: {
+    editor: {
+      title: 'Configuration',
+      loading: 'Loading configuration...',
+      loadFailed: 'Failed to load the profile configuration',
+      descriptionLabel: 'Description',
+      descriptionPlaceholder: 'What is this agent for?',
+      toolsetsLabel: 'Toolsets',
+      toolsetsUnpinned: 'No toolset list is pinned, so every toolset is on. Turning one off pins the rest.',
+      mcpLabel: 'MCP servers',
+      noneInstalled: 'None installed.',
+      save: 'Save configuration',
+      saved: 'Profile configuration saved',
+      savedPartial: 'Some changes were not applied',
+      saveFailed: 'Failed to save the profile configuration',
+      avatarUpload: 'Upload avatar',
+      avatarReplace: 'Replace avatar',
+      avatarRemove: 'Remove',
+      avatarHint: 'PNG, JPEG or WebP, up to 2 MB. Stored on the gateway, so every device sees it.',
+      avatarSaved: 'Avatar saved',
+      avatarFailed: 'Failed to update the avatar',
+      avatarRejected: 'Unsupported image format',
+      avatarTooLarge: 'That image is too large',
+      working: 'Working',
+      shareSignIn: 'Share sign-in with this gateway',
+      shareSignInHint:
+        'Reads OAuth tokens from the main profile instead of copying them. A copy forks token state, and the first refresh on either side signs the other out.',
+      noCredentials: 'Created without credentials — set a provider key before the first message.'
+    },
     close: 'Close profiles',
     nameHint: 'Lowercase letters, digits, hyphens, and underscores. Must start with a letter or digit.',
     title: 'Profiles',
@@ -1695,6 +2005,9 @@ export const en: Translations = {
     creating: 'Creating...',
     createAction: 'Create profile',
     renameTitle: 'Rename profile',
+    displayNameTitle: 'Name this agent',
+    displayNameDesc: 'Sets a display name shown across the app. The internal profile ID stays "default".',
+    displayNameLabel: 'Display name',
     renameDescPrefix: 'Renaming updates the profile directory and any wrapper scripts in ',
     renameDescSuffix: '.',
     newNameLabel: 'New name',
@@ -1770,6 +2083,16 @@ export const en: Translations = {
     monthlyOnDayAt: (dayOfMonth, time) => `Monthly on day ${dayOfMonth} at ${time}`,
     topOfHour: 'At the top of every hour',
     everyHourAt: minute => `Every hour at :${minute}`,
+    hidePaused: 'Hide paused',
+    showPaused: 'Show paused',
+    repeatLabel: 'Runs',
+    repeatForever: 'Repeats indefinitely',
+    repeatOf: (completed, times) => `${completed} of ${times}`,
+    triggering: 'Running…',
+    continuityLabel: 'Build on the last run',
+    continuityHint:
+      'Feed this job its own previous output, so each run continues from the last instead of starting cold.',
+    missedFire: 'Missed scheduled fire',
     newCron: 'New cron',
     emptyDescNew:
       'Schedule a prompt to run on a cron expression. Hermes will run it and deliver results to the destination you pick.',
@@ -1915,6 +2238,10 @@ export const en: Translations = {
       orderCost: 'Cost',
       orderManual: 'Manual',
       show: 'Show',
+      density: 'Row density',
+      densityCompact: 'Compact',
+      densityComfortable: 'Comfortable',
+      densityDetailed: 'Detailed',
       metaUpdated: 'Updated',
       metaTokens: 'Tokens',
       metaCost: 'Cost',
@@ -2020,6 +2347,10 @@ export const en: Translations = {
       unpin: 'Unpin',
       copyId: 'Copy ID',
       openInTile: 'Open in tile',
+      messageCount: count => `${count} ${count === 1 ? 'message' : 'messages'}`,
+      toolCallCount: count => `${count} ${count === 1 ? 'tool call' : 'tool calls'}`,
+      openInTerminal: 'Open in terminal',
+      openInTerminalFailed: 'No terminal application could be opened here',
       openInBubble: 'Open in bubble',
       export: 'Export',
       branchFrom: 'Branch',
@@ -2050,6 +2381,15 @@ export const en: Translations = {
   },
 
   composer: {
+    mcpSuggestions: {
+      label: server => `Add ${server}`,
+      tip: keyword => `Suggested because you mentioned “${keyword}” — click to connect`,
+      connecting: server => `Connecting ${server}…`,
+      cancelTip: 'Click to cancel',
+      added: server => `Added ${server}`,
+      addedTip: 'Connected — its tools are ready in this chat',
+      connectFailed: server => `Could not connect ${server}`
+    },
     message: 'Message',
     bubbles: {
       releaseToClose: 'Release to close',
@@ -2169,6 +2509,7 @@ export const en: Translations = {
     attachLabel: 'Attach',
     attachFailed: label => `Could not attach ${label}`,
     attachNoRef: 'The gateway staged nothing for this file.',
+    attachTooLarge: maxMb => `Bigger than the ${maxMb} MB limit. Raise it in Settings → Chat.`,
     files: 'Files…',
     folder: 'Folder…',
     back: 'Back',
@@ -2746,6 +3087,34 @@ export const en: Translations = {
     missingBody: 'This artifact is no longer in the local registry.'
   },
 
+  // The in-app browser's own chrome (MJXHRM-447). The pane's error and restart
+  // copy lives under `preview.web.*`, which was ported with the chat UI and had
+  // no consumer until this ticket.
+  browser: {
+    back: 'Back',
+    forward: 'Forward',
+    reload: 'Reload',
+    stop: 'Stop',
+    addressLabel: 'Address',
+    addressPlaceholder: 'Search or enter address',
+    copyUrl: 'Copy address',
+    openExternally: 'Open in your browser',
+    unsupportedTitle: 'The in-app browser could not start here',
+    resume: 'Resume',
+    paletteOpen: 'Open in-app browser',
+    openLinksInApp: 'Open web links in Hermes',
+    openLinksInAppDescription: 'Web links open in the in-app browser. Hold ⌘/Ctrl or middle-click to use your own browser instead.',
+    isolatedStore: 'Keep the in-app browser\'s cookies separate',
+    isolatedStoreDescription: 'Signing in to a site in the pane never touches the account Hermes itself uses. Changing this clears what is already stored.',
+    consoleDefault: 'Show the preview console by default',
+    consoleDefaultDescription: 'Open the console deck whenever the in-app browser opens.',
+    clearData: 'Clear browsing data',
+    clearDataDescription: 'Cookies, storage and cache for the in-app browser only.',
+    clearDataConfirm: 'Clear the in-app browser\'s cookies, storage and cache?',
+    cleared: 'Browsing data cleared',
+    sharedCookies: 'This browser shares cookies with Hermes on this device.',
+    ephemeralStore: 'This browser forgets logins when Hermes restarts.'
+  },
   preview: {
     tab: 'Preview',
     closeTab: label => `Close ${label}`,
@@ -2836,7 +3205,10 @@ export const en: Translations = {
       loadFailedConsole: (code, message) => `Load failed${code ? ` (${code})` : ''}: ${message}`,
       unreachableDescription: 'The preview page could not be reached.',
       openTarget: url => `Open ${url}`,
-      fallbackTitle: 'Preview'
+      fallbackTitle: 'Preview',
+      // The ONE key desktop has that universal lacked: why a loopback
+      // address cannot load when the gateway is somewhere else.
+      remoteLoopback: 'This address points at the machine Hermes is talking to, and this gateway has no tunnel to it. Connect over SSH, or open the page on that machine.'
     }
   },
 
@@ -2901,6 +3273,27 @@ export const en: Translations = {
         `This adds the “${pattern}” pattern to your permanent allowlist (~/.hermes/config.yaml). Hermes won’t ask again for commands like this — in this session or any future one.`,
       alwaysAllow: 'Always allow'
     },
+    mcpSetup: {
+      installTitle: server => `Add the ${server} MCP server?`,
+      enableTitle: server => `Enable the ${server} MCP server?`,
+      authorizeTitle: server => `Authorize the ${server} MCP server?`,
+      installAction: 'Install',
+      enableAction: 'Enable',
+      authorizeAction: 'Authorize',
+      decline: 'Not now',
+      catalogSource: 'From the Nous-approved catalog',
+      envRequired: 'Fill in the required credentials first',
+      notInCatalog: server => `“${server}” is not in the MCP catalog`,
+      installed: server => `Installed ${server}`,
+      enabled: server => `Enabled ${server}`,
+      authorized: server => `Authorized ${server}`,
+      declined: 'Declined',
+      unanswered: 'No response',
+      failed: server => `Setup failed for ${server}`,
+      toolCount: count => `${count} tools`,
+      sendFailed: 'Could not send the MCP setup response',
+      reloadFailed: 'The server was set up, but this chat could not reload its tools'
+    },
     clarify: {
       notReady: 'Clarify request is not ready yet',
       gatewayDisconnected: 'Hermes gateway is not connected',
@@ -2910,6 +3303,10 @@ export const en: Translations = {
       placeholder: 'Type your answer…',
       skip: 'Skip',
       continueLabel: 'Continue',
+      confirmAndContinueLabel: 'Confirm and continue',
+      answeredBadge: 'Answered',
+      questionProgress: (answered, total) => `${answered} of ${total} answered`,
+      unknownQuestion: 'The agent is no longer asking that question — answer the ones still shown',
       skipped: 'Skipped',
       lateAnswer: (question, choice) => `Re: "${question}" — my answer: ${choice}`,
       lateAnswerTip: 'Draft this answer as a follow-up message',
@@ -2939,6 +3336,10 @@ export const en: Translations = {
       statusRecovered: 'Recovered',
       statusDone: 'Done',
       memoryWriteNoted: 'Memory write noted',
+      spilloverLabel: 'Full output',
+      spilloverSaved: (size: string) => `Too large to inline (${size}) — saved to a file`,
+      spilloverSavedUnsized: 'Too large to inline — saved to a file',
+      spilloverOpen: 'Open',
       actions: {
         read: 'Read',
         reading: 'Reading',
@@ -2994,6 +3395,7 @@ export const en: Translations = {
           pending: 'Searching session history',
           pendingAction: 'Searching'
         },
+        setup_mcp: { done: 'Set up an MCP server', pending: 'Setting up an MCP server', pendingAction: 'Setting up' },
         terminal: { done: 'Ran command', pending: 'Running command', pendingAction: 'Running' },
         todo: { done: 'Updated todos', pending: 'Updating todos', pendingAction: 'Updating' },
         vision_analyze: { done: 'Analyzed image', pending: 'Analyzing image', pendingAction: 'Analyzing' },

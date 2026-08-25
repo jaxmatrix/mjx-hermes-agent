@@ -4,6 +4,8 @@
 // BUILTIN_PERSONALITIES, plus the FIELD_LABELS/FIELD_DESCRIPTIONS copy that i18n
 // en.ts imports. Icons come from the shared @/lib/icons seam.
 import { Box, Brain, Lock, MessageCircle, Mic, Monitor, Palette, Wrench } from '@/lib/icons'
+import { REASONING_EFFORTS } from '@/lib/reasoning-effort'
+import type { ConfigFieldSchema } from '@/types/hermes'
 
 import { defineFieldCopy } from './field-copy'
 import type { DesktopConfigSection } from './types'
@@ -230,8 +232,13 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   'agent.image_input_mode': ['auto', 'native', 'text'],
   'approvals.mode': ['manual', 'smart', 'off'],
   'code_execution.mode': ['project', 'strict'],
+  // agent/context_compressor.py: anything but 'lean' falls back to 'legacy'.
+  'compression.tail_mode': ['legacy', 'lean'],
   'context.engine': ['compressor', 'default', 'custom'],
-  'delegation.reasoning_effort': ['', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+  // Derived, never re-typed: this list had stopped at `xhigh`, so a subagent
+  // could not be asked for `max`/`ultra` from the UI even though the gateway
+  // accepts both (MJXHRM-459).
+  'delegation.reasoning_effort': ['', ...REASONING_EFFORTS],
   // NOTE: memory.provider is intentionally NOT listed here. Its options are
   // discovery-driven and served by the backend config schema (merged
   // per-request in web_server._schema_with_dynamic_provider_options), so
@@ -240,7 +247,13 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   'terminal.backend': ['local', 'docker', 'singularity', 'modal', 'daytona', 'ssh'],
   'stt.elevenlabs.model_id': ['scribe_v2', 'scribe_v1'],
   'stt.local.model': ['tiny', 'base', 'small', 'medium', 'large-v3'],
-  'stt.provider': ['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs'],
+  // Mirrors tools/transcription_tools.py BUILTIN_STT_PROVIDERS. The backend's
+  // own option list is now unreachable (see FALLBACK_FIELD_SCHEMA), so this is
+  // the only thing that renders the picker — `deepinfra` was missing from it.
+  // `local_command` is deliberately absent: it is the `stt.providers.<name>:
+  // type: command` escape hatch, and enumOptionsFor appends a stored value that
+  // is not in this list, so configuring one by hand still shows and survives.
+  'stt.provider': ['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs', 'deepinfra'],
   'tts.openai.voice': ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'],
   'tts.provider': [
     'edge',
@@ -256,10 +269,42 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
   ],
   'stt.openai.model': ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
   'stt.mistral.model': ['voxtral-mini-latest', 'voxtral-mini-2602'],
+  // hermes_cli/config.py rejects anything else at load time.
+  'voice.submit_mode': ['direct', 'draft'],
   'tts.openai.model': ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'],
   'tts.elevenlabs.model_id': ['eleven_multilingual_v2', 'eleven_turbo_v2_5', 'eleven_flash_v2_5'],
   'tts.neutts.device': ['cpu', 'cuda', 'mps'],
   'updates.non_interactive_local_changes': ['stash', 'discard']
+}
+
+/**
+ * Field shapes for keys the backend's schema does not declare.
+ *
+ * `/api/config/schema` is DERIVED from `DEFAULT_CONFIG`
+ * (`web_server._build_schema_from_config`), so a key that is real, read by the
+ * agent, and documented — but deliberately NOT seeded — has no schema entry and
+ * no config value either, and `sectionFieldEntries` then drops the row
+ * entirely. Both of these are that case:
+ *
+ *  - `stt.provider` lost its `"local"` seed in the 08-20 sync, on purpose: a
+ *    stored value is now an explicit user pick and a fresh install must be
+ *    indistinguishable from unset so the autodetect ladder runs. The side
+ *    effect is that the backend's own `_SCHEMA_OVERRIDES['stt.provider']` entry
+ *    became unreachable (overrides are applied while walking DEFAULT_CONFIG),
+ *    so the STT provider picker DISAPPEARED from Settings on a fresh install.
+ *  - `timeouts.tools.sequential_call` is read by `agent/tool_executor.py` and
+ *    has never been seeded.
+ *
+ * Consulted only when the backend omits the key, so a gateway that does declare
+ * one still wins. Nothing here writes a value — an unset field stays unset
+ * until the user picks something.
+ */
+export const FALLBACK_FIELD_SCHEMA: Record<string, ConfigFieldSchema> = {
+  'stt.provider': { description: 'Speech-to-text provider', type: 'select' },
+  'timeouts.tools.sequential_call': {
+    description: 'Per-tool timeout in seconds for a sequential (non-batched) call',
+    type: 'number'
+  }
 }
 
 // Voice/model name fields render as a free-input combobox instead of a closed
@@ -526,12 +571,12 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
 // keys (it's a custom tab bound to the theme engine). Ported from desktop; keys
 // kept in sync with the backend config schema.
 export const SECTIONS: DesktopConfigSection[] = [
-  { id: 'model', label: 'Model', icon: Box, keys: ['model_context_length', 'fallback_providers'] },
+  { id: 'model', label: 'Model', icon: Box, keys: ['model_context_length', 'fallback_providers', 'model_overrides'] },
   {
     id: 'chat',
     label: 'Chat',
     icon: MessageCircle,
-    keys: ['display.personality', 'timezone', 'display.show_reasoning', 'agent.image_input_mode']
+    keys: ['display.personality', 'timezone', 'display.show_reasoning', 'display.timestamps', 'agent.image_input_mode']
   },
   { id: 'appearance', label: 'Appearance', icon: Palette, keys: [] },
   {
@@ -579,7 +624,9 @@ export const SECTIONS: DesktopConfigSection[] = [
       'compression.enabled',
       'compression.threshold',
       'compression.target_ratio',
-      'compression.protect_last_n'
+      'compression.protect_last_n',
+      'compression.tail_mode',
+      'memory.nudge_interval'
     ]
   },
   {
@@ -620,7 +667,8 @@ export const SECTIONS: DesktopConfigSection[] = [
       'stt.elevenlabs.tag_audio_events',
       'stt.elevenlabs.diarize',
       'voice.record_key',
-      'voice.max_recording_seconds'
+      'voice.max_recording_seconds',
+      'voice.submit_mode'
     ]
   },
   {
@@ -648,7 +696,23 @@ export const SECTIONS: DesktopConfigSection[] = [
       'delegation.max_concurrent_children',
       'delegation.child_timeout_seconds',
       'delegation.reasoning_effort',
-      'updates.non_interactive_local_changes'
+      'updates.non_interactive_local_changes',
+      // The 08-18 + 08-20 backend sync (MJXHRM-443). Dot-paths verified against
+      // hermes_cli/config_defaults.py DEFAULT_CONFIG, which is what
+      // web_server._build_schema_from_config derives /api/config/schema from —
+      // three of them are not where the sync notes said (`nofile_soft_limit` is
+      // under `runtime.`, and execution_guidance/reasoning_echo under `agent.`,
+      // not `model.`).
+      'agent.run_budget_seconds',
+      'agent.stall_guards',
+      'agent.execution_guidance',
+      'agent.reasoning_echo',
+      'timeouts.tools.sequential_call',
+      'web.keyless_fallback',
+      'web.keyless_rescue',
+      'web.provider_tier',
+      'cron.media_send_timeout_seconds',
+      'runtime.nofile_soft_limit'
     ]
   }
 ]

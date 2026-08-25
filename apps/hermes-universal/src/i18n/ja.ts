@@ -22,6 +22,7 @@ export const ja = defineLocale({
     copy: 'コピー',
     copyFailed: 'コピーに失敗しました',
     delete: '削除',
+    deleteNamed: (name: string) => `${name} を削除しますか？`,
     docs: 'ドキュメント',
     done: '完了',
     error: 'エラー',
@@ -63,6 +64,71 @@ export const ja = defineLocale({
 
   // The read-only `shortcuts` reference became the full rebindable `keybinds`
   // panel; only its title is translated here, the rest falls back to English.
+  contextMenu: {
+    link: {
+      openExternal: '外部ブラウザーで開く',
+      copyUrl: 'URL をコピー',
+      openInApp: 'アプリ内ブラウザーで開く',
+      copyResolvedUrl: '解決済み URL をコピー'
+    },
+    image: {
+      copyImage: '画像をコピー',
+      copyImageAddress: '画像アドレスをコピー',
+      saveImageAs: '画像を名前を付けて保存…',
+      copyFailed: '画像をコピーできませんでした',
+      saveFailed: '画像を保存できませんでした'
+    },
+    edit: {
+      cut: '切り取り',
+      paste: '貼り付け',
+      selectAll: 'すべて選択',
+      addToDictionary: '辞書に追加'
+    },
+    page: {
+      inspectElement: '要素を検証'
+    },
+    checkForUpdates: '更新を確認',
+    someItemsFailed: '一部の項目を読み込めませんでした'
+  },
+
+  pluginInstall: {
+    title: 'プラグインをインストール',
+    fromDeepLink: 'リンクがこのプラグインのインストールを要求しました。承認するまで何もインストールされません。',
+    fromSettings: 'Hermes はゲートウェイ上でリポジトリをクローンし、見つかったものをインストールします。',
+    repoLabel: 'リポジトリ',
+    repoPlaceholder: 'owner/repo、owner/repo/subdir、または git URL',
+    sourceLink: 'ソースを表示',
+    invalidIdentifier:
+      'Hermes がインストールできるリポジトリではありません。owner/repo、owner/repo/subdir、または git URL を使ってください。',
+    insecureWarning: url => `${url} は認証されたソースではありません。そのネットワークに到達できる誰もが内容を決められます。`,
+    targetProfile: 'インストール先プロファイル',
+    authorityNotice:
+      'インストールすると、このリポジトリのコードがエージェントの完全な権限でゲートウェイ上で実行され、デスクトップ側はアプリの完全な権限で Hermes 内で実行されます。プラグインは互いのエラーからは隔離されますが、互いからは隔離されません。',
+    enableAfterInstall: 'インストール後に有効化',
+    forceReinstall: '強制的に再インストール',
+    forceReinstallHint: 'このプラグインの既存のコピーを置き換えます。',
+    waitingForGateway: 'ゲートウェイを待機中 — 接続するとインストールできます。',
+    install: 'インストール',
+    installing: 'インストール中…',
+    agentSuccess: name => `${name} をインストールしました。`,
+    warningsTitle: 'プラグインインストールの警告',
+    missingEnv: list => `インストールされましたが、次が設定されるまで動作しません: ${list}。`,
+    noIdentifier: 'リンクにリポジトリが指定されていません。',
+    stillRunning:
+      'ゲートウェイから応答がありませんでした。インストールはまだ進行中の可能性があります。再試行の前に「設定 ▸ プラグイン」で確認してください。',
+    restDoorOff:
+      'このゲートウェイはリモートで、ゲートウェイのプラグインドアが無効なため、このプラグインのデスクトップ側はここでは読み込まれません。'
+  },
+
+  deepLink: {
+    title: 'Hermes リンク',
+    badUrl: 'これは Hermes が開けるリンクではありません。',
+    unsafePath: 'このリンクはアプリの外を指しているため無視されました。',
+    unknownPath: path => `${path} に該当するページがありません。未インストールのプラグイン用のリンクかもしれません。`,
+    reservedKind: kind => `Hermes は「${kind}」リンクを処理できません。`,
+    routeConflict: '2 つのハンドラーが同じ Hermes リンクを要求しました'
+  },
+
   keybinds: {
     title: 'キーボードショートカット',
     globalTag: 'システム全体',
@@ -71,7 +137,9 @@ export const ja = defineLocale({
     globalClaimTitle: 'ショートカットをシステム全体で予約しました',
     globalClaimMessage: combos =>
       `Hermes はオペレーティングシステムから ${combos} を予約しました。他のアプリが手前にあるときも反応します。Hermes の実行中は他のアプリがこのキーを使えません。`,
-    globalClaimAction: '変更する'
+    globalClaimAction: '変更する',
+    // Only the keys this locale actually translates; the rest fall back to en.
+    actions: { 'session.archive': '現在のセッションをアーカイブ' }
   },
 
   files: {
@@ -170,6 +238,14 @@ export const ja = defineLocale({
       backgroundDoneTitle: 'バックグラウンドタスクが完了しました',
       backgroundFailedTitle: 'バックグラウンドタスクが失敗しました',
       creditsTitle: 'クレジット'
+    },
+    mcp: {
+      needsAuthTitle: 'MCP サーバーの再認証が必要です',
+      needsAuthMessage: name => `${name} MCP の再認証が必要です。`,
+      errorTitle: 'MCP サーバーに接続できません',
+      errorMessage: name => `${name} MCP のヘルスチェックに失敗しました。`,
+      signIn: 'サインイン',
+      view: '表示'
     }
   },
 
@@ -187,6 +263,20 @@ export const ja = defineLocale({
       `ソフトウェアレンダリングが有効です — リモートディスプレイを検出しました（${reason}）。ちらつきを防ぐため GPU アクセラレーションは無効化されています。`
   },
 
+  resourcePressure: {
+    diskCritical:
+      'エージェントのディスクがほぼ満杯です。新しいメッセージ・メモリー・設定の保存に失敗する可能性があります。',
+    diskElevated:
+      'エージェントのディスクが埋まりつつあります。古いセッションを整理するか、容量の拡張を検討してください。',
+    diskFree: mb => `（空き ${mb} MB）`,
+    dismiss: '警告を閉じる',
+    memoryCritical:
+      'エージェントのメモリーがほぼ尽きており、再起動する可能性があります。アイドル状態のセッションを閉じるか、メモリーの増設を検討してください。',
+    memoryElevated: 'エージェントのメモリーが少なくなっています。',
+    oomRestart:
+      'エージェントが予期せず再起動しました。メモリー不足が原因の可能性が高いです。長いセッションや多数の同時タスクはメモリー使用量を増やします。'
+  },
+
   titlebar: {
     hideSidebar: 'サイドバーを非表示',
     showSidebar: 'サイドバーを表示',
@@ -196,6 +286,7 @@ export const ja = defineLocale({
     swapSidebarSidesTitle: 'セッションとファイルブラウザーの位置を入れ替える',
     hideRightSidebar: '右サイドバーを非表示',
     showRightSidebar: '右サイドバーを表示',
+    unreadSessions: count => (count === 1 ? '未読セッション 1 件' : `未読セッション ${count} 件`),
     muteHaptics: '触覚フィードバックをオフ',
     unmuteHaptics: '触覚フィードバックをオン',
     openSettings: '設定を開く',
@@ -223,6 +314,77 @@ export const ja = defineLocale({
   },
 
   settings: {
+    connections: {
+      title: 'ゲートウェイ',
+      switchTo: label => `ソースを切り替え: ${label}`,
+      noSource: 'ゲートウェイなし',
+      connecting: label => `${label} に接続中…`,
+      searchPlaceholder: 'ゲートウェイを検索…',
+      searchEmpty: term => `「${term}」に一致するゲートウェイはありません。`,
+      add: 'ゲートウェイを追加',
+      pickOne: '設定を表示するゲートウェイを選んでください。',
+      readOnly: 'このゲートウェイ一覧は新しいバージョンの Hermes で書かれているため、ここでは読み取り専用です。',
+      degradedReason: reason => `保存されたファイルが使用できませんでした（${reason}）。以前のファイルは隣に残してあります。`,
+      fieldLabel: '名前',
+      fieldLabelPlaceholder: 'studio-box',
+      fieldUrl: 'ゲートウェイ URL',
+      fieldHost: 'SSH ホスト',
+      fieldRemoteProfile: 'リモートプロファイル',
+      fieldToken: 'ゲートウェイトークン',
+      fieldTokenPlaceholder: 'このゲートウェイに必要な場合のみ',
+      noKeyring: 'この端末には資格情報ストアがないため、ゲートウェイトークンを保存できません。ブラウザーでのサインイン、または認証不要のゲートウェイをご利用ください。',
+      localUnsupported: 'この端末では Hermes バックエンドを実行できません。SSH または URL で接続してください。',
+      kindHint: kind =>
+        kind === 'ssh' ? 'Hermes がそのホスト上でバックエンドを起動（または再接続）し、トンネルを張ります。' : kind === 'cloud' ? 'ポータル経由で到達する Hermes Cloud エージェントです。' : 'URL で到達できる Hermes バックエンドです。',
+      save: '保存',
+      saved: 'ゲートウェイを保存しました',
+      saveFailed: 'このゲートウェイを保存できませんでした',
+      removeFailed: 'このゲートウェイを削除できませんでした',
+      test: 'テスト',
+      testFailed: 'このゲートウェイをテストできませんでした',
+      connect: '接続',
+      setPrimary: 'プライマリに設定',
+      remove: '削除',
+      droppedHeaders: names => `これらのヘッダーはトランスポートが管理しているため保存されませんでした: ${names}。`,
+      verdict: verdict =>
+        verdict === 'ok'
+          ? '到達できます。'
+          : verdict === 'credential-rejected'
+            ? 'ゲートウェイは接続を受け入れた後に切断しました（資格情報が拒否された可能性があります）'
+            : verdict === 'auth-required'
+              ? '続行するにはこのゲートウェイにサインインしてください。'
+              : verdict === 'skipped-no-token'
+                ? '到達できます。トークンが保存されていないため、ソケットはテストしていません。'
+                : verdict === 'timeout'
+                  ? 'ゲートウェイが時間内に応答しませんでした。'
+                  : verdict === 'ws-unreachable'
+                    ? 'ゲートウェイは応答しましたが、ソケットが接続を拒否しました。'
+                    : 'このゲートウェイに到達できませんでした。',
+      legHttp: (ok, status, ms) => `HTTP ${ok ? status || 'ok' : 'failed'} · ${ms}ms`,
+      legWs: (ok, ms) => `WebSocket ${ok ? 'ok' : 'failed'} · ${ms}ms`,
+      launchMode: '起動時:',
+      launchPrimary: 'プライマリ',
+      launchLastUsed: '最後に使用したもの',
+      updateAll: 'すべて更新',
+      updateAllSummary: (total, failed) =>
+        failed > 0 ? `${total} 個のターゲットのうち ${failed} 個に到達できませんでした。` : `${total} 個のターゲットを更新しました。`,
+      degradedTitle: 'ゲートウェイ一覧を修復しました',
+      degradedMessage: '保存済みゲートウェイの一部を読み込めなかったため再作成しました。下の一覧を確認してください。',
+      latchedTitle: 'このゲートウェイは停止中です',
+      latchedMessage: reason =>
+        reason === 'host-key-changed'
+          ? 'ホストキーが変更されたため、Hermes は再試行を停止しました。新しいキーを信頼すると続行できます。'
+          : reason === 'reauth-required'
+            ? '保存されたサインインが拒否されました。再度サインインしてください。'
+            : 'このゲートウェイの起動に失敗しました。自動では再試行されません。',
+      switchFailed: 'ゲートウェイを切り替えられませんでした',
+      midDialTitle: 'ゲートウェイは変更されていません',
+      midDialMessage: label => `接続中に ${label} が変更されたため、前のゲートウェイのままです。`
+    },
+    profileScope: {
+      appliesTo: '適用先',
+      editsProfile: profile => `このページでの変更は「${profile}」プロファイルに適用されます。`
+    },
     closeSettings: '設定を閉じる',
     exportConfig: '設定を書き出す',
     importConfig: '設定を読み込む',
@@ -251,6 +413,8 @@ export const ja = defineLocale({
       blurb:
         'ビルドに同梱されたもの、または desktop-plugins フォルダーに置いたもの。無効にすると即座にアンロードされます。',
       count: (n: number) => `${n} 個インストール済み`,
+      installFromGit: 'Git からインストール…',
+      installFromGitHint: 'プラグインのリポジトリをゲートウェイにクローンします。付与される権限を先に確認できます。',
       openFolder: 'プラグインフォルダーを開く',
       rescan: '再スキャン',
       reveal: 'ファイルマネージャーで表示',
@@ -259,6 +423,9 @@ export const ja = defineLocale({
       failed: '失敗',
       empty: 'プラグインはまだインストールされていません。',
       kinds: { bundled: '同梱', disk: 'ディスク', runtime: 'ランタイム' },
+      roots: { 'agent-packages': 'エージェントパッケージ', 'desktop-plugins': 'desktop-plugins' },
+      agentPackagesNotice:
+        'インストール済みエージェントパッケージのデスクトップ側は既定でオフです。エージェント側が許可制で動くのと同じ扱いです。',
       sourceLocal: 'この端末から読み込み中',
       sourceGateway: '接続中のバックエンドから読み込み中',
       sourceNone: '利用できるプラグインフォルダーがありません',
@@ -285,6 +452,7 @@ export const ja = defineLocale({
       enableAll: '通知を有効にする',
       enableAllDesc: 'マスタースイッチ。オフにすると以下のすべての通知を無効にします。',
       focusedHint: '完了通知は Hermes がバックグラウンドにあるときのみ表示されます。',
+      noActionsNotice: 'このプラットフォームの通知にはボタンがありません。ボタンを使うプラグインはアプリ内メッセージにフォールバックします。',
       kinds: {
         approval: {
           label: '承認が必要',
@@ -386,6 +554,10 @@ export const ja = defineLocale({
       toolViewDesc: 'プロダクト表示は生のツールペイロードを隠し、テクニカル表示は入出力をすべて表示します。',
       backdropTitle: 'チャットの背景',
       backdropDesc: '会話の背後にうっすら見える彫像の画像。',
+      introSplashTitle: 'イントロ画面',
+      introSplashDesc: '新しい空のチャットに表示されるワードマークとタグライン。',
+      restorePaintTitle: '再接続中に直前の会話を表示',
+      restorePaintDesc: 'ゲートウェイの接続が完了する前に、直近のチャットの最後の画面を接続画面の背後に表示します。',
       reactionsTitle: 'メッセージリアクション',
       reactionsDesc:
         'iMessage 風の絵文字リアクション — メッセージにリアクションでき、Hermes もあなたのメッセージにリアクションできます。',
@@ -399,7 +571,31 @@ export const ja = defineLocale({
       terminalFontPreview: 'グリフのプレビュー',
       terminalFontReset: '既定値を使用',
       translucencyTitle: 'ウィンドウの透過',
-      translucencyDesc: 'ウィンドウ全体を透過させてデスクトップを表示します。macOS と Windows のみ。',
+      translucencyDesc: 'Hermes の背後のデスクトップを透けさせます。ライトとダークで個別に調整されます。',
+      glass: {
+        modeOff: 'オフ',
+        modeClear: 'クリア',
+        modeGlass: 'すりガラス',
+        tintTitle: '色の濃さ',
+        tintDesc: 'ウィンドウからテーマ色をどれだけ取り除くか。100% ではすりガラスだけが残ります。',
+        frostTitle: 'すりガラスの強さ',
+        frostDesc: 'ウィンドウ素材の重さ。透明感のあるものから不透明なものまで。',
+        frost: {
+          underWindow: '軽い',
+          popover: 'やわらか',
+          titlebar: 'すりガラス',
+          header: '濃い'
+        },
+        areaTitle: '範囲',
+        areaWindow: 'ウィンドウ全体',
+        areaSidebar: 'サイドバーのみ',
+        fadeTitle: 'ウィンドウを薄く',
+        fadeDesc: 'すりガラスの上でウィンドウ自体を薄くします（文字も含む）。コントラストを保つには 0 のままに。',
+        clearDesc: 'ウィンドウ全体を、文字も含めて薄くします。',
+        unsupportedLinux: 'すりガラスにはこのデスクトップが提供しないウィンドウ素材が必要です。',
+        unsupportedWindows: (build: string) =>
+          `すりガラスには Windows 11 22H2（ビルド 22621）が必要です。このシステムは ${build} を報告しています。`
+      },
       embedsTitle: 'インライン埋め込み',
       embedsDesc:
         'リッチプレビューは第三者サイト（YouTube、X など）から読み込まれます。確認は許可するまでプレースホルダーを表示し、常には自動で読み込み、オフはリンクのままにします。',
@@ -728,7 +924,12 @@ export const ja = defineLocale({
       backgroundModeTitle: 'バックグラウンドで実行を続ける',
       backgroundModeDesc:
         'ウィンドウを閉じても終了せず、Hermes をしまうだけになります。実行中の応答はそのまま続きます。再表示や終了はトレイアイコンから行えます。',
-      backgroundModeFailed: 'Hermes をバックグラウンドで実行し続けられませんでした'
+      backgroundModeFailed: 'Hermes をバックグラウンドで実行し続けられませんでした',
+      attachmentSizeTitle: '添付 / プレビューの最大サイズ',
+      attachmentSizeDesc:
+        'Hermes が添付やプレビューのためにメモリへ読み込むローカルファイルの上限（MB）。既定は 16 です。ファイル全体が base64 でバッファされるため、大きくしすぎるとスマートフォンでは添付中にアプリが強制終了されることがあります。',
+      attachmentSizeUnit: 'MB',
+      attachmentSizeLabel: '添付 / プレビューの最大サイズ（MB）'
     },
     credentials: {
       pasteKey: 'キーを貼り付け',
@@ -888,7 +1089,30 @@ export const ja = defineLocale({
       unsavedConnect: '未保存 — 接続するには mcp.json を保存してください。',
       enableTool: tool => `${tool} を有効化`,
       disableTool: tool => `${tool} を無効化`,
-      noOutput: 'まだ出力がありません。'
+      noOutput: 'まだ出力がありません。',
+      importButton: 'インポート',
+      importPlaceholder: 'mcp.json スニペット、npx/docker コマンド、claude mcp add 行、URL、Cursor リンクを貼り付け…',
+      importNoMatch: '貼り付けたテキストにサーバー設定が見つかりません。',
+      importConfirm: 'mcp.json に追加',
+      importConfirmMany: count => `${count} 件のサーバーを mcp.json に追加`,
+      deepLinkTitle: 'MCP サーバーを追加しますか？',
+      deepLinkDescription:
+        'リンクがこの MCP サーバーの追加を要求しました。以下の設定は Hermes ではなくリンクから来ています。内容を確認してください。',
+      deepLinkStdioWarning:
+        'このサーバーは以下のコマンドでローカルプロセスを実行します。提供元を信頼できる場合のみ続行してください。',
+      deepLinkConfirm: 'サーバーを追加',
+      deepLinkNameInvalid: '名前は英数字・ドット・ハイフン・アンダースコアの 1〜64 文字です。',
+      deepLinkNameConflict: name =>
+        `${name} という名前のサーバーは既にあります。別の名前を選ぶかキャンセルしてください。`,
+      deepLinkErrorTitle: 'MCP インストールリンクを拒否しました',
+      deepLinkErrorName: 'リンクのサーバー名がないか無効です。',
+      deepLinkErrorConfig: 'リンクの設定が有効な base64 エンコード JSON ではありません。',
+      deepLinkErrorShape: '設定は文字列の `url` または `command` を持つ JSON オブジェクトである必要があります。',
+      deepLinkErrorUrl: 'http:// と https:// のサーバー URL のみ許可されています。',
+      deepLinkErrorTooLarge: '設定のペイロードが 32KB の上限を超えています。',
+      costTokens: tokens => `約 ${tokens} トークン/回`,
+      usage30d: uses => `${uses} 回/30日`,
+      unusedPill: '未使用'
     },
     model: {
       loading: 'モデル設定を読み込み中...',
@@ -993,6 +1217,8 @@ export const ja = defineLocale({
       messages: count => `${count} 件のメッセージ`,
       restored: '復元しました',
       deleteConfirm: title => `"${title}" を完全に削除しますか？この操作は元に戻せません。`,
+      deletePinnedWarning:
+        'このチャットはピン留めされています。ピン留めは「保持」の印で、一括整理では対象外になりますが、ここでの削除は元に戻せません。',
       defaultDirTitle: 'デフォルトのプロジェクトディレクトリ',
       defaultDirDesc:
         '別のフォルダーを選択しない限り、新しいセッションはこのフォルダーで開始します。未設定の場合はホームディレクトリが使用されます。',
@@ -1049,6 +1275,21 @@ export const ja = defineLocale({
 
   skills: {
     tabSkills: 'スキル',
+    hub: {
+      advisory: 'SkillEvaluator（参考）',
+      advisoryPassed: '問題なし',
+      advisoryFlagged: count => `${count} 件の問題を検出`,
+      advisoryIncomplete: count => `${count} 件のチェックを実行できませんでした`
+    },
+    project: {
+      trust: 'このリポジトリを信頼',
+      untrust: '信頼を解除',
+      trustedCount: count => `このリポジトリから ${count} 件のプロジェクトスキルを読み込みました`,
+      untrustedCount: count => `このリポジトリの ${count} 件のスキルは、信頼するまで読み込まれません`,
+      quarantinedCount: count => `${count} 件はセキュリティスキャンによりブロックされました`,
+      disabled: 'このプロファイルではプロジェクトスキルの検出が無効です。',
+      title: 'プロジェクトスキル'
+    },
     tabToolsets: 'ツールセット',
     tabMcp: 'MCP',
     all: 'すべて',
@@ -1176,7 +1417,17 @@ export const ja = defineLocale({
     steerFailed: 'ゲートウェイに接続できませんでした',
     steerGone: 'このサブエージェントはもう実行されていません',
     steerNotOwned: 'このサブエージェントは別のチャットのものです — そちらから誘導してください',
-    steerMissed: (text: string) => `誘導は届きませんでした — サブエージェントが先に終了しました: ${text}`
+    steerMissed: (text: string) => `誘導は届きませんでした — サブエージェントが先に終了しました: ${text}`,
+    stop: '停止',
+    stopRequested: '停止中 — 途中までの結果は返ります',
+    budgetWrapup: '時間切れで打ち切り指示 — 作業が終わったわけではありません',
+    truncatedNotice: 'ステップ上限に達しました — この要約は途中までです',
+    worktree: 'ワークツリー',
+    worktreeCommits: (count: number) => `${count} 件のコミット`,
+    worktreeDirty: '未コミットの変更あり',
+    worktreeKept: 'レビュー用に保持',
+    worktreePruned: '削除済み — 成果物はありませんでした',
+    worktreeUnknown: '状態不明 — 成果なしと判断する前に確認してください'
   },
 
   commandCenter: {
@@ -1196,6 +1447,27 @@ export const ja = defineLocale({
     settings: '設定',
     changeTheme: 'テーマを変更',
     changeColorMode: 'カラーモードを変更…',
+    tour: {
+      label: 'ツアーを開始',
+      steps: {
+        sidebar: {
+          title: 'セッション',
+          text: 'すべての会話はここにあります。新規作成、切り替え、アーカイブしたものの再開ができます。'
+        },
+        composer: {
+          title: '入力欄',
+          text: 'ここから何でも依頼できます。ファイルの添付、モデルの選択、/ でコマンドも使えます。'
+        },
+        statusbar: {
+          title: 'ステータス',
+          text: 'ゲートウェイ・モデル・コンテキスト残量が一目でわかります。右クリックで表示項目を選べます。'
+        },
+        palette: {
+          title: 'その他すべて',
+          text: 'いつでも ⌘K（Ctrl+K）。設定・セッション・テーマ・このツアーもすべてそこにあります。'
+        }
+      }
+    },
     pets: {
       title: 'ペット',
       placeholder: 'ペットを検索…',
@@ -1253,6 +1525,9 @@ export const ja = defineLocale({
       installs: count => `${count} 回インストール`
     },
     settingsFields: '設定フィールド',
+    settingsPreferences: '環境設定',
+    settingsSearchPlaceholder: '設定を検索…',
+    settingsSearchPill: '設定を検索',
     mcpServers: 'MCP サーバー',
     archivedChats: 'アーカイブ済みチャット',
     sections: { sessions: 'セッション', system: 'システム', usage: '使用状況' },
@@ -1457,6 +1732,35 @@ export const ja = defineLocale({
   },
 
   profiles: {
+    editor: {
+      title: '構成',
+      loading: '構成を読み込み中...',
+      loadFailed: 'プロファイル構成の読み込みに失敗しました',
+      descriptionLabel: '説明',
+      descriptionPlaceholder: 'このエージェントの用途は？',
+      toolsetsLabel: 'ツールセット',
+      toolsetsUnpinned:
+        'ツールセットの一覧が固定されていないため、すべて有効です。1 つオフにすると残りが固定されます。',
+      mcpLabel: 'MCP サーバー',
+      noneInstalled: 'インストールされていません。',
+      save: '構成を保存',
+      saved: 'プロファイル構成を保存しました',
+      savedPartial: '一部の変更は適用されませんでした',
+      saveFailed: 'プロファイル構成の保存に失敗しました',
+      avatarUpload: 'アバターをアップロード',
+      avatarReplace: 'アバターを変更',
+      avatarRemove: '削除',
+      avatarHint: 'PNG、JPEG、WebP、最大 2 MB。ゲートウェイに保存されるため、すべての端末で表示されます。',
+      avatarSaved: 'アバターを保存しました',
+      avatarFailed: 'アバターの更新に失敗しました',
+      avatarRejected: '未対応の画像形式です',
+      avatarTooLarge: '画像が大きすぎます',
+      working: '作業中',
+      shareSignIn: 'このゲートウェイとサインインを共有',
+      shareSignInHint:
+        'OAuth トークンをコピーせずメインプロファイルから読み取ります。コピーするとトークンの状態が分岐し、どちらか一方を最初に更新した時点でもう一方がサインアウトされます。',
+      noCredentials: '認証情報なしで作成されました — 最初のメッセージの前にプロバイダーキーを設定してください。'
+    },
     close: 'プロファイルを閉じる',
     nameHint: '小文字、数字、ハイフン、アンダースコア。文字または数字で始める必要があります。',
     title: 'プロファイル',
@@ -1526,6 +1830,9 @@ export const ja = defineLocale({
     creating: '作成中...',
     createAction: 'プロファイルを作成',
     renameTitle: 'プロファイルの名前を変更',
+    displayNameTitle: 'このエージェントに名前を付ける',
+    displayNameDesc: 'アプリ全体で表示される名前を設定します。内部のプロファイル ID は「default」のままです。',
+    displayNameLabel: '表示名',
     renameDescPrefix: '名前を変更するとプロファイルディレクトリと ',
     renameDescSuffix: ' 内のラッパースクリプトが更新されます。',
     newNameLabel: '新しい名前',
@@ -1601,6 +1908,15 @@ export const ja = defineLocale({
     monthlyOnDayAt: (dayOfMonth, time) => `毎月 ${dayOfMonth} 日 ${time} に`,
     topOfHour: '毎時 0 分',
     everyHourAt: minute => `毎時 :${minute} に`,
+    hidePaused: '一時停止中を隠す',
+    showPaused: '一時停止中を表示',
+    repeatLabel: '実行回数',
+    repeatForever: '無制限に繰り返し',
+    repeatOf: (completed, times) => `${times} 回中 ${completed} 回`,
+    triggering: '実行中…',
+    continuityLabel: '前回の実行を引き継ぐ',
+    continuityHint: 'このジョブに前回の出力を渡し、毎回ゼロから始めるのではなく前回の続きから実行します。',
+    missedFire: 'スケジュールされた実行を逃しました',
     newCron: '新しい Cron',
     emptyDescNew:
       'Cron 式でプロンプトを実行するスケジュールを設定します。Hermes が実行して、選択した宛先に結果を送信します。',
@@ -1747,6 +2063,10 @@ export const ja = defineLocale({
       orderCost: 'コスト',
       orderManual: '手動',
       show: '表示',
+      density: '行の密度',
+      densityCompact: 'コンパクト',
+      densityComfortable: '標準',
+      densityDetailed: '詳細',
       metaUpdated: '更新日時',
       metaTokens: 'トークン',
       metaCost: 'コスト',
@@ -1848,6 +2168,10 @@ export const ja = defineLocale({
       pin: 'ピン留め',
       unpin: 'ピン留めを解除',
       copyId: 'ID をコピー',
+      messageCount: count => `${count} 件のメッセージ`,
+      toolCallCount: count => `${count} 件のツール呼び出し`,
+      openInTerminal: 'ターミナルで開く',
+      openInTerminalFailed: 'ここでターミナルアプリを開けませんでした',
       export: 'エクスポート',
       branchFrom: '分岐',
       moveToProject: 'プロジェクトへ移動',
@@ -1877,6 +2201,15 @@ export const ja = defineLocale({
   },
 
   composer: {
+    mcpSuggestions: {
+      label: server => `${server} を追加`,
+      tip: keyword => `「${keyword}」に言及したため提案しています — クリックで接続`,
+      connecting: server => `${server} に接続中…`,
+      cancelTip: 'クリックでキャンセル',
+      added: server => `${server} を追加しました`,
+      addedTip: '接続しました — このチャットでツールを利用できます',
+      connectFailed: server => `${server} に接続できませんでした`
+    },
     message: 'メッセージ',
     wakingProfile: profile => `${profile} を起動中…`,
     placeholderStarting: 'Hermes を起動中...',
@@ -1992,6 +2325,7 @@ export const ja = defineLocale({
     attachLabel: '添付',
     attachFailed: label => `${label} を添付できませんでした`,
     attachNoRef: 'ゲートウェイはこのファイルを保存しませんでした。',
+    attachTooLarge: maxMb => `${maxMb} MB の上限を超えています。設定 → チャットで引き上げられます。`,
     files: 'ファイル…',
     folder: 'フォルダー…',
     back: '戻る',
@@ -2462,6 +2796,31 @@ export const ja = defineLocale({
     addToChat: 'チャットに追加'
   },
 
+  browser: {
+    back: '戻る',
+    forward: '進む',
+    reload: '再読み込み',
+    stop: '停止',
+    addressLabel: 'アドレス',
+    addressPlaceholder: '検索またはアドレスを入力',
+    copyUrl: 'アドレスをコピー',
+    openExternally: 'ブラウザで開く',
+    unsupportedTitle: 'この環境ではアプリ内ブラウザを起動できませんでした',
+    resume: '再開',
+    paletteOpen: 'アプリ内ブラウザを開く',
+    openLinksInApp: 'Web リンクを Hermes 内で開く',
+    openLinksInAppDescription: 'Web リンクはアプリ内ブラウザで開きます。⌘/Ctrl を押しながら、または中クリックすると通常のブラウザで開きます。',
+    isolatedStore: 'アプリ内ブラウザの Cookie を分離する',
+    isolatedStoreDescription: 'ペインでサイトにサインインしても、Hermes 自身のアカウントには影響しません。変更すると保存済みのデータは消去されます。',
+    consoleDefault: 'プレビューコンソールを既定で表示',
+    consoleDefaultDescription: 'アプリ内ブラウザを開いたときに常にコンソールを表示します。',
+    clearData: '閲覧データを消去',
+    clearDataDescription: 'アプリ内ブラウザの Cookie・ストレージ・キャッシュのみが対象です。',
+    clearDataConfirm: 'アプリ内ブラウザの Cookie、ストレージ、キャッシュを消去しますか？',
+    cleared: '閲覧データを消去しました',
+    sharedCookies: 'このブラウザはこの端末で Hermes と Cookie を共有します。',
+    ephemeralStore: 'このブラウザは Hermes の再起動時にログイン状態を破棄します。'
+  },
   preview: {
     tab: 'プレビュー',
     closeTab: label => `${label} を閉じる`,
@@ -2553,7 +2912,10 @@ export const ja = defineLocale({
       loadFailedConsole: (code, message) => `読み込みに失敗しました${code ? ` (${code})` : ''}: ${message}`,
       unreachableDescription: 'プレビューページに到達できませんでした。',
       openTarget: url => `${url} を開く`,
-      fallbackTitle: 'プレビュー'
+      fallbackTitle: 'プレビュー',
+      // The ONE key desktop has that universal lacked: why a loopback
+      // address cannot load when the gateway is somewhere else.
+      remoteLoopback: 'このアドレスは Hermes の接続先マシンを指していますが、このゲートウェイにはそこへのトンネルがありません。SSH で接続するか、そのマシン上でページを開いてください。'
     }
   },
 
@@ -2614,6 +2976,27 @@ export const ja = defineLocale({
         `これにより "${pattern}" パターンが永続的な許可リスト (~/.hermes/config.yaml) に追加されます。Hermes はこのセッションや将来のセッションで、このようなコマンドについて再度尋ねません。`,
       alwaysAllow: '常に許可'
     },
+    mcpSetup: {
+      installTitle: server => `${server} の MCP サーバーを追加しますか？`,
+      enableTitle: server => `${server} の MCP サーバーを有効にしますか？`,
+      authorizeTitle: server => `${server} の MCP サーバーを認証しますか？`,
+      installAction: 'インストール',
+      enableAction: '有効にする',
+      authorizeAction: '認証',
+      decline: '今はしない',
+      catalogSource: 'Nous 承認カタログから',
+      envRequired: '先に必要な認証情報を入力してください',
+      notInCatalog: server => `「${server}」は MCP カタログにありません`,
+      installed: server => `${server} をインストールしました`,
+      enabled: server => `${server} を有効にしました`,
+      authorized: server => `${server} を認証しました`,
+      declined: '拒否しました',
+      unanswered: '応答なし',
+      failed: server => `${server} のセットアップに失敗しました`,
+      toolCount: count => `${count} 個のツール`,
+      sendFailed: 'MCP セットアップの応答を送信できませんでした',
+      reloadFailed: 'サーバーは設定されましたが、このチャットのツールを再読み込みできませんでした'
+    },
     clarify: {
       notReady: '明確化リクエストはまだ準備できていません',
       gatewayDisconnected: 'Hermes ゲートウェイが接続されていません',
@@ -2623,6 +3006,10 @@ export const ja = defineLocale({
       placeholder: '回答を入力…',
       skip: 'スキップ',
       continueLabel: '続行',
+      confirmAndContinueLabel: '確認して続行',
+      answeredBadge: '回答済み',
+      questionProgress: (answered, total) => `${total} 件中 ${answered} 件回答済み`,
+      unknownQuestion: 'エージェントはその質問をもう尋ねていません — 表示されている質問に回答してください',
       skipped: 'スキップ',
       lateAnswer: (question, choice) => `「${question}」について — 私の回答: ${choice}`,
       lateAnswerTip: 'この回答をフォローアップメッセージとして下書きする',
@@ -2652,6 +3039,10 @@ export const ja = defineLocale({
       statusRecovered: '回復しました',
       statusDone: '完了',
       memoryWriteNoted: 'メモリへの書き込みを記録',
+      spilloverLabel: '完全な出力',
+      spilloverSaved: (size: string) => `大きすぎて表示できません（${size}）— ファイルに保存しました`,
+      spilloverSavedUnsized: '大きすぎて表示できません — ファイルに保存しました',
+      spilloverOpen: '開く',
       actions: {
         read: '読み取り完了',
         reading: '読み取り中',
@@ -2723,6 +3114,7 @@ export const ja = defineLocale({
           pending: 'セッション履歴を検索中',
           pendingAction: '検索中'
         },
+        setup_mcp: { done: 'MCP サーバーを設定しました', pending: 'MCP サーバーを設定中', pendingAction: '設定中' },
         terminal: { done: 'コマンドを実行しました', pending: 'コマンドを実行中', pendingAction: '実行中' },
         todo: { done: 'Todo を更新しました', pending: 'Todo を更新中', pendingAction: '更新中' },
         vision_analyze: { done: '画像を分析しました', pending: '画像を分析中', pendingAction: '分析中' },

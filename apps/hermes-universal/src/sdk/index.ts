@@ -34,16 +34,50 @@
  *    app. Branch on the result; never assume the door opened.
  */
 
-import { atom, type ReadableAtom } from 'nanostores'
+import { atom, computed, type ReadableAtom } from 'nanostores'
 
+import { attachToSession } from '@/app/chat/attachments'
+import { registerPaneCloser, revealTreePane } from '@/components/pane-shell/tree/store'
 import { $narrowViewport } from '@/components/pane-shell/tree/store'
 import { onGatewayEvent } from '@/contrib/events'
+import { registry } from '@/contrib/registry'
+import type { HermesGateway } from '@/hermes'
 import { getLogs, getStatus } from '@/hermes'
+import { connectionIdOf } from '@/lib/backend-scope'
+import type { ChatMessage } from '@/lib/chat-messages'
+import { $browserState, type BrowserPageState, openInAppBrowser } from '@/store/browser'
 import { $currentCwd, $sessionId } from '@/store/chat'
-import { $gatewayState, requestGateway } from '@/store/gateway'
+import { $connection } from '@/store/connection'
+import { $connectionReady } from '@/store/connection-ready'
+import { $gateway, $gatewayState, requestGateway } from '@/store/gateway'
+import { $liveSessionStatuses, type LiveSessionStatus } from '@/store/live-session-registry'
 import { $currentModel } from '@/store/model'
+import { startNewSession } from '@/store/new-session'
 import { notify, notifyError } from '@/store/notifications'
+import { $paneVisible } from '@/store/pane-visibility-store'
+import {
+  pluginConnectionSource,
+  type PluginProfileRoute,
+  requestPluginProfile
+} from '@/store/plugin-connection-source'
+import { openPluginSession, type PluginOpenSessionOptions, warmProfile } from '@/store/plugin-open-session'
+import {
+  type BindSessionOptions,
+  type BindSessionResult,
+  bindSessionSlice,
+  releaseSessionSlice
+} from '@/store/plugin-session-bind'
 import { $activeGatewayProfile } from '@/store/profile'
+import {
+  sessionApprovalRequest,
+  sessionClarifyRequest,
+  sessionMcpSetupRequest,
+  sessionSecretRequest,
+  sessionSudoRequest
+} from '@/store/prompts'
+import { $activeStoredSessionId, knownSessionProfile } from '@/store/session'
+import { $sessionStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
+import { $focusedRuntimeId, $focusedSessionState, $focusedStoredSessionId } from '@/store/session-states'
 import { runGatewayRestart } from '@/store/system-status'
 
 // -- state: readonly views over the app's live atoms -------------------------
@@ -72,6 +106,82 @@ if (typeof window !== 'undefined') {
   $narrowViewport.listen(refresh)
 }
 
+/** One session, as a plugin sees it. Deliberately small: every field here is a
+ *  standing compatibility promise. */
+export interface PluginSessionSummary {
+  storedSessionId: string
+  runtimeSessionId: null | string
+  title: string
+  cwd: string
+  busy: boolean
+}
+
+/**
+ * `$sessions` and `$messages` are NOT exported, and that is a decision rather
+ * than an omission. Universal has no `$sessions` list atom, and `$messages` is a
+ * projection of the ACTIVE slice (rule 16) — handing either to a plugin gives it
+ * a lie on a multi-tile screen, where the session it cares about is very often
+ * not the active one. Both are answered from `$sessionStates`, the source of
+ * truth for EVERY session, instead.
+ */
+const $pluginSessions = computed($sessionStates, states =>
+  Object.values(states)
+    .filter(state => state.storedSessionId)
+    .map(state => ({
+      busy: state.busy,
+      cwd: state.cwd,
+      runtimeSessionId: state.runtimeSessionId,
+      storedSessionId: state.storedSessionId!,
+      title: state.liveTitle
+    }))
+)
+
+const $busyBySession = computed($sessionStates, states => {
+  const busy: Record<string, boolean> = {}
+
+  for (const state of Object.values(states)) {
+    if (state.storedSessionId) {
+      busy[state.storedSessionId] = state.busy
+    }
+  }
+
+  return busy
+})
+
+/** Per-session transcripts, memoised so a subscriber taken once keeps working.
+ *  Bounded by the number of sessions a plugin actually asks about. */
+const sessionMessageAtoms = new Map<string, ReadableAtom<ChatMessage[]>>()
+
+/**
+ * The five blocking prompts for ONE session, as a plugin sees them —
+ * READ-ONLY on purpose.
+ *
+ * Answering goes through the mounted `SessionThread` (or the app's own bars),
+ * never through a plugin-forged `approval.respond`: rule 26 says a plugin has
+ * full authority anyway, so the point is not permission, it is that there be
+ * exactly ONE answer path, or MJXHRM-458's `requestId` correlation drifts the
+ * first time a second one is written.
+ */
+export interface SessionPromptSnapshot {
+  approval: null | { command: string; description: string; requestId?: string }
+  /** `questionCount` is 1 for a single question and 2–5 for a batch. */
+  clarify: null | { multiSelect: boolean; questionCount: number; requestId: string }
+  mcpSetup: null | { action: string; requestId: string; server: string }
+  secret: null | { envVar: string; requestId: string }
+  sudo: null | { requestId: string }
+}
+
+const EMPTY_PROMPTS: SessionPromptSnapshot = {
+  approval: null,
+  clarify: null,
+  mcpSetup: null,
+  secret: null,
+  sudo: null
+}
+
+/** Memoised per session key — a subscriber taken once keeps working. */
+const sessionPromptAtoms = new Map<string, ReadableAtom<SessionPromptSnapshot>>()
+
 export const host = {
   state: {
     /** Runtime id of the active chat session (null on a fresh draft). */
@@ -86,7 +196,68 @@ export const host = {
     /** Profile the live gateway is routed to. */
     profile: readonlyAtom<string>($activeGatewayProfile),
     /** Window geometry ({ width, height, narrow }). */
-    viewport: readonlyAtom<ViewportRect>($viewport)
+    viewport: readonlyAtom<ViewportRect>($viewport),
+
+    // ── the FOCUSED session ──────────────────────────────────────────────────
+    // The focused chat, NOT a "primary" one. On a multi-tile screen the session
+    // you are looking at is frequently not the selected one, and a surface that
+    // follows the wrong one is `28fc9d9c0d`'s bug.
+
+    /** A turn is running in the FOCUSED session. */
+    busy: computed($focusedSessionState, state => state.busy),
+    /** The focused session is waiting on the model's first token. */
+    awaitingResponse: computed($focusedSessionState, state => state.awaitingResponse),
+    /** `storedSessionId` → busy, for EVERY open session. */
+    busyBySession: readonlyAtom<Record<string, boolean>>($busyBySession),
+    /** Session KEY of the focused chat (a draft has one; a runtime id does not). */
+    focusedSessionId: readonlyAtom<null | string>($focusedRuntimeId),
+    focusedStoredSessionId: readonlyAtom<null | string>($focusedStoredSessionId),
+    /** Owning profile of the focused session, or '' when it is not known yet. */
+    focusedSessionProfile: computed($focusedStoredSessionId, id => (id ? (knownSessionProfile(id) ?? '') : '')),
+    /** Cumulative token usage for the focused session. */
+    focusedUsage: computed($focusedSessionState, state => state.usage),
+    /** Stored id of the SELECTED session (desktop's `$selectedStoredSessionId`). */
+    selectedStoredSessionId: readonlyAtom<null | string>($activeStoredSessionId),
+    /** Every open session, from `$sessionStates`. */
+    sessions: readonlyAtom<PluginSessionSummary[]>($pluginSessions),
+
+    /**
+     * The page in the in-app browser (MJXHRM-447), for a plugin that FOLLOWS it
+     * — a bookmark bar, a reader-mode button.
+     *
+     * `browser_eval` and the act engine are deliberately NOT exported. A plugin
+     * already evaluates with the app's full authority, so exporting them would
+     * add no security and would freeze the engine's internals as a published
+     * contract for a subsystem that will change.
+     */
+    browser: readonlyAtom<BrowserPageState>($browserState),
+
+    /**
+     * Is the app usable right now?
+     *
+     * A RE-EXPORT of `store/connection-ready.ts`, which derives it from the six
+     * connection flags — not a seventh flag (rule 12). Core surfaces read the
+     * same atom, so a plugin and the app can never disagree about it.
+     */
+    ready: readonlyAtom<boolean>($connectionReady),
+
+    /**
+     * Which sessions the GATEWAY reports as running, by stored id — including
+     * sessions this client has no slice for.
+     *
+     * `busyBySession` above answers about sessions this window has open;
+     * `session.active_list` answers about the machine. A surface driving a
+     * foreign session needs the second one: "is this member still working" is
+     * what stops a second `prompt.submit` landing on a turn already in flight.
+     */
+    liveSessions: readonlyAtom<Record<string, LiveSessionStatus>>($liveSessionStatuses),
+
+    /**
+     * Which connection the app is routed to. `'local'` for the primary,
+     * whatever its gateway MODE — a phone has no local spawn and is still the
+     * primary connection.
+     */
+    connectionId: computed($connection, connection => connectionIdOf(connection))
   },
 
   /** Toast into the app's notification stack. */
@@ -123,7 +294,221 @@ export const host = {
    *  itself uses. Lazy: resolves the LIVE socket per call, and rejects when the
    *  gateway is not connected. */
   request: async <T>(method: string, params: Record<string, unknown> = {}): Promise<T> =>
-    requestGateway<T>(method, params)
+    requestGateway<T>(method, params),
+
+  /**
+   * The live JSON-RPC client, for the app COMPONENTS that take one (`McpTab`).
+   *
+   * Not an escalation: `host.request` already reaches every method, so this is
+   * the same authority with a nicer handle. Null until connected — and a fresh
+   * one after a gateway switch, so hold the atom rather than the instance.
+   *
+   * (The architecture doc calls this structurally impossible — "universal's
+   * gateway lives in Rust and there is no JS instance to hand out". Only the
+   * SOCKET is in Rust; the client is `src/hermes.ts`'s `HermesGateway` and
+   * `store/gateway.ts` already keeps it in an atom.)
+   */
+  getGateway: (): HermesGateway | null => $gateway.get(),
+
+  /**
+   * Open a conversation. THE door — a plugin never resumes a session itself,
+   * because a bare resume bypasses the three id spaces and the hydration plan
+   * (rules 17, 18).
+   *
+   * Resolves when the transcript is actually PAINTED, not when the request was
+   * sent, and reports why when it is not.
+   */
+  openSession: async (storedSessionId: string, options?: PluginOpenSessionOptions) =>
+    openPluginSession(storedSessionId, options),
+
+  /** The owning profile of a stored session, as far as the client knows. */
+  sessionProfile: (storedSessionId: string): string | undefined => knownSessionProfile(storedSessionId),
+
+  /**
+   * One session's transcript. Read from `$sessionStates` — the source of truth
+   * for EVERY session — rather than from the active-slice projection, which
+   * would answer about a different conversation on a multi-tile screen.
+   */
+  sessionMessages: (storedSessionId: string): ReadableAtom<ChatMessage[]> => {
+    let existing = sessionMessageAtoms.get(storedSessionId)
+
+    if (!existing) {
+      existing = computed($sessionStates, states => {
+        const key = runtimeKeyForStoredSession(storedSessionId)
+
+        return (key ? states[key]?.messages : undefined) ?? []
+      })
+      sessionMessageAtoms.set(storedSessionId, existing)
+    }
+
+    return existing
+  },
+
+  /** Start a fresh chat, optionally in another profile. */
+  newChat: async (profile?: null | string): Promise<void> => {
+    if (profile) {
+      await warmProfile(profile)
+    }
+
+    startNewSession()
+  },
+
+  /** Point the app at a profile and wait for the switch to settle. Resolves
+   *  false when it did not — the caller must not carry on as if it had. */
+  warmProfile: async (profile: null | string): Promise<boolean> => warmProfile(profile),
+
+  /**
+   * A workspace pane owned by this plugin: register the tile, reveal it, and
+   * route its close through the tree's own closer registry so the layout stays
+   * the one authority on what is open.
+   *
+   * Returns a disposer.
+   */
+  openWorkspace: (
+    paneId: string,
+    options: { render: () => React.ReactNode; title?: string; minWidth?: number; onClose?: () => void }
+  ): (() => void) => {
+    const dispose = registry.register({
+      area: PANES_AREA,
+      data: {
+        chrome: { dock: { pane: 'workspace', pos: 'center' } },
+        ...(options.minWidth === undefined ? {} : { sizing: { minWidth: options.minWidth } })
+      },
+      id: paneId,
+      render: options.render,
+      title: options.title
+    })
+
+    registerPaneCloser(paneId, options.onClose)
+    revealTreePane(paneId)
+
+    return () => {
+      registerPaneCloser(paneId)
+      dispose()
+    }
+  },
+
+  /**
+   * Is this pane on screen right now?
+   *
+   * An ATOM, not a `when()` — the registry's `when()` is evaluated only when an
+   * area's snapshot is rebuilt, so a predicate over visibility would never
+   * re-run (rule 28). A pane nobody has published reads false.
+   */
+  paneVisibility: (paneId: string): ReadableAtom<boolean> => $paneVisible(paneId),
+
+  /**
+   * Open a URL in the in-app browser (MJXHRM-447).
+   *
+   * Resolves `false` when there is no guest host or the address was refused —
+   * the `ctx.os.*` result-shaped convention, so a plugin branches on the answer
+   * instead of sniffing the platform. A plugin showing a doc or a dashboard is
+   * the most foreseeable second consumer, and without this every one of them
+   * re-implements "http(s) in-app, else the OS".
+   */
+  openInAppBrowser: (url: string): Promise<boolean> => openInAppBrowser(url),
+
+  // ── connections (MJXHRM-446 fills the bodies) ──────────────────────────────
+  // The SHAPES ship here so 446 replaces `PluginConnectionSource` from its own
+  // module and edits nothing in this file. Today every one of them answers about
+  // the single live connection, and refuses anything else with a SHAPED error
+  // rather than an empty success.
+
+  connections: async () => pluginConnectionSource().connections(),
+  agents: async () => pluginConnectionSource().agents(),
+  ensureAgent: async (connectionId: string, profile: string) =>
+    pluginConnectionSource().ensureAgent(connectionId, profile),
+  /** Desktop's name for the same act — an agent you intend to talk to shortly. */
+  warmAgent: async (connectionId: string, profile: string) =>
+    pluginConnectionSource().ensureAgent(connectionId, profile),
+  profileRoutes: async () => pluginConnectionSource().profileRoutes(),
+
+  /** JSON-RPC to ONE agent. Dispatched through MJXHRM-480's session router, so
+   *  446 gives it multi-connection reach with no change here. */
+  requestProfile: async <T>(route: PluginProfileRoute, method: string, params: Record<string, unknown> = {}) =>
+    requestPluginProfile<T>(route, method, params),
+
+  /**
+   * `host.state.connectionId` as a CALL, for source compatibility with the
+   * desktop SDK, whose plugins are written
+   * `host.state.connectionId?.get?.() || host.activeConnectionId?.()`.
+   *
+   * One value, two handles — deliberately, and the only such pair in this file:
+   * the atom is the door, this reads it.
+   */
+  activeConnectionId: (): string => connectionIdOf($connection.get()),
+
+  /**
+   * Stage bytes into a NAMED session — a session that is not the focused one.
+   *
+   * The composer's own stagers resolve the active session, which is right for a
+   * composer and wrong for a surface fanning one attachment out to several
+   * sessions at once. Resolves the ref to splice into that session's prompt, or
+   * null when the staging failed (the failure has already been surfaced).
+   */
+  attachToSession,
+
+  /**
+   * FOLLOW a session without focusing it — a real, streaming `$sessionStates`
+   * slice for a conversation this window is not looking at.
+   *
+   * `openSession` is the door for "show me this chat"; this is the door for
+   * "drive these six chats behind a surface of my own". Idempotent, and the
+   * returned key is the session KEY every other per-session door takes
+   * (`sessionPrompts`, `host.state.busyBySession`'s stored-id twin).
+   */
+  bindSession: async (storedSessionId: string, options?: BindSessionOptions): Promise<BindSessionResult> =>
+    bindSessionSlice(storedSessionId, options),
+
+  /** Stop following a bound session. Does NOT interrupt it — the turn keeps
+   *  running on the gateway. */
+  releaseSession: (storedSessionId: string): void => releaseSessionSlice(storedSessionId),
+
+  /**
+   * ONE session's blocking prompts, as an atom. Read-only (see
+   * `SessionPromptSnapshot`).
+   *
+   * `sessionKey` is the SLICE key (rule 17) — `host.state.focusedSessionId`'s
+   * space, not a stored id.
+   */
+  sessionPrompts: (sessionKey: string): ReadableAtom<SessionPromptSnapshot> => {
+    let existing = sessionPromptAtoms.get(sessionKey)
+
+    if (!existing) {
+      existing = computed(
+        [
+          sessionApprovalRequest(sessionKey),
+          sessionClarifyRequest(sessionKey),
+          sessionMcpSetupRequest(sessionKey),
+          sessionSecretRequest(sessionKey),
+          sessionSudoRequest(sessionKey)
+        ],
+        (approval, clarify, mcpSetup, secret, sudo) =>
+          approval || clarify || mcpSetup || secret || sudo
+            ? {
+                approval: approval
+                  ? { command: approval.command, description: approval.description, requestId: approval.requestId }
+                  : null,
+                clarify: clarify
+                  ? {
+                      multiSelect: Boolean(clarify.multiSelect),
+                      questionCount: clarify.questions?.length ?? 1,
+                      requestId: clarify.requestId
+                    }
+                  : null,
+                mcpSetup: mcpSetup
+                  ? { action: mcpSetup.action, requestId: mcpSetup.requestId, server: mcpSetup.server }
+                  : null,
+                secret: secret ? { envVar: secret.envVar, requestId: secret.requestId } : null,
+                sudo: sudo ? { requestId: sudo.requestId } : null
+              }
+            : EMPTY_PROMPTS
+      )
+      sessionPromptAtoms.set(sessionKey, existing)
+    }
+
+    return existing
+  }
 }
 
 // -- react bridge -------------------------------------------------------------
@@ -131,18 +516,65 @@ export const host = {
 // Every contribution surface, plugin-reachable: register keybinds, palette
 // commands, routes, themes, panes, composer extensions, and bar items with
 // the same area ids + payload types core uses.
-export { COMPOSER_AREAS, type ComposerAttachmentProvider, type ComposerMiddleware } from '@/app/chat/composer/contrib'
+export {
+  COMPOSER_AREAS,
+  type ComposerAtCompletionItem,
+  type ComposerAtCompletionSource,
+  type ComposerAttachmentProvider,
+  type ComposerMiddleware
+} from '@/app/chat/composer/contrib'
 
+/**
+ * The app's OWN transcript for one session (MJXHRM-445 §10.3).
+ *
+ * The keystone export: a surface that mounts this can never drift from the
+ * chat, and every transcript feature that ships later — artifacts, media,
+ * directives, tool renderers, approvals, clarify — arrives in it for free.
+ * Desktop's Bot Mode hand-mirrored approvals into its rooms instead, and that
+ * mirror is what this deletes.
+ */
+export { SessionThread } from '@/app/chat/session-thread'
 export { PALETTE_AREA, type PaletteContribution } from '@/app/command-palette/contrib'
+/** Rows in the app-wide right-click / long-press menu (MJXHRM-478). The NORMAL
+ *  door: contribute to `contextMenu.items` and your sections are appended to
+ *  whatever target the gesture landed on, in contribution `order`. `provide()`
+ *  runs per gesture, which is how live state reaches it — `when()` is not
+ *  reactive. */
+export {
+  CONTEXT_MENU_ITEMS_AREA,
+  type ContextMenuItemsContribution
+} from '@/app/context-menu/contrib'
+/** Claim a whole new target KIND (the sharp door — MJXHRM-447's browser webview
+ *  is its first user). `order < 100` is reserved for core and `dom` is total at
+ *  100, so a provider registered below it can swallow the app's own menu. */
+export {
+  type ContextGesture,
+  type ContextMenuItemContext,
+  type ContextMenuItemSpec,
+  type ContextMenuSection,
+  type ContextTargetProvider,
+  registerContextTarget
+} from '@/app/context-menu/registry'
 /** `statusBar.left` / `statusBar.right` and `titleBar.left/center/right`. A
  *  `data` contribution is a StatusbarItem; a `render` contribution owns its slot
  *  (arbitrary stateful node) — the only form `titleBar.*` accepts. */
 export { STATUSBAR_AREAS, TITLEBAR_AREAS } from '@/app/contrib/surfaces'
+/** The app's profile editor + its confirmed delete flow.
+ *
+ * `host.deleteProfile` is deliberately NOT minted: a plugin-callable profile
+ * destructor is the one door whose blast radius is a user's whole agent
+ * directory, so the confirmation stays in core and the plugin gets the DIALOG
+ * (445 §2.3 A-2). */
+export { DeleteProfileDialog } from '@/app/profiles/delete-profile-dialog'
+export { ProfileEditor } from '@/app/profiles/profile-editor'
 export { type RouteContribution, ROUTES_AREA, SIDEBAR_NAV_AREA, type SidebarNavContribution } from '@/app/routes'
 /** Desktop exports this from `components/ui/empty-state`; on universal the
  *  canonical one lives in the settings primitives. Same component, same look. */
 export { EmptyState } from '@/app/settings/primitives'
 
+/** The toolset configurator — provider keys, per-tool switches — as Settings
+ *  renders it. */
+export { ToolsetConfigPanel } from '@/app/settings/toolset-config-panel'
 /**
  * THE model catalog menu — the very component the chat composer's model pill
  * renders, so a plugin that lets the user choose a model gets the app's search,
@@ -161,13 +593,35 @@ export {
   ModelMenuCloseContext,
   type ModelMenuController
 } from '@/app/shell/model-catalog-menu'
-/** The reasoning levels the app offers, and what an unset effort resolves to —
- *  so a plugin storing a thinking depth stores one the app agrees with. */
-export { DEFAULT_REASONING_EFFORT, REASONING_EFFORTS } from '@/app/shell/model-edit-submenu'
 
 // -- ui: the design language --------------------------------------------------
 
 export type { StatusbarItem } from '@/app/shell/statusbar-controls'
+/**
+ * The Capabilities view (skills, MCP, hub). Reads the LIVE gateway and the
+ * app's Capabilities scope itself — unlike desktop's, it takes no fixed
+ * connection, so a plugin that wants a pinned one must render its own surface.
+ */
+export { SkillsView } from '@/app/skills'
+/**
+ * THE Capabilities MCP tab — server list, add/edit, OAuth, health probes — the
+ * exact component Settings renders. Takes the live client from
+ * `host.getGateway()`; pass `profile` to scope it to one agent.
+ *
+ * Exportable only because `host.getGateway()` is (P-11): it was the single
+ * thing standing between universal and this export, which is MJXHRM-454's
+ * stated "mcp-tab" gap.
+ */
+export { McpTab } from '@/app/skills/mcp-tab'
+/**
+ * Markdown, rendered THE APP'S WAY: the same streaming pipeline the transcript
+ * uses, with its code fences, math, tables, mermaid and artifact handling.
+ *
+ * Not the bare `streamdown` package, deliberately — a plugin that pulls that in
+ * gets a different renderer with different plugins and its output stops looking
+ * like the app. Aliased as `Streamdown` for desktop source compatibility.
+ */
+export { MarkdownTextContent, MarkdownTextContent as Streamdown } from '@/components/assistant-ui/markdown-text'
 /**
  * A layout TILE — what `ctx.registerTile(...)` takes. Prefer it over
  * `ctx.register({ area: PANES_AREA, … })`, which hands a tile's chrome and
@@ -232,12 +686,12 @@ export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 export { Separator } from '@/components/ui/separator'
 export { Skeleton } from '@/components/ui/skeleton'
 export { Switch } from '@/components/ui/switch'
-export { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-export { Textarea } from '@/components/ui/textarea'
-export { Tip, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 // -- contracts ----------------------------------------------------------------
 
+export { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+export { Textarea } from '@/components/ui/textarea'
+export { Tip, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 export type { GatewayEventListener } from '@/contrib/events'
 export type {
   HermesPlugin,
@@ -272,29 +726,56 @@ export {
   useI18n,
   usePluginI18n
 } from '@/i18n'
+/** A poll that yields to the app: bounded work per tick, backing off while the
+ *  tab is hidden. Don't hand-roll a `setInterval` for a scanning loop. */
+export { type BudgetedLoop, type BudgetedLoopOptions, createBudgetedLoop } from '@/lib/budgeted-loop'
 /** THE compact-number formatter — every user-facing count/token figure goes
  *  through here (1230 → "1.2k", 1_500_000 → "1.5M"). Don't hand-roll `/1000`. */
 export { compactNumber } from '@/lib/format'
 export { triggerHaptic as haptic } from '@/lib/haptics'
+/** A navigation target that also works as a `hermes://` deep link — what a
+ *  notification's `activate` and a context menu's "open in Hermes" both take. */
+export type { HermesOpenTarget } from '@/lib/hermes-open-target'
+
+// -- app surfaces a plugin can host whole ------------------------------------
+
+/** Turn any supported target into an in-app path, or null. THE guard: a path
+ *  that did not come through here must not be navigated to. */
+export { isSafeAppPath, resolveHermesOpenPath } from '@/lib/hermes-open-target'
 /** The app's icon set (RefreshCw, LayoutDashboard, Activity, …). */
 export * as icons from '@/lib/icons'
 export { type KeybindContribution, KEYBINDS_AREA } from '@/lib/keybinds/actions'
+export { formatModifierToken } from '@/lib/keybinds/combo'
+
+// -- host contracts ----------------------------------------------------------
+
 /** Model-id presentation, shared with the composer and the status bar:
  *  `displayModelName` for the friendly name, `modelDisplayParts` to split off a
  *  variant tag, `reasoningEffortLabel` to render a thinking depth ('high' →
  *  'High'). A plugin showing a model should never hand-roll these. */
 export { displayModelName, modelDisplayParts, reasoningEffortLabel } from '@/lib/model-status-label'
-
-export const PANES_AREA = 'panes'
+/** What OS notifications can do HERE. Action buttons and tap activation are
+ *  mobile-only — ask before offering them (rule 10). */
+export {
+  type NativeNotificationCapabilities,
+  nativeNotificationCapabilities
+} from '@/lib/native-notification-capabilities'
 /** The app's deterministic identity color for a name (profiles, assignees,
  *  authors) + its translucent tag fill — so plugin-rendered identities read
  *  the same hue as everywhere else. */
+/** Run a pointer drag to its end and unbind every listener — including on
+ *  `pointercancel`, which is how a touch platform ends a gesture it stole. Use
+ *  it for any drag surface (a colour field, a canvas scrub); a hand-rolled
+ *  pointermove/pointerup pair leaks a live handler on every cancelled gesture. */
+export { startPointerDrag } from '@/lib/pointer-drag'
 export { profileColor, profileColorSoft } from '@/lib/profile-color'
 /** The shared client itself, for invalidation OUTSIDE React (e.g. a
  *  `ctx.socket` frame invalidating a query). Inside components keep using
  *  `useQueryClient`. */
 export { queryClient } from '@/lib/query-client'
-
+/** The reasoning levels the app offers, and what an unset effort resolves to —
+ *  so a plugin storing a thinking depth stores one the app agrees with. */
+export { DEFAULT_REASONING_EFFORT, REASONING_EFFORTS } from '@/lib/reasoning-effort'
 /** The app's own gateway-readiness evaluation (setup.status +
  *  setup.runtime_check, reconciled) — pass `host.request`. Don't hand-roll
  *  readiness from raw RPC shapes. */
@@ -302,7 +783,102 @@ export { evaluateRuntimeReadiness, type RuntimeReadinessResult } from '@/lib/run
 /** Canonical time formatting — every timestamp/age string in the app comes
  *  from these (localized `Intl` under the hood). Don't hand-roll "Xm ago". */
 export { coarseElapsed, fmtDateTime, fmtDayTime, relativeTime } from '@/lib/time'
+/** A TAP, not a click. On Android a `click` is the WebView's gesture verdict
+ *  and arrives late (or not at all) on a row that also scrolls or long-presses;
+ *  `createTap` decides from the pointer stream. Use it for every plugin row a
+ *  finger can reach. */
+export { createTap, isCoarsePointer, type Tap, type TapOptions } from '@/lib/touch'
+/** The transcript as a contribution area: register a named `::directive{...}`
+ *  and the model can render your component inline in assistant messages. */
+export {
+  TRANSCRIPT_DIRECTIVE_AREA,
+  type TranscriptDirectiveContribution,
+  type TranscriptDirectiveProps
+} from '@/lib/transcript-directives'
 export { cn } from '@/lib/utils'
+/** Live accent override — set a hex and the ACTIVE theme repaints with its
+ *  accent family re-seeded from it (see `retintTheme`); `null` restores the
+ *  authored palette. Deliberately not persisted: it is an authoring knob, not
+ *  a setting, so a plugin that sets it must clear it on dispose. */
+/** The in-app browser's ONE tab (MJXHRM-447), for a plugin contributing strip
+ *  tools or a pane that needs to recognise it by name. */
+export { BROWSER_TAB_PATH, type BrowserPageState, isBrowserTab } from '@/store/browser'
+
+export const PANES_AREA = 'panes'
+/**
+ * Ask the user a yes/no question from a plain handler — no component, no state.
+ * `<ConfirmHost/>` is mounted in every window, so this resolves wherever it is
+ * called from.
+ */
+export { confirm, type ConfirmAnswer, type ConfirmRequest } from '@/store/confirm'
+/** Toast a delete confirmation the way core surfaces do (desktop's
+ *  `useConfirmDelete`, as a plain call — there is no hook state to hold). */
+export { confirmDelete } from '@/store/confirm-delete'
+/** Register a `hermes://<kind>/…` deep-link handler. A kind must be in
+ *  `RESERVED_DEEP_LINK_KINDS` to beat plugin-id resolution — adding one is a
+ *  core decision, not a plugin's. */
+export { type DeepLinkRoute, registerDeepLinkRoute } from '@/store/deep-link'
+/**
+ * Hold the machine awake for a long unattended run, refcounted and OR-ed with
+ * the user's Settings preference — so releasing YOUR hold never turns THEIR
+ * switch off. Desktop-only: on mobile the hold is a no-op that promises
+ * nothing. Always call the disposer in a `finally`.
+ */
+export { $keepAwakeHolds, holdKeepAwake } from '@/store/keep-awake'
+/**
+ * Change ticks + the poll-interval helper.
+ *
+ * `livePollIntervalMs(legacyMs, backstopMs)` answers the fast interval on a
+ * gateway with no change broadcast and the slow backstop on one that has them,
+ * so a plugin's refresh loop is capability-gated instead of guessing. There is
+ * NO `profiles.changed` event — a roster refresh still needs a backstop poll,
+ * and that is why the helper takes two numbers rather than an on/off.
+ */
+export { $changeEventsAvailable, $cronChangeTick, $sessionsChangeTick, livePollIntervalMs } from '@/store/live-sync'
+
+export {
+  MAX_NOTIFICATION_ACTIONS,
+  type NativeNotifyOutcome,
+  type NativeNotifyRefusal,
+  type PluginNotificationAction
+} from '@/store/native-notifications'
+/**
+ * The multi-connection source. MJXHRM-446 registers the registry's
+ * implementation from its own module; until then every answer describes the one
+ * live connection, and refuses anything else with `AGENT_ROUTING_UNAVAILABLE`
+ * rather than an empty success.
+ */
+export {
+  AGENT_ROUTING_UNAVAILABLE,
+  type PluginAgent,
+  type PluginAgentHandle,
+  type PluginAgentRoster,
+  type PluginConnection,
+  type PluginConnectionSource,
+  type PluginProfileRoute,
+  setPluginConnectionSource
+} from '@/store/plugin-connection-source'
+export type { PluginOpenSessionError, PluginOpenSessionOptions, PluginOpenSessionResult } from '@/store/plugin-open-session'
+export { $accentOverride, setAccentOverride } from '@/themes/accent-override'
+/** OKLCH colour maths, for anything deriving a palette rather than hardcoding
+ *  one: perceptual conversion, the sRGB gamut boundary, WCAG contrast, and
+ *  hue-stable blending. */
+export {
+  contrastRatio,
+  hexToOklch,
+  hueDelta,
+  maxChroma,
+  mixOklab,
+  normalizeHex,
+  type Oklch,
+  oklchToHex,
+  oklchToSrgb255,
+  readableOn
+} from '@/themes/color'
+/** The painted theme, its name, and the appearance it resolved to. */
+export { useTheme } from '@/themes/context'
+export { retintTheme, themeHue } from '@/themes/retint'
+export type { DesktopTheme, DesktopThemeColors } from '@/themes/types'
 export { THEMES_AREA } from '@/themes/user-themes'
 export type { RpcEvent, StatusResponse } from '@/types/hermes'
 /** Subscribe a component to a `host.state` atom. */
@@ -311,6 +887,14 @@ export { useStore as useValue } from '@nanostores/react'
  *  the app root, so their queries cache, dedupe, poll (`refetchInterval`), and
  *  invalidate exactly like core screens — no hand-rolled atoms or polls. */
 export { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+/** Deterministic blob avatars — the same generator the profile roster paints,
+ *  so a plugin-rendered identity matches the app's. */
+export { blobatar as blobatarSvg } from 'blobatar/blob'
+export { Blobatar } from 'blobatar/react'
 /** Plugin-local reactive state (share between a trigger and its panel, poll
  *  loops, cross-component signals) — the same primitive `host.state` uses. */
 export { atom, computed } from 'nanostores'
+/** The read-only atom type every `host.state.*` member and every
+ *  `host.sessionPrompts(...)` hands back — a plugin holding one needs to be able
+ *  to NAME it. */
+export type { ReadableAtom, WritableAtom } from 'nanostores'

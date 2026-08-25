@@ -46,6 +46,7 @@ import { $projectTree, setSidebarGrouping } from '@/store/projects'
 import type { PullRequestBucket } from '@/store/pull-requests'
 import { $unreadFinishedSessionIds, markAllSessionsRead } from '@/store/session'
 import type { SessionStatusBucket } from '@/store/session-dot-state'
+import { $sessionListDensity, type SessionListDensity, setSessionListDensity } from '@/store/session-list-density'
 import { $sessionsHaveCost } from '@/store/sidebar-archive'
 
 /**
@@ -104,6 +105,17 @@ const prFilters = (f: Labels): Option<PullRequestBucket>[] => [
   { icon: 'circle-slash', id: 'none', label: f.prNone }
 ]
 
+// How many LINES a row gets — orthogonal to `Show` above, which picks which
+// chips ride the title line. Lives here beside its sibling rather than in
+// Settings → Appearance (where desktop puts it): universal keeps every sidebar
+// display preference in this one menu, and splitting the pair across two
+// surfaces would make neither discoverable.
+const densities = (f: Labels): Option<SessionListDensity>[] => [
+  { id: 'compact', label: f.densityCompact },
+  { id: 'comfortable', label: f.densityComfortable },
+  { id: 'detailed', label: f.densityDetailed }
+]
+
 const statusFilters = (f: Labels): Option<SessionStatusBucket>[] => [
   { dot: sessionDotClassName('needs-input'), id: 'needs-input', label: f.statusNeedsInput },
   { dot: sessionDotClassName('working'), id: 'working', label: f.statusWorking },
@@ -153,6 +165,7 @@ export function SidebarFilterMenu({ className }: { className?: string }) {
   const grouping = useStore($sidebarGrouping)
   const ordering = useStore($sidebarOrdering)
   const rowMeta = useStore($sidebarRowMeta)
+  const density = useStore($sessionListDensity)
   const statusFilter = useStore($sidebarStatusFilter)
   const projectFilter = useStore($sidebarProjectFilter)
   const prFilter = useStore($sidebarPrFilter)
@@ -250,6 +263,20 @@ export function SidebarFilterMenu({ className }: { className?: string }) {
                   option={option}
                 />
               ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>{f.density}</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuRadioGroup
+                onValueChange={value => setSessionListDensity(value as SessionListDensity)}
+                value={density}
+              >
+                {densities(f).map(option => (
+                  <OptionRadio key={option.id} option={option} />
+                ))}
+              </DropdownMenuRadioGroup>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         </DropdownMenuGroup>

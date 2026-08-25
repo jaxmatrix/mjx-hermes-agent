@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { HermesConfigRecord } from '@/types/hermes'
 
+import { SECTIONS } from './constants'
 import { defineFieldCopy, fieldCopyForSchemaKey, schemaKeyToFieldCopyKey } from './field-copy'
 import {
   enumOptionsFor,
@@ -184,9 +185,19 @@ describe('settings helpers', () => {
       expect(opts).toContain('elevenlabs')
     })
 
-    it('renders a dropdown for the STT provider including xAI (Grok)', () => {
+    // Mirrors tools/transcription_tools.py BUILTIN_STT_PROVIDERS. The backend's
+    // own option list became unreachable when the stt.provider seed was removed
+    // (its _SCHEMA_OVERRIDES entry is applied while walking DEFAULT_CONFIG), so
+    // this list is now the only thing that fills the picker.
+    it('renders a dropdown for the STT provider including xAI (Grok) and DeepInfra', () => {
       const opts = enumOptionsFor('stt.provider', 'local', config)
-      expect(opts).toEqual(['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs'])
+      expect(opts).toEqual(['local', 'groq', 'openai', 'mistral', 'xai', 'elevenlabs', 'deepinfra'])
+    })
+
+    it('keeps a hand-configured command provider pickable rather than silently dropping it', () => {
+      // `stt.providers.<name>: type: command` names are open-world, so a stored
+      // value outside the list has to survive being rendered.
+      expect(enumOptionsFor('stt.provider', 'my-whisper-cli', config)).toContain('my-whisper-cli')
     })
 
     it('renders dropdowns for per-backend model/device sub-fields', () => {
@@ -244,6 +255,93 @@ describe('settings helpers', () => {
 
     it('hides declared keys absent from both schema and config', () => {
       expect(sectionFieldEntries({}, {}).get('memory') ?? []).toHaveLength(0)
+    })
+
+    /**
+     * `/api/config/schema` is DERIVED from DEFAULT_CONFIG
+     * (`web_server._build_schema_from_config`), so a key that is real and read
+     * by the agent but deliberately NOT seeded has no schema entry and no
+     * config value — and the rule above then deletes its row. The 08-20 sync
+     * removed `stt.provider`'s "local" seed exactly so a fresh install would be
+     * indistinguishable from unset, which took the picker down with it.
+     */
+    it('renders stt.provider on a fresh install, where nothing seeds it', () => {
+      // Deliberately hostile fixture: the gateway declares OTHER stt keys, so
+      // an assertion that merely counted rows would pass without the fallback.
+      const schema = { 'stt.enabled': { type: 'boolean' as const } }
+      const config: HermesConfigRecord = { stt: { enabled: true } }
+
+      const fields = new Map(sectionFieldEntries(schema, config).get('voice') ?? [])
+
+      expect(fields.get('stt.provider')?.type).toBe('select')
+      expect(fields.get('timeouts.tools.sequential_call')).toBeUndefined()
+    })
+
+    it('renders timeouts.tools.sequential_call, which nothing seeds either', () => {
+      const fields = new Map(sectionFieldEntries({}, {}).get('advanced') ?? [])
+
+      expect(fields.get('timeouts.tools.sequential_call')?.type).toBe('number')
+    })
+
+    it('lets a gateway that DOES declare a fallback key win', () => {
+      const schema = { 'stt.provider': { options: ['local'], type: 'string' as const } }
+
+      const field = new Map(sectionFieldEntries(schema, {}).get('voice') ?? []).get('stt.provider')
+
+      expect(field?.type).toBe('string')
+    })
+
+    /**
+     * The two silent-data-loss shapes of MJXHRM-443. Both are about a value the
+     * user never touched surviving a Settings visit: `agent.max_turns` = null
+     * is "unlimited" (DEFAULT_CONFIG, not a migration), and an unset
+     * `stt.provider` is what makes the autodetect ladder run.
+     */
+    it('keeps a null agent.max_turns and an unset stt.provider through a save round-trip', () => {
+      const config: HermesConfigRecord = {
+        agent: { api_max_retries: 3, max_turns: null },
+        stt: { enabled: true }
+      }
+
+      // A save PUTs the whole draft, so the round-trip is: touch ONE unrelated
+      // field, then look at what the other two became.
+      const saved = setNested(config, 'agent.api_max_retries', 5)
+
+      expect(getNested(saved, 'agent.max_turns')).toBeNull()
+      expect(getNested(saved, 'agent.api_max_retries')).toBe(5)
+      expect(Object.prototype.hasOwnProperty.call(saved.stt as object, 'provider')).toBe(false)
+    })
+
+    it('renders a null agent.max_turns as a row, not as a dropped key', () => {
+      const schema = { 'agent.max_turns': { type: 'string' as const } }
+      const fields = new Map(sectionFieldEntries(schema, { agent: { max_turns: null } }).get('advanced') ?? [])
+
+      expect(fields.has('agent.max_turns')).toBe(true)
+    })
+
+    it('exposes every config key the 08-18 and 08-20 sync added', () => {
+      // Dot-paths verified against hermes_cli/config_defaults.py DEFAULT_CONFIG.
+      const added = [
+        'compression.tail_mode',
+        'display.timestamps',
+        'voice.submit_mode',
+        'timeouts.tools.sequential_call',
+        'cron.media_send_timeout_seconds',
+        'model_overrides',
+        'runtime.nofile_soft_limit',
+        'agent.run_budget_seconds',
+        'agent.stall_guards',
+        'agent.execution_guidance',
+        'agent.reasoning_echo',
+        'web.keyless_fallback',
+        'web.keyless_rescue',
+        'web.provider_tier',
+        'memory.nudge_interval'
+      ]
+
+      const declared = new Set(SECTIONS.flatMap(section => section.keys))
+
+      expect(added.filter(key => !declared.has(key))).toEqual([])
     })
   })
 })

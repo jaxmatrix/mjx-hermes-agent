@@ -112,3 +112,63 @@ def test_nothing_is_reported_once_the_prompt_is_released(parked, monkeypatch):
 
     # Absent, not null: an idle session's resume payload gains no new key.
     assert "pending_prompt" not in payload
+
+
+@pytest.fixture()
+def parked_batch(monkeypatch):
+    """A BATCH clarify, parked with one of its two questions already locked.
+
+    The locked answers are the one thing a replay cannot read off the emitted
+    payload: they accumulate in ``_batch_clarify`` AFTER the emit. So the hook
+    locks ``q0`` first, then reads the replay fields — which is exactly the
+    order a real reconnect sees.
+    """
+    seen: dict = {}
+
+    def _capture(event, sid, payload=None):
+        if event != "clarify.request":
+            return
+        rid = (payload or {})["request_id"]
+        server._respond(1, {"request_id": rid, "question_id": "q0", "answer": "Tea"}, "answer")
+        seen["pending"] = server._session_pending_prompt(sid)
+        seen["resume"] = server._live_session_payload(sid, _session(), omit_messages=True)
+
+    monkeypatch.setattr(server, "_emit", _capture)
+    monkeypatch.setattr(server, "_get_db", lambda: None)
+
+    server._block(
+        "clarify.request",
+        "sid-batch",
+        {
+            "questions": [
+                {"qid": "q0", "question": "Drink?", "choices": ["Coffee", "Tea"], "multi_select": False},
+                {"qid": "q1", "question": "Time?", "choices": ["Morning"], "multi_select": False},
+            ]
+        },
+        timeout=0,
+        batch_qids=["q0", "q1"],
+    )
+    return seen
+
+
+def test_pending_prompt_replays_the_answers_already_locked(parked_batch):
+    """MJXHRM-458. ``pending_prompt`` is the generic replay — the only one that
+    covers sudo/secret/terminal.read as well — and it fed the batch clarify
+    card straight from ``_pending_prompt_payloads``, which knows nothing about
+    the per-question locks. A reconnecting client therefore got its questions
+    back with the user's own answers erased, and had to re-answer them."""
+    payload = parked_batch["pending"]["payload"]
+
+    assert payload["answers"] == {"q0": "Tea"}
+    # The questions themselves are unchanged by the overlay.
+    assert [entry["qid"] for entry in payload["questions"]] == ["q0", "q1"]
+
+
+def test_both_replay_fields_describe_the_same_prompt(parked_batch):
+    """``pending_prompt`` (universal) and ``pending_clarify`` (desktop, and the
+    hermes-bots plugin) are both kept because each covers a client the other
+    cannot. They must never tell the two clients different things — which is
+    what one shared snapshot buys."""
+    resume = parked_batch["resume"]
+
+    assert resume["pending_prompt"]["payload"] == resume["pending_clarify"]

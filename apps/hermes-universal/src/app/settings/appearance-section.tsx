@@ -10,7 +10,7 @@ import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { Check, Download, Loader2, Monitor, Moon, Palette, Sun, Trash } from '@/lib/icons'
-import { IS_DESKTOP, IS_TAURI } from '@/lib/platform'
+import { IS_TAURI } from '@/lib/platform'
 import {
   $calmDuringResize,
   $resizeThrottle,
@@ -25,10 +25,11 @@ import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $backdrop, setBackdrop } from '@/store/backdrop'
 import { $embedAllowed, $embedMode, clearEmbedAllowed, type EmbedMode, setEmbedMode } from '@/store/embed-consent'
+import { $introSplash, setIntroSplash } from '@/store/intro-splash'
 import { installFromMarketplace, type MarketplaceSearchItem, searchMarketplace } from '@/store/marketplace'
 import { $reactionsEnabled, setReactionsEnabled } from '@/store/reactions-enabled'
+import { $restorePaintEnabled, setRestorePaintEnabled } from '@/store/restore-paint'
 import { $toolViewMode, setToolViewMode, type ToolViewMode } from '@/store/tool-view'
-import { $translucency, setTranslucency } from '@/store/translucency'
 import { $zoomPercent, setZoomPercent } from '@/store/zoom'
 import { useTheme } from '@/themes'
 import { getBaseColors } from '@/themes/context'
@@ -36,7 +37,9 @@ import type { DesktopTheme } from '@/themes/types'
 import { $marketplaceInstalls, isUserTheme, removeUserTheme } from '@/themes/user-themes'
 
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
+import { settingRowElementId } from './settings-search'
 import { TerminalFontSetting } from './terminal-font-setting'
+import { TranslucencySettings } from './translucency-rows'
 
 const MODE_OPTIONS = [
   { icon: Sun, id: 'light' },
@@ -243,7 +246,8 @@ function MarketplaceThemeResults({
 }
 
 // The Appearance page (desktop parity): Language, Theme (mode + preview cards +
-// search + VS Code Marketplace install), UI scale, Translucency (desktop-only),
+// search + VS Code Marketplace install), UI scale, Translucency (per the
+// platform's capability report),
 // Tool view, Embeds, and the nested Pet panel.
 export function AppearanceSection() {
   const { t } = useI18n()
@@ -251,11 +255,12 @@ export function AppearanceSection() {
   const { availableThemes, mode, resolvedMode, setMode, setTheme, themeName } = useTheme()
   const toolViewMode = useStore($toolViewMode)
   const backdrop = useStore($backdrop)
+  const introSplash = useStore($introSplash)
+  const restorePaint = useStore($restorePaintEnabled)
   const reactionsEnabled = useStore($reactionsEnabled)
   const zoomPercent = useStore($zoomPercent)
   const embedMode = useStore($embedMode)
   const embedAllowed = useStore($embedAllowed)
-  const translucency = useStore($translucency)
   const resizeThrottle = useStore($resizeThrottle)
   const calmDuringResize = useStore($calmDuringResize)
   const installs = useStore($marketplaceInstalls)
@@ -303,7 +308,12 @@ export function AppearanceSection() {
 
         <div className="mt-2">
           {/* Language */}
-          <ListRow action={<LanguageSwitcher />} description={t.language.description} title={t.language.label} />
+          <ListRow
+            action={<LanguageSwitcher />}
+            description={t.language.description}
+            id={settingRowElementId('appearance.language')}
+            title={t.language.label}
+          />
 
           {/* Theme */}
           <ListRow
@@ -382,6 +392,7 @@ export function AppearanceSection() {
               </>
             }
             description={a.themeDesc}
+            id={settingRowElementId('appearance.theme')}
             title={
               <div className="flex items-center justify-between gap-3">
                 <span>{a.themeTitle}</span>
@@ -411,37 +422,13 @@ export function AppearanceSection() {
               />
             }
             description={a.uiScaleDesc(zoomPercent)}
+            id={settingRowElementId('appearance.ui-scale')}
             title={a.uiScaleTitle}
           />
 
-          {/* Translucency (desktop-only native effect) */}
-          {IS_DESKTOP && (
-            <ListRow
-              action={
-                <div className="flex items-center gap-3">
-                  <input
-                    aria-label={a.translucencyTitle}
-                    className="h-1 w-40 cursor-pointer appearance-none rounded-full bg-(--ui-stroke-tertiary)"
-                    max={100}
-                    min={0}
-                    onChange={event => {
-                      triggerHaptic('selection')
-                      setTranslucency(Number(event.target.value))
-                    }}
-                    step={5}
-                    style={{ accentColor: 'var(--dt-primary)' }}
-                    type="range"
-                    value={translucency}
-                  />
-                  <span className="w-9 text-end text-[length:var(--conversation-caption-font-size)] tabular-nums text-(--ui-text-tertiary)">
-                    {translucency}%
-                  </span>
-                </div>
-              }
-              description={a.translucencyDesc}
-              title={a.translucencyTitle}
-            />
-          )}
+          {/* Translucency: mode, tint, frost, area, fade — behind the
+              capability probe, not IS_DESKTOP (appearance/mod.rs decides). */}
+          <TranslucencySettings />
 
           {/* Terminal font — profile config (`terminal.font_family`), not a
               device-local pref, so it lives behind the shared config record
@@ -461,6 +448,7 @@ export function AppearanceSection() {
               />
             }
             description={a.toolViewDesc}
+            id={settingRowElementId('appearance.tool-view')}
             title={a.toolViewTitle}
           />
 
@@ -480,7 +468,53 @@ export function AppearanceSection() {
               />
             }
             description={a.backdropDesc}
+            id={settingRowElementId('appearance.backdrop')}
             title={a.backdropTitle}
+          />
+
+          {/* Intro splash — the wordmark + tagline on an empty chat. The toggle
+              outranks every other clause of `shouldShowIntro`: off is off, in
+              every window and every tile. */}
+          <ListRow
+            action={
+              <SegmentedControl
+                onChange={id => {
+                  triggerHaptic('selection')
+                  setIntroSplash(id === 'on')
+                }}
+                options={[
+                  { id: 'off', label: t.common.off },
+                  { id: 'on', label: t.common.on }
+                ]}
+                value={introSplash ? 'on' : 'off'}
+              />
+            }
+            description={a.introSplashDesc}
+            id={settingRowElementId('appearance.intro-splash')}
+            title={a.introSplashTitle}
+          />
+
+          {/* Last conversation while reconnecting (MJXHRM-480). Sits beside the
+              intro splash because it is the same kind of pref: what the app
+              paints when there is no conversation on screen yet. Off restores
+              today's behaviour exactly — a connecting card and nothing else. */}
+          <ListRow
+            action={
+              <SegmentedControl
+                onChange={id => {
+                  triggerHaptic('selection')
+                  setRestorePaintEnabled(id === 'on')
+                }}
+                options={[
+                  { id: 'off', label: t.common.off },
+                  { id: 'on', label: t.common.on }
+                ]}
+                value={restorePaint ? 'on' : 'off'}
+              />
+            }
+            description={a.restorePaintDesc}
+            id={settingRowElementId('appearance.restore-paint')}
+            title={a.restorePaintTitle}
           />
 
           {/* Message reactions — opt-in. Off by default: it adds an affordance
@@ -501,6 +535,7 @@ export function AppearanceSection() {
               />
             }
             description={a.reactionsDesc}
+            id={settingRowElementId('appearance.reactions')}
             title={a.reactionsTitle}
           />
 
@@ -531,6 +566,7 @@ export function AppearanceSection() {
               </div>
             }
             description={a.embedsDesc}
+            id={settingRowElementId('appearance.embeds')}
             title={a.embedsTitle}
           />
 
@@ -555,6 +591,7 @@ export function AppearanceSection() {
               </div>
             }
             description={a.resizeRateDesc}
+            id={settingRowElementId('appearance.resize-rate')}
             title={a.resizeRateTitle}
           />
 
@@ -571,6 +608,7 @@ export function AppearanceSection() {
               />
             }
             description={a.resizeCalmDesc}
+            id={settingRowElementId('appearance.resize-calm')}
             title={a.resizeCalmTitle}
           />
         </div>

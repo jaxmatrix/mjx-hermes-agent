@@ -75,3 +75,30 @@ export const $sessionDotStateById = computed(
     return states
   }
 )
+
+/** Listed, non-archived rows whose resolved status is unread. Alias keys in
+ *  `$sessionDotStateById` are ignored unless they are themselves a listed row —
+ *  a lineage that rotated its id must not be counted twice. */
+export function unreadSessionCount(
+  byId: Readonly<Record<string, SessionDotState>>,
+  ...lists: (readonly { archived?: boolean; id: string }[])[]
+): number {
+  let n = 0
+
+  for (const rows of lists) {
+    for (const row of rows) {
+      if (!row.archived && byId[row.id] === 'unread') {
+        n++
+      }
+    }
+  }
+
+  return n
+}
+
+/** Unread badge source for the sessions-sidebar toggle. Only `$sessions` feeds
+ *  it: `$sessionDotStateById` is built from that list alone, so any other list
+ *  would contribute a constant zero rather than a count. */
+export const $unreadSessionCount = computed([$sessionDotStateById, $sessions], (byId, sessions) =>
+  unreadSessionCount(byId, sessions)
+)

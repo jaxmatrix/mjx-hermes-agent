@@ -73,6 +73,18 @@ describe('useKeybinds', () => {
     expect($sidebarOpen.get()).toBe(true)
   })
 
+  it('ignores a chord pressed during an IME composition', () => {
+    // Microsoft Pinyin and Sogou use Ctrl+, as their punctuation-mode toggle,
+    // and the same chord is nav.settings — so the toggle navigated away
+    // mid-word and took the unsent composer draft with it. Seeded open, which
+    // disagrees with a passing assertion by default: only the guard keeps it.
+    setSidebarOpen(true)
+    mount()
+
+    fireEvent.keyDown(window, { code: 'KeyB', isComposing: true, key: 'b', metaKey: true })
+    expect($sidebarOpen.get()).toBe(true)
+  })
+
   it('ignores a bare "b" without a modifier', () => {
     setSidebarOpen(true)
     mount()

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { previewFile } from '@/app/contrib/panes'
 import { RightSidebarPane } from '@/app/right-pane'
 import { PreviewRail } from '@/app/right-pane/preview/preview-rail'
 import { absolutePath } from '@/app/right-pane/review/file-tree'
@@ -18,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $currentCwd } from '@/store/chat'
 import { $dirtyPreviewPaths } from '@/store/preview-edit'
+import { previewFile } from '@/store/preview-open'
 import { $reviewFiles, openReview } from '@/store/review'
 import { $effectiveCwd } from '@/store/workspace-events'
 

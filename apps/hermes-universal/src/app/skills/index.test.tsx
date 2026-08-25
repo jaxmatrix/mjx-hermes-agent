@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as HermesApi from '@/hermes'
 import { queryClient } from '@/lib/query-client'
+import { $settingsScopeOverride } from '@/store/settings-scope'
 
 // This is a full mount → useQuery → master-detail → on-mount config-fetch
 // integration test. In isolation it settles in <100ms, but inside the ~80-file
@@ -22,19 +23,33 @@ const toggleToolset = vi.fn()
 const getToolsetConfig = vi.fn()
 const selectToolsetProvider = vi.fn()
 const getUsageAnalytics = vi.fn()
+const getSkillHubSources = vi.fn()
+const installSkillFromHub = vi.fn()
+const getActionStatus = vi.fn()
+const getSkillContent = vi.fn()
+const getProjectSkills = vi.fn()
+const previewSkillHub = vi.fn()
+const scanSkillHub = vi.fn()
 
 // Partial mock: keep the real module (SkillsView pulls in @/store/profile,
 // whose import-time subscription calls setApiRequestProfile) and stub only the
 // calls we assert on.
 vi.mock('@/hermes', async importOriginal => ({
   ...(await importOriginal<typeof HermesApi>()),
-  getSkills: () => getSkills(),
+  getSkills: (profile?: null | string) => getSkills(profile),
   getToolsets: () => getToolsets(),
-  toggleSkill: (name: string, enabled: boolean) => toggleSkill(name, enabled),
+  toggleSkill: (name: string, enabled: boolean, profile?: null | string) => toggleSkill(name, enabled, profile),
   toggleToolset: (name: string, enabled: boolean) => toggleToolset(name, enabled),
   getToolsetConfig: (name: string) => getToolsetConfig(name),
   selectToolsetProvider: (toolset: string, provider: string) => selectToolsetProvider(toolset, provider),
-  getUsageAnalytics: (days: number) => getUsageAnalytics(days)
+  getUsageAnalytics: (days: number) => getUsageAnalytics(days),
+  getSkillHubSources: (profile?: null | string) => getSkillHubSources(profile),
+  installSkillFromHub: (identifier: string, profile?: null | string) => installSkillFromHub(identifier, profile),
+  getActionStatus: (name: string, tail?: number) => getActionStatus(name, tail),
+  getSkillContent: (name: string, profile?: null | string) => getSkillContent(name, profile),
+  getProjectSkills: (cwd?: null | string, profile?: null | string) => getProjectSkills(cwd, profile),
+  previewSkillHub: (identifier: string, profile?: null | string) => previewSkillHub(identifier, profile),
+  scanSkillHub: (identifier: string, profile?: null | string) => scanSkillHub(identifier, profile)
 }))
 
 // Notifications hit nanostores/timers we don't care about here.
@@ -56,14 +71,14 @@ function toolset(overrides: Record<string, unknown> = {}) {
   }
 }
 
-async function renderSkills() {
+async function renderSkills(route = '/skills?tab=toolsets') {
   const { SkillsView } = await import('./index')
   let result: ReturnType<typeof render>
   await act(async () => {
     result = render(
       // SkillsView reads skills/toolsets via useQuery, so it needs a provider.
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/skills?tab=toolsets']}>
+        <MemoryRouter initialEntries={[route]}>
           <SkillsView />
         </MemoryRouter>
       </QueryClientProvider>
@@ -79,9 +94,19 @@ beforeEach(() => {
   toggleToolset.mockResolvedValue({ ok: true, name: 'web', enabled: false })
   getToolsetConfig.mockResolvedValue({ has_category: true, active_provider: null, providers: [] })
   getUsageAnalytics.mockResolvedValue({ tools: [] })
+  getSkillHubSources.mockResolvedValue({ sources: [], featured: [], installed: {} })
+  installSkillFromHub.mockResolvedValue({ name: 'skill-install-1' })
+  getActionStatus.mockResolvedValue({ name: 'skill-install-1', running: false, exit_code: 0, lines: [] })
+  toggleSkill.mockResolvedValue({ ok: true, name: 'pdf', enabled: false })
+  getSkillContent.mockResolvedValue({ name: 'pdf', path: '/skills/pdf/SKILL.md', content: '' })
+  // No project skills by default — the gate renders nothing and stays out of
+  // every other assertion in this file.
+  getProjectSkills.mockResolvedValue({ root: null, trusted: false, discovery_enabled: true, skills: [] })
+  previewSkillHub.mockResolvedValue({ skill_md: '# hi', files: [] })
 })
 
 afterEach(() => {
+  $settingsScopeOverride.set(null)
   cleanup()
   vi.clearAllMocks()
   // Shared singleton client — drop cached skills/toolsets so each test refetches.
@@ -122,5 +147,211 @@ describe('SkillsView toolset management', () => {
 
     await screen.findByRole('switch', { name: 'Toggle Web Search toolset' })
     await waitFor(() => expect(getToolsetConfig).toHaveBeenCalledWith('web'))
+  })
+})
+
+describe('SkillsView hub browser', () => {
+  // The fixture disagrees with the layout on purpose: ZERO installed skills is
+  // the state the old code replaced the whole pane with an empty panel in, and
+  // it is exactly the user who needs the hub. The hub has to outlive it.
+  it('docks the hub browser in the Skills tab even with nothing installed', async () => {
+    getSkills.mockResolvedValue([])
+
+    await renderSkills('/skills?tab=skills')
+
+    // 'Connected hubs:' is rendered by the hub browser and by nothing else.
+    expect(await screen.findByText('Connected hubs:')).toBeTruthy()
+  })
+
+  it('drops the standalone Browse Hub tab', async () => {
+    getSkills.mockResolvedValue([])
+
+    await renderSkills('/skills?tab=skills')
+
+    await screen.findByText('Connected hubs:')
+    // The label survives as the docked pane's title (a span); what must be
+    // gone is the TAB, which is the only button that ever carried it.
+    expect(screen.queryAllByRole('button', { name: 'Browse Hub' })).toHaveLength(0)
+  })
+
+  it('keeps the hub out of the Tools tab', async () => {
+    getSkills.mockResolvedValue([])
+
+    await renderSkills('/skills?tab=toolsets')
+
+    await screen.findByRole('switch', { name: 'Toggle Web Search toolset' })
+    expect(screen.queryByText('Connected hubs:')).toBeNull()
+  })
+
+  it('routes a legacy ?tab=hub link to the Skills tab', async () => {
+    getSkills.mockResolvedValue([])
+
+    await renderSkills('/skills?tab=hub')
+
+    // Falls back to 'skills' (useRouteEnumParam drops unknown values), which
+    // is where the hub now lives — the link keeps working.
+    expect(await screen.findByText('Connected hubs:')).toBeTruthy()
+  })
+})
+
+describe('SkillsView profile scope', () => {
+  // The fixture disagrees on purpose: the app-wide profile is the default, and
+  // the Capabilities scope points somewhere else. Every read and write has to
+  // follow the SCOPE, not the app.
+  const scoped = async () => {
+    $settingsScopeOverride.set('research')
+    getSkills.mockResolvedValue([{ name: 'pdf', description: 'pdf things', category: 'docs', enabled: true }])
+
+    return renderSkills('/skills?tab=skills')
+  }
+
+  it("lists the scoped profile's skills, not the active profile's", async () => {
+    await scoped()
+
+    await waitFor(() => expect(getSkills).toHaveBeenCalledWith('research'))
+  })
+
+  it('toggles a skill on the scoped profile', async () => {
+    await scoped()
+
+    const sw = await screen.findByRole('switch', { name: 'pdf' })
+    await act(async () => {
+      fireEvent.click(sw)
+    })
+
+    await waitFor(() => expect(toggleSkill).toHaveBeenCalledWith('pdf', false, 'research'))
+  })
+
+  it('installs a hub skill into the scoped profile', async () => {
+    getSkillHubSources.mockResolvedValue({
+      sources: [],
+      featured: [{ identifier: 'acme/pdf-tools', name: 'pdf-tools', description: '', trust_level: 'community' }],
+      installed: {}
+    })
+
+    await scoped()
+
+    const install = await screen.findByRole('button', { name: 'Install' })
+    await act(async () => {
+      fireEvent.click(install)
+    })
+
+    await waitFor(() => expect(installSkillFromHub).toHaveBeenCalledWith('acme/pdf-tools', 'research'))
+  })
+
+  it('reads the hub under the scoped profile', async () => {
+    await scoped()
+
+    await waitFor(() => expect(getSkillHubSources).toHaveBeenCalledWith('research'))
+  })
+})
+
+describe('SkillsView full-skill detail', () => {
+  const SKILL_MD = ['---', 'name: pdf', 'allowed-tools: read, write', '---', '', '# Splitting PDFs', 'Step one.'].join(
+    '\n'
+  )
+
+  it('renders the whole SKILL.md, not just the row description', async () => {
+    getSkills.mockResolvedValue([{ name: 'pdf', description: 'pdf things', category: 'docs', enabled: true }])
+    getSkillContent.mockResolvedValue({ name: 'pdf', path: '/skills/pdf/SKILL.md', content: SKILL_MD })
+
+    await renderSkills('/skills?tab=skills')
+
+    // Body text lives only in the file — the list row never carried it.
+    expect(await screen.findByText(/Splitting PDFs/)).toBeTruthy()
+    // …and the frontmatter renders as metadata rows, not as part of the body.
+    expect(screen.getByText('allowed-tools')).toBeTruthy()
+  })
+
+  it('reads the file from the scoped profile', async () => {
+    $settingsScopeOverride.set('research')
+    getSkills.mockResolvedValue([{ name: 'pdf', description: 'pdf things', category: 'docs', enabled: true }])
+
+    await renderSkills('/skills?tab=skills')
+
+    await waitFor(() => expect(getSkillContent).toHaveBeenCalledWith('pdf', 'research'))
+  })
+})
+
+describe('parseFrontmatter', () => {
+  it('splits the fenced block from the body', async () => {
+    const { parseFrontmatter } = await import('./index')
+    const parsed = parseFrontmatter('---\nname: pdf\n---\nbody text\n')
+
+    expect(parsed.meta).toEqual([['name', 'pdf']])
+    expect(parsed.body).toBe('body text\n')
+  })
+
+  it('leaves a file with no frontmatter whole', async () => {
+    const { parseFrontmatter } = await import('./index')
+    const parsed = parseFrontmatter('# Just a heading\n---\nnot frontmatter\n')
+
+    expect(parsed.meta).toEqual([])
+    expect(parsed.body).toBe('# Just a heading\n---\nnot frontmatter\n')
+  })
+
+  it('keeps a multi-line value with its key and survives CRLF', async () => {
+    const { parseFrontmatter } = await import('./index')
+    const parsed = parseFrontmatter('---\r\ndescription: one\r\n  two\r\nname: pdf\r\n---\r\nbody\r\n')
+
+    expect(parsed.meta).toEqual([
+      ['description', 'one\ntwo'],
+      ['name', 'pdf']
+    ])
+    expect(parsed.body).toBe('body\r\n')
+  })
+})
+
+describe('hub security scan', () => {
+  it("shows SkillEvaluator's advisory verdict alongside the built-in scan", async () => {
+    getSkills.mockResolvedValue([])
+    getSkillHubSources.mockResolvedValue({
+      sources: [],
+      featured: [{ identifier: 'acme/pdf-tools', name: 'pdf-tools', description: '', trust_level: 'community' }],
+      installed: {}
+    })
+    // The disagreeing fixture: the BUILT-IN guard is happy (allow/safe, no
+    // findings) and only the advisory scanner flagged something. If the
+    // advisory is dropped the dialog looks clean, which is the failure mode.
+    scanSkillHub.mockResolvedValue({
+      name: 'pdf-tools',
+      identifier: 'acme/pdf-tools',
+      source: 'hub',
+      trust_level: 'community',
+      verdict: 'safe',
+      summary: '',
+      policy: 'allow',
+      policy_reason: null,
+      findings: [],
+      severity_counts: {},
+      tier1: {
+        passed: false,
+        incomplete_checks: 2,
+        findings: [
+          {
+            check: 'secrets',
+            validator: 'gitleaks',
+            severity: 'high',
+            message: 'possible token in setup.sh',
+            file: 'setup.sh',
+            line: 12,
+            secrets_class: true
+          }
+        ]
+      }
+    })
+
+    await renderSkills('/skills?tab=skills')
+
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Preview' }))
+    })
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Scan' }))
+    })
+
+    expect(await screen.findByText(/SkillEvaluator \(advisory\)/)).toBeTruthy()
+    expect(screen.getByText(/possible token in setup.sh/)).toBeTruthy()
+    expect(screen.getByText(/2 checks could not run/)).toBeTruthy()
   })
 })

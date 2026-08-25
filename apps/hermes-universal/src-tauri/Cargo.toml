@@ -62,7 +62,16 @@ tauri-build = { version = "2", features = [] }
 # crate: `tray-icon`, `muda`, `image` and `png` are already resolved in
 # `Cargo.lock` (both are target-gated to desktop inside tauri, so the mobile
 # builds compile none of it).
-tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
+# `unstable` is what puts `Window::add_child` in scope — the child webview the
+# in-app browser's desktop guest IS (MJXHRM-447). It unlocks nothing at runtime
+# by itself. Two costs, both accepted deliberately:
+#   1. the feature is semver-EXEMPT, so a 2.x patch bump can break the build —
+#      hence the `~2.11` pin rather than the bare `2` every other tauri crate
+#      here uses;
+#   2. it silently removes the `CannotReparentWebviewWindow` guard. Inert today
+#      (nothing calls `reparent`), and pinned by a test in browser/policy.rs
+#      that the guest label can never be a window label.
+tauri = { version = "~2.11", features = ["macos-private-api", "tray-icon", "image-png", "unstable"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -95,6 +104,14 @@ keyring-core = "1.0"
 # the webview (getUserMedia); desktop is a no-op. See plugins/tauri-plugin-mic.
 tauri-plugin-mic = { path = "plugins/tauri-plugin-mic" }
 
+# The MOBILE half of the in-app browser (MJXHRM-447). Desktop's guest is a child
+# webview built in src/browser/desktop.rs; a phone has no such thing — a "window"
+# there is an Activity/UIScene — so the Android/iOS guest is a native
+# WebView/WKWebView that only a Kotlin/Swift half can hold at a rect. In-tree,
+# like tauri-plugin-mic, so its manifest and ProGuard rules live somewhere
+# committed rather than in the gitignored gen/ tree.
+tauri-plugin-browser = { path = "plugins/tauri-plugin-browser" }
+
 # Open external links in the system browser (Gc6/R11).
 tauri-plugin-opener = "2"
 
@@ -107,6 +124,14 @@ tauri-plugin-fs = "2"
 
 # Native OS notifications (Ic10/R8): turn-done / approval / error while backgrounded.
 tauri-plugin-notification = "2"
+
+# `hermes://` OS deep links (MJXHRM-455) — the front door for a plugin install, an
+# MCP install and any future in-app target. Not target-gated: the crate compiles a
+# per-OS `imp` itself (Android talks to its own Kotlin plugin, the rest read the
+# launch argv / `open-url`), and `plugins.deep-link` in tauri.conf.json is what
+# makes the BUNDLER write the registry key / `.desktop` MimeType / Info.plist entry
+# that claims the scheme with the OS.
+tauri-plugin-deep-link = "2"
 
 # Clipboard for the integrated terminal (MJXHRM-415). xterm renders to a canvas,
 # so a paste must read the clipboard explicitly — and WebKitGTK gates
@@ -239,6 +264,14 @@ keepawake = "0.6"
 # runtime because neither mobile OS lets an app claim a system-wide chord, so the
 # plugin has nothing to do there and no reason to be in the NDK build.
 tauri-plugin-global-shortcut = "2"
+# The other half of the deep link on Windows/Linux, where a `hermes://` click
+# starts a SECOND process with the URL as its argv instead of talking to the
+# running one. The plugin kills the newcomer and forwards its arguments, and the
+# `deep-link` feature is what makes its default callback hand them to
+# `tauri-plugin-deep-link` — so the link lands in the instance the user already
+# has open. Desktop-only by construction: the crate is `#![cfg(not(mobile))]`,
+# because Android/iOS deliver into the running Activity/scene themselves.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 # Route Rust `log::` output to logcat on Android. tao does not reliably install a
 # logger, so our connect/OAuth diagnostics were invisible; init it ourselves in
@@ -310,6 +343,13 @@ webkit2gtk = { version = "2.0", features = ["v2_8"] }
 # CGWindowListCopyWindowInfo needs NO grant for owner/bounds/z-order, and titles
 # need Screen Recording. This build PREFLIGHTS that grant and never requests it.
 [target.'cfg(target_os = "macos")'.dependencies]
+# Window glass (src/appearance/mac.rs). Called DIRECTLY rather than through
+# Tauri's `Window::set_effects`, which drops this crate's `Result` and reports
+# success on every platform including Linux — the capability report exists so
+# nothing has to infer a material from a call that did not throw. Already in the
+# tree as tauri's own dependency at this exact version, so naming it adds no
+# crate and leaves Cargo.lock untouched.
+window-vibrancy = "0.6"
 # The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
 # plugin that used to wrap them — see the keyring-core note under [dependencies].
 # `protected` selects the Protected Data keychain. Required on iOS (the crate
@@ -324,6 +364,9 @@ core-foundation-sys = "0.8"
 # Windows stack; these features are declaration-only bindings, so enabling them
 # adds no crate and no runtime cost.
 [target.'cfg(target_os = "windows")'.dependencies]
+# DWM system backdrops for window glass (src/appearance/win.rs) — same crate,
+# same reason, same "already tauri's dependency" note as the macOS block above.
+window-vibrancy = "0.6"
 # The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
 # plugin that used to wrap them — see the keyring-core note under [dependencies].
 windows-native-keyring-store = "1.1"

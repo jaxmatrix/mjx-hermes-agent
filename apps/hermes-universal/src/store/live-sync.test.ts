@@ -27,6 +27,7 @@ import {
   $pairingChangeTick,
   $petChange,
   $platformsChangeTick,
+  $pluginsChangeTick,
   $sessionsChangeTick,
   livePollIntervalMs,
   resetLiveSync
@@ -40,6 +41,7 @@ beforeEach(() => {
   $sessionsChangeTick.set(0)
   $platformsChangeTick.set(0)
   $pairingChangeTick.set(0)
+  $pluginsChangeTick.set(0)
   $petChange.set({ tick: 0 })
 })
 
@@ -48,17 +50,31 @@ describe('change broadcasts → live-sync ticks', () => {
     ['cron.changed', $cronChangeTick],
     ['sessions.changed', $sessionsChangeTick],
     ['platforms.changed', $platformsChangeTick],
-    ['pairing.changed', $pairingChangeTick]
+    ['pairing.changed', $pairingChangeTick],
+    // Wired for an event nothing emits YET (MJXHRM-416's gateway half is a new
+    // push event, which the shared-gateway freeze forbids). Routed here so the
+    // post-freeze ticket that adds the signature row touches only the gateway.
+    ['plugins.changed', $pluginsChangeTick]
   ])('%s bumps its own tick and no other', (type, tick) => {
     routeGatewayEvent(event(type, {}))
 
     expect(tick.get()).toBe(1)
 
-    const others = [$cronChangeTick, $sessionsChangeTick, $platformsChangeTick, $pairingChangeTick].filter(
-      other => other !== tick
-    )
+    const others = [
+      $cronChangeTick,
+      $sessionsChangeTick,
+      $platformsChangeTick,
+      $pairingChangeTick,
+      $pluginsChangeTick
+    ].filter(other => other !== tick)
 
-    expect(others.map(other => other.get())).toEqual([0, 0, 0])
+    expect(others.map(other => other.get())).toEqual([0, 0, 0, 0])
+  })
+
+  it('routes plugins.changed globally too — it names no conversation', () => {
+    routeGatewayEvent({ type: 'plugins.changed', payload: {}, session_id: '' } as GatewayEvent)
+
+    expect($pluginsChangeTick.get()).toBe(1)
   })
 
   it('routes the change events GLOBALLY — they carry no session and must not fail closed', () => {

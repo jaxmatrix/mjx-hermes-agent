@@ -1,4 +1,3 @@
-import { atom, computed } from 'nanostores'
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 
 import { ChatScreen } from '@/app/chat/chat-screen'
@@ -7,6 +6,7 @@ import { type ComposerScope, ComposerScopeProvider } from '@/app/chat/composer/s
 import { paneMirror } from '@/app/chat/pane-mirror'
 import { startSessionDrag } from '@/app/chat/session-drag'
 import { type SessionView, SessionViewProvider } from '@/app/chat/session-view'
+import { buildSessionView } from '@/app/chat/session-view-build'
 import { detachTile } from '@/components/pane-shell/tile/detach'
 import { findGroupOfPane } from '@/components/pane-shell/tree/model'
 import {
@@ -24,7 +24,6 @@ import { sessionTitle } from '@/lib/chat-runtime'
 import { DRAFT_TILE_KEY, isDraftTileKey, sessionTilePaneId, WORKSPACE_PANE_ID } from '@/lib/pane-ids'
 import { useStoreSelector } from '@/lib/use-session-slice'
 import { useStore } from '@/store/atom'
-import { type ChatMessage } from '@/store/chat'
 import { $draftTitles, createComposerAttachmentScope, draftTitleFor } from '@/store/composer'
 import { $gatewayState } from '@/store/gateway'
 import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
@@ -38,7 +37,6 @@ import {
   useSessionRow,
   useSessionRowScalars
 } from '@/store/session-lookup'
-import { $sessionStates } from '@/store/session-state-types'
 import {
   $sessionTiles,
   discardSessionTile,
@@ -52,50 +50,6 @@ import {
 
 import { SessionStatusDot } from './session-status-dot'
 import { SessionContextMenu } from './sidebar/session-actions-menu'
-
-const NO_MESSAGES: ChatMessage[] = []
-
-function lastVisibleIsUser(messages: ChatMessage[]): boolean {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'system') {
-      continue
-    }
-
-    return messages[i].role === 'user'
-  }
-
-  return false
-}
-
-/** A SessionView driven entirely by the tile's `$sessionStates` slice — the same
- *  shape the primary chat's PRIMARY_SESSION_VIEW provides, so one ChatScreen
- *  serves both. */
-function buildTileView(storedSessionId: string): SessionView {
-  // Resolved through the reverse index (which carries lineage aliases) rather
-  // than the tile's cached runtimeId, so the tile follows its session across a
-  // background auto-compaction instead of pointing at a dead slice (MJX-133).
-  const $runtimeId = computed([$sessionTiles, $sessionStates], () => tileRuntimeKey(storedSessionId))
-
-  const $state = computed([$runtimeId, $sessionStates], (rt, states) => (rt ? states[rt] : undefined))
-  const $messages = computed($state, s => s?.messages ?? NO_MESSAGES)
-
-  return {
-    kind: 'tile',
-    $runtimeId,
-    $storedId: atom(storedSessionId),
-    $messages,
-    $busy: computed($state, s => Boolean(s?.busy)),
-    $awaitingResponse: computed($state, s => Boolean(s?.awaitingResponse)),
-    $messagesEmpty: computed($messages, m => m.length === 0),
-    $lastVisibleIsUser: computed($messages, lastVisibleIsUser),
-    $statusLine: computed($state, s => s?.statusLine ?? ''),
-    $cwd: computed($state, s => s?.cwd ?? ''),
-    $model: computed($state, s => s?.model ?? ''),
-    $provider: computed($state, s => s?.provider ?? ''),
-    $fast: computed($state, s => Boolean(s?.fast)),
-    $reasoningEffort: computed($state, s => s?.reasoningEffort ?? '')
-  }
-}
 
 /** Mounts the shared ChatScreen under the tile's view + a per-tile composer
  *  scope (its own attachment set, awaiting-input edge, and `tile:<id>` focus-bus
@@ -154,7 +108,7 @@ function TileChat({ storedSessionId, view }: { storedSessionId: string; view: Se
  * draft key each time, and the tile follows the current one.
  */
 function DraftTilePane() {
-  const view = useMemo(() => buildTileView(DRAFT_TILE_KEY), [])
+  const view = useMemo(() => buildSessionView(DRAFT_TILE_KEY), [])
   const runtimeId = useStore(view.$runtimeId)
 
   if (!runtimeId) {
@@ -178,7 +132,7 @@ export function SessionTilePane({ storedSessionId }: { storedSessionId: string }
   const tile = useStoreSelector($sessionTiles, tiles => tiles.find(item => item.storedSessionId === storedSessionId))
   const runtimeId = tile?.runtimeId
   const gatewayOpen = useStore($gatewayState) === 'open'
-  const view = useMemo(() => buildTileView(storedSessionId), [storedSessionId])
+  const view = useMemo(() => buildSessionView(storedSessionId), [storedSessionId])
   const resumingRef = useRef(false)
 
   // Closes the `chat.open` span opened by the gesture that asked for this tile.

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 
 import { getElevenLabsVoices } from '@/hermes'
+import { useStore } from '@/store/atom'
+import { $settingsScopeOverride } from '@/store/settings-scope'
 
 import { ConfigSection } from './config-section'
 import { enumOptionsFor, voiceFieldVisible } from './helpers'
@@ -14,13 +16,16 @@ const ELEVENLABS_VOICE_KEY = 'tts.elevenlabs.voice_id'
 // voices, `tts.elevenlabs.voice_id` becomes a named-voice Select instead of free
 // text; otherwise it falls back to the generic control.
 export function VoiceSection() {
+  // The voice list belongs to the profile this page is EDITING (each profile
+  // has its own ElevenLabs key), not to the app-wide active one.
+  const scopeProfile = useStore($settingsScopeOverride)
   const [voiceOptions, setVoiceOptions] = useState<string[] | null>(null)
   const [voiceLabels, setVoiceLabels] = useState<Record<string, string>>({})
 
   useEffect(() => {
     let cancelled = false
 
-    getElevenLabsVoices()
+    getElevenLabsVoices(scopeProfile ?? undefined)
       .then(result => {
         if (cancelled || !result.available) {
           return
@@ -37,7 +42,7 @@ export function VoiceSection() {
       })
 
     return () => void (cancelled = true)
-  }, [])
+  }, [scopeProfile])
 
   return (
     <ConfigSection

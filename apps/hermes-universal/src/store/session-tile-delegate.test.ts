@@ -27,7 +27,10 @@ vi.mock('@/store/gateway', async () => {
 })
 
 vi.mock('@/hermes', () => ({
-  getSessionMessages: (...args: unknown[]) => getSessionMessages(...args)
+  getSessionMessages: (...args: unknown[]) => getSessionMessages(...args),
+  // `store/profiles.ts` calls this at module scope, and the session request
+  // router pulls `store/profile` → `store/profiles` in for the ambient route.
+  setApiRequestProfile: vi.fn()
 }))
 
 vi.mock('@/store/notifications', () => ({
@@ -172,6 +175,29 @@ describe('submitToSession', () => {
     expect(state?.turnStartedAt).not.toBeNull()
     // ...and the transcript keeps a record of what was sent.
     expect(state?.messages.at(-1)).toMatchObject({ role: 'user', parts: [{ type: 'text', text: 'hello' }] })
+  })
+
+  // MJXHRM-457. A slash `send`/`skill` directive splits the two: the model is
+  // sent `text`, the transcript shows `displayText`. Both had been one value,
+  // so `/goal resume` printed its continuation scaffolding as the user's turn.
+  // The turn record deliberately keeps the WIRE text — turn-lifecycle
+  // reconciles an in-flight turn against what the gateway holds, and a display
+  // string there would read as a different turn.
+  it('shows the display projection while sending the model text', async () => {
+    seed('runtime-1', { storedSessionId: 'stored-1' })
+    requestGateway.mockResolvedValue({})
+
+    await delegate.submitToSession('runtime-1', 'the continuation prompt', '/goal resume')
+
+    expect(requestGateway).toHaveBeenCalledWith('prompt.submit', {
+      session_id: 'runtime-1',
+      text: 'the continuation prompt'
+    })
+    expect($sessionStates.get()['runtime-1']?.messages.at(-1)).toMatchObject({
+      role: 'user',
+      parts: [{ type: 'text', text: '/goal resume' }]
+    })
+    expect(getInflightTurn('runtime-1')).toMatchObject({ prompt: 'the continuation prompt' })
   })
 
   // MJXHRM-308: the default `onRecovered` resolved the LIVE id through the

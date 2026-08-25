@@ -256,6 +256,7 @@ export function MobileReviewRow({
       <div
         aria-selected={selected}
         className={mobileReviewRowVariants({ selected, dragging })}
+        data-context-menu-skip=""
         data-slot="mobile-review-row"
         data-state={selected ? 'selected' : 'default'}
         onClick={onClick}

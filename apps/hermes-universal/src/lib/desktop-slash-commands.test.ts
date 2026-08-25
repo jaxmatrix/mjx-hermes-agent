@@ -5,6 +5,7 @@ import {
   desktopSlashDescription,
   desktopSlashUnavailableMessage,
   isDesktopSlashCommand,
+  isDesktopSlashSuggestion,
   rankSkillCommands,
   resolveDesktopCommand,
   type SkillCatalogMap
@@ -105,5 +106,28 @@ describe('/focus', () => {
   it('no longer shares a surface with /verbose', () => {
     expect(resolveDesktopCommand('/verbose')?.surface).toEqual({ kind: 'unavailable', reason: 'terminal' })
     expect(resolveDesktopCommand('/focus')?.surface).not.toEqual(resolveDesktopCommand('/verbose')?.surface)
+  })
+})
+
+// MJXHRM-457. `/loop` (hermes_cli/loops.py) already EXECUTED without a row here
+// — the table treats anything it does not name as a backend skill command — so
+// the gap was DISCOVERABILITY: the popover offers only what this table or the
+// gateway's commands.catalog lists, and /loop is in neither.
+describe('/loop', () => {
+  it('is offered by the popover, not just silently accepted when typed', () => {
+    expect(isDesktopSlashSuggestion('/loop')).toBe(true)
+    expect(resolveDesktopCommand('/loop')?.surface).toEqual({ kind: 'exec' })
+    expect(desktopSlashUnavailableMessage('/loop')).toBeNull()
+  })
+
+  it('names its controls, so the argument step is not a blank prompt', () => {
+    expect(desktopSlashCommandTakesArgs('/loop')).toBe(true)
+    expect(desktopSlashDescription('/loop')).toContain('/loop stop')
+  })
+
+  // It takes an interval AND free prose ("/loop 5m check the deploy"), so the
+  // composer must not commit it as a pill with the prompt stranded beside it.
+  it('is marked as taking free text', () => {
+    expect(resolveDesktopCommand('/loop')?.takesFreeText).toBe(true)
   })
 })

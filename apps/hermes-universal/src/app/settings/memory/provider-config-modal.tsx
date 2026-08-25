@@ -15,7 +15,7 @@ import { saveMemoryProviderConfig } from '@/hermes'
 import { openExternalLink } from '@/lib/external-link'
 import { ExternalLink, Loader2, Save, SlidersHorizontal } from '@/lib/icons'
 import { notify, notifyError } from '@/store/notifications'
-import { $activeGatewayProfile } from '@/store/profile'
+import { $settingsScopeOverride, $settingsScopeProfile } from '@/store/settings-scope'
 import type { MemoryProviderConfig, MemoryProviderField } from '@/types/hermes'
 
 import { ListRow } from '../primitives'
@@ -58,7 +58,13 @@ export function ProviderConfigModal({
   onOpenChange: (open: boolean) => void
   onSaved: () => Promise<void> | void
 }) {
-  const activeProfile = useStore($activeGatewayProfile)
+  // The profile this page is EDITING — which is the app's active profile until
+  // the "Applies to" selector points somewhere else. Naming the wrong one here
+  // told the user their keys were going to a profile they were not editing.
+  const scopeProfile = useStore($settingsScopeProfile)
+  // ...and the OVERRIDE is what rides the request: `null` means "follow the
+  // app", which the REST layer turns into no `?profile=` at all.
+  const scopeOverride = useStore($settingsScopeOverride)
   const [values, setValues] = useState<Record<string, string>>({})
   const [seeded, setSeeded] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
@@ -79,7 +85,7 @@ export function ProviderConfigModal({
     setSaving(true)
 
     try {
-      await saveMemoryProviderConfig(provider, edited)
+      await saveMemoryProviderConfig(provider, edited, scopeOverride ?? undefined)
       notify({ kind: 'success', title: `${config.label} saved`, message: 'Memory provider configuration updated.' })
       await onSaved()
       onOpenChange(false)
@@ -96,7 +102,7 @@ export function ProviderConfigModal({
         <DialogHeader>
           <DialogTitle icon={SlidersHorizontal}>{config.label} — full configuration</DialogTitle>
           <DialogDescription>
-            Every {config.label} option for the <span className="font-medium">{activeProfile}</span> profile. Blank
+            Every {config.label} option for the <span className="font-medium">{scopeProfile}</span> profile. Blank
             fields fall back to the resolved host or built-in default.
           </DialogDescription>
           {config.docs_url && (

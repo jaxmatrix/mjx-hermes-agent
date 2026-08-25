@@ -66,6 +66,19 @@ export function ApprovalBar({ request, sessionKey }: { request: ApprovalRequest;
   return (
     <RequestBar title="Approval needed">
       <RequestBarDescription mono>{request.command || request.description}</RequestBarDescription>
+      {/*
+        WHY it is being asked, when that is not just a restatement of the
+        command. Universal showed the command alone, which reads fine for
+        `rm -rf /` and not at all for the gates whose "command" is a synthetic
+        display target: an `~/.ssh/config` write arrives as
+        `<write to /home/you/.ssh/config>` with the reason — ProxyCommand /
+        Match exec can run programs — living only in `description`
+        (`tools/file_tools.py::_check_approval_required_write`). Desktop shows
+        both for the same reason.
+      */}
+      {request.description && request.description !== request.command ? (
+        <RequestBarDescription>{request.description}</RequestBarDescription>
+      ) : null}
       <RequestBarActions>
         {CHOICES.filter(c => allowed(c.choice)).map(c => (
           <Button

@@ -227,8 +227,17 @@ export function apiRequestProfile(): null | string {
   return _apiProfile
 }
 
-function profileScoped(): { profile?: string } {
-  return _apiProfile ? { profile: _apiProfile } : {}
+/** The `profile` a profile-scoped REST call rides with.
+ *
+ *  `override` is the settings "Applies to" scope (store/settings-scope): a
+ *  concrete profile the page is editing INSTEAD of the app-wide active one.
+ *  `null`/`undefined` means "no override" and falls back to `_apiProfile`, so
+ *  every pre-existing call site stays byte-identical on the wire and
+ *  single-profile users never send the key at all. */
+function profileScoped(override?: null | string): { profile?: string } {
+  const target = (override ?? _apiProfile ?? '').trim()
+
+  return target ? { profile: target } : {}
 }
 
 // ── Plugin doors ─────────────────────────────────────────────────────────────
@@ -516,9 +525,9 @@ export function renameSession(
   })
 }
 
-export function getGlobalModelInfo(): Promise<ModelInfoResponse> {
+export function getGlobalModelInfo(profile?: null | string): Promise<ModelInfoResponse> {
   return api<ModelInfoResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/model/info',
     timeoutMs: STARTUP_REQUEST_TIMEOUT_MS
   })
@@ -576,9 +585,9 @@ export function getHermesConfig(): Promise<HermesConfig> {
   })
 }
 
-export function getHermesConfigRecord(): Promise<HermesConfigRecord> {
+export function getHermesConfigRecord(profile?: null | string): Promise<HermesConfigRecord> {
   return api<HermesConfigRecord>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/config'
   })
 }
@@ -591,16 +600,16 @@ export function getHermesConfigDefaults(): Promise<HermesConfigRecord> {
   })
 }
 
-export function getHermesConfigSchema(): Promise<ConfigSchemaResponse> {
+export function getHermesConfigSchema(profile?: null | string): Promise<ConfigSchemaResponse> {
   return api<ConfigSchemaResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/config/schema'
   })
 }
 
-export function saveHermesConfig(config: HermesConfigRecord): Promise<{ ok: boolean }> {
+export function saveHermesConfig(config: HermesConfigRecord, profile?: null | string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/config',
     method: 'PUT',
     body: { config }
@@ -608,32 +617,36 @@ export function saveHermesConfig(config: HermesConfigRecord): Promise<{ ok: bool
 }
 
 // surface=declared serves the curated desktop schema; the dashboard consumes the raw plugin schema.
-export function getMemoryProviderConfig(provider: string): Promise<MemoryProviderConfig> {
+export function getMemoryProviderConfig(provider: string, profile?: null | string): Promise<MemoryProviderConfig> {
   return api<MemoryProviderConfig>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/memory/providers/${encodeURIComponent(provider)}/config?surface=declared`
   })
 }
 
-export function saveMemoryProviderConfig(provider: string, values: Record<string, string>): Promise<{ ok: boolean }> {
+export function saveMemoryProviderConfig(
+  provider: string,
+  values: Record<string, string>,
+  profile?: null | string
+): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/memory/providers/${encodeURIComponent(provider)}/config?surface=declared`,
     method: 'PUT',
     body: { values }
   })
 }
 
-export function getEnvVars(): Promise<Record<string, EnvVarInfo>> {
+export function getEnvVars(profile?: null | string): Promise<Record<string, EnvVarInfo>> {
   return api<Record<string, EnvVarInfo>>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/env'
   })
 }
 
-export function setEnvVar(key: string, value: string): Promise<{ ok: boolean }> {
+export function setEnvVar(key: string, value: string, profile?: null | string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/env',
     method: 'PUT',
     body: { key, value }
@@ -697,18 +710,18 @@ export function deleteCustomEndpoint(id: string): Promise<CustomEndpointsRespons
   })
 }
 
-export function deleteEnvVar(key: string): Promise<{ ok: boolean }> {
+export function deleteEnvVar(key: string, profile?: null | string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/env',
     method: 'DELETE',
     body: { key }
   })
 }
 
-export function revealEnvVar(key: string): Promise<{ key: string; value: string }> {
+export function revealEnvVar(key: string, profile?: null | string): Promise<{ key: string; value: string }> {
   return api<{ key: string; value: string }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/env/reveal',
     method: 'POST',
     body: { key }
@@ -765,25 +778,83 @@ export function cancelOAuthSession(sessionId: string): Promise<{ ok: boolean }> 
 
 // Memory-provider OAuth connect (provider-keyed; 404s for providers without an
 // OAuth flow). Profile-scoped: the grant lands in the active profile's config.
-export function startMemoryProviderOAuth(provider: string): Promise<MemoryProviderOAuthStatus> {
+export function startMemoryProviderOAuth(
+  provider: string,
+  profile?: null | string
+): Promise<MemoryProviderOAuthStatus> {
   return api<MemoryProviderOAuthStatus>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/memory/providers/${encodeURIComponent(provider)}/oauth/start`,
     method: 'POST'
   })
 }
 
-export function getMemoryProviderOAuthStatus(provider: string): Promise<MemoryProviderOAuthStatus> {
+export function getMemoryProviderOAuthStatus(
+  provider: string,
+  profile?: null | string
+): Promise<MemoryProviderOAuthStatus> {
   return api<MemoryProviderOAuthStatus>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/memory/providers/${encodeURIComponent(provider)}/oauth/status`
   })
 }
 
-export function getSkills(): Promise<SkillInfo[]> {
+export function getSkills(profile?: null | string): Promise<SkillInfo[]> {
   return api<SkillInfo[]>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/skills'
+  })
+}
+
+/** One skill's FULL text — frontmatter + the whole SKILL.md body — for any
+ *  provenance. The list rows only carry name/description/category; the detail
+ *  pane shows the file. Profile-scoped: the same skill name can be a different
+ *  file in another profile. */
+export function getSkillContent(
+  name: string,
+  profile?: null | string
+): Promise<{ content: string; name: string; path: string }> {
+  return api<{ content: string; name: string; path: string }>({
+    ...profileScoped(profile),
+    path: `/api/skills/content?name=${encodeURIComponent(name)}`
+  })
+}
+
+export interface ProjectSkillsStatus {
+  /** Every SKILL.md the project tier holds, quarantined ones included. */
+  skills: { name: string; path: string; quarantined: boolean }[]
+  /** False when `skills.project_discovery` is off for this profile. */
+  discovery_enabled: boolean
+  /** The enclosing git root, or null when the cwd is not inside a checkout. */
+  root: null | string
+  trusted: boolean
+}
+
+/** What the project-local skill tier holds for `cwd`, and whether that repo is
+ *  trusted. Skills vendored in a repo do not load until the user says so — this
+ *  is the read half of that gate (the CLI half is `hermes skills trust`). */
+export function getProjectSkills(cwd?: null | string, profile?: null | string): Promise<ProjectSkillsStatus> {
+  const dir = (cwd ?? '').trim()
+
+  return api<ProjectSkillsStatus>({
+    ...profileScoped(profile),
+    path: `/api/skills/project${dir ? `?cwd=${encodeURIComponent(dir)}` : ''}`
+  })
+}
+
+/** Trust (or stop trusting) a repo's project-local skills. `path` must be the
+ *  `root` a `getProjectSkills` call resolved — trust is stored by resolved path,
+ *  so trusting a subdirectory would silently load nothing. */
+export function setProjectSkillsTrust(
+  path: string,
+  trusted: boolean,
+  profile?: null | string
+): Promise<{ ok: boolean; root: string; trusted: boolean }> {
+  return api<{ ok: boolean; root: string; trusted: boolean }>({
+    ...profileScoped(profile),
+    path: '/api/skills/project/trust',
+    method: 'PUT',
+    body: { path, trusted, ...profileScoped(profile) }
   })
 }
 
@@ -803,34 +874,42 @@ export interface LearningNodeDetail {
   ok: boolean
 }
 
-export function getLearningNode(id: string): Promise<LearningNodeDetail> {
+export function getLearningNode(id: string, profile?: null | string): Promise<LearningNodeDetail> {
   return api<LearningNodeDetail>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/learning/node?id=${encodeURIComponent(id)}`
   })
 }
 
-export function deleteLearningNode(id: string): Promise<{ message: string; ok: boolean }> {
+export function deleteLearningNode(id: string, profile?: null | string): Promise<{ message: string; ok: boolean }> {
   return api<{ message: string; ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/learning/node',
     method: 'DELETE',
     body: { id }
   })
 }
 
-export function editLearningNode(id: string, content: string): Promise<{ message: string; ok: boolean }> {
+export function editLearningNode(
+  id: string,
+  content: string,
+  profile?: null | string
+): Promise<{ message: string; ok: boolean }> {
   return api<{ message: string; ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/learning/node',
     method: 'PUT',
     body: { content, id }
   })
 }
 
-export function toggleSkill(name: string, enabled: boolean): Promise<{ ok: boolean; name: string; enabled: boolean }> {
+export function toggleSkill(
+  name: string,
+  enabled: boolean,
+  profile?: null | string
+): Promise<{ ok: boolean; name: string; enabled: boolean }> {
   return api<{ ok: boolean; name: string; enabled: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/skills/toggle',
     method: 'PUT',
     body: { name, enabled }
@@ -840,7 +919,9 @@ export function toggleSkill(name: string, enabled: boolean): Promise<{ ok: boole
 export interface McpTestResult {
   ok: boolean
   error?: string
-  tools: { name: string; description: string }[]
+  /** `schema_chars` (the JSON-stringified registry schema's length) is additive —
+   *  older backends omit it and the cost overlay shows no token estimate. */
+  tools: { name: string; description: string; schema_chars?: number }[]
   /** Capability counts (absent on older backends / failed probes). */
   prompts?: number
   resources?: number
@@ -848,9 +929,9 @@ export interface McpTestResult {
 
 /** Connect to the server, list its tools, disconnect. Slow (spawns/handshakes
  *  for real) — well past the 15s default fetch timeout. */
-export function testMcpServer(name: string): Promise<McpTestResult> {
+export function testMcpServer(name: string, profile?: null | string): Promise<McpTestResult> {
   return api<McpTestResult>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/mcp/servers/${encodeURIComponent(name)}/test`,
     method: 'POST',
     timeoutMs: 60_000
@@ -860,9 +941,12 @@ export function testMcpServer(name: string): Promise<McpTestResult> {
 /** Replace the whole `mcp_servers` map (the mcp.json editor's save). Unlike
  *  `saveHermesConfig`, this REPLACES rather than deep-merges, so deletes,
  *  re-enables (dropping `enabled: false`), and removed nested fields persist. */
-export function saveMcpServers(servers: Record<string, Record<string, unknown>>): Promise<{ ok: boolean }> {
+export function saveMcpServers(
+  servers: Record<string, Record<string, unknown>>,
+  profile?: null | string
+): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/mcp/servers',
     method: 'PUT',
     body: { servers }
@@ -882,9 +966,9 @@ export interface McpOAuthFlow {
  *  Capabilities MCP tab drives the browser + polling itself via
  *  completeMcpDesktopOAuth (see lib/mcp-dashboard-oauth), so this only kicks the
  *  flow off — hence a short timeout, not a blocking 5-minute wait. */
-export function authMcpServer(name: string): Promise<McpOAuthFlow> {
+export function authMcpServer(name: string, profile?: null | string): Promise<McpOAuthFlow> {
   return api<McpOAuthFlow>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/mcp/servers/${encodeURIComponent(name)}/auth`,
     method: 'POST',
     timeoutMs: 60_000
@@ -892,10 +976,33 @@ export function authMcpServer(name: string): Promise<McpOAuthFlow> {
 }
 
 /** Poll a running MCP OAuth flow by id until it lands approved/error. */
-export function getMcpOAuthFlow(flowId: string): Promise<McpOAuthFlow> {
+export function getMcpOAuthFlow(flowId: string, profile?: null | string): Promise<McpOAuthFlow> {
   return api<McpOAuthFlow>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/mcp/oauth/flows/${encodeURIComponent(flowId)}`
+  })
+}
+
+/**
+ * Abandon a running MCP OAuth flow (MJXHRM-444). Lives beside its GET twin
+ * rather than in lib/gateway-rest.ts, which would put the two halves of one
+ * route in different files.
+ *
+ * The backend marks the flow errored with "Cancelled by user", so the poller
+ * lands on `status: 'error'` instead of hanging. Without this, a user who
+ * closes the dialog leaves the flow — and its loopback redirect listener —
+ * alive until it is garbage-collected, and a later `authMcpServer` for the same
+ * server races it.
+ *
+ * Idempotent by design: an unknown or already-collected id answers
+ * `{ok: true, status: 'expired'}`, NOT a 404, so a cleanup path can call this
+ * unconditionally without first checking whether the flow still exists.
+ */
+export function cancelMcpOAuthFlow(flowId: string, profile?: null | string): Promise<{ ok: boolean; status: string }> {
+  return api<{ ok: boolean; status: string }>({
+    ...profileScoped(profile),
+    path: `/api/mcp/oauth/flows/${encodeURIComponent(flowId)}`,
+    method: 'DELETE'
   })
 }
 
@@ -999,17 +1106,24 @@ export function grantComputerUsePermissions(): Promise<ActionResponse> {
   })
 }
 
-export function getMessagingPlatforms(): Promise<MessagingPlatformsResponse> {
+// Profile-scoped: both handlers take `?profile=` and read that profile's
+// .env + gateway state (`web_server.py get_messaging_platforms`). Universal
+// used to send nothing at all, so the page showed the GATEWAY's own channel
+// credentials even while the app was operating as another profile.
+export function getMessagingPlatforms(profile?: null | string): Promise<MessagingPlatformsResponse> {
   return api<MessagingPlatformsResponse>({
+    ...profileScoped(profile),
     path: '/api/messaging/platforms'
   })
 }
 
 export function updateMessagingPlatform(
   platformId: string,
-  body: MessagingPlatformUpdate
+  body: MessagingPlatformUpdate,
+  profile?: null | string
 ): Promise<{ ok: boolean; platform: string }> {
   return api<{ ok: boolean; platform: string }>({
+    ...profileScoped(profile),
     path: `/api/messaging/platforms/${encodeURIComponent(platformId)}`,
     method: 'PUT',
     body
@@ -1072,24 +1186,36 @@ export function setWebhookEnabled(
   })
 }
 
-export function getCronJobs(profile?: string): Promise<CronJob[]> {
-  const suffix = profile ? `?profile=${encodeURIComponent(profile)}` : ''
+/**
+ * `?profile=` for a cron route.
+ *
+ * Cron jobs live in PER-PROFILE stores on disk, and every one of these routes
+ * takes an optional `profile` that decides which store it opens. Only the list
+ * ever sent one, so browsing another profile (or the aggregated 'all' view) and
+ * then pausing, triggering, editing or deleting a row addressed the ACTIVE
+ * profile's store instead — where that job id does not exist. Every job record
+ * comes back annotated with its own `profile` (web_server `_annotate_cron_job`),
+ * so the caller passes the job's, and the action lands on the job the row names.
+ */
+const cronProfileQuery = (profile: null | string | undefined, separator = '?'): string =>
+  profile ? `${separator}profile=${encodeURIComponent(profile)}` : ''
 
+export function getCronJobs(profile?: string): Promise<CronJob[]> {
   return api<CronJob[]>({
-    path: `/api/cron/jobs${suffix}`,
+    path: `/api/cron/jobs${cronProfileQuery(profile)}`,
     timeoutMs: STARTUP_REQUEST_TIMEOUT_MS
   })
 }
 
-export function getCronJob(jobId: string): Promise<CronJob> {
+export function getCronJob(jobId: string, profile?: null | string): Promise<CronJob> {
   return api<CronJob>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}`
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}${cronProfileQuery(profile)}`
   })
 }
 
-export async function getCronJobRuns(jobId: string, limit = 20): Promise<SessionInfo[]> {
+export async function getCronJobRuns(jobId: string, limit = 20, profile?: null | string): Promise<SessionInfo[]> {
   const { runs } = await api<{ runs: SessionInfo[] }>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/runs?limit=${limit}`
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/runs?limit=${limit}${cronProfileQuery(profile, '&')}`
   })
 
   return runs ?? []
@@ -1104,46 +1230,46 @@ export async function getCronDeliveryTargets(): Promise<CronDeliveryTarget[]> {
   return targets ?? []
 }
 
-export function createCronJob(body: CronJobCreatePayload): Promise<CronJob> {
+export function createCronJob(body: CronJobCreatePayload, profile?: null | string): Promise<CronJob> {
   return api<CronJob>({
-    path: '/api/cron/jobs',
+    path: `/api/cron/jobs${cronProfileQuery(profile)}`,
     method: 'POST',
     body
   })
 }
 
-export function updateCronJob(jobId: string, updates: CronJobUpdates): Promise<CronJob> {
+export function updateCronJob(jobId: string, updates: CronJobUpdates, profile?: null | string): Promise<CronJob> {
   return api<CronJob>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}`,
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}${cronProfileQuery(profile)}`,
     method: 'PUT',
     body: { updates }
   })
 }
 
-export function pauseCronJob(jobId: string): Promise<CronJob> {
+export function pauseCronJob(jobId: string, profile?: null | string): Promise<CronJob> {
   return api<CronJob>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/pause`,
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/pause${cronProfileQuery(profile)}`,
     method: 'POST'
   })
 }
 
-export function resumeCronJob(jobId: string): Promise<CronJob> {
+export function resumeCronJob(jobId: string, profile?: null | string): Promise<CronJob> {
   return api<CronJob>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/resume`,
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/resume${cronProfileQuery(profile)}`,
     method: 'POST'
   })
 }
 
-export function triggerCronJob(jobId: string): Promise<CronJob> {
+export function triggerCronJob(jobId: string, profile?: null | string): Promise<CronJob> {
   return api<CronJob>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/trigger`,
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}/trigger${cronProfileQuery(profile)}`,
     method: 'POST'
   })
 }
 
-export function deleteCronJob(jobId: string): Promise<{ ok: boolean }> {
+export function deleteCronJob(jobId: string, profile?: null | string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    path: `/api/cron/jobs/${encodeURIComponent(jobId)}`,
+    path: `/api/cron/jobs/${encodeURIComponent(jobId)}${cronProfileQuery(profile)}`,
     method: 'DELETE'
   })
 }
@@ -1232,18 +1358,21 @@ export function getProfileSetupCommand(name: string): Promise<ProfileSetupComman
   })
 }
 
-export function getUsageAnalytics(days = 30): Promise<AnalyticsResponse> {
+export function getUsageAnalytics(days = 30, profile?: null | string): Promise<AnalyticsResponse> {
   return api<AnalyticsResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/analytics/usage?days=${Math.max(1, Math.floor(days))}`
   })
 }
 
-export function getGlobalModelOptions(opts?: {
-  refresh?: boolean
-  includeUnconfigured?: boolean
-  explicitOnly?: boolean
-}): Promise<ModelOptionsResponse> {
+export function getGlobalModelOptions(
+  opts?: {
+    refresh?: boolean
+    includeUnconfigured?: boolean
+    explicitOnly?: boolean
+  },
+  profile?: null | string
+): Promise<ModelOptionsResponse> {
   const params = new URLSearchParams()
 
   if (opts?.refresh) {
@@ -1259,7 +1388,7 @@ export function getGlobalModelOptions(opts?: {
   }
 
   return api<ModelOptionsResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: params.size > 0 ? `/api/model/options?${params.toString()}` : '/api/model/options',
     timeoutMs: STARTUP_REQUEST_TIMEOUT_MS
   })
@@ -1275,9 +1404,12 @@ export interface RecommendedDefaultModel {
 // Recommended default model for a freshly-authenticated provider. Mirrors the
 // curation `hermes model` does — for Nous it honors the free/paid tier so a
 // free user gets a free model instead of a paid default.
-export function getRecommendedDefaultModel(provider: string): Promise<RecommendedDefaultModel> {
+export function getRecommendedDefaultModel(
+  provider: string,
+  profile?: null | string
+): Promise<RecommendedDefaultModel> {
   return api<RecommendedDefaultModel>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/model/recommended-default?provider=${encodeURIComponent(provider)}`
   })
 }
@@ -1298,32 +1430,38 @@ export function setGlobalModel(
   })
 }
 
-export function getAuxiliaryModels(): Promise<AuxiliaryModelsResponse> {
+export function getAuxiliaryModels(profile?: null | string): Promise<AuxiliaryModelsResponse> {
   return api<AuxiliaryModelsResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/model/auxiliary'
   })
 }
 
-export function getMoaModels(): Promise<MoaConfigResponse> {
+export function getMoaModels(profile?: null | string): Promise<MoaConfigResponse> {
   return api<MoaConfigResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/model/moa'
   })
 }
 
-export function saveMoaModels(body: MoaConfigResponse): Promise<MoaConfigResponse & { ok: boolean }> {
+export function saveMoaModels(
+  body: MoaConfigResponse,
+  profile?: null | string
+): Promise<MoaConfigResponse & { ok: boolean }> {
   return api<MoaConfigResponse & { ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/model/moa',
     method: 'PUT',
     body
   })
 }
 
-export function setModelAssignment(body: ModelAssignmentRequest): Promise<ModelAssignmentResponse> {
+export function setModelAssignment(
+  body: ModelAssignmentRequest,
+  profile?: null | string
+): Promise<ModelAssignmentResponse> {
   return api<ModelAssignmentResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/model/set',
     method: 'POST',
     body
@@ -1356,9 +1494,9 @@ export function checkHermesUpdate(force = false): Promise<BackendUpdateCheckResp
   })
 }
 
-export function getActionStatus(name: string, lines = 200): Promise<ActionStatusResponse> {
+export function getActionStatus(name: string, lines = 200, profile?: null | string): Promise<ActionStatusResponse> {
   return api<ActionStatusResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/actions/${encodeURIComponent(name)}/status?lines=${Math.max(1, lines)}`
   })
 }
@@ -1382,8 +1520,12 @@ export function speakText(text: string): Promise<AudioSpeakResponse> {
   })
 }
 
-export function getElevenLabsVoices(): Promise<ElevenLabsVoicesResponse> {
+// Profile-scoped: the handler takes `?profile=` and reads that profile's
+// ElevenLabs key (`web_server.py get_elevenlabs_voices`). The voice dropdown on
+// Settings -> Voice has to list the voices of the profile it is editing.
+export function getElevenLabsVoices(profile?: null | string): Promise<ElevenLabsVoicesResponse> {
   return api<ElevenLabsVoicesResponse>({
+    ...profileScoped(profile),
     path: '/api/audio/elevenlabs/voices'
   })
 }
@@ -1396,61 +1538,69 @@ export function getElevenLabsVoices(): Promise<ElevenLabsVoicesResponse> {
 
 const HUB_REQUEST_TIMEOUT_MS = 45_000
 
-export function getSkillHubSources(): Promise<SkillHubSourcesResponse> {
+export function getSkillHubSources(profile?: null | string): Promise<SkillHubSourcesResponse> {
   return api<SkillHubSourcesResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/skills/hub/sources',
     timeoutMs: HUB_REQUEST_TIMEOUT_MS
   })
 }
 
-export function searchSkillsHub(query: string, source = 'all', limit = 20): Promise<SkillHubSearchResponse> {
+export function searchSkillsHub(
+  query: string,
+  source = 'all',
+  limit = 20,
+  profile?: null | string
+): Promise<SkillHubSearchResponse> {
   const params = new URLSearchParams({ q: query, source, limit: String(limit) })
 
   return api<SkillHubSearchResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/skills/hub/search?${params.toString()}`,
     timeoutMs: HUB_REQUEST_TIMEOUT_MS
   })
 }
 
-export function previewSkillHub(identifier: string): Promise<SkillHubPreview> {
+export function previewSkillHub(identifier: string, profile?: null | string): Promise<SkillHubPreview> {
   return api<SkillHubPreview>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/skills/hub/preview?identifier=${encodeURIComponent(identifier)}`,
     timeoutMs: HUB_REQUEST_TIMEOUT_MS
   })
 }
 
-export function scanSkillHub(identifier: string): Promise<SkillHubScanResult> {
+export function scanSkillHub(identifier: string, profile?: null | string): Promise<SkillHubScanResult> {
   return api<SkillHubScanResult>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/skills/hub/scan?identifier=${encodeURIComponent(identifier)}`,
     timeoutMs: HUB_REQUEST_TIMEOUT_MS
   })
 }
 
-export function installSkillFromHub(identifier: string): Promise<ActionResponse> {
+export function installSkillFromHub(identifier: string, profile?: null | string): Promise<ActionResponse> {
   return api<ActionResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/skills/hub/install',
     method: 'POST',
-    body: { identifier }
+    // The profile rides BOTH the querystring (profileScoped) and the body: the
+    // install route reads `body.profile or profile`, and the body field is the
+    // one that survives into the spawned `hermes skills install` action.
+    body: { identifier, ...profileScoped(profile) }
   })
 }
 
-export function uninstallSkillFromHub(name: string): Promise<ActionResponse> {
+export function uninstallSkillFromHub(name: string, profile?: null | string): Promise<ActionResponse> {
   return api<ActionResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/skills/hub/uninstall',
     method: 'POST',
-    body: { name }
+    body: { name, ...profileScoped(profile) }
   })
 }
 
-export function updateSkillsFromHub(): Promise<ActionResponse> {
+export function updateSkillsFromHub(profile?: null | string): Promise<ActionResponse> {
   return api<ActionResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/skills/hub/update',
     method: 'POST',
     body: {}
@@ -1463,35 +1613,36 @@ export function updateSkillsFromHub(): Promise<ActionResponse> {
 // config.yaml via saveHermesConfig.
 // ---------------------------------------------------------------------------
 
-export function listMcpServers(): Promise<{ servers: McpServerSummary[] }> {
+export function listMcpServers(profile?: null | string): Promise<{ servers: McpServerSummary[] }> {
   return api<{ servers: McpServerSummary[] }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/mcp/servers'
   })
 }
 
-export function setMcpServerEnabled(name: string, enabled: boolean): Promise<{ ok: boolean }> {
+export function setMcpServerEnabled(name: string, enabled: boolean, profile?: null | string): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: `/api/mcp/servers/${encodeURIComponent(name)}/enabled`,
     method: 'PUT',
     body: { enabled }
   })
 }
 
-export function getMcpCatalog(): Promise<McpCatalogResponse> {
+export function getMcpCatalog(profile?: null | string): Promise<McpCatalogResponse> {
   return api<McpCatalogResponse>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/mcp/catalog'
   })
 }
 
 export function installMcpCatalogEntry(
   name: string,
-  env: Record<string, string> = {}
+  env: Record<string, string> = {},
+  profile?: null | string
 ): Promise<{ ok: boolean; name?: string; pid?: number; action?: string; background?: boolean }> {
   return api<{ ok: boolean; name?: string; pid?: number; action?: string; background?: boolean }>({
-    ...profileScoped(),
+    ...profileScoped(profile),
     path: '/api/mcp/catalog/install',
     method: 'POST',
     body: { name, env, enable: true },

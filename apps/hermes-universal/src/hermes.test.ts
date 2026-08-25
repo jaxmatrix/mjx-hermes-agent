@@ -6,20 +6,28 @@ import { api } from '@/lib/api'
 import type { SessionInfo } from '@/types/hermes'
 
 import {
+  cancelMcpOAuthFlow,
   createWebhook,
   deleteWebhook,
   enableWebhooks,
   getAutomationBlueprints,
+  getCronJobRuns,
+  getEnvVars,
   getHermesConfig,
+  getMcpOAuthFlow,
+  getMessagingPlatforms,
   getSession,
   getStatus,
   getWebhooks,
   instantiateAutomationBlueprint,
   listAllProfileSessions,
   listSessions,
+  pauseCronJob,
   saveHermesConfig,
   setApiRequestProfile,
-  setWebhookEnabled
+  setWebhookEnabled,
+  triggerCronJob,
+  updateCronJob
 } from './hermes'
 
 const mockApi = vi.mocked(api)
@@ -183,5 +191,112 @@ describe('session list paging keeps back-filled pins', () => {
     const result = await listAllProfileSessions(2)
 
     expect(result.sessions.map(s => s.id)).toEqual(['a', 'b', 'old-pin'])
+  })
+})
+
+// --- MCP OAuth flow cancel (MJXHRM-444) ------------------------------------
+
+describe('MCP OAuth flow lifecycle', () => {
+  it('cancels the same flow the poller reads, by DELETE on that one path', async () => {
+    await getMcpOAuthFlow('flow 1')
+    await cancelMcpOAuthFlow('flow 1')
+
+    const [poll, cancel] = mockApi.mock.calls.map(call => call[0])
+
+    // Same URL, opposite verbs: a cancel spelled against a different path would
+    // leave the flow (and its loopback redirect listener) running.
+    expect(cancel).toMatchObject({ path: poll.path, method: 'DELETE' })
+    expect(poll).not.toHaveProperty('method')
+    expect(cancel.path).toBe('/api/mcp/oauth/flows/flow%201')
+  })
+
+  // An unknown or garbage-collected id answers {ok, status: 'expired'}, not a
+  // 404 — so a cleanup path can fire this without first checking existence.
+  it('treats an already-gone flow as a resolved cancel', async () => {
+    mockApi.mockResolvedValueOnce({ ok: true, status: 'expired' })
+
+    await expect(cancelMcpOAuthFlow('gone')).resolves.toEqual({ ok: true, status: 'expired' })
+  })
+})
+
+// The settings "Applies to" scope (store/settings-scope) reaches the wire as
+// this optional trailing argument. The three states are distinct on purpose:
+// an override wins, no override falls back to the app-wide profile, and
+// neither means the key is ABSENT — which is what keeps single-profile users'
+// requests byte-identical to before the selector existed.
+describe('profile-scoped settings calls', () => {
+  afterEach(() => setApiRequestProfile(null))
+
+  it('omits profile entirely with no app profile and no override', async () => {
+    await getEnvVars()
+    expect(mockApi.mock.calls[0][0]).not.toHaveProperty('profile')
+  })
+
+  it('falls back to the app-wide profile when no override is given', async () => {
+    setApiRequestProfile('work')
+    await getEnvVars()
+    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ profile: 'work' }))
+  })
+
+  // The whole point: the override targets a profile the app is NOT on.
+  it('sends the override in preference to the app-wide profile', async () => {
+    setApiRequestProfile('work')
+    await getEnvVars('research')
+    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ profile: 'research' }))
+  })
+
+  it('scopes a config save', async () => {
+    await saveHermesConfig({ timezone: 'UTC' }, 'research')
+    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ method: 'PUT', profile: 'research' }))
+  })
+
+  // Messaging carried NO profile at all before this — it always hit the
+  // gateway's own channels, whatever the app was scoped to.
+  it('scopes the messaging platform list', async () => {
+    setApiRequestProfile('work')
+    await getMessagingPlatforms()
+    expect(mockApi).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/messaging/platforms', profile: 'work' }))
+  })
+})
+
+// MJXHRM-457. Cron jobs live in per-profile stores and every route takes an
+// optional ?profile= choosing which one it opens. Only the list ever sent it, so
+// acting on a row from another profile hit the ACTIVE profile's store instead.
+describe('cron routes carry ?profile=', () => {
+  const pathOf = () => String((mockApi.mock.calls.at(-1)?.[0] as { path: string }).path)
+
+  it('stamps the profile on a trigger', async () => {
+    await triggerCronJob('j1', 'work')
+    expect(pathOf()).toBe('/api/cron/jobs/j1/trigger?profile=work')
+  })
+
+  it('stamps the profile on a pause', async () => {
+    await pauseCronJob('j1', 'work')
+    expect(pathOf()).toBe('/api/cron/jobs/j1/pause?profile=work')
+  })
+
+  it('stamps the profile on an update', async () => {
+    await updateCronJob('j1', { name: 'x' }, 'work')
+    expect(pathOf()).toBe('/api/cron/jobs/j1?profile=work')
+  })
+
+  // The runs route already has a query string, so the separator has to be '&' —
+  // a second '?' makes `profile` part of the `limit` value and the backend
+  // silently falls back to the active profile.
+  it('appends rather than restarts the query string on the runs route', async () => {
+    await getCronJobRuns('j1', 5, 'work')
+    expect(pathOf()).toBe('/api/cron/jobs/j1/runs?limit=5&profile=work')
+  })
+
+  it('escapes a profile name that needs it', async () => {
+    await triggerCronJob('j1', 'my profile/2')
+    expect(pathOf()).toBe('/api/cron/jobs/j1/trigger?profile=my%20profile%2F2')
+  })
+
+  // A fixture that DISAGREES: an older gateway does not annotate its records, so
+  // there is no profile to send and inventing one would retarget the request.
+  it('sends no profile when the job carries none', async () => {
+    await triggerCronJob('j1')
+    expect(pathOf()).toBe('/api/cron/jobs/j1/trigger')
   })
 })

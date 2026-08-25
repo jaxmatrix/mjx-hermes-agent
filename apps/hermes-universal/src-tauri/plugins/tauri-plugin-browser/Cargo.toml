@@ -1,0 +1,36 @@
+# Local (in-tree) Tauri v2 plugin: the MOBILE half of the in-app browser
+# (MJXHRM-447).
+#
+# It exists because a mobile guest is a NATIVE VIEW, not a Tauri window. On
+# desktop the guest is a child webview (`Window::add_child`), but on Android a
+# "window" is an Activity and on iOS a UIScene — neither can sit at a rect
+# inside the app's own layout. Only a Kotlin `WebView` / Swift `WKWebView`
+# added to the current Activity's content root / the Tauri view controller's
+# view can, and only a JNI/Swift half can hold one.
+#
+# It is also where the two things Tauri cannot give us on mobile live:
+# `WebChromeClient.onConsoleMessage` (a real console PUSH, where desktop has to
+# poll) and `onReceivedError` / `didFailProvisionalNavigation` (real load-error
+# codes, where desktop only has silence and a timeout).
+#
+# Structured exactly like plugins/tauri-plugin-mic, whose build wiring this
+# mirrors line for line.
+[package]
+name = "tauri-plugin-browser"
+version = "0.1.0"
+description = "Native WebView guest host for Tauri v2 (Android/iOS). Desktop uses a child webview instead and compiles a no-op here."
+authors = ["Hermes Universal"]
+edition = "2021"
+rust-version = "1.77.2"
+# REQUIRED: must match build.rs's plugin name; Tauri keys plugin discovery + the
+# generated Android/iOS subproject wiring on this value.
+links = "tauri-plugin-browser"
+
+[dependencies]
+tauri = { version = "2" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "2.4.0", features = ["build"] }

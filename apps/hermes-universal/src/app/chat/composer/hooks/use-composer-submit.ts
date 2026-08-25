@@ -6,6 +6,7 @@ import { hasClarifyRequest, skipClarifyRequest } from '@/store/clarify'
 import { clearSessionDraft, type ComposerAttachment } from '@/store/composer'
 import { resetBrowseState } from '@/store/composer-input-history'
 import { enqueueQueuedPrompt, type QueuedPromptEntry } from '@/store/composer-queue'
+import { hasMcpSetupRequest, skipMcpSetupRequest } from '@/store/mcp-setup'
 
 import { cloneAttachments, type QueueEditState } from '../composer-utils'
 import { onComposerSubmitRequest } from '../focus'
@@ -218,6 +219,14 @@ export function useComposerSubmit({
     // draft live for a tick — long enough for a second Enter to send it twice.
     if (payloadPresent && !queueEdit && hasClarifyRequest(activeQueueSessionKey)) {
       void skipClarifyRequest(activeQueueSessionKey)
+    }
+
+    // Same deal for a parked `setup_mcp` consent card, and worse: its `_block`
+    // budget is TEN minutes, not five, and going unanswered reports `unanswered`
+    // to the model rather than a decline. Typing a real message instead of
+    // touching the card IS "not now", so decline it and let the words ride on.
+    if (payloadPresent && !queueEdit && hasMcpSetupRequest(activeQueueSessionKey)) {
+      void skipMcpSetupRequest(activeQueueSessionKey)
     }
 
     // Compaction counts as busy even when the turn flag says otherwise: a

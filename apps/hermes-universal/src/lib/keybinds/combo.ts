@@ -207,7 +207,10 @@ function labelForBase(base: string): string {
   return base.length === 1 ? base.toUpperCase() : base
 }
 
-function labelForMod(mod: string): string {
+// Display token for one modifier ("mod" → "⌘" on macOS, "Ctrl" elsewhere). Exported
+// through the plugin SDK so plugins can label the platform modifier the way the
+// app does (the shared kanban sample uses it for its select hint).
+export function formatModifierToken(mod: string): string {
   if (mod === 'mod') {
     return IS_MAC ? '⌘' : 'Ctrl'
   }
@@ -233,7 +236,7 @@ export function comboTokens(combo: string): string[] {
   const parts = combo.split('+')
   const base = parts.pop() ?? ''
 
-  return [...parts.map(labelForMod), labelForBase(base)]
+  return [...parts.map(formatModifierToken), labelForBase(base)]
 }
 
 // Human-readable label, e.g. "⌘⇧K" on macOS, "Ctrl+Shift+K" elsewhere.

@@ -1,3 +1,5 @@
+import '@/store/suggestion-providers/mcp'
+
 import { useAui, useAuiState, useComposerRuntime } from '@assistant-ui/react'
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 
@@ -5,6 +7,7 @@ import { SLASH_COMMAND_RE } from '@/lib/chat-runtime'
 import { onComposerDraftSyncRequest } from '@/lib/composer-draft-bus'
 import { type ComposerAttachment, stashSessionDraft, takeSessionDraft } from '@/store/composer'
 import { isBrowsingHistory } from '@/store/composer-input-history'
+import { clearDraftSuggestions, sampleComposerDraft } from '@/store/composer-suggestions'
 
 import {
   cloneAttachments,
@@ -271,6 +274,9 @@ export function useComposerDraft({
     const sync = () => {
       const text = composerRuntime.getState().text
       draftRef.current = text
+      // Composer suggestion pills for THIS session's draft (debounced +
+      // change-gated in the bus — this is just a timer reset).
+      sampleComposerDraft(sessionIdRef.current ?? null, text)
 
       const editor = editorRef.current
 
@@ -381,6 +387,12 @@ export function useComposerDraft({
       } else if (!isBrowsingHistory(sessionId)) {
         stashAt(activeQueueSessionKey, latestText)
       }
+
+      // Withdraw the outgoing session's draft suggestions (and any pending
+      // sample timer). The incoming session re-earns its own from the draft
+      // restore above — without this a leaving session's "Add Linear" pill
+      // lingers in the map and re-appears stale on the way back.
+      clearDraftSuggestions(sessionIdRef.current)
     }
     // `sessionId` is deliberately the STALE (outgoing) one — do NOT "fix" this
     // to `sessionIdRef.current` for consistency with the rest of the file. This

@@ -3,19 +3,10 @@ import { Link } from 'react-router-dom'
 
 import { SidebarTrigger } from '@/app/shell/sidebar'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger
-} from '@/components/ui/dialog'
 import { getHermesConfigDefaults, saveHermesConfig } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { ChevronRight, Refresh } from '@/lib/icons'
+import { confirm } from '@/store/confirm'
 import { notify, notifyError } from '@/store/notifications'
 
 import { SettingsContent } from './primitives'
@@ -31,6 +22,16 @@ function ResetToDefaults() {
   const [busy, setBusy] = useState(false)
 
   const reset = async () => {
+    const ok = await confirm({
+      confirmLabel: t.settings.resetToDefaults,
+      destructive: true,
+      title: t.settings.resetConfirm
+    })
+
+    if (!ok) {
+      return
+    }
+
     setBusy(true)
 
     try {
@@ -47,30 +48,10 @@ function ResetToDefaults() {
   }
 
   return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <Button className="mt-6 w-full" variant="outline">
-          <Refresh className="size-4" />
-          {t.settings.resetToDefaults}
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{t.settings.resetToDefaults}</DialogTitle>
-          <DialogDescription>{t.settings.resetConfirm}</DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="ghost">{t.common.cancel}</Button>
-          </DialogClose>
-          <DialogClose asChild>
-            <Button disabled={busy} onClick={() => void reset()} variant="destructive">
-              {t.settings.resetToDefaults}
-            </Button>
-          </DialogClose>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <Button className="mt-6 w-full" disabled={busy} onClick={() => void reset()} variant="outline">
+      <Refresh className="size-4" />
+      {t.settings.resetToDefaults}
+    </Button>
   )
 }
 

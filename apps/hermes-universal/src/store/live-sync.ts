@@ -32,6 +32,21 @@ export const $cronChangeTick = atom(0)
 export const $sessionsChangeTick = atom(0)
 export const $platformsChangeTick = atom(0)
 export const $pairingChangeTick = atom(0)
+/**
+ * The gateway's plugin directory moved (MJXHRM-416).
+ *
+ * WIRED BUT NEVER FIRED, deliberately and visibly: the gateway's change-watcher
+ * table (`tui_gateway/server.py` `_broadcast_watched_changes`) has five
+ * signature rows and none of them is the plugin directory, so nothing emits
+ * `plugins.changed` today. Adding one is a NEW backend push event, which the
+ * shared-gateway freeze forbids — so 455 lands the client half and a post-freeze
+ * ticket adds the row, with no client change needed on that day.
+ *
+ * The user-visible symptom 416 was filed about is already covered meanwhile:
+ * `contrib/plugin-disk.ts`'s 2 s local poll reconciles membership on its own.
+ * This is the cheaper path, not the only one.
+ */
+export const $pluginsChangeTick = atom(0)
 
 /** `pet.info.meta`-shaped payload carried on `pet.changed` — lets the pet skip
  *  the heavy spritesheet refetch when the broadcast already says enabled=false. */
@@ -67,6 +82,10 @@ export function notifyPlatformsChanged(): void {
 
 export function notifyPairingChanged(): void {
   $pairingChangeTick.set($pairingChangeTick.get() + 1)
+}
+
+export function notifyPluginsChanged(): void {
+  $pluginsChangeTick.set($pluginsChangeTick.get() + 1)
 }
 
 /**

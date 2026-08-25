@@ -12,7 +12,12 @@ vi.mock('@/hermes', () => ({
 vi.mock('@/store/profile', async () => {
   const { atom } = await import('nanostores')
 
-  return { $activeGatewayProfile: atom('default') }
+  // `normalizeProfileKey` is read by store/settings-scope at import time (the
+  // panel is scoped by the settings "Applies to" selector).
+  return {
+    $activeGatewayProfile: atom('default'),
+    normalizeProfileKey: (name: null | string | undefined) => (name ?? '').trim() || 'default'
+  }
 })
 
 vi.mock('@/store/notifications', () => ({

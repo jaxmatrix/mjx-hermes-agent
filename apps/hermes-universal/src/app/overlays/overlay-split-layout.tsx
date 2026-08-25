@@ -31,6 +31,8 @@ interface OverlayMainProps {
 interface OverlayNavItemProps {
   active: boolean
   icon: IconComponent
+  /** Stable identity for the row, used as its `data-tour` handle. */
+  id?: string
   label: string
   // Renders as an indented child of another nav item: smaller icon and a
   // lighter active state so it never competes with the boxed parent item.
@@ -59,6 +61,10 @@ export function OverlaySidebar({ children, className }: OverlaySidebarProps) {
         'flex min-h-0 flex-col gap-0.5 overflow-y-auto bg-(--ui-sidebar-surface-background) px-2.5 pb-3 pt-[calc(var(--titlebar-height)/2+1rem)]',
         className
       )}
+      // Every overlay's left nav (settings, command center, cron, profiles)
+      // answers to one name, so a tour can point at "the nav" without knowing
+      // which overlay is open. See lib/tour.
+      data-tour="overlay-nav"
     >
       {children}
     </aside>
@@ -80,7 +86,7 @@ export function OverlayMain({ children, className }: OverlayMainProps) {
   )
 }
 
-export function OverlayNavItem({ active, icon: Icon, label, nested, onClick, trailing }: OverlayNavItemProps) {
+export function OverlayNavItem({ active, icon: Icon, id, label, nested, onClick, trailing }: OverlayNavItemProps) {
   return (
     <button
       className={cn(
@@ -93,6 +99,9 @@ export function OverlayNavItem({ active, icon: Icon, label, nested, onClick, tra
             ? 'border-(--ui-stroke-tertiary) bg-(--ui-bg-tertiary) text-foreground'
             : 'border-transparent bg-transparent text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground'
       )}
+      // A tour can point at one nav row by name (`[data-tour="nav-models"]`)
+      // instead of guessing at nth-child. See lib/tour.
+      data-tour={id ? `nav-${id}` : undefined}
       onClick={onClick}
       type="button"
     >
@@ -136,13 +145,20 @@ export function OverlayNav({ footer, groups }: { footer?: ReactNode; groups: Ove
         {groups.map(group => (
           <Fragment key={group.id}>
             {group.gapBefore && <div aria-hidden className="h-2" />}
-            <OverlayNavItem active={group.active} icon={group.icon} label={group.label} onClick={group.onSelect} />
+            <OverlayNavItem
+              active={group.active}
+              icon={group.icon}
+              id={group.id}
+              label={group.label}
+              onClick={group.onSelect}
+            />
             {group.children && group.active && (
               <div className="ms-3.5 flex flex-col gap-0.5 ps-1.5">
                 {group.children.map(child => (
                   <OverlayNavItem
                     active={child.active}
                     icon={child.icon}
+                    id={child.id}
                     key={child.id}
                     label={child.label}
                     nested

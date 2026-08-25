@@ -21,11 +21,17 @@ import { cn } from '@/lib/utils'
 // reacts via onRenamed. Unchanged name is a no-op close.
 export function RenameProfileDialog({
   currentName,
+  isDefault = false,
   onClose,
   onRenamed,
   open
 }: {
   currentName: string
+  /** Default profile: the backend sets a presentation-only `display_name`
+   *  (profile.yaml) instead of moving the directory, so the canonical id stays
+   *  "default" and the value is free text — no slug rules, Unicode fine.
+   *  Ported from apps/desktop/src/app/profiles/rename-profile-dialog.tsx. */
+  isDefault?: boolean
   onClose: () => void
   onRenamed?: (name: string) => Promise<void> | void
   open: boolean
@@ -41,14 +47,15 @@ export function RenameProfileDialog({
       return
     }
 
-    setName(currentName)
+    // Display-name mode starts blank — "default" is the id, not a name.
+    setName(isDefault ? '' : currentName)
     setError(null)
     setStatus('idle')
-  }, [currentName, open])
+  }, [currentName, isDefault, open])
 
   const trimmed = name.trim()
-  const unchanged = trimmed === currentName
-  const invalid = trimmed !== '' && !unchanged && !isValidProfileName(trimmed)
+  const unchanged = !isDefault && trimmed === currentName
+  const invalid = trimmed !== '' && !unchanged && !isDefault && !isValidProfileName(trimmed)
   const busy = status === 'saving' || status === 'done'
 
   async function handleSubmit(event: React.FormEvent) {
@@ -84,18 +91,24 @@ export function RenameProfileDialog({
     <Dialog onOpenChange={value => !value && !busy && onClose()} open={open}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{p.renameTitle}</DialogTitle>
+          <DialogTitle>{isDefault ? p.displayNameTitle : p.renameTitle}</DialogTitle>
           <DialogDescription>
-            {p.renameDescPrefix}
-            <span className="font-mono">~/.local/bin</span>
-            {p.renameDescSuffix}
+            {isDefault ? (
+              p.displayNameDesc
+            ) : (
+              <>
+                {p.renameDescPrefix}
+                <span className="font-mono">~/.local/bin</span>
+                {p.renameDescSuffix}
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
         <form className="grid gap-3" onSubmit={handleSubmit}>
           <div className="grid gap-1.5">
             <label className="text-xs font-medium" htmlFor="rename-profile-name">
-              {p.newNameLabel}
+              {isDefault ? p.displayNameLabel : p.newNameLabel}
             </label>
             <Input
               aria-invalid={invalid}
@@ -104,9 +117,11 @@ export function RenameProfileDialog({
               onChange={event => setName(event.target.value)}
               value={name}
             />
-            <p className={cn('text-[0.66rem] leading-4', invalid ? 'text-destructive' : 'text-muted-foreground')}>
-              {p.nameHint}
-            </p>
+            {!isDefault && (
+              <p className={cn('text-[0.66rem] leading-4', invalid ? 'text-destructive' : 'text-muted-foreground')}>
+                {p.nameHint}
+              </p>
+            )}
           </div>
 
           {error && (

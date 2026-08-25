@@ -538,6 +538,12 @@
     --ui-sidebar-surface-background: var(--ui-bg-sidebar);
     --ui-chat-surface-background: var(--ui-bg-chrome);
     --ui-editor-surface-background: var(--ui-bg-chrome);
+    /* The terminal's own surface. Identical to the editor's off glass, and
+       deliberately NOT thinned under it: xterm resolves this to a concrete
+       canvas colour, and a WebGL/canvas renderer cannot composite page alpha,
+       so a semi-transparent value paints a wrong flat colour rather than
+       glass. `terminal-theme.ts` probes this variable, not the editor one. */
+    --ui-terminal-surface-background: var(--ui-editor-surface-background);
     --ui-chat-bubble-background: color-mix(
       in srgb,
       var(--theme-bubble-seed) var(--theme-mix-bubble),
@@ -576,6 +582,18 @@
     --dt-input-inset: inset 0 1px 1px color-mix(in srgb, #000 10%, transparent);
     --dt-ring: var(--ui-stroke-primary);
     --dt-midground: var(--theme-midground);
+    /* Scrollbars carry no theme colour: the accent-tinted thumb read as a
+       coloured element in the corner of every list. Same lightness as the
+       midground so each theme still gets a thumb that sits right against its
+       own surfaces — chroma 0 is the only thing removed.
+
+       Universal is WebKitGTK, not Chromium, and relative colour syntax
+       (`oklch(from …)`) is used nowhere else in this file — so the plain
+       midground is the declared value and the desaturation is applied only
+       where the engine advertises support. Without the guard an unsupported
+       `oklch(from …)` would make every `color-mix()` below invalid at
+       computed-value time and the thumbs would disappear entirely. */
+    --dt-scrollbar-thumb: var(--dt-midground);
     --dt-composer-ring: var(--ui-base);
     --dt-destructive: #cf2d56;
     --dt-destructive-foreground: #ffffff;
@@ -848,6 +866,93 @@
     background: var(--ui-selection-background);
     color: inherit;
   }
+}
+
+/* ── Window glass ────────────────────────────────────────────────────────────
+   ONE painter. `body` above already carries the field colour, so glass thins
+   that single declaration and sends the surface TOKENS transparent — the field
+   surfaces NEST (body > zone > pane > transcript) and tinting each of them
+   would stack the same coat four times.
+
+   Unlayered on purpose: these rules have to beat Tailwind's utilities layer,
+   which is where every `bg-(--ui-*)` on a component lands.
+
+   `data-hermes-glass`      a compositor material is on THIS window right now
+                            (the native outcome said so — never just the ask).
+   `data-hermes-glass-on`   the glass setting is active, on every window that
+                            follows it, satellites included. Tint only.
+   `data-hermes-clear`      the whole window is being faded, text included.  */
+:root[data-hermes-glass] {
+  --ui-chat-surface-background: transparent;
+  --ui-sidebar-surface-background: transparent;
+  --ui-editor-surface-background: transparent;
+  --ui-surface-background: transparent;
+  --ui-terminal-surface-background: var(--ui-bg-chrome);
+}
+
+:root[data-hermes-glass] body {
+  background: color-mix(in srgb, var(--ui-bg-chrome) var(--translucency-glass-keep, 100%), transparent);
+}
+
+/* The Finder shape: glass rail, opaque content column, a hard seam at the
+   sessions pane's inner edge (`--glass-rail-edge`, published by
+   lib/glass-surfaces.ts). With no rail on screen the edge is 0px and the whole
+   field is opaque, which is the honest no-rail answer. */
+:root[data-hermes-glass][data-hermes-glass-scope='sidebar'] body {
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--ui-bg-chrome) var(--translucency-glass-keep, 100%), transparent)
+      var(--glass-rail-edge, 0px),
+    var(--ui-bg-chrome) var(--glass-rail-edge, 0px)
+  );
+}
+
+/* RTL puts the rail at the other physical edge; the gradient is physical, so it
+   has to be mirrored here rather than in the measurement. */
+:root[dir='rtl'][data-hermes-glass][data-hermes-glass-scope='sidebar'] body {
+  background: linear-gradient(
+    to left,
+    color-mix(in srgb, var(--ui-bg-chrome) var(--translucency-glass-keep, 100%), transparent)
+      var(--glass-rail-edge, 0px),
+    var(--ui-bg-chrome) var(--glass-rail-edge, 0px)
+  );
+}
+
+/* Surfaces that MASK what is behind them — a revealed sidebar overlay, a sticky
+   diff gutter, a row being dragged over its neighbours. See-through masks read
+   as text through text. */
+:root[data-hermes-glass] [data-glass-opaque] {
+  background: var(--ui-bg-chrome) !important;
+}
+
+/* Content RAISED above the field — overlay cards, the context menu, a settings
+   footer. It may thin with the tint, but never past the point of reading, so it
+   keeps at least 94% of the chrome colour. */
+:root[data-hermes-glass] [data-glass-raised] {
+  background: color-mix(
+    in srgb,
+    var(--ui-bg-chrome) max(94%, var(--translucency-glass-keep, 100%)),
+    transparent
+  ) !important;
+}
+
+/* Clear fades the WINDOW, scrim included, so the overlay scrim has to work
+   harder to keep the card legible against a desktop showing through. */
+:root[data-hermes-clear] [data-overlay-surface] {
+  background: color-mix(in srgb, #000 38%, transparent);
+}
+
+/* Peek: while a translucency control is held, the Settings overlay ghosts out
+   of the way so the live window IS the preview. Scoped to the overlay that
+   actually contains a translucency row, so the transition does not tax every
+   overlay for the life of the process. Reveal fast, return slow. */
+[data-overlay-surface]:has([data-translucency-peek-scope]) {
+  transition: opacity 420ms ease;
+}
+
+:root[data-hermes-translucency-peek] [data-overlay-surface]:has([data-translucency-peek-scope]) {
+  opacity: 0.08;
+  transition-duration: 160ms;
 }
 
 /* Primitive-level pointer cursor for every interactive control (buttons,
@@ -1541,7 +1646,7 @@ html.is-mobile [data-slot='composer-root'] {
    webview is too old for `scrollbar-width`, and that's the tradeoff we took. */
 html {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--dt-midground) 18%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--dt-scrollbar-thumb) 18%, transparent) transparent;
 }
 
 /* ==========================================================================
@@ -2300,7 +2405,7 @@ body.guest-pointer-lock iframe {
   .scrollbar-dt,
   .scrollbar-dt *:not(.scrollbar-overlay) {
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--dt-midground) 18%, transparent) transparent;
+    scrollbar-color: color-mix(in srgb, var(--dt-scrollbar-thumb) 18%, transparent) transparent;
   }
 
   .scrollbar-dt::-webkit-scrollbar,
@@ -2318,7 +2423,7 @@ body.guest-pointer-lock iframe {
 
   .scrollbar-dt::-webkit-scrollbar-thumb,
   .scrollbar-dt *:not(.scrollbar-overlay)::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--dt-midground) 18%, transparent);
+    background: color-mix(in srgb, var(--dt-scrollbar-thumb) 18%, transparent);
     border-radius: 9999rem;
     border: 0.125rem solid transparent;
     background-clip: padding-box;
@@ -2326,7 +2431,7 @@ body.guest-pointer-lock iframe {
 
   .scrollbar-dt::-webkit-scrollbar-thumb:hover,
   .scrollbar-dt *:not(.scrollbar-overlay)::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--dt-midground) 40%, transparent);
+    background: color-mix(in srgb, var(--dt-scrollbar-thumb) 40%, transparent);
     background-clip: padding-box;
   }
 
@@ -2341,7 +2446,7 @@ body.guest-pointer-lock iframe {
      container so its (and only its) internal scrollbar is themed. */
   .dt-portal-scrollbar {
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--dt-midground) 28%, transparent) transparent;
+    scrollbar-color: color-mix(in srgb, var(--dt-scrollbar-thumb) 28%, transparent) transparent;
   }
 
   .dt-portal-scrollbar::-webkit-scrollbar {
@@ -2355,14 +2460,14 @@ body.guest-pointer-lock iframe {
   }
 
   .dt-portal-scrollbar::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--dt-midground) 28%, transparent);
+    background: color-mix(in srgb, var(--dt-scrollbar-thumb) 28%, transparent);
     border-radius: 9999rem;
     border: 0.0625rem solid transparent;
     background-clip: padding-box;
   }
 
   .dt-portal-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--dt-midground) 50%, transparent);
+    background: color-mix(in srgb, var(--dt-scrollbar-thumb) 50%, transparent);
     background-clip: padding-box;
   }
 
@@ -3191,3 +3296,12 @@ html[data-hud] [data-hud-card] {
 
 /* A codicon/chevron is a glyph, not text: the direction-bearing ones are
    flipped per-component where the meaning is known, never wholesale here. */
+
+/* Relative colour syntax is the desaturation itself; guarded because WebKitGTK
+   builds older than the feature would otherwise invalidate every scrollbar
+   `color-mix()` above and leave the thumbs unpainted. */
+@supports (color: oklch(from white l 0 h)) {
+  :root {
+    --dt-scrollbar-thumb: oklch(from var(--dt-midground) l 0 h);
+  }
+}

@@ -24,15 +24,29 @@ vi.mock('@/hermes', () => ({
   })),
   setEnvVar: vi.fn(async () => ({ ok: true })),
   revealEnvVar: vi.fn(async (key: string) => ({ key, value: 'super-secret' })),
-  deleteEnvVar: vi.fn(async () => ({ ok: true }))
+  deleteEnvVar: vi.fn(async () => ({ ok: true })),
+  // Pulled in transitively by the "Applies to" scope (settings-scope ->
+  // store/profile -> store/profiles): the roster the chips render, and the
+  // REST re-scope store/profiles runs at import time.
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  setApiRequestProfile: vi.fn()
 }))
 
-import { setEnvVar } from '@/hermes'
+import { getEnvVars, getProfiles, setEnvVar } from '@/hermes'
 import { I18nProvider } from '@/i18n'
+import { $profiles } from '@/store/profiles'
+import { $settingsScopeOverride } from '@/store/settings-scope'
 
 import { KeysSection, type KeysView } from './keys-section'
 
 const setVar = vi.mocked(setEnvVar)
+const readVars = vi.mocked(getEnvVars)
+const readProfiles = vi.mocked(getProfiles)
+
+const roster = [
+  { has_env: true, is_default: true, model: null, name: 'default', path: '/h', provider: null, skill_count: 0 },
+  { has_env: true, is_default: false, model: null, name: 'research', path: '/h/r', provider: null, skill_count: 0 }
+]
 
 const renderSection = (view: KeysView) =>
   render(
@@ -42,8 +56,17 @@ const renderSection = (view: KeysView) =>
   )
 
 describe('KeysSection (Tools & Keys)', () => {
-  beforeEach(() => setVar.mockClear())
-  afterEach(() => localStorage.clear())
+  beforeEach(() => {
+    setVar.mockClear()
+    readVars.mockClear()
+    $settingsScopeOverride.set(null)
+    $profiles.set([])
+  })
+  afterEach(() => {
+    localStorage.clear()
+    $settingsScopeOverride.set(null)
+    $profiles.set([])
+  })
 
   it('Tools view shows tool credentials and hides settings + provider keys', async () => {
     renderSection('tools')
@@ -67,6 +90,57 @@ describe('KeysSection (Tools & Keys)', () => {
     fireEvent.change(input, { target: { value: 'http://proxy' } })
     fireEvent.click(await screen.findByRole('button', { name: /save/i }))
 
-    await waitFor(() => expect(setVar).toHaveBeenCalledWith('GATEWAY_PROXY', 'http://proxy'))
+    // Third arg = the "Applies to" override: undefined means "follow the app's
+    // active profile", which is what keeps the request byte-identical for
+    // single-profile users.
+    await waitFor(() => expect(setVar).toHaveBeenCalledWith('GATEWAY_PROXY', 'http://proxy', undefined))
+  })
+})
+
+// The whole point of the selector: the page must write to the profile the CHIP
+// names, not the one the app is operating as. The fixture deliberately disagrees
+// with the app's active profile (which is "default" here) so a save that ignored
+// the scope would still look right without this assertion.
+describe('KeysSection "Applies to" scope', () => {
+  beforeEach(() => {
+    setVar.mockClear()
+    readVars.mockClear()
+    // The selector refreshes the roster on mount, so the fetch has to agree
+    // with the seed or the chips would be wiped by their own refresh.
+    readProfiles.mockResolvedValue({ profiles: roster })
+    $profiles.set(roster)
+    $settingsScopeOverride.set('research')
+  })
+  afterEach(() => {
+    localStorage.clear()
+    $settingsScopeOverride.set(null)
+    $profiles.set([])
+  })
+
+  it('reads and writes the scoped profile, not the active one', async () => {
+    renderSection('settings')
+    await screen.findByText(/gateway proxy/i)
+
+    expect(readVars).toHaveBeenCalledWith('research')
+
+    const input = screen.getByRole('textbox')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'http://proxy' } })
+    fireEvent.click(await screen.findByRole('button', { name: /save/i }))
+
+    await waitFor(() => expect(setVar).toHaveBeenCalledWith('GATEWAY_PROXY', 'http://proxy', 'research'))
+  })
+
+  it('renders one chip per profile and switches the target when one is picked', async () => {
+    renderSection('settings')
+    await screen.findByText(/gateway proxy/i)
+
+    expect(screen.getByText('Applies to')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'default' }))
+
+    // Picking the app's ACTIVE profile clears the override, so the next request
+    // goes back to its unscoped shape rather than pinning "default".
+    await waitFor(() => expect($settingsScopeOverride.get()).toBeNull())
+    await waitFor(() => expect(readVars).toHaveBeenLastCalledWith(undefined))
   })
 })

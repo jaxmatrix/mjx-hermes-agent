@@ -821,6 +821,17 @@ fn app_window_builder<'a>(
     #[cfg(desktop)]
     {
         builder = builder.decorations(false);
+        // Compositor materials need a transparent window (macOS inserts the
+        // NSVisualEffectView BEHIND the WKWebView otherwise; DWM backdrops reach
+        // only a transparent window's client area). This mirrors what
+        // tauri.macos.conf.json / tauri.windows.conf.json give the config-built
+        // `main`, so a Rust-built window matches whichever route created it.
+        //
+        // Linux stays OPAQUE on purpose: there is no material to show, and an
+        // RGBA visual on an X11 session with no compositor renders black — a
+        // real regression for the one platform whose translucency already
+        // works. See appearance/linux.rs.
+        builder = builder.transparent(cfg!(any(target_os = "macos", target_os = "windows")));
     }
     builder
 }

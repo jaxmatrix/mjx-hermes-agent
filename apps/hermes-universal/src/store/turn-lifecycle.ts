@@ -34,8 +34,12 @@ import type { GatewayEvent } from '@/gateway'
 import type { ChatMessage } from '@/lib/chat-messages'
 import { isLiveTailRow, reconcileLiveTail } from '@/lib/live-tail'
 import { appendLiveSessionProjection } from '@/lib/session-history'
+import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
+import { applyResumedApproval } from '@/store/approvals'
 import { applyResumedClarify } from '@/store/clarify'
-import { $gatewayState, requestGateway } from '@/store/gateway'
+import { $gatewayState } from '@/store/gateway'
+import { applyResumedMcpSetup } from '@/store/mcp-setup'
+import { requestForSession } from '@/store/session-request-router'
 import {
   $sessionStates,
   addSessionKeyHooks,
@@ -659,6 +663,8 @@ export const resumedTurnIsLive = (resumed: SessionResumeResponse): boolean =>
  */
 export function adoptResumedTurn(key: string, resumed: SessionResumeResponse): TurnReconciliation {
   applyResumedClarify(key, resumed)
+  applyResumedMcpSetup(key, resumed)
+  applyResumedApproval(key, resumed)
 
   return applyTurnReconciliation(key, planTurnReconciliation(getInflightTurn(key), remoteTurnSnapshot(resumed)))
 }
@@ -769,10 +775,21 @@ export async function reconcileSessionTurn(key: string): Promise<TurnReconciliat
   reconciling.add(key)
 
   try {
-    const resumed = await requestGateway<SessionResumeResponse>('session.resume', {
+    // ROUTED, and that is a correctness fix, not a latency one: this was the ONE
+    // resume site that sent no `profile` at all, so a reconnect reconciliation
+    // for a session owned by a NON-ACTIVE profile resumed against the ambient
+    // backend's database. `requestForSession` resolves the owner the same way
+    // every other site does, and re-reads the route inside the dispatch.
+    //
+    // `source` (MJXHRM-472 / MJXHRM-480): the gateway reads this field as the
+    // session's PLATFORM (`_resolve_session_source` → `_resolve_agent_platform`
+    // → `_gui_surface_toolsets`), and "desktop" is the literal that unlocks the
+    // `desktop_ui` toolset this app answers every bridge of. See
+    // `lib/session-source.ts` for why the old omission was only half a fix.
+    const resumed = await requestForSession<SessionResumeResponse>(storedId, 'session.resume', {
       session_id: storedId,
       omit_messages: true,
-      source: 'universal'
+      ...SESSION_SOURCE_PARAMS
     })
 
     // A gateway that RESTARTED (a supervised local backend, a redeployed remote)
@@ -810,6 +827,8 @@ export async function reconcileSessionTurn(key: string): Promise<TurnReconciliat
     // concluded about the turn — and the replay is an upsert, so a card that
     // survived the disconnect stays one card.
     applyResumedClarify(live, resumed)
+    applyResumedMcpSetup(live, resumed)
+    applyResumedApproval(live, resumed)
 
     return plan
   } catch {

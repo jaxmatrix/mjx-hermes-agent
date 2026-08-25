@@ -121,7 +121,11 @@ function TerminalRailItem({ active, index, term }: { active: boolean; index: num
               role="tab"
               type="button"
             >
-              <Codicon name="terminal" size="0.875rem" />
+              {/* A read-only tab mirroring one of the agent's background
+                  processes reads as an OUTPUT panel, not a shell you can type
+                  in — the icon is the distinction, so it needs no string (and
+                  so no locale round). The tooltip already names the process. */}
+              <Codicon name={term.procId ? 'output' : 'terminal'} size="0.875rem" />
             </button>
           </Tip>
         </li>

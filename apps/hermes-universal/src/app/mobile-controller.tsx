@@ -16,6 +16,7 @@ import { SettingsView } from '@/app/settings/settings-view'
 import { StarmapView } from '@/app/starmap'
 import { WebhooksView } from '@/app/webhooks'
 import { NotificationStack } from '@/components/notifications'
+import { ResourcePressureBanner } from '@/components/resource-pressure-banner'
 import { useKeyboardInset } from '@/hooks/use-keyboard-inset'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { IS_DESKTOP, IS_MOBILE } from '@/lib/platform'
@@ -244,6 +245,15 @@ export function MobileController() {
             it can never cover the content beneath it (the tree zone tab strips /
             session titles start right below it). Desktop Tauri only. */}
         {IS_DESKTOP && <Titlebar connected={connected} />}
+        {/* Resource-pressure bar (NS-656): disk exhaustion, memory pressure and
+            suspected-OOM restarts, read off the `/api/status` snapshot the
+            statusbar already polls (store/system-status.ts) — no second poller.
+            A REAL in-flow row like the Titlebar above and the Statusbar below,
+            so it can never cover the content it is warning about, and it renders
+            nothing at all until the backend classifies a level. Mounted on the
+            connected branch only: an unreachable gateway has no status to
+            report, and the poll is gated on the socket being open anyway. */}
+        {connected && <ResourcePressureBanner />}
         <div className="min-h-0 flex-1">{content}</div>
         {/* Bottom statusbar (ported from desktop): a real shrink-0 row below the
             content. Connected-only — it reads live gateway/session state. Hidden

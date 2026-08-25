@@ -1,5 +1,6 @@
 import { IS_TAURI } from '@/lib/platform'
 import { onPeerBroadcast } from '@/lib/webview-broadcast'
+import { selectConnection } from '@/store/connections'
 import { dialSavedTarget } from '@/store/gateway-restore'
 import { softSwitchGateway } from '@/store/gateway-soft-switch'
 import { type GatewaySwitchedPayload, SWITCH_EVENT } from '@/store/gateway-switch-broadcast'
@@ -45,6 +46,17 @@ export function initGatewaySwitchSync(): void {
     // payload with no target would tear this WebView's connection down and then
     // dial nothing, which is strictly worse than ignoring the event.
     if (!payload.mode || !payload.target) {
+      return
+    }
+
+    // Re-home onto the SAME SOURCE, not merely the same mode. The payload's
+    // `connectionId` (MJXHRM-446) is what makes a follower land on the machine
+    // the initiator moved to rather than on whatever `hermes.connection.last`
+    // happens to say — which after a switch is a different host. Absent on a
+    // payload from a pre-registry build, and then this is exactly what it was.
+    if (payload.target.connectionId) {
+      void selectConnection(payload.target.connectionId).catch(() => {})
+
       return
     }
 

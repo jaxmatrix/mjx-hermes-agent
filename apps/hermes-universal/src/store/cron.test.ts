@@ -57,7 +57,7 @@ describe('cron store', () => {
 
     await triggerCron('a')
 
-    expect(trigger).toHaveBeenCalledWith('a')
+    expect(trigger).toHaveBeenCalledWith('a', undefined)
     expect($cronJobs.get().map(j => j.name)).toEqual(['triggered', 'B'])
   })
 

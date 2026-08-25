@@ -41,9 +41,11 @@ import {
   $activeStoredSessionId,
   $pinnedSessionCache,
   $sessions,
+  archiveSessionLocal,
   sessionMatchesStoredId,
   sessionPinId
 } from '@/store/session'
+import { $focusedStoredSessionId } from '@/store/session-states'
 import type { SessionInfo } from '@/types/hermes'
 
 /** The atoms `sessionRowFor` reads. Pass these to a pane mirror's `also`, or to
@@ -189,6 +191,25 @@ export function liveSessionIdFor(storedSessionId: string): string {
  * lookup, and `store/session` cannot import this module without a cycle — this
  * one reads `$projectTree`, and `store/projects` already imports `store/session`.
  */
+/** Archive whatever session is on screen — the `session.archive` hotkey.
+ *
+ *  The FOCUSED session, not the selected one: on a multi-tile shell the chat you
+ *  are looking at can be a tile, and archiving the workspace's session out from
+ *  under a focused tile is the opposite of what the key promises. No-op on a
+ *  fresh draft, which has no stored row to archive.
+ *
+ *  Lives here rather than in `store/session` for the same reason its sibling
+ *  `toggleSelectedPin` does: reaching `$focusedStoredSessionId` means importing
+ *  `store/session-states`, and a static edge from `store/session` to that would
+ *  close the module cycle `session-entry.test.ts` guards. */
+export async function archiveActiveSession(): Promise<void> {
+  const target = $focusedStoredSessionId.get()
+
+  if (target) {
+    await archiveSessionLocal(target)
+  }
+}
+
 export function toggleSelectedPin(): void {
   const sessionId = $activeStoredSessionId.get()
 
@@ -250,6 +271,10 @@ export function useSessionRowLookup(): (storedSessionId: null | string) => null 
 
 /** The three scalars a tab's context menu actually renders. */
 export interface SessionRowScalars {
+  /** The session's working directory, when a source has seen the row. What
+   *  "Open in terminal" hands to the OS — absent for a detached chat, and for a
+   *  row this window has never loaded. */
+  cwd?: null | string
   /** DURABLE pin key — the lineage root when a row is known, the raw stored id
    *  otherwise (matching what the sidebar row keys pins by). */
   pinId: string
@@ -289,12 +314,13 @@ export function useSessionRowScalars(storedSessionId: string): SessionRowScalars
     const pinId = stored ? sessionPinId(stored) : storedSessionId
     const title = stored ? sessionTitle(stored) : null
     const profile = stored?.profile
+    const cwd = stored?.cwd
     // NUL-joined so a title containing the separator can't collide with a
-    // different (pinId, title, profile) triple.
-    const key = `${pinId}\u0000${title ?? ''}\u0000${profile ?? ''}`
+    // different (pinId, title, profile, cwd) tuple.
+    const key = `${pinId}\u0000${title ?? ''}\u0000${profile ?? ''}\u0000${cwd ?? ''}`
 
     if (cache.current?.key !== key) {
-      cache.current = { key, value: { pinId, profile, title } }
+      cache.current = { key, value: { cwd, pinId, profile, title } }
     }
 
     return cache.current.value

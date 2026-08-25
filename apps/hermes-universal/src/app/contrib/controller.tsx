@@ -7,6 +7,7 @@ import { useLocation } from 'react-router-dom'
 
 import { composerTargetForPane, markActiveComposer } from '@/app/chat/composer/focus'
 import { PALETTE_AREA, type PaletteContribution, paletteToggle } from '@/app/command-palette/contrib'
+import { InlinePreviewDirective } from '@/components/assistant-ui/inline-preview-directive'
 import { $layoutEditMode, toggleLayoutEditMode } from '@/components/pane-shell/edit-mode'
 import { registerTile, registerTiles } from '@/components/pane-shell/tile/registry'
 import { allPaneIds, group, split } from '@/components/pane-shell/tree/model'
@@ -35,6 +36,7 @@ import { LayoutDashboard, PanelBottom, Plug } from '@/lib/icons'
 import { type KeybindContribution, KEYBINDS_AREA } from '@/lib/keybinds/actions'
 import { WORKSPACE_PANE_ID } from '@/lib/pane-ids'
 import { IS_MOBILE } from '@/lib/platform'
+import { TRANSCRIPT_DIRECTIVE_AREA, type TranscriptDirectiveContribution } from '@/lib/transcript-directives'
 import { $chatBubbles, addBubble, bubbleRuntimeKey, switchToBubble } from '@/store/chat-bubbles'
 import { $draftTitles, draftTitleFor } from '@/store/composer'
 import { $gatewayState } from '@/store/gateway'
@@ -52,6 +54,7 @@ import {
   SIDEBAR_MAX_WIDTH
 } from '@/store/layout'
 import { startNewSession, startNewSessionTab } from '@/store/new-session'
+import { openPluginInstallRequest } from '@/store/plugin-install-request'
 import { $reviewOpen, closeReview, REVIEW_PANE_ID } from '@/store/review'
 import { $activeStoredSessionId, openSession, setBranchedSessionOpener } from '@/store/session'
 import { chatTabTitle, SESSION_ROW_SOURCES, sessionRowFor } from '@/store/session-lookup'
@@ -66,6 +69,7 @@ import {
   openBranchTile,
   setVisibleBubbleKeysProvider
 } from '@/store/session-states'
+import { watchPersistedUnread } from '@/store/session-unread'
 import { $statusbarVisible } from '@/store/statusbar-prefs'
 import { $effectiveCwd, ensureWorkspaceCwd } from '@/store/workspace-events'
 
@@ -297,6 +301,19 @@ registry.registerMany([
     label: 'Toggle layout edit mode',
     set: enabled => $layoutEditMode.set(enabled)
   }),
+  // The core `::preview{file="…"}` transcript directive — the model (or a
+  // skill) renders a workspace HTML file LIVE inside its own message, in a
+  // sandboxed frame served over `hermes-artifact://` (see the component for why
+  // not `srcdoc`). Also the reference consumer for the `transcript.directives`
+  // area plugins register into, and the seam MJXHRM-445's Bot Mode cards take.
+  {
+    area: TRANSCRIPT_DIRECTIVE_AREA,
+    data: {
+      name: 'preview',
+      render: ({ attrs, streaming }) => <InlinePreviewDirective attrs={attrs} streaming={streaming} />
+    } satisfies TranscriptDirectiveContribution,
+    id: 'transcript.preview'
+  },
   {
     area: PALETTE_AREA,
     data: {
@@ -333,6 +350,20 @@ registry.registerMany([
       run: discoverRuntimePlugins
     } satisfies PaletteContribution,
     id: 'plugins.reload'
+  },
+  // The other door to the install dialog (Settings ▸ Plugins is the first).
+  // Deliberately NOT a keybind: installing a plugin is not a chord-worthy
+  // action, and a `KEYBIND_ACTIONS` row costs an i18n key and a check:i18n gate.
+  {
+    area: PALETTE_AREA,
+    data: {
+      icon: Plug,
+      id: 'plugins.install',
+      keywords: ['plugin', 'install', 'git', 'repository', 'clone', 'add'],
+      labelKey: 'settings.plugins.installFromGit',
+      run: () => openPluginInstallRequest({ origin: 'settings', repo: '' })
+    } satisfies PaletteContribution,
+    id: 'plugins.install'
   }
 ])
 
@@ -359,6 +390,13 @@ watchPreviewTiles()
 // list endpoints' pinned back-fill both read. Pre-existing local pins migrate
 // transparently on the first reconcile.
 watchSessionPins()
+
+// The DURABLE half of "finished — unread". The transient marker dies with the
+// window, so without this a turn that finished while you were elsewhere — or
+// while the app was closed — is forgotten by the next start. Registers itself
+// as `store/session`'s unread-persistence hook; a secondary window opts out
+// (it sees a sliver of the lists and would clobber the primary's records).
+watchPersistedUnread()
 
 // A reconnect issues new runtime ids, so every binding we hold is dead. Drop
 // the bindings (NOT the sessions — a draft's unsent text is the one thing that

@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { registry } from '@/contrib/registry'
 import { I18nProvider } from '@/i18n'
 import { $panesFlipped, $rightSidebarOpen, $sidebarOpen, setSidebarOpen } from '@/store/layout'
+import { $sessions, $unreadFinishedSessionIds } from '@/store/session'
+import type { SessionInfo } from '@/types/hermes'
 
 // The titlebar mounts WindowControls, which reaches for the real Tauri window.
 const win = vi.hoisted(() => ({
@@ -42,7 +44,52 @@ afterEach(() => {
   setSidebarOpen(true)
   $rightSidebarOpen.set(false)
   $panesFlipped.set(false)
+  $sessions.set([])
+  $unreadFinishedSessionIds.set([])
   caps.floatingSurface = true
+})
+
+const row = (id: string, extra: Partial<SessionInfo> = {}): SessionInfo => ({ id, ...extra }) as SessionInfo
+
+/**
+ * MJXHRM-452 — the unread count badges the SESSIONS sidebar toggle, and both
+ * edge toggles are positional, so a swap carries the count across with the pane.
+ * The count comes from the shared dot-state map rather than the raw unread id
+ * list: an archived row is unread in that list but is not a row the sidebar
+ * paints, and a rotated lineage answers to two ids for one conversation.
+ */
+describe('the unread sessions badge', () => {
+  const sidebarName = (suffix = '') => `Hide sidebar${suffix}`
+
+  it('is absent with nothing unread', async () => {
+    $sessions.set([row('s1'), row('s2')])
+    renderTitlebar()
+
+    expect(await screen.findByRole('button', { name: sidebarName() })).toBeInTheDocument()
+  })
+
+  it('counts unread sessions onto the sidebar toggle', async () => {
+    // Seeded to disagree with the count: three rows are flagged unread, but one
+    // of them is archived and so is not a row the sidebar can show.
+    $sessions.set([row('s1'), row('s2'), row('s3', { archived: true })])
+    $unreadFinishedSessionIds.set(['s1', 's2', 's3'])
+    renderTitlebar()
+
+    expect(await screen.findByRole('button', { name: sidebarName(' · 2 unread sessions') })).toBeInTheDocument()
+    expect(screen.getByText('2')).toBeInTheDocument()
+  })
+
+  it('moves the count to the right toggle when the panes are flipped', async () => {
+    $sessions.set([row('s1')])
+    $unreadFinishedSessionIds.set(['s1'])
+    $panesFlipped.set(true)
+    renderTitlebar()
+
+    // Flipped, the edges swap what they toggle: the sessions pane is now the
+    // RIGHT edge (open, hence "Hide"), and the left edge holds the file browser.
+    expect(await screen.findByRole('button', { name: 'Hide right sidebar · 1 unread session' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show sidebar' })).toBeInTheDocument()
+  })
 })
 
 describe('the HUD affordance', () => {

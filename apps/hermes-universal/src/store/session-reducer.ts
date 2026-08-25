@@ -25,6 +25,7 @@ import {
   type ChatMessage,
   coerceText,
   patchActive,
+  sealOpenToolParts,
   withActiveAssistant
 } from '@/lib/chat-messages'
 import { coerceThinkingText } from '@/lib/chat-runtime'
@@ -32,6 +33,7 @@ import { type GatewayToolPayload, upsertToolPart } from '@/lib/chat-tool-parts'
 import { dedupeGeneratedImageEchoesInParts } from '@/lib/generated-images'
 import { isLiveTailRow } from '@/lib/live-tail'
 import { type ClientSessionState } from '@/store/session-state-types'
+import type { UsageStats } from '@/types/hermes'
 
 const patchLastAssistant = (state: ClientSessionState, patch: (m: ChatMessage) => ChatMessage): ClientSessionState => ({
   ...state,
@@ -143,7 +145,45 @@ function applySessionInfo(state: ClientSessionState, payload: Record<string, unk
     patch.fast = payload.fast
   }
 
+  // `yolo` is the gateway's EFFECTIVE approval-bypass state, not the per-session
+  // `/yolo` flag: `_session_info` ORs the frozen process env, the session flag
+  // and `approvals.mode === 'off'` (`tui_gateway/server.py`). The slice has
+  // carried this field since the port with nothing ever writing it, so a session
+  // running with approvals off read as `yolo: false` everywhere. Adopted with
+  // the same stance as `fast` — `false` is a real state, so any boolean lands.
+  if (typeof payload.yolo === 'boolean' && payload.yolo !== state.yolo) {
+    patch.yolo = payload.yolo
+  }
+
   return Object.keys(patch).length > 0 ? { ...state, ...patch } : state
+}
+
+/** The zero row a session's usage starts from, so a partial tick never leaves
+ *  `calls`/`input`/`output`/`total` undefined on a `UsageStats`. */
+export const EMPTY_USAGE: UsageStats = { calls: 0, input: 0, output: 0, total: 0 }
+
+/**
+ * Adopt a live `session.usage` tick.
+ *
+ * `_start_usage_ticker` (`tui_gateway/server.py`) pushes one of these about once
+ * a second while a turn runs, precisely because the client's context-window
+ * figure otherwise sits frozen for the whole (often multi-minute, multi-tool)
+ * turn and only jumps at `message.complete`. Universal had no case for it at
+ * all: the frame reached this reducer, matched nothing, and was dropped.
+ *
+ * MERGED, never replaced. A tick carries whatever `_get_usage` could compute —
+ * `context_used`/`context_max`/`context_percent` are deliberately absent when
+ * the compressor has no real current-window occupancy to report (#50421), so an
+ * assignment would blank a gauge an earlier tick had legitimately painted.
+ */
+function applySessionUsage(state: ClientSessionState, payload: Record<string, unknown>): ClientSessionState {
+  const usage = payload.usage
+
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) {
+    return state
+  }
+
+  return { ...state, usage: { ...EMPTY_USAGE, ...state.usage, ...(usage as Partial<UsageStats>) } }
 }
 
 /** Reduce ONE gateway event into ONE session's state slice. Pure. */
@@ -299,7 +339,12 @@ export function reduceSessionState(
       // `clarify.request` and otherwise cleared only by `message.complete` —
       // kept the sidebar's attention dot lit, and its running arc suppressed,
       // for the whole rest of a turn the user had already unblocked.
-      return payload.name === 'clarify' && settled.needsInput ? { ...settled, needsInput: false } : settled
+      // `setup_mcp` for the identical reason — its request is the other prompt
+      // that mounts a synthetic row here, and `_block` holds the run loop so the
+      // agent cannot be parked on two at once.
+      return (payload.name === 'clarify' || payload.name === 'setup_mcp') && settled.needsInput
+        ? { ...settled, needsInput: false }
+        : settled
     }
 
     case 'message.complete':
@@ -311,7 +356,13 @@ export function reduceSessionState(
         needsInput: false,
         // `text` is the turn's final_response; `rendered` is its ANSI/markdown
         // render (desktop reads the same pair).
-        messages: applyCompletion(state.messages, (coerceText(payload.text) || coerceText(payload.rendered)).trim())
+        //
+        // `sealOpenToolParts` last: a `tool.complete` lost to a degraded socket
+        // leaves its row spinning forever, and the turn is provably done here —
+        // nothing can still be running — so an open part is a lost event.
+        messages: sealOpenToolParts(
+          applyCompletion(state.messages, (coerceText(payload.text) || coerceText(payload.rendered)).trim())
+        )
       }
 
     /**
@@ -336,6 +387,9 @@ export function reduceSessionState(
 
     case 'session.info':
       return applySessionInfo(state, payload)
+
+    case 'session.usage':
+      return applySessionUsage(state, payload)
     /**
      * A clarify parks the agent in the backend's `_block` until
      * `clarify.respond` lands, and the inline ClarifyTool normally mounts from
@@ -366,11 +420,38 @@ export function reduceSessionState(
       // The two halves of this ONE event have to agree on whether it is
       // renderable: the router writing the prompt store while this case declines
       // to make a row IS the "needs input, nowhere to answer it" state the row
-      // exists to prevent.
+      // exists to prevent. That includes the BATCH shape, which has no
+      // top-level `question` at all — only `questions[]`.
       const question = coerceText(payload.question) || coerceText(payload.prompt) || coerceText(payload.message)
 
-      if (!requestId || !question) {
+      // Raw pass, deliberately — same stance as `choices` below: the panel
+      // normalizes at the render boundary (`store/clarify.ts`). Importing the
+      // normalizer here would also close an import cycle (clarify.ts calls
+      // `reduceSessionState`), and all this row needs is the question TEXT that
+      // `lib/chat-tool-parts` correlates the two clarify rows on.
+      const questions = Array.isArray(payload.questions)
+        ? payload.questions.flatMap(entry => {
+            const row = entry as Record<string, unknown> | null
+            const qid = typeof row?.qid === 'string' ? row.qid.trim() : ''
+            const text = typeof row?.question === 'string' ? row.question.trim() : ''
+
+            return qid && text ? [{ qid, question: text }] : []
+          })
+        : []
+
+      if (!requestId || (!question && questions.length === 0)) {
         return { ...state, needsInput: true }
+      }
+
+      // A batch row carries its questions as args so `lib/chat-tool-parts`
+      // can correlate it with the `tool.start` row that has no `question`
+      // either (`batchClarifyMatchValue`), and so the card can render from the
+      // row alone if the prompt store entry is gone.
+      if (questions.length > 0) {
+        return {
+          ...applyToolEvent(state, { args: { questions }, name: 'clarify', tool_id: requestId }, 'running'),
+          needsInput: true
+        }
       }
 
       // Raw strings only; the panel normalizes at the render boundary
@@ -391,6 +472,46 @@ export function reduceSessionState(
       // nothing settles.
       return {
         ...applyToolEvent(state, { args: { choices, question }, name: 'clarify', tool_id: requestId }, 'running'),
+        needsInput: true
+      }
+    }
+
+    /**
+     * The setup card's synthetic row, on the same contract as `clarify.request`
+     * above: `tool.start` and `mcp.setup.request` describe ONE tool call under
+     * two different ids (the model's `tool_call_id` and the gateway's
+     * `request_id`), so the row is upserted under `request_id` and correlated
+     * with the other by its `server` arg (`lib/chat-tool-parts`). Without a row
+     * the card has nothing to render in, and a reattach that missed `tool.start`
+     * would show "needs input" with nowhere to answer it — for ten minutes.
+     *
+     * Also replayed out of the stream by `store/mcp-setup.ts`'s
+     * `applyResumedMcpSetup`, through this same case, so a cold-opened parked
+     * session rebuilds an identical row.
+     */
+    case 'mcp.setup.request': {
+      // Trimmed to agree with `readMcpSetupRequest` exactly — a row whose
+      // request the router refused is a card with nowhere to answer.
+      const requestId = coerceText(payload.request_id).trim()
+      const server = coerceText(payload.server).trim()
+
+      // Both halves must agree with `readMcpSetupRequest`, which the router
+      // writes the prompt store with: a row without a request, or a request
+      // without a row, is the "needs input, nowhere to answer it" state.
+      if (!requestId || !server) {
+        return { ...state, needsInput: true }
+      }
+
+      return {
+        ...applyToolEvent(
+          state,
+          {
+            args: { action: coerceText(payload.action) || 'install', reason: coerceText(payload.reason), server },
+            name: 'setup_mcp',
+            tool_id: requestId
+          },
+          'running'
+        ),
         needsInput: true
       }
     }

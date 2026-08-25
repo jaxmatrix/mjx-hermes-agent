@@ -1,16 +1,22 @@
 import { ActivityScreenRoot } from '@/app/activity-screen'
 import { BackgroundCloseDialog } from '@/app/background-close-dialog'
 import { CloseConfirm } from '@/app/close-confirm'
+import { AppContextMenu } from '@/app/context-menu/coordinator'
 import { HUD_SURFACE } from '@/app/hud/hud'
 import { HudWindowRoot } from '@/app/hud/hud-window'
+import { McpInstallDeepLinkDialog } from '@/app/mcp-install-deeplink-dialog'
 import { MobileController } from '@/app/mobile-controller'
 import { QUICK_ENTRY_SURFACE } from '@/app/quick-entry/quick-entry'
 import { QuickEntryWindowRoot } from '@/app/quick-entry/quick-entry-window'
 import { RemoteFolderPicker } from '@/app/right-pane/files/remote-picker'
+import { PluginInstallModal } from '@/app/settings/plugin-install-modal'
 import { TileWindowRoot } from '@/app/tile-window'
 import { WakeIndicatorOverlay } from '@/app/wake-indicator-overlay'
 import { WakeIndicatorWindowRoot } from '@/app/wake-indicator/wake-indicator-window'
+import { ConfirmHost } from '@/components/confirm-host'
 import { FindBar } from '@/components/find-bar'
+import { startDeepLinkRouter } from '@/store/deep-link'
+import { startMcpHealthChecker } from '@/store/mcp-health'
 import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFACE } from '@/store/windows'
 
 /**
@@ -49,10 +55,40 @@ import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFAC
  * exist wherever that guard does. A window whose shell forgot it would park the
  * first close and never draw the question, which is a dead titlebar button.
  *
+ * `AppContextMenu` (MJXHRM-478) is the ninth, and it is the sharpest case of
+ * the same rule: on Tauri every engine pops its OWN context menu for a gesture
+ * the page does not cancel, so a root without the coordinator does not merely
+ * lose the Hermes menu — it shows WebKitGTK's "Reload / Inspect Element" over
+ * the app instead. Right-click and long-press exist in every window.
+ *
+ * `ConfirmHost` (MJXHRM-479) is the sixth, and it is the strongest case of all:
+ * `confirm()` is called from plain async handlers and store actions that have no
+ * component of their own, so the promise is parked with NOTHING on screen unless
+ * a host is mounted in that window. A settings panel, a command-center action
+ * and a sidebar row each reach it from a different shell, so the shell level is
+ * again one level too low.
+ *
+ * `PluginInstallModal` (MJXHRM-455) is the eighth, and it is the seventh's
+ * twin: `hermes://plugin/install` is the same "an outside link asked for
+ * something" shape, and the same window must be able to draw the question.
+ *
+ * `McpInstallDeepLinkDialog` (MJXHRM-454) is the seventh, and it is the
+ * `ConfirmHost` case again from outside the app: a `hermes://mcp/install` link
+ * is opened by the OS, so whichever window happens to be listening has to be
+ * able to draw the confirmation — and nothing is written to config until it is
+ * answered. The router is armed here for the same reason — and it claims only
+ * the window that owns the app's persisted state, so a detached tile cannot
+ * race the main shell for the same link (MJXHRM-455).
+ *
  * Mounted HERE rather than once per root so the next root cannot forget them —
  * the failure mode is silence, which is the kind that ships.
  */
 export function App() {
+  startDeepLinkRouter()
+  // Both are idempotent and refuse to arm twice; the health checker also
+  // refuses in a satellite window, so the fleet gets ONE sweeper.
+  startMcpHealthChecker()
+
   return (
     <>
       <AppRoot />
@@ -60,6 +96,10 @@ export function App() {
       <FindBar />
       <CloseConfirm />
       <BackgroundCloseDialog />
+      <ConfirmHost />
+      <AppContextMenu />
+      <McpInstallDeepLinkDialog />
+      <PluginInstallModal />
       <WakeIndicatorOverlay />
     </>
   )

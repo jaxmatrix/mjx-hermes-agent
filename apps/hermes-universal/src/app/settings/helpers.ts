@@ -1,7 +1,7 @@
 import { asText } from '@/lib/text'
 import type { ConfigFieldSchema, HermesConfigRecord, ToolsetInfo } from '@/types/hermes'
 
-import { BUILTIN_PERSONALITIES, ENUM_OPTIONS, PROVIDER_GROUPS, SECTIONS } from './constants'
+import { BUILTIN_PERSONALITIES, ENUM_OPTIONS, FALLBACK_FIELD_SCHEMA, PROVIDER_GROUPS, SECTIONS } from './constants'
 
 // Ported from apps/desktop/src/app/settings/helpers.ts. Canonical text helpers
 // live in @/lib/text; re-exported so settings call sites keep their import path.
@@ -128,7 +128,9 @@ export function sectionFieldEntries(
       s.id,
       s.keys.flatMap(k => {
         const value = getNested(config, k)
-        const field = schema[k] ?? (value === undefined ? undefined : inferFieldSchema(value))
+
+        const field =
+          schema[k] ?? FALLBACK_FIELD_SCHEMA[k] ?? (value === undefined ? undefined : inferFieldSchema(value))
 
         return field ? [[k, field] as [string, ConfigFieldSchema]] : []
       })

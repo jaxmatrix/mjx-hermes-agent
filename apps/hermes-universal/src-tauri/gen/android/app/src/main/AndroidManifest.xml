@@ -40,6 +40,28 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- `hermes://` deep links (MJXHRM-455). On MainActivity, which is
+                 `singleTask`, so a link tapped while the app is running arrives as
+                 `onNewIntent` into the EXISTING WebView — no second window, the
+                 same rule mobile OAuth works under. BROWSABLE is what lets a
+                 browser hand the link over at all. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="hermes" />
+            </intent-filter>
+            <!-- tauri-plugin-deep-link's build script rewrites the block between
+                 these two markers from `plugins.deep-link.mobile[]` in
+                 tauri.conf.json on every Android build. That key is deliberately
+                 UNSET (the filter above is hand-authored so it is reviewable and
+                 present in a tracked file rather than appearing at build time), so
+                 the generated block is empty and the rewrite is a no-op. Placed
+                 here, with this exact indentation, so the build does not have to
+                 write the file at all. -->
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+            
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
 
         <!-- Native screen activity (MJX-141): ONE Activity hosting every windowable

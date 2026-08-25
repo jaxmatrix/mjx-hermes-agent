@@ -12,6 +12,8 @@ import { api } from '@/lib/api'
 
 import {
   exportProfileArchive,
+  getAllProfilesProjectTree,
+  getGhAuthStatus,
   getProfileDesktopOverlay,
   importProfileArchive,
   listRepoPullRequests,
@@ -103,5 +105,62 @@ describe('pull requests', () => {
       method: 'POST',
       body: { ids: ['a', 'b'] }
     })
+  })
+})
+
+// --- The 2026-08-18 / 2026-08-20 sync (MJXHRM-444) -------------------------
+
+describe('GET /api/git/gh-auth', () => {
+  it('reads the cached answer by default — the backend shells out to `gh`', async () => {
+    await getGhAuthStatus()
+
+    expect(sent()).toEqual({ path: '/api/git/gh-auth' })
+  })
+
+  // The backend caches for 5 minutes. Without this the screen keeps reporting
+  // the pre-login state for the rest of the window after `gh auth login`.
+  it('busts the 5-minute cache when the user has just been sent off to log in', async () => {
+    await getGhAuthStatus({ refresh: true })
+
+    expect(sent()).toEqual({ path: '/api/git/gh-auth?refresh=true' })
+  })
+
+  it('distinguishes "gh is missing" from "gh is logged out" — both are falsy `authenticated`', async () => {
+    rest.mockResolvedValue({ available: false, authenticated: false })
+
+    await expect(getGhAuthStatus()).resolves.toEqual({ available: false, authenticated: false })
+  })
+})
+
+describe('GET /api/profiles/projects/tree', () => {
+  it('sends no query at all when neither limit is pinned, so the backend defaults stand', async () => {
+    await getAllProfilesProjectTree()
+
+    expect(sent()).toEqual({ path: '/api/profiles/projects/tree' })
+  })
+
+  it('sends only the limits the caller set', async () => {
+    await getAllProfilesProjectTree({ previewLimit: 5 })
+
+    expect(sent()).toEqual({ path: '/api/profiles/projects/tree?preview_limit=5' })
+  })
+
+  it('sends an explicit 0, which is a real limit and not an absent one', async () => {
+    await getAllProfilesProjectTree({ previewLimit: 0, sessionLimit: 10 })
+
+    expect(sent()).toEqual({ path: '/api/profiles/projects/tree?preview_limit=0&session_limit=10' })
+  })
+
+  // The route answers 200 with per-profile failures collected in `errors`, so a
+  // caller that ignores them reports a PARTIAL tree as the complete one.
+  it('surfaces the per-profile failures the 200 response carries', async () => {
+    rest.mockResolvedValue({
+      projects: [],
+      active_id: null,
+      scoped_session_ids: [],
+      errors: [{ profile: 'x', error: 'locked' }]
+    })
+
+    await expect(getAllProfilesProjectTree()).resolves.toMatchObject({ errors: [{ profile: 'x', error: 'locked' }] })
   })
 })

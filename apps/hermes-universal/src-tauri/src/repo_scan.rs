@@ -13,9 +13,11 @@
 //! Gating: this walks the *Tauri host's* filesystem, so `lib/desktop-git.ts` only
 //! calls it when the backend was spawned locally (gateway mode `local`). A remote
 //! gateway owns a different disk and Android has no crawlable one; those cases go
-//! to the gateway's own copy of this walk instead — `GET /api/git/scan-repos`
-//! (`hermes_cli/web_repo_scan.py`), whose roots come from the gateway's config
-//! rather than from the client.
+//! to the gateway's own walk instead — `projects.discover_repos {scan: true}`,
+//! whose roots come from the gateway's config rather than from the client, and
+//! which writes the discovery cache itself (so those callers post no
+//! `projects.record_repos`). That RPC replaced the fork's second server-side
+//! walk, `GET /api/git/scan-repos` (MJXHRM-474).
 
 use serde::Serialize;
 
@@ -230,8 +232,8 @@ pub mod imp {
     /// `home` is only ever the machine this crawl runs on: the command is gated
     /// to locally-spawned gateways (see the module header), so the client's
     /// `$HOME` and the gateway's home are the same directory. A remote gateway
-    /// answers from its own config via `GET /api/git/scan-repos` instead, and
-    /// never sees this value.
+    /// answers from its own config via `projects.discover_repos {scan: true}`
+    /// instead, and never sees this value.
     pub fn scan_git_repos_in(
         home: &Path,
         roots: &[String],
@@ -343,8 +345,8 @@ pub mod imp {
 
 // --------------------------------------------------------------------------
 // Mobile: no crawlable local filesystem. Discovery happens backend-side over
-// `GET /api/git/scan-repos`; the TS caller gates on gateway mode and never
-// reaches this.
+// `projects.discover_repos {scan: true}`; the TS caller gates on gateway mode
+// and never reaches this.
 // --------------------------------------------------------------------------
 #[cfg(mobile)]
 pub mod imp {

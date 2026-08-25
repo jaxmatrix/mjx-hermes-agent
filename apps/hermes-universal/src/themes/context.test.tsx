@@ -1,8 +1,14 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { useEffect } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setAccentOverride } from './accent-override'
 import { __resetBackendSkinSync, ingestBackendSkin } from './backend-sync'
-import { ThemeProvider, useTheme } from './context'
+import { hexToOklch, hueDelta } from './color'
+import { $mode, ThemeProvider, useTheme } from './context'
+import { nousTheme } from './presets'
+import { BUILTIN_THEME_LIST } from './presets'
+import { retintTheme } from './retint'
 
 function Harness() {
   const { themeName, resolvedMode, setMode, setTheme } = useTheme()
@@ -162,5 +168,262 @@ describe('ThemeProvider ← backend skin sync', () => {
       ingestBackendSkin({ name: 'forest', colors: { background: '#001100', ui_text: '#66ff66' } }, { apply: false })
     )
     expect(cssVar('--theme-foreground')).toBe('#ff9f0a')
+  })
+})
+
+// Painting each family in each appearance, and reading what actually landed on
+// :root. The source-level guard (presets.test.ts) proves the palettes are
+// literals; this proves the PAINT is complete — a family that resolves fewer
+// vars than the default skin leaves whatever the previous theme wrote in place,
+// which is how a half-applied theme ships looking almost right.
+function Painter({ mode, name }: { mode: 'dark' | 'light'; name: string }) {
+  const { setMode, setTheme } = useTheme()
+
+  useEffect(() => {
+    setTheme(name)
+    setMode(mode)
+  }, [mode, name, setMode, setTheme])
+
+  return null
+}
+
+/** Every custom property currently set inline on :root, name → value. */
+function paintedVars(): Record<string, string> {
+  const style = root().style
+  const out: Record<string, string> = {}
+
+  for (let i = 0; i < style.length; i += 1) {
+    const name = style.item(i)
+
+    if (name.startsWith('--')) {
+      out[name] = style.getPropertyValue(name)
+    }
+  }
+
+  return out
+}
+
+describe('every builtin family paints a complete theme, in both appearances', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    root().className = ''
+    root().removeAttribute('style')
+  })
+  afterEach(cleanup)
+
+  const paint = (name: string, mode: 'dark' | 'light') => {
+    render(
+      <ThemeProvider>
+        <Painter mode={mode} name={name} />
+      </ThemeProvider>
+    )
+
+    return paintedVars()
+  }
+
+  const cases = BUILTIN_THEME_LIST.flatMap(theme =>
+    (['light', 'dark'] as const).map(mode => ({ mode, name: theme.name }))
+  )
+
+  it.each(cases)('$name/$mode paints under its own name, every var a literal', ({ mode, name }) => {
+    // The reference set: whatever the default skin resolves. A hard-coded list
+    // would only re-state applyTheme; comparing families to each other catches
+    // the real failure, which is one family resolving FEWER vars than the rest.
+    // `setProperty(k, '')` removes the property outright, so an unresolved slot
+    // shows up here as a missing key — never as an empty string — and leaves
+    // whatever the previous theme painted in force.
+    const expected = Object.keys(paint('nous', 'light')).sort()
+
+    cleanup()
+    root().removeAttribute('style')
+
+    const vars = paint(name, mode)
+
+    expect(Object.keys(vars).sort()).toEqual(expected)
+
+    // A family registered under a key that doesn't match its own `name` paints
+    // the DEFAULT skin instead — silently, and looking almost right.
+    expect(root().dataset.hermesTheme).toBe(name)
+
+    for (const [key, value] of Object.entries(vars)) {
+      expect(value, key).not.toBe('')
+
+      // Fonts and the numeric mix knobs are not colours; everything else is a
+      // seed and must be something WebKitGTK resolves without `color-mix()` or
+      // `oklch(from …)` relative-colour syntax.
+      if (!key.startsWith('--dt-font') && !key.startsWith('--theme-mix') && !key.startsWith('--noise')) {
+        expect(value, key).not.toMatch(/color-mix\(|oklch\(from|light-dark\(/)
+      }
+    }
+  })
+})
+
+describe('accent override', () => {
+  const ROSE = '#e11d48'
+
+  beforeEach(() => {
+    localStorage.clear()
+    root().className = ''
+    root().removeAttribute('style')
+  })
+
+  afterEach(() => {
+    setAccentOverride(null)
+    cleanup()
+  })
+
+  // The painted seed is the override adapted to nous's own sidebar (seedFor
+  // clamps it to AA), not the raw hex — so compare against what retintTheme
+  // itself produces rather than re-deriving it here.
+  const ROSE_ON_NOUS = retintTheme(nousTheme, ROSE).colors.primary.toLowerCase()
+
+  const paintNous = () =>
+    act(() => {
+      render(
+        <ThemeProvider>
+          <Painter mode="light" name="nous" />
+        </ThemeProvider>
+      )
+    })
+
+  const primary = () => root().style.getPropertyValue('--theme-primary').toLowerCase()
+
+  it('repaints the accent family without touching the chrome', () => {
+    paintNous()
+
+    const chromeBefore = root().style.getPropertyValue('--theme-background-seed')
+
+    expect(primary()).toBe('#0053fd')
+
+    act(() => setAccentOverride(ROSE))
+
+    expect(primary()).toBe(ROSE_ON_NOUS)
+    expect(ROSE_ON_NOUS).not.toBe('#0053fd')
+    // The neutrals are the app's surface, not its brand.
+    expect(root().style.getPropertyValue('--theme-background-seed')).toBe(chromeBefore)
+    // The mixed surfaces have to follow the seed, or the theme is half-retinted.
+    expect(root().style.getPropertyValue('--theme-accent-soft')).not.toBe('#dfe8ff')
+  })
+
+  it('never persists — nothing on disk carries the override', () => {
+    paintNous()
+    act(() => setAccentOverride(ROSE))
+
+    const stored = Object.keys(localStorage).map(key => `${key}=${localStorage.getItem(key)}`)
+
+    expect(stored.join('|').toLowerCase()).not.toContain(ROSE)
+  })
+
+  it('restores the authored palette when cleared', () => {
+    paintNous()
+    act(() => setAccentOverride(ROSE))
+    act(() => setAccentOverride(null))
+
+    expect(primary()).toBe('#0053fd')
+  })
+
+  it('ignores a half-typed hex rather than blanking the theme', () => {
+    paintNous()
+    act(() => setAccentOverride(ROSE))
+    act(() => setAccentOverride('#e1'))
+
+    expect(primary()).toBe(ROSE_ON_NOUS)
+  })
+})
+
+// MJXHRM-497. The finished-session dot used to be a fixed green, so eight of
+// them sat in the sidebar fighting whatever palette was on.
+describe('--ui-success follows the accent', () => {
+  const EMERALD_HUE = 162
+
+  beforeEach(() => {
+    localStorage.clear()
+    root().className = ''
+    root().removeAttribute('style')
+  })
+  afterEach(cleanup)
+
+  const successHue = (name: string) => {
+    act(() => {
+      render(
+        <ThemeProvider>
+          <Painter mode="light" name={name} />
+        </ThemeProvider>
+      )
+    })
+
+    const value = root().style.getPropertyValue('--ui-success')
+
+    expect(value, '--ui-success is painted').toMatch(/^#[0-9a-f]{6}$/i)
+
+    return hexToOklch(value)!.h
+  }
+
+  it('bends toward a blue accent, without becoming it', () => {
+    const hue = successHue('nous')
+
+    expect(Math.abs(hueDelta(EMERALD_HUE, hue))).toBeGreaterThan(5)
+    // Still a green: "done" and "running" must not collapse into one colour.
+    expect(Math.abs(hueDelta(hue, hexToOklch('#0053fd')!.h))).toBeGreaterThan(30)
+  })
+
+  it('barely moves under an accent that is already green', () => {
+    cleanup()
+    root().removeAttribute('style')
+
+    expect(Math.abs(hueDelta(EMERALD_HUE, successHue('github')))).toBeLessThan(6)
+  })
+})
+
+// bd853747bb on desktop: a fresh profile follows the OS. Defaulting to `light`
+// meant someone whose desktop is dark got a white window on first launch and
+// had to go find the setting. Universal has always defaulted to `system`, so
+// this is the regression guard for a default that would flip silently.
+describe('a fresh profile follows the OS', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    root().className = ''
+    root().removeAttribute('style')
+  })
+
+  afterEach(() => {
+    cleanup()
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
+
+  const pretendOsIs = (scheme: 'dark' | 'light') => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: (query: string) => ({
+        addEventListener: () => {},
+        matches: query.includes('prefers-color-scheme: dark') && scheme === 'dark',
+        removeEventListener: () => {}
+      })
+    })
+  }
+
+  it('starts on `system` rather than a fixed appearance', async () => {
+    // A fresh module against empty storage — the persisted atom has already been
+    // written by the cases above, so only a new instance sees the real default.
+    vi.resetModules()
+
+    const fresh = await import('./context')
+
+    expect(fresh.$mode.get()).toBe('system')
+  })
+
+  it.each(['dark', 'light'] as const)('paints %s when the OS says so', scheme => {
+    pretendOsIs(scheme)
+    act(() => $mode.set('system'))
+
+    act(() => {
+      render(
+        <ThemeProvider>
+          <div />
+        </ThemeProvider>
+      )
+    })
+
+    expect(root().classList.contains('dark')).toBe(scheme === 'dark')
   })
 })

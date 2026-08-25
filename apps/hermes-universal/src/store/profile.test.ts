@@ -36,6 +36,7 @@ import {
   ALL_PROFILES,
   cycleProfile,
   normalizeProfileKey,
+  profileLabel,
   requestProfileCreate,
   selectProfile,
   setProfileColor,
@@ -196,5 +197,28 @@ describe('requestProfileCreate', () => {
 
     requestProfileCreate()
     expect($profileCreateRequest.get()).toBe(before + 1)
+  })
+})
+
+// The default profile is renamable by DISPLAY NAME only: its canonical id stays
+// "default" so routing, comparison and the wire are untouched. Everything the
+// user reads goes through profileLabel.
+describe('profileLabel', () => {
+  it('prefers the display name over the canonical id', () => {
+    expect(profileLabel({ display_name: 'Ada', name: 'default' })).toBe('Ada')
+  })
+
+  it('falls back to the canonical name when the display name is absent or blank', () => {
+    expect(profileLabel({ name: 'research' })).toBe('research')
+    expect(profileLabel({ display_name: '   ', name: 'research' })).toBe('research')
+  })
+
+  // The label must never become an identity: normalizeProfileKey still answers
+  // "default" for a renamed default profile, which is what every lookup uses.
+  it('does not change the key a renamed default profile is looked up by', () => {
+    const renamed = { display_name: 'Ada', name: 'default' }
+
+    expect(profileLabel(renamed)).toBe('Ada')
+    expect(normalizeProfileKey(renamed.name)).toBe('default')
   })
 })

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { triggerHaptic } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
+import { useGuestOcclusion } from '@/store/browser-occlusion'
 
 // Ported from apps/desktop/src/app/overlays/overlay-view.tsx. The full-screen
 // modal card that hosts an overlay view (settings, …). Adapted for Tauri: the
@@ -40,6 +41,11 @@ export function OverlayView({
   rootClassName,
   variant = 'overlay'
 }: OverlayViewProps) {
+  // Settings, the palette, the agents tree: every one of these is drawn ABOVE
+  // the in-app browser's guest, which the compositor paints above the whole DOM
+  // (MJXHRM-447).
+  useGuestOcclusion('overlay')
+
   const fullscreen = variant === 'fullscreen'
   const fullBleed = variant === 'fullbleed'
 
@@ -154,6 +160,7 @@ export function OverlayView({
         'p-[calc(var(--titlebar-height)+0.625rem)]',
         'sm:p-[calc(var(--titlebar-height)+0.875rem)]'
       )}
+      data-overlay-surface=""
       onClick={event => {
         if (event.target === event.currentTarget) {
           closeOverlay()
@@ -166,6 +173,10 @@ export function OverlayView({
           'relative flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-(--ui-stroke-secondary) bg-(--ui-chat-surface-background) shadow-md',
           rootClassName
         )}
+        // Raised above the field: it may thin with the tint but never past
+        // reading, or Settings and the Command Center go see-through over the
+        // transcript at high tints.
+        data-glass-raised=""
       >
         <div
           className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[calc(var(--titlebar-height)+0.1875rem)]"

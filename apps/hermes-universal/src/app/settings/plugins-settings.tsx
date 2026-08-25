@@ -9,7 +9,7 @@ import { $pluginRecords, type PluginRecord, setPluginEnabled } from '@/contrib/p
 import { discoverRuntimePlugins } from '@/contrib/runtime-loader'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
-import { Package, Plug } from '@/lib/icons'
+import { Download, Package, Plug } from '@/lib/icons'
 import { IS_DESKTOP } from '@/lib/platform'
 import { revealPathInFileManager } from '@/lib/reveal-path'
 import { normalize } from '@/lib/text'
@@ -27,7 +27,9 @@ import { useStore } from '@/store/atom'
 import { $connection } from '@/store/connection'
 import { $gatewayState, requestGateway } from '@/store/gateway'
 import { modeIsRemoteLike } from '@/store/gateway-config'
+import { $changeEventsAvailable, $pluginsChangeTick } from '@/store/live-sync'
 import { notifyError } from '@/store/notifications'
+import { openPluginInstallRequest } from '@/store/plugin-install-request'
 
 import {
   EmptyState,
@@ -38,6 +40,7 @@ import {
   SettingsContent,
   SettingsSection
 } from './primitives'
+import { settingRowElementId } from './settings-search'
 
 // Ported from apps/desktop/src/app/settings/plugins-settings.tsx. Universal adds
 // the dual-door surface: the active door and its root are always named, and the
@@ -162,13 +165,23 @@ function AgentPluginsSection() {
   const error = useStore($agentPluginsError)
   const [query, setQuery] = useState('')
 
+  // MJXHRM-416's reader. The tick moves when the gateway says its plugin
+  // directory changed — an event NOTHING emits yet (its signature row is a
+  // backend change the freeze forbids), so the mount fetch stays the backstop
+  // and the gate keeps this from looking live when it is not.
+  const changeEvents = useStore($changeEventsAvailable)
+  const pluginsTick = useStore($pluginsChangeTick)
+  // Held flat so the dependency stays statically checkable: on a gateway that
+  // does not advertise change events the tick can never move it.
+  const refreshOn = changeEvents ? pluginsTick : 0
+
   useEffect(() => {
     if (gatewayState !== 'open') {
       return
     }
 
     void loadAgentPlugins(requestGateway)
-  }, [gatewayState])
+  }, [gatewayState, refreshOn])
 
   const needle = normalize(query)
 
@@ -319,7 +332,7 @@ function PluginRow({ record, reveal }: { record: PluginRecord; reveal?: (path: s
       title={
         <span className="flex items-center gap-2">
           {record.name}
-          <Pill>{p.kinds[record.kind]}</Pill>
+          <Pill>{record.root ? p.roots[record.root] : p.kinds[record.kind]}</Pill>
           {record.status === 'error' && <Pill tone="primary">{p.failed}</Pill>}
         </span>
       }
@@ -387,6 +400,30 @@ export function PluginsSettings() {
         </p>
       )}
 
+      {/* The primary door for adding a plugin, above the inventory it adds to.
+          The dialog is what asks for the identifier and shows what the install
+          grants — this row only opens it. */}
+      <div className="mb-4">
+        <ListRow
+          action={
+            <Button
+              onClick={() => {
+                triggerHaptic('selection')
+                openPluginInstallRequest({ origin: 'settings', repo: '' })
+              }}
+              size="sm"
+              variant="outline"
+            >
+              <Download size="0.8rem" />
+              {p.installFromGit}
+            </Button>
+          }
+          description={p.installFromGitHint}
+          id={settingRowElementId('plugins.install')}
+          title={p.installFromGit}
+        />
+      </div>
+
       <div className="mb-4">
         <ListRow
           action={
@@ -400,6 +437,7 @@ export function PluginsSettings() {
             />
           }
           description={restEnabled && !loading && !disk ? p.gatewayDoorUnavailable : p.gatewayDoorHint}
+          id={settingRowElementId('plugins.gatewayDoor')}
           title={p.gatewayDoor}
         />
       </div>
@@ -421,6 +459,14 @@ export function PluginsSettings() {
             <PluginRow key={record.id} record={record} reveal={disk?.reveal} />
           ))}
         </div>
+      )}
+
+      {/* Says why an `agent package` row is off, next to the rows it explains —
+          the badge alone answers "which root", not "why". */}
+      {rows.some(record => record.root === 'agent-packages') && (
+        <p className="mt-3 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
+          {p.agentPackagesNotice}
+        </p>
       )}
 
       <div className="mt-8">

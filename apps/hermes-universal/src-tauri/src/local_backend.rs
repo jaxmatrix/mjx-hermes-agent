@@ -196,6 +196,20 @@ mod imp {
 #[cfg(desktop)]
 pub use imp::LocalBackendState;
 
+/// The base URL of the local child, if one is ALREADY running.
+///
+/// The registry's roster (MJXHRM-446) asks before enumerating a `local` source,
+/// so a background poll can never spawn a backend the user did not ask for.
+#[cfg(desktop)]
+pub async fn running_base_url(state: &LocalBackendState) -> Option<String> {
+    imp::status(state).await.base_url
+}
+
+#[cfg(mobile)]
+pub async fn running_base_url(_state: &LocalBackendState) -> Option<String> {
+    None
+}
+
 /// Kill the spawned `hermes serve` child, for callers that are not a command.
 ///
 /// The tray's Keep Running row is the one such caller: turning background mode

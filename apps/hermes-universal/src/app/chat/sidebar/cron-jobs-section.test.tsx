@@ -11,6 +11,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { confirm } from '@/store/confirm'
 import type { CronJob } from '@/types/hermes'
 
 const hermes = vi.hoisted(() => ({
@@ -21,6 +22,11 @@ const hermes = vi.hoisted(() => ({
   // Reached at import time through store/session → store/profile → store/profiles.
   setApiRequestProfile: vi.fn()
 }))
+
+// MJXHRM-479: `window.confirm` is gone — these surfaces now ask through the
+// imperative `confirm()` front door, which parks a promise until the one
+// `<ConfirmHost />` in `app.tsx` answers it. No host renders here, so mock it.
+vi.mock('@/store/confirm', () => ({ confirm: vi.fn(async () => true) }))
 
 vi.mock('@/hermes', () => hermes)
 
@@ -108,7 +114,7 @@ describe('cron sidebar row actions', () => {
     openRowMenu('Alpha backup')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pause cron' }))
 
-    await waitFor(() => expect(hermes.pauseCronJob).toHaveBeenCalledWith('alpha-job'))
+    await waitFor(() => expect(hermes.pauseCronJob).toHaveBeenCalledWith('alpha-job', undefined))
     expect(hermes.pauseCronJob).toHaveBeenCalledTimes(1)
 
     openRowMenu('Alpha backup')
@@ -122,32 +128,36 @@ describe('cron sidebar row actions', () => {
     openRowMenu('Alpha backup')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Trigger now' }))
 
-    expect(props.onTriggerJob).toHaveBeenLastCalledWith('alpha-job')
+    expect(props.onTriggerJob).toHaveBeenLastCalledWith('alpha-job', undefined)
 
     openRowMenu('Zulu digest')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Trigger now' }))
 
-    expect(props.onTriggerJob).toHaveBeenLastCalledWith('zulu-job')
+    expect(props.onTriggerJob).toHaveBeenLastCalledWith('zulu-job', undefined)
   })
 
   it('asks before deleting, and deletes the row it was opened on', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    vi.mocked(confirm).mockResolvedValueOnce(false)
 
     renderSection()
     openRowMenu('Alpha backup')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }))
 
-    // Declined: nothing is destroyed, and the prompt named the right job.
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Alpha backup'))
+    // Declined: nothing is destroyed, and the prompt named the right job. The
+    // job name is in the DESCRIPTION now, not the whole message — a window
+    // prompt had nowhere else to put it.
+    await waitFor(() =>
+      expect(vi.mocked(confirm).mock.calls[0]?.[0]).toMatchObject({
+        description: expect.stringContaining('Alpha backup'),
+        destructive: true
+      })
+    )
     expect(hermes.deleteCronJob).not.toHaveBeenCalled()
 
-    confirm.mockReturnValue(true)
     openRowMenu('Alpha backup')
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }))
 
-    await waitFor(() => expect(hermes.deleteCronJob).toHaveBeenCalledWith('alpha-job'))
-
-    confirm.mockRestore()
+    await waitFor(() => expect(hermes.deleteCronJob).toHaveBeenCalledWith('alpha-job', undefined))
   })
 
   it('reaches the same actions by right-click, from one shared item set', async () => {

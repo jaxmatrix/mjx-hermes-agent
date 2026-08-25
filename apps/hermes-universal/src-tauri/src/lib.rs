@@ -13,7 +13,14 @@ mod app_state;
 mod appearance;
 mod artifact;
 mod background;
+mod browser;
 mod cloud;
+mod connections;
+mod context_menu;
+mod data_url_read_max;
+mod deep_link;
+#[cfg(desktop)]
+mod external_terminal;
 mod find_in_page;
 mod keep_awake;
 mod link_title;
@@ -38,12 +45,31 @@ mod webview_cookies;
 mod window;
 
 use app_state::{get_app_flag, set_app_flag};
-use appearance::set_window_translucency;
+use appearance::{appearance_capabilities, appearance_set_glass, AppearanceState};
 use artifact::{artifact_release, artifact_stage, ArtifactState, ARTIFACT_SCHEME};
 use background::{get_background_mode, quit_app, set_background_mode, BackgroundState};
+use browser::commands::{
+    browser_back, browser_capabilities, browser_clear_data, browser_close, browser_eval,
+    browser_forward, browser_navigate, browser_open, browser_open_devtools, browser_reach_reset,
+    browser_reach_url, browser_reload, browser_set_bounds, browser_set_visible, browser_stop,
+};
+use browser::BrowserState;
 use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
 };
+use connections::{
+    connections_list, connections_migrate, connections_remove, connections_resolve,
+    connections_roster, connections_save, connections_set_last_used, connections_set_launch_mode,
+    connections_set_primary, connections_test, connections_update_all, ConnectionsState,
+};
+use context_menu::{
+    context_menu_copy_image, context_menu_install, context_menu_save_image,
+    context_menu_set_suppressed, ContextMenuState,
+};
+use data_url_read_max::{read_capped_file_base64, set_data_url_read_max, DataUrlReadMaxState};
+use deep_link::{deep_link_ready, DeepLinkState};
+#[cfg(desktop)]
+use external_terminal::open_in_terminal;
 use find_in_page::{find_in_page, stop_find_in_page};
 use keep_awake::{set_keep_awake, KeepAwakeState};
 use link_title::fetch_link_title;
@@ -93,6 +119,21 @@ fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+/// The same handoff, callable from Rust.
+///
+/// `open_external` itself cannot be made `pub(crate)`: `#[tauri::command]`
+/// re-exports its generated `__cmd__*` macros at the visibility of the function
+/// it decorates, and two definitions of that macro in one module do not
+/// compile. The in-app browser's navigation guard needs this door for a
+/// `mailto:`, a refused `window.open`, and a download it will not take.
+pub(crate) fn open_url_externally(app: &tauri::AppHandle, url: &str) {
+    use tauri_plugin_opener::OpenerExt;
+
+    if let Err(err) = app.opener().open_url(url, None::<&str>) {
+        log::warn!("could not hand a url to the system browser: {err}");
+    }
 }
 
 /// Reveal a path in the OS file manager (Finder/Explorer/Files), selecting the
@@ -155,6 +196,18 @@ pub fn run() {
 
     let builder = tauri::Builder::default();
 
+    // FIRST in the chain, and that is load-bearing: on Windows/Linux a
+    // `hermes://` link launches a SECOND process with the URL as its only
+    // argument, and this plugin is what kills that process and hands its argv to
+    // the running one. Registering it after another plugin would let that
+    // plugin's setup run in the losing instance first. Our callback body is
+    // deliberately empty — the plugin's own default already calls the deep-link
+    // plugin's `handle_cli_arguments`, and desktop's Electron `app.exit(0)`
+    // teardown maps to "do nothing but hand over the argv" here, because nothing
+    // in the loser owns anything yet.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.plugin(tauri_plugin_single_instance::Builder::new().build());
+
     // OS-level hotkeys (MJXHRM-55). Desktop only — no mobile OS lets an app claim
     // a system-wide chord, and the crate isn't in the mobile dependency set at
     // all, so this is a compile-time branch rather than a runtime capability
@@ -167,11 +220,19 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_mic::init())
+        // The native WebView guest host. Registered on both targets so the
+        // builder chain has one shape; the desktop half is a refusal stub
+        // nothing calls (desktop uses a child webview instead).
+        .plugin(tauri_plugin_browser::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_haptics::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
+        // `hermes://` — the OS front door (see deep_link.rs). Registered on both
+        // targets: the scheme is claimed by the bundler on desktop and by the
+        // Android intent-filter / iOS CFBundleURLTypes on mobile.
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(TransportState::new())
         .manage(MediaState::default())
@@ -182,6 +243,27 @@ pub fn run() {
         // The one system-sleep inhibitor. It releases on drop, so quitting frees
         // the machine even if the webview never turned the preference back off.
         .manage(KeepAwakeState::default())
+        .manage(DataUrlReadMaxState::default())
+        // Which glass request each window LABEL already carries, so a tint drag
+        // under glass costs zero native calls (appearance/mod.rs).
+        .manage(AppearanceState::default())
+        // Which windows already have the context-menu bridge installed
+        // (MJXHRM-478). Managed on BOTH targets so the builder chain has one
+        // shape; the set is empty and harmless where no adapter exists yet.
+        .manage(ContextMenuState::default())
+        // The in-app browser's guests and its SSH forward leases (MJXHRM-447).
+        // Managed on BOTH targets: desktop hosts a child webview, mobile a
+        // native view through tauri-plugin-browser, and the reach lease is
+        // platform-independent because russh is not cfg-gated.
+        .manage(BrowserState::default())
+        // The connection registry (MJXHRM-446). Managed on BOTH targets: the
+        // document, the credentials and the probe are platform-identical, and
+        // only the `local` KIND is desktop-only.
+        .manage(ConnectionsState::default())
+        // The deep-link cold-start buffer. Managed on BOTH targets so the builder
+        // chain has one shape — and it does real work on mobile, where a cold
+        // launch from a tapped link races the WebView every time.
+        .manage(DeepLinkState::default())
         .manage(VoiceState::default())
         .manage(UpdateState::default())
         // Live SSH sessions. Unlike desktop's on-disk control socket, nothing
@@ -263,6 +345,8 @@ pub fn run() {
                 app.state::<BackgroundState>().set_tray_ready(ready);
             }
 
+            deep_link::setup(app.handle());
+
             let _ = app;
             Ok(())
         })
@@ -290,10 +374,26 @@ pub fn run() {
             voice_close,
             open_external,
             reveal_in_file_manager,
-            set_window_translucency,
+            #[cfg(desktop)]
+            open_in_terminal,
+            appearance_capabilities,
+            appearance_set_glass,
             set_keep_awake,
+            set_data_url_read_max,
+            read_capped_file_base64,
             get_app_flag,
             set_app_flag,
+            connections_list,
+            connections_migrate,
+            connections_save,
+            connections_remove,
+            connections_set_primary,
+            connections_set_launch_mode,
+            connections_set_last_used,
+            connections_resolve,
+            connections_test,
+            connections_roster,
+            connections_update_all,
             marketplace_search,
             marketplace_fetch,
             artifact_release,
@@ -347,6 +447,10 @@ pub fn run() {
             secrets_lock,
             find_in_page,
             stop_find_in_page,
+            context_menu_install,
+            context_menu_set_suppressed,
+            context_menu_copy_image,
+            context_menu_save_image,
             surface_capabilities,
             surface_set_interactive_rect,
             read_window_below,
@@ -359,7 +463,23 @@ pub fn run() {
             tray_set_labels,
             tray_set_status,
             global_shortcuts_sync,
-            global_shortcut_take_pending
+            global_shortcut_take_pending,
+            deep_link_ready,
+            browser_capabilities,
+            browser_open,
+            browser_navigate,
+            browser_back,
+            browser_forward,
+            browser_reload,
+            browser_stop,
+            browser_set_bounds,
+            browser_set_visible,
+            browser_eval,
+            browser_clear_data,
+            browser_open_devtools,
+            browser_close,
+            browser_reach_url,
+            browser_reach_reset
         ]))
         // `.build(...).run(closure)` (rather than the terminal `.run(context)`) so
         // we can observe `RunEvent`s. On iOS this catches scenes the *system*
@@ -422,6 +542,20 @@ pub fn run() {
                 pty::reap_window_ptys(app_handle, label);
 
                 transport::reap_window_sockets(app_handle, label);
+                appearance::reap_window(app_handle, label);
+                // …and so do the guest webviews it hosted (MJXHRM-447): a child
+                // webview dies with its window, but the Rust-side registry
+                // would keep answering for it.
+                browser::reap_window(app_handle, label);
+
+                // The main webview is gone (a reload, an Android process
+                // recreation). Stop claiming a listener exists, so the next link
+                // buffers until its replacement calls `deep_link_ready` again —
+                // without this, an F5 during development silently swallows every
+                // later link.
+                if label == "main" {
+                    deep_link::forget_ready(app_handle);
+                }
 
                 if window::is_tile_window_label(label) {
                     let _ = app_handle.emit(window::TILE_WINDOW_CLOSED_EVENT, label.clone());

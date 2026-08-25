@@ -9,6 +9,7 @@ import { PageLoader } from '@/components/page-loader'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Codicon } from '@/components/ui/codicon'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
   type AutomationBlueprint,
@@ -46,8 +48,10 @@ import {
   updateCronJob
 } from '@/hermes'
 import { type Translations, useI18n } from '@/i18n'
+import { createCronTriggerController, type CronTriggerController } from '@/lib/cron-trigger-controller'
 import { AlertTriangle } from '@/lib/icons'
 import { requestModelOptions } from '@/lib/model-options'
+import { Codecs, persistentAtom } from '@/lib/persisted'
 import { asText } from '@/lib/text'
 import { $cronJobs, setCronJobs, updateCronJobs } from '@/store/cron'
 import { $changeEventsAvailable, $cronChangeTick, livePollIntervalMs } from '@/store/live-sync'
@@ -81,6 +85,10 @@ import {
   cronDeliveryOptions,
   cronDeliveryTargetLabel,
   cronEditorUpdates,
+  cronExternalContextFrom,
+  cronJobContinuity,
+  cronJobFireError,
+  cronRepeatSummary,
   jobIsScriptOnly,
   normalizeCronDeliverValue,
   parseCronDeliveryTargets,
@@ -90,6 +98,24 @@ import {
 import { jobState, jobTitle, STATE_DOT } from './job-state'
 
 const DEFAULT_DELIVER = 'local'
+
+/**
+ * Hide paused/disabled jobs in the list.
+ *
+ * This is the `include_disabled` filter, applied CLIENT-side: the REST listing
+ * always asks the backend for everything (`web_server._list_cron_jobs_sync`
+ * passes include_disabled=True unconditionally), unlike the `cron.manage` RPC
+ * which defaults it false. Default OFF — a management surface that hides paused
+ * jobs reads as if pausing deleted them, which is exactly the trap 444's helper
+ * documents.
+ */
+export const $hideDisabledCronJobs = persistentAtom('hermes.cron.hideDisabled', false, Codecs.bool)
+
+// What "disabled" means to the list filter. `paused` is included: the backend
+// stores a pause as enabled=false, so both words describe one thing the user
+// switched off, and a filter that hid only one of them would be a filter that
+// appeared not to work.
+const DISABLED_STATES = new Set(['disabled', 'paused'])
 
 // "Start from" sentinel: the manual editor rather than a blueprint. Any other
 // value is a blueprint key.
@@ -379,12 +405,42 @@ export function CronView({
 
   const [editor, setEditor] = useState<EditorState>({ mode: 'closed' })
   const [pendingDelete, setPendingDelete] = useState<CronJob | null>(null)
-  const [deleting, setDeleting] = useState(false)
+  const [triggeringJobKeys, setTriggeringJobKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const triggerControllerRef = useRef<CronTriggerController | null>(null)
+
+  useEffect(() => {
+    const controller = createCronTriggerController((key, running) => {
+      if (triggerControllerRef.current !== controller) {
+        return
+      }
+
+      setTriggeringJobKeys(current => {
+        const next = new Set(current)
+
+        if (running) {
+          next.add(key)
+        } else {
+          next.delete(key)
+        }
+
+        return next
+      })
+    })
+
+    triggerControllerRef.current = controller
+
+    return () => {
+      triggerControllerRef.current = null
+    }
+  }, [])
 
   // Jobs live per-profile on disk and the list endpoint aggregates 'all' by
   // default — scope the fetch to the sidebar's profile scope so this overlay
   // and the sidebar (which share the $cronJobs atom) agree on what's shown.
   const profileScope = useStore($profileScope)
+  // 'all' aggregates other profiles' stores and is not somewhere a job can be
+  // WRITTEN; every create path collapses it the same way.
+  const writeProfile = profileScope === ALL_PROFILES ? 'default' : profileScope
 
   const refresh = useCallback(async () => {
     try {
@@ -425,9 +481,15 @@ export function CronView({
     navigate(CRON_ROUTE, { replace: true })
   }, [focusJobId, jobs, loading, navigate])
 
+  const hideDisabled = useStore($hideDisabledCronJobs)
+
   const visibleJobs = useMemo(
-    () => jobs.filter(job => matchesQuery(job, query.trim())).sort((a, b) => jobTitle(a).localeCompare(jobTitle(b))),
-    [jobs, query]
+    () =>
+      jobs
+        .filter(job => matchesQuery(job, query.trim()))
+        .filter(job => !hideDisabled || !DISABLED_STATES.has(jobState(job)))
+        .sort((a, b) => jobTitle(a).localeCompare(jobTitle(b))),
+    [hideDisabled, jobs, query]
   )
 
   // Detail always reflects a concrete job: the explicitly selected one, else the
@@ -458,7 +520,7 @@ export function CronView({
 
     try {
       const isPaused = jobState(job) === 'paused'
-      const updated = isPaused ? await resumeCronJob(job.id) : await pauseCronJob(job.id)
+      const updated = isPaused ? await resumeCronJob(job.id, job.profile) : await pauseCronJob(job.id, job.profile)
       updateCronJobs(rows => rows.map(row => (row.id === job.id ? updated : row)))
       notify({
         kind: 'success',
@@ -472,12 +534,46 @@ export function CronView({
     }
   }
 
+  /**
+   * Run a job now.
+   *
+   * Through the shared trigger controller (vendored from apps/shared, which the
+   * web dashboard and desktop both use) rather than the plain busy flag:
+   *
+   *  - it announces BEFORE the request leaves, so a trigger whose run takes a
+   *    while is not a click that appears to do nothing;
+   *  - it coalesces per JOB, keyed `profile:id`, so a double-click cannot fire
+   *    two runs while the first is in the air, and two profiles' same-named jobs
+   *    are still two jobs. `busyJobId` is one id for the whole surface, which is
+   *    a different guard for a different purpose (it disables the row's other
+   *    actions) and is kept.
+   *
+   * It is an INTERACTION guard only. At-most-once execution stays the backend's
+   * durable cron claim; a renderer-local Set is not an execution lock.
+   */
   async function handleTrigger(job: CronJob) {
+    const controller = triggerControllerRef.current
+
+    if (!controller) {
+      return
+    }
+
+    const key = `${job.profile ?? ''}:${job.id}`
+
     setBusyJobId(job.id)
 
     try {
-      const updated = await triggerCronJob(job.id)
-      updateCronJobs(rows => rows.map(row => (row.id === job.id ? updated : row)))
+      const run = await controller.run(
+        key,
+        () => triggerCronJob(job.id, job.profile),
+        () => notify({ kind: 'info', title: c.triggerNow, message: truncate(jobTitle(job), 60) })
+      )
+
+      if (!run.started || !run.value) {
+        return
+      }
+
+      updateCronJobs(rows => rows.map(row => (row.id === job.id ? run.value! : row)))
       notify({ kind: 'success', title: c.triggered, message: truncate(jobTitle(job), 60) })
     } catch (err) {
       notifyError(err, c.failedTrigger)
@@ -491,36 +587,45 @@ export function CronView({
       return
     }
 
-    setDeleting(true)
-
-    try {
-      await deleteCronJob(pendingDelete.id)
-      updateCronJobs(rows => rows.filter(row => row.id !== pendingDelete.id))
-      notify({ kind: 'success', title: c.deleted, message: truncate(jobTitle(pendingDelete), 60) })
-      setPendingDelete(null)
-    } catch (err) {
-      notifyError(err, c.failedDelete)
-    } finally {
-      setDeleting(false)
-    }
+    // No try/catch: ConfirmDialog owns the pending → done beat and turns a
+    // throw into an inline error, which is where the user is already looking.
+    // The old toast fired from behind a dialog that had just closed itself.
+    await deleteCronJob(pendingDelete.id, pendingDelete.profile)
+    updateCronJobs(rows => rows.filter(row => row.id !== pendingDelete.id))
+    notify({ kind: 'success', title: c.deleted, message: truncate(jobTitle(pendingDelete), 60) })
   }
 
   async function handleEditorSave(values: EditorValues) {
     if (editor.mode === 'create') {
-      const created = await createCronJob({
-        prompt: values.prompt,
-        schedule: values.schedule,
-        name: values.name || undefined,
-        deliver: values.deliver || DEFAULT_DELIVER,
-        ...(values.model.trim() ? { model: values.model.trim(), provider: values.provider.trim() || undefined } : {})
-      })
+      const created = await createCronJob(
+        {
+          prompt: values.prompt,
+          schedule: values.schedule,
+          name: values.name || undefined,
+          deliver: values.deliver || DEFAULT_DELIVER,
+          // A create has no stored refs to preserve, so the toggle is the whole
+          // list. Omitted entirely when off, to keep the payload what it was.
+          ...(values.continuity ? { context_from: ['self'] } : {}),
+          ...(values.model.trim() ? { model: values.model.trim(), provider: values.provider.trim() || undefined } : {})
+        },
+        // The profile being browsed, so a job created while looking at another
+        // one lands in ITS store. 'all' is not a writable target — collapse it to
+        // 'default', matching the blueprint path below.
+        writeProfile
+      )
 
       updateCronJobs(rows => [...rows, created])
       notify({ kind: 'success', title: c.created, message: truncate(jobTitle(created), 60) })
     } else if (editor.mode === 'edit') {
       const scriptOnlyJob = jobIsScriptOnly(editor.job)
 
-      const updated = await updateCronJob(editor.job.id, cronEditorUpdates(values, { scriptOnlyJob }))
+      const updated = await updateCronJob(
+        editor.job.id,
+        // The job's OWN external refs, so flipping the one checkbox this editor
+        // shows cannot delete a cross-job link set from the CLI or dashboard.
+        cronEditorUpdates(values, { externalContextFrom: cronExternalContextFrom(editor.job), scriptOnlyJob }),
+        editor.job.profile
+      )
 
       updateCronJobs(rows => rows.map(row => (row.id === updated.id ? updated : row)))
       notify({ kind: 'success', title: c.updated, message: truncate(jobTitle(updated), 60) })
@@ -535,8 +640,7 @@ export function CronView({
   // real per-profile job, and "all" is not a writable target — collapse it to
   // 'default', matching the manual create path in handleEditorSave.
   async function handleBlueprintCreate(blueprint: AutomationBlueprint, values: Record<string, string>) {
-    const profile = profileScope === ALL_PROFILES ? 'default' : profileScope
-    const job = await instantiateAutomationBlueprint({ blueprint: blueprint.key, values }, profile)
+    const job = await instantiateAutomationBlueprint({ blueprint: blueprint.key, values }, writeProfile)
 
     updateCronJobs(rows => [...rows.filter(row => row.id !== job.id), job])
     notify({ kind: 'success', title: c.blueprints.scheduled, message: asText(job.schedule_display) || blueprint.title })
@@ -560,7 +664,20 @@ export function CronView({
         />
       ) : (
         <>
-          <PanelHeader subtitle={c.count(totalCount)} title={c.title} />
+          <PanelHeader
+            actions={
+              <Button
+                aria-pressed={hideDisabled}
+                onClick={() => $hideDisabledCronJobs.set(!hideDisabled)}
+                size="sm"
+                variant={hideDisabled ? 'secondary' : 'ghost'}
+              >
+                {hideDisabled ? c.showPaused : c.hidePaused}
+              </Button>
+            }
+            subtitle={c.count(totalCount)}
+            title={c.title}
+          />
           <PanelBody>
             <PanelList
               onSearchChange={setQuery}
@@ -587,7 +704,9 @@ export function CronView({
                 />
               ))}
               {visibleJobs.length === 0 && (
-                <p className="px-2 py-4 text-center text-xs text-muted-foreground">{c.emptyTitleSearch}</p>
+                <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+                  {query.trim() ? c.emptyTitleSearch : c.emptyTitleNew}
+                </p>
               )}
               <PanelAddButton label={c.newCron} onClick={() => setEditor({ mode: 'create' })} />
             </PanelList>
@@ -600,9 +719,19 @@ export function CronView({
                 onOpenSession={onOpenSession}
                 onPauseResume={() => void handlePauseResume(selectedJob)}
                 onTrigger={() => void handleTrigger(selectedJob)}
+                triggering={triggeringJobKeys.has(`${selectedJob.profile ?? ''}:${selectedJob.id}`)}
               />
-            ) : (
+            ) : query.trim() ? (
+              // A search with no selected job: search-flavoured copy is right.
               <PanelEmpty description={c.emptyDescSearch} icon="search" />
+            ) : (
+              // No selection and no search — "Try a broader search query" here
+              // just confused people staring at an empty panel with zero jobs.
+              <PanelEmpty
+                description={c.emptyDescNew}
+                icon="watch"
+                title={jobs.length === 0 ? c.emptyTitleNew : undefined}
+              />
             )}
           </PanelBody>
         </>
@@ -615,30 +744,30 @@ export function CronView({
         onSave={handleEditorSave}
       />
 
-      <Dialog onOpenChange={open => !open && !deleting && setPendingDelete(null)} open={pendingDelete !== null}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{c.deleteTitle}</DialogTitle>
-            <DialogDescription>
-              {pendingDelete ? (
-                <>
-                  {c.deleteDescPrefix}
-                  <span className="font-medium text-foreground">{truncate(jobTitle(pendingDelete), 60)}</span>
-                  {c.deleteDescSuffix}
-                </>
-              ) : null}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button disabled={deleting} onClick={() => setPendingDelete(null)} variant="outline">
-              {t.common.cancel}
-            </Button>
-            <Button disabled={deleting} onClick={() => void handleConfirmDelete()} variant="destructive">
-              {deleting ? c.deleting : t.common.delete}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* The SIDEBAR deletes a cron job through the imperative `confirm()`;
+          this overlay deletes the same job and had its own hand-rolled dialog,
+          so the app asked the same question two different ways. It stays
+          DECLARATIVE rather than moving to `confirm()` because it wants the
+          busy → done beat and the inline error — which is exactly the split
+          `store/confirm`'s own header prescribes. */}
+      <ConfirmDialog
+        busyLabel={c.deleting}
+        confirmLabel={t.common.delete}
+        description={
+          pendingDelete ? (
+            <>
+              {c.deleteDescPrefix}
+              <span className="font-medium text-foreground">{truncate(jobTitle(pendingDelete), 60)}</span>
+              {c.deleteDescSuffix}
+            </>
+          ) : null
+        }
+        destructive
+        onClose={() => setPendingDelete(null)}
+        onConfirm={handleConfirmDelete}
+        open={pendingDelete !== null}
+        title={c.deleteTitle}
+      />
     </Panel>
   )
 }
@@ -657,11 +786,16 @@ function CronJobListRow({
   onSelect: () => void
 }) {
   const state = jobState(job)
+  // A missed fire does not change `state` — the scheduler never started the run,
+  // so the record still reads "scheduled" and the row looked healthy. Paint the
+  // pip with the error colour so the list itself says which job to open; the
+  // detail pane carries the reason.
+  const dot = cronJobFireError(job) ? STATE_DOT.error : (STATE_DOT[state] ?? 'bg-muted-foreground')
 
   return (
     <PanelListRow
       active={active}
-      dotClassName={STATE_DOT[state] ?? 'bg-muted-foreground'}
+      dotClassName={dot}
       menuItems={menuItems}
       menuLabel={menuLabel}
       onSelect={onSelect}
@@ -677,7 +811,8 @@ function CronJobDetail({
   job,
   onOpenSession,
   onPauseResume,
-  onTrigger
+  onTrigger,
+  triggering
 }: {
   busy: boolean
   c: Translations['cron']
@@ -685,11 +820,15 @@ function CronJobDetail({
   onOpenSession?: (sessionId: string) => void
   onPauseResume: () => void
   onTrigger: () => void
+  /** A trigger for THIS job is in flight (the shared controller's state). */
+  triggering: boolean
 }) {
   const state = jobState(job)
   const isPaused = state === 'paused'
   const deliver = jobDeliver(job)
   const deliveryError = asText(job.last_delivery_error).trim()
+  const fireError = cronJobFireError(job)
+  const repeat = cronRepeatSummary(job, c.repeatForever, c.repeatOf)
   const prompt = jobPrompt(job)
   const modelOverride = jobModel(job)
 
@@ -705,8 +844,8 @@ function CronJobDetail({
             <PanelAction disabled={busy} icon={isPaused ? 'play' : 'debug-pause'} onClick={onPauseResume}>
               {isPaused ? c.resumeTitle : c.pauseTitle}
             </PanelAction>
-            <PanelAction disabled={busy} icon="zap" onClick={onTrigger}>
-              {c.triggerNow}
+            <PanelAction disabled={busy || triggering} icon="zap" onClick={onTrigger}>
+              {triggering ? c.triggering : c.triggerNow}
             </PanelAction>
           </div>
         </div>
@@ -717,6 +856,7 @@ function CronJobDetail({
             { label: c.last.replace(/:$/, ''), value: formatTime(job.last_run_at) },
             { label: c.next.replace(/:$/, ''), value: formatTime(job.next_run_at) },
             { label: c.deliverLabel, value: cronDeliverSummary(deliver, c.deliveryLabels) },
+            ...(repeat ? [{ label: c.repeatLabel, value: repeat }] : []),
             ...(modelOverride ? [{ label: c.modelLabel, value: modelOverride }] : [])
           ]}
         />
@@ -725,6 +865,22 @@ function CronJobDetail({
           <div className="flex items-start gap-1.5 rounded bg-destructive/10 p-2 text-[0.7rem] text-destructive">
             <AlertTriangle className="mt-px size-3 shrink-0" />
             <span className="min-w-0 break-words">{job.last_error}</span>
+          </div>
+        ) : null}
+
+        {/* A MISSED fire is neither of the other two: the scheduler never got
+            to start the run, so no execution row exists and last_status /
+            last_error only ever describe runs that began (cron/jobs.py
+            `stamp_fire_error`). This is the "runs fine when I trigger it, never
+            fires on its own" shape, and without this block the job looked
+            perfectly healthy while silently never running. */}
+        {fireError ? (
+          <div className="flex items-start gap-1.5 rounded bg-destructive/10 p-2 text-[0.7rem] text-destructive">
+            <AlertTriangle className="mt-px size-3 shrink-0" />
+            <span className="min-w-0 break-words">
+              {c.missedFire}
+              {fireError.at ? ` (${formatTime(fireError.at)})` : ''}: {fireError.detail}
+            </span>
           </div>
         ) : null}
 
@@ -751,7 +907,7 @@ function CronJobDetail({
         </section>
       ) : null}
 
-      <CronJobRuns c={c} jobId={job.id} onOpenSession={onOpenSession} />
+      <CronJobRuns c={c} jobId={job.id} onOpenSession={onOpenSession} profile={job.profile} />
     </PanelDetail>
   )
 }
@@ -778,11 +934,13 @@ const RUNS_BACKSTOP_INTERVAL_MS = 60_000
 function CronJobRuns({
   c,
   jobId,
-  onOpenSession
+  onOpenSession,
+  profile
 }: {
   c: Translations['cron']
   jobId: string
   onOpenSession?: (sessionId: string) => void
+  profile?: null | string
 }) {
   const changeEventsAvailable = useStore($changeEventsAvailable)
   const cronChangeTick = useStore($cronChangeTick)
@@ -792,7 +950,7 @@ function CronJobRuns({
     let cancelled = false
 
     const load = () =>
-      getCronJobRuns(jobId)
+      getCronJobRuns(jobId, undefined, profile)
         .then(result => {
           if (!cancelled) {
             setRuns(result)
@@ -829,7 +987,7 @@ function CronJobRuns({
       document.removeEventListener('visibilitychange', onVisible)
     }
     // cronChangeTick: a run the scheduler just finished reloads the history.
-  }, [changeEventsAvailable, cronChangeTick, jobId])
+  }, [changeEventsAvailable, cronChangeTick, jobId, profile])
 
   return (
     <div>
@@ -887,6 +1045,7 @@ function CronEditorDialog({
   const [schedule, setSchedule] = useState('')
   const [schedulePreset, setSchedulePreset] = useState('daily')
   const [deliver, setDeliver] = useState(DEFAULT_DELIVER)
+  const [continuity, setContinuity] = useState(false)
   // Per-job model override, encoded as `${providerSlug}:${model}` (split on the
   // first ':' when saving). MODEL_DEFAULT_VALUE = follow the global default.
   const [modelChoice, setModelChoice] = useState(MODEL_DEFAULT_VALUE)
@@ -934,6 +1093,7 @@ function CronEditorDialog({
     setSchedule(initial ? jobScheduleExpr(initial) : (SCHEDULE_OPTIONS[0].expr ?? ''))
     setSchedulePreset(initial ? scheduleOptionForExpr(jobScheduleExpr(initial)).value : 'daily')
     setDeliver(initial ? jobDeliver(initial) : DEFAULT_DELIVER)
+    setContinuity(initial ? cronJobContinuity(initial) : false)
     setModelChoice(initial && jobModel(initial) ? `${jobProvider(initial)}:${jobModel(initial)}` : MODEL_DEFAULT_VALUE)
     setSlotValues({})
     setTemplateChoice(CUSTOM_TEMPLATE)
@@ -1011,6 +1171,7 @@ function CronEditorDialog({
 
     try {
       await onSave({
+        continuity,
         deliver,
         model: overrideModel,
         name: name.trim(),
@@ -1169,6 +1330,20 @@ function CronEditorDialog({
               </Field>
             </div>
 
+            {/* Continuity is stored as the reserved 'self' entry in context_from,
+                not as a field of its own — see cronContextFromPayload. A switch,
+                because it is one durable property of the job rather than a
+                choice among options. */}
+            <div className="flex items-start justify-between gap-3 rounded-md border border-input px-3 py-2.5">
+              <div className="grid gap-0.5">
+                <label className="text-xs font-medium text-foreground" htmlFor="cron-continuity">
+                  {c.continuityLabel}
+                </label>
+                <FieldHint>{c.continuityHint}</FieldHint>
+              </div>
+              <Switch checked={continuity} id="cron-continuity" onCheckedChange={setContinuity} />
+            </div>
+
             {!scriptOnlyJob && (
               <Field htmlFor="cron-model" label={c.modelLabel} optional optionalLabel={c.optional}>
                 <Select onValueChange={setModelChoice} value={modelChoice}>
@@ -1312,6 +1487,8 @@ function FieldHint({ children }: { children: React.ReactNode }) {
 type EditorState = { mode: 'closed' } | { mode: 'create' } | { job: CronJob; mode: 'edit' }
 
 interface EditorValues {
+  /** Feed the job its own previous output into the next run. */
+  continuity: boolean
   deliver: string
   /** Per-job model override ('' = follow the global default). */
   model: string

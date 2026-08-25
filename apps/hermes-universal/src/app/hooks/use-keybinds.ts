@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { commandFocusedBrowser } from '@/app/browser/browser-nav'
 import { toggleHud } from '@/app/hud/hud'
 import { toggleQuickEntry } from '@/app/quick-entry/quick-entry'
 import {
@@ -14,6 +15,7 @@ import { contributedKeybindHandler, PROFILE_SLOT_COUNT, SESSION_SLOT_COUNT } fro
 import { comboAllowedInInput, comboFromEvent, isEditableTarget, isShiftPrintableCombo } from '@/lib/keybinds/combo'
 import { composerFocusKeysAllowed, isComposerFocusSoftCombo, typeToFocusChar } from '@/lib/keybinds/composer-focus-keys'
 import { setGlobalShortcutDispatch, startGlobalShortcuts } from '@/lib/keybinds/global-shortcut'
+import { toggleInAppBrowser } from '@/store/browser'
 import { openWorktreeDialog } from '@/store/coding-status'
 import { toggleCommandPalette } from '@/store/command-palette'
 import {
@@ -44,7 +46,7 @@ import {
 } from '@/store/profile'
 import { openFolderAsProject } from '@/store/projects'
 import { toggleReview } from '@/store/review'
-import { toggleSelectedPin } from '@/store/session-lookup'
+import { archiveActiveSession, toggleSelectedPin } from '@/store/session-lookup'
 import { focusOpenSession, reopenLastClosedTile } from '@/store/session-states'
 import {
   $switcherOpen,
@@ -197,6 +199,10 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
     ...sessionSlotHandlers,
     'session.focusSearch': requestSessionSearchFocus,
     'session.togglePin': toggleSelectedPin,
+    // Ships unbound — see lib/keybinds/actions.ts. No-op with no active
+    // session, so a bound chord on a fresh draft does nothing rather than
+    // archiving whatever was last selected.
+    'session.archive': () => void archiveActiveSession(),
     // ⌘⇧B spins up a new git worktree. openWorktreeDialog resolves the target
     // (the focused surface's cwd, else the entered project's root) and publishes
     // it to the ONE mounted dialog, so this no longer tests $repoStatus first and
@@ -214,6 +220,17 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
     // ⌘J toggles the file browser — the "secondary panel" toggle.
     'view.toggleRightSidebar': toggleRightEdge,
     'view.toggleReview': toggleReview,
+
+    // ⌘⇧L — the in-app browser (MJXHRM-447). A fresh one lands on about:blank,
+    // where the pane's address field invites an address.
+    'view.toggleBrowser': () => void toggleInAppBrowser(),
+    // The three PAGE chords only answer while focus is inside the pane, so ⌘R
+    // still reloads the window everywhere else. Once focus is inside the GUEST
+    // the host document never sees the key at all — those are handled by the
+    // injected guest script.
+    'browser.back': () => commandFocusedBrowser()?.back(),
+    'browser.forward': () => commandFocusedBrowser()?.forward(),
+    'browser.reload': () => commandFocusedBrowser()?.reload(),
     'view.toggleStatusbar': toggleStatusbarVisible,
     'view.showFiles': showFiles,
     // ⌘F opens the bar; ⌘G / ⌘⇧G step from anywhere once it is open (the bar
@@ -311,6 +328,15 @@ export function useKeybinds(deps: KeybindRuntimeDeps): void {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // An active IME composition owns the keyboard. Windows Chinese IMEs
+      // (Microsoft Pinyin, Sogou) use Ctrl+, as their punctuation-mode toggle,
+      // so without this guard that keystroke ALSO matched `nav.settings` and
+      // navigated away mid-word, unmounting the composer with an unsent draft
+      // in it. Before capture mode, which would otherwise bind a preedit key.
+      if (event.isComposing) {
+        return
+      }
+
       // Capture mode: the next real key becomes the binding. Swallow everything
       // so e.g. ⌘K rebinds instead of opening the palette.
       const capturing = $capture.get()

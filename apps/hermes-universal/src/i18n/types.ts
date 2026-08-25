@@ -25,6 +25,7 @@ export type ToolTitleKey =
   | 'read_file'
   | 'search_files'
   | 'session_search_recall'
+  | 'setup_mcp'
   | 'terminal'
   | 'todo'
   | 'vision_analyze'
@@ -67,6 +68,7 @@ export interface Translations {
     copied: string
     copy: string
     copyFailed: string
+    deleteNamed: (name: string) => string
     delete: string
     docs: string
     done: string
@@ -209,6 +211,14 @@ export interface Translations {
       backgroundFailedTitle: string
       creditsTitle: string
     }
+    mcp: {
+      needsAuthTitle: string
+      needsAuthMessage: (name: string) => string
+      errorTitle: string
+      errorMessage: (name: string) => string
+      signIn: string
+      view: string
+    }
   }
 
   billingBlock: {
@@ -224,6 +234,16 @@ export interface Translations {
     message: (reason: string) => string
   }
 
+  resourcePressure: {
+    diskCritical: string
+    diskElevated: string
+    diskFree: (mb: number) => string
+    dismiss: string
+    memoryCritical: string
+    memoryElevated: string
+    oomRestart: string
+  }
+
   titlebar: {
     hideSidebar: string
     showSidebar: string
@@ -233,6 +253,7 @@ export interface Translations {
     swapSidebarSidesTitle: string
     hideRightSidebar: string
     showRightSidebar: string
+    unreadSessions: (count: number) => string
     muteHaptics: string
     unmuteHaptics: string
     openSettings: string
@@ -259,6 +280,75 @@ export interface Translations {
     title: string
     next: string
     previous: string
+  }
+
+  // The app-wide right-click / long-press menu (MJXHRM-478).
+  contextMenu: {
+    link: {
+      openExternal: string
+      copyUrl: string
+      openInApp: string
+      copyResolvedUrl: string
+    }
+    image: {
+      copyImage: string
+      copyImageAddress: string
+      saveImageAs: string
+      copyFailed: string
+      saveFailed: string
+    }
+    edit: {
+      cut: string
+      paste: string
+      selectAll: string
+      addToDictionary: string
+    }
+    page: {
+      inspectElement: string
+    }
+    checkForUpdates: string
+    someItemsFailed: string
+  }
+
+  // The consent gate for installing a plugin from git (MJXHRM-455). Every string
+  // here is shown BEFORE anything is installed — a deep link can put an
+  // arbitrary repository in front of the user, so the dialog's job is to say
+  // exactly what is about to be trusted.
+  pluginInstall: {
+    title: string
+    fromDeepLink: string
+    fromSettings: string
+    repoLabel: string
+    repoPlaceholder: string
+    sourceLink: string
+    invalidIdentifier: string
+    insecureWarning: (url: string) => string
+    targetProfile: string
+    authorityNotice: string
+    enableAfterInstall: string
+    forceReinstall: string
+    forceReinstallHint: string
+    waitingForGateway: string
+    install: string
+    installing: string
+    agentSuccess: (name: string) => string
+    warningsTitle: string
+    missingEnv: (list: string) => string
+    noIdentifier: string
+    stillRunning: string
+    restDoorOff: string
+  }
+
+  // `hermes://` deep links (MJXHRM-455). Every message here is what the user
+  // sees when a link the OS handed us does NOT lead anywhere — the refusals are
+  // the whole surface, because a link that works just opens what it named.
+  deepLink: {
+    title: string
+    badUrl: string
+    unsafePath: string
+    unknownPath: (path: string) => string
+    reservedKind: (kind: string) => string
+    routeConflict: string
   }
 
   // The rebindable keyboard-shortcuts panel (Settings → Keyboard shortcuts).
@@ -294,6 +384,10 @@ export interface Translations {
   }
 
   settings: {
+    profileScope: {
+      appliesTo: string
+      editsProfile: (profile: string) => string
+    }
     closeSettings: string
     exportConfig: string
     importConfig: string
@@ -321,6 +415,8 @@ export interface Translations {
       title: string
       blurb: string
       count: (n: number) => string
+      installFromGit: string
+      installFromGitHint: string
       openFolder: string
       rescan: string
       reveal: string
@@ -329,6 +425,8 @@ export interface Translations {
       failed: string
       empty: string
       kinds: { bundled: string; disk: string; runtime: string }
+      roots: { 'agent-packages': string; 'desktop-plugins': string }
+      agentPackagesNotice: string
       sourceLocal: string
       sourceGateway: string
       sourceNone: string
@@ -353,6 +451,7 @@ export interface Translations {
       intro: string
       enableAll: string
       enableAllDesc: string
+      noActionsNotice: string
       focusedHint: string
       kinds: Record<
         'approval' | 'backgroundDone' | 'credits' | 'input' | 'plugin' | 'turnDone' | 'turnError',
@@ -411,6 +510,10 @@ export interface Translations {
       toolViewDesc: string
       backdropTitle: string
       backdropDesc: string
+      introSplashTitle: string
+      introSplashDesc: string
+      restorePaintTitle: string
+      restorePaintDesc: string
       reactionsTitle: string
       reactionsDesc: string
       uiScaleTitle: string
@@ -422,6 +525,24 @@ export interface Translations {
       terminalFontReset: string
       translucencyTitle: string
       translucencyDesc: string
+      glass: {
+        modeOff: string
+        modeClear: string
+        modeGlass: string
+        tintTitle: string
+        tintDesc: string
+        frostTitle: string
+        frostDesc: string
+        frost: Record<'header' | 'popover' | 'titlebar' | 'underWindow', string>
+        areaTitle: string
+        areaWindow: string
+        areaSidebar: string
+        fadeTitle: string
+        fadeDesc: string
+        clearDesc: string
+        unsupportedLinux: string
+        unsupportedWindows: (build: string) => string
+      }
       embedsTitle: string
       embedsDesc: string
       embedsAsk: string
@@ -548,6 +669,11 @@ export interface Translations {
       /** Shown when the machine has no system tray, so hiding the window would
        *  leave a process with nothing to reach it by — the switch flips back off. */
       backgroundModeFailed: string
+      /** Settings ▸ Chat: cap on local files read into memory as data URLs. */
+      attachmentSizeTitle: string
+      attachmentSizeDesc: string
+      attachmentSizeUnit: string
+      attachmentSizeLabel: string
     }
     credentials: {
       pasteKey: string
@@ -624,12 +750,12 @@ export interface Translations {
       sshErrAuth: string
       sshErrHostKey: string
       sshErrNotInstalled: string
-    /** Offer to install Hermes on the remote host after a failed connect. */
-    sshInstallTitle: (host: string) => string
-    sshInstallBody: string
-    sshInstallCancel: string
-    sshInstallDoneTitle: string
-    sshInstallDoneBody: string
+      /** Offer to install Hermes on the remote host after a failed connect. */
+      sshInstallTitle: (host: string) => string
+      sshInstallBody: string
+      sshInstallCancel: string
+      sshInstallDoneTitle: string
+      sshInstallDoneBody: string
       sshErrPlatform: string
       sshErrTimeout: string
       sshErrUpdateRequired: string
@@ -728,6 +854,54 @@ export interface Translations {
       useDifferentGateway: string
       startOver: string
     }
+    /** Settings ▸ Gateways — the multi-connection registry (MJXHRM-446). */
+    connections: {
+      title: string
+      switchTo: (label: string) => string
+      noSource: string
+      connecting: (label: string) => string
+      searchPlaceholder: string
+      searchEmpty: (term: string) => string
+      add: string
+      pickOne: string
+      readOnly: string
+      degradedReason: (reason: string) => string
+      fieldLabel: string
+      fieldLabelPlaceholder: string
+      fieldUrl: string
+      fieldHost: string
+      fieldRemoteProfile: string
+      fieldToken: string
+      fieldTokenPlaceholder: string
+      noKeyring: string
+      localUnsupported: string
+      kindHint: (kind: string) => string
+      save: string
+      saved: string
+      saveFailed: string
+      removeFailed: string
+      test: string
+      testFailed: string
+      connect: string
+      setPrimary: string
+      remove: string
+      droppedHeaders: (names: string) => string
+      verdict: (verdict: string) => string
+      legHttp: (ok: boolean, status: number, ms: number) => string
+      legWs: (ok: boolean, ms: number) => string
+      launchMode: string
+      launchPrimary: string
+      launchLastUsed: string
+      updateAll: string
+      updateAllSummary: (total: number, failed: number) => string
+      degradedTitle: string
+      degradedMessage: string
+      latchedTitle: string
+      latchedMessage: (reason: string) => string
+      switchFailed: string
+      midDialTitle: string
+      midDialMessage: (label: string) => string
+    }
     keys: {
       loading: string
       failedLoad: string
@@ -797,6 +971,26 @@ export interface Translations {
       enableTool: (tool: string) => string
       disableTool: (tool: string) => string
       noOutput: string
+      importButton: string
+      importPlaceholder: string
+      importNoMatch: string
+      importConfirm: string
+      importConfirmMany: (count: number) => string
+      deepLinkTitle: string
+      deepLinkDescription: string
+      deepLinkStdioWarning: string
+      deepLinkConfirm: string
+      deepLinkNameInvalid: string
+      deepLinkNameConflict: (name: string) => string
+      deepLinkErrorTitle: string
+      deepLinkErrorName: string
+      deepLinkErrorConfig: string
+      deepLinkErrorShape: string
+      deepLinkErrorUrl: string
+      deepLinkErrorTooLarge: string
+      costTokens: (tokens: string) => string
+      usage30d: (uses: string) => string
+      unusedPill: string
     }
     model: {
       loading: string
@@ -903,6 +1097,8 @@ export interface Translations {
       messages: (count: number) => string
       restored: string
       deleteConfirm: (title: string) => string
+      /** Extra line in the permanent-delete dialog when the row is pinned. */
+      deletePinnedWarning: string
       defaultDirTitle: string
       defaultDirDesc: string
       defaultDirUpdated: string
@@ -981,6 +1177,15 @@ export interface Translations {
   }
 
   skills: {
+    project: {
+      disabled: string
+      quarantinedCount: (count: number) => string
+      title: string
+      trust: string
+      trustedCount: (count: number) => string
+      untrust: string
+      untrustedCount: (count: number) => string
+    }
     tabSkills: string
     tabToolsets: string
     tabMcp: string
@@ -1084,6 +1289,10 @@ export interface Translations {
       policyBlock: string
       findings: (count: number) => string
       noFindings: string
+      advisory: string
+      advisoryPassed: string
+      advisoryFlagged: (count: number) => string
+      advisoryIncomplete: (count: number) => string
       installStarted: (name: string) => string
       uninstallStarted: (name: string) => string
       updateStarted: string
@@ -1162,6 +1371,16 @@ export interface Translations {
     steerGone: string
     steerNotOwned: string
     steerMissed: (text: string) => string
+    stop: string
+    stopRequested: string
+    budgetWrapup: string
+    truncatedNotice: string
+    worktree: string
+    worktreeCommits: (count: number) => string
+    worktreeDirty: string
+    worktreeKept: string
+    worktreePruned: string
+    worktreeUnknown: string
   }
 
   commandCenter: {
@@ -1181,6 +1400,15 @@ export interface Translations {
     settings: string
     changeTheme: string
     changeColorMode: string
+    tour: {
+      label: string
+      steps: {
+        sidebar: { title: string; text: string }
+        composer: { title: string; text: string }
+        statusbar: { title: string; text: string }
+        palette: { title: string; text: string }
+      }
+    }
     pets: {
       title: string
       placeholder: string
@@ -1239,6 +1467,9 @@ export interface Translations {
     }
     commands: string
     settingsFields: string
+    settingsPreferences: string
+    settingsSearchPlaceholder: string
+    settingsSearchPill: string
     mcpServers: string
     archivedChats: string
     sections: Record<'maintenance' | 'sessions' | 'system' | 'usage', string>
@@ -1378,6 +1609,33 @@ export interface Translations {
   }
 
   profiles: {
+    editor: {
+      title: string
+      loading: string
+      loadFailed: string
+      descriptionLabel: string
+      descriptionPlaceholder: string
+      toolsetsLabel: string
+      toolsetsUnpinned: string
+      mcpLabel: string
+      noneInstalled: string
+      save: string
+      saved: string
+      savedPartial: string
+      saveFailed: string
+      avatarUpload: string
+      avatarReplace: string
+      avatarRemove: string
+      avatarHint: string
+      avatarSaved: string
+      avatarFailed: string
+      avatarRejected: string
+      avatarTooLarge: string
+      working: string
+      shareSignIn: string
+      shareSignInHint: string
+      noCredentials: string
+    }
     close: string
     nameHint: string
     title: string
@@ -1447,6 +1705,9 @@ export interface Translations {
     createAction: string
     renameTitle: string
     renameDescPrefix: string
+    displayNameTitle: string
+    displayNameDesc: string
+    displayNameLabel: string
     renameDescSuffix: string
     newNameLabel: string
     renaming: string
@@ -1482,6 +1743,20 @@ export interface Translations {
     monthlyOnDayAt: (dayOfMonth: string, time: string) => string
     topOfHour: string
     everyHourAt: (minute: string) => string
+    /** The client-side include_disabled filter. */
+    hidePaused: string
+    showPaused: string
+    /** Run-count cap ({times, completed} on the record). */
+    repeatLabel: string
+    repeatForever: string
+    repeatOf: (completed: number, times: number) => string
+    /** A trigger for this job is in flight. */
+    triggering: string
+    /** Continuity toggle — stored as the reserved 'self' ref in context_from. */
+    continuityLabel: string
+    continuityHint: string
+    /** The scheduler never started a due run (last_fire_error). */
+    missedFire: string
     newCron: string
     emptyDescNew: string
     emptyDescSearch: string
@@ -1624,6 +1899,10 @@ export interface Translations {
       orderCost: string
       orderManual: string
       show: string
+      density: string
+      densityCompact: string
+      densityComfortable: string
+      densityDetailed: string
       metaUpdated: string
       metaTokens: string
       metaCost: string
@@ -1728,6 +2007,10 @@ export interface Translations {
       unpin: string
       copyId: string
       openInTile: string
+      messageCount: (count: number) => string
+      toolCallCount: (count: number) => string
+      openInTerminal: string
+      openInTerminalFailed: string
       openInBubble: string
       export: string
       branchFrom: string
@@ -1758,6 +2041,15 @@ export interface Translations {
   }
 
   composer: {
+    mcpSuggestions: {
+      label: (server: string) => string
+      tip: (keyword: string) => string
+      connecting: (server: string) => string
+      cancelTip: string
+      added: (server: string) => string
+      addedTip: string
+      connectFailed: (server: string) => string
+    }
     message: string
     bubbles: {
       releaseToClose: string
@@ -1843,6 +2135,9 @@ export interface Translations {
     attachLabel: string
     attachFailed: (label: string) => string
     attachNoRef: string
+    /** Refusal for a file over the Settings ▸ Chat cap — it MUST name the limit,
+     *  because raising it is the fix and nothing else in the UI says the number. */
+    attachTooLarge: (maxMb: number) => string
     files: string
     folder: string
     back: string
@@ -2362,6 +2657,34 @@ export interface Translations {
     missingBody: string
   }
 
+  /** The in-app browser's own chrome (MJXHRM-447). Its error and restart copy
+   *  lives under `preview.web.*`, which was ported with the chat UI and had no
+   *  consumer until this ticket. */
+  browser: {
+    back: string
+    forward: string
+    reload: string
+    stop: string
+    addressLabel: string
+    addressPlaceholder: string
+    copyUrl: string
+    openExternally: string
+    unsupportedTitle: string
+    resume: string
+    paletteOpen: string
+    openLinksInApp: string
+    openLinksInAppDescription: string
+    isolatedStore: string
+    isolatedStoreDescription: string
+    consoleDefault: string
+    consoleDefaultDescription: string
+    clearData: string
+    clearDataDescription: string
+    clearDataConfirm: string
+    cleared: string
+    sharedCookies: string
+    ephemeralStore: string
+  }
   preview: {
     tab: string
     closeTab: (label: string) => string
@@ -2450,6 +2773,8 @@ export interface Translations {
       unreachableDescription: string
       openTarget: (url: string) => string
       fallbackTitle: string
+      /** Why a loopback address cannot load when the gateway is somewhere else. */
+      remoteLoopback: string
     }
   }
 
@@ -2510,6 +2835,27 @@ export interface Translations {
       alwaysDescription: (pattern: string) => string
       alwaysAllow: string
     }
+    mcpSetup: {
+      installTitle: (server: string) => string
+      enableTitle: (server: string) => string
+      authorizeTitle: (server: string) => string
+      installAction: string
+      enableAction: string
+      authorizeAction: string
+      decline: string
+      catalogSource: string
+      envRequired: string
+      notInCatalog: (server: string) => string
+      installed: (server: string) => string
+      enabled: (server: string) => string
+      authorized: (server: string) => string
+      declined: string
+      unanswered: string
+      failed: (server: string) => string
+      toolCount: (count: number) => string
+      sendFailed: string
+      reloadFailed: string
+    }
     clarify: {
       notReady: string
       gatewayDisconnected: string
@@ -2519,6 +2865,10 @@ export interface Translations {
       placeholder: string
       skip: string
       continueLabel: string
+      confirmAndContinueLabel: string
+      answeredBadge: string
+      questionProgress: (answered: number, total: number) => string
+      unknownQuestion: string
       skipped: string
       lateAnswer: (question: string, choice: string) => string
       lateAnswerTip: string
@@ -2548,6 +2898,10 @@ export interface Translations {
       statusRecovered: string
       statusDone: string
       memoryWriteNoted: string
+      spilloverLabel: string
+      spilloverSaved: (size: string) => string
+      spilloverSavedUnsized: string
+      spilloverOpen: string
       actions: {
         read: string
         reading: string

@@ -365,6 +365,12 @@ export interface ModelOptionProvider {
 }
 
 export interface ModelCapabilities {
+  /** False when the route REJECTS a reasoning disable ("mandatory" in the
+   *  provider catalog, `hermes_cli/inventory.py`), so "thinking off" must not
+   *  be offered — asking for it is an HTTP 400, not a preference. Absent when
+   *  the catalog does not say, which is why every read is `!== false` rather
+   *  than a truthiness test. */
+  can_disable_reasoning?: boolean
   fast: boolean
   reasoning: boolean
 }
@@ -570,12 +576,27 @@ export interface SessionResumeResponse {
     event: string
     payload: Record<string, unknown>
   }
+  /** The gateway approval still queued for this session. Approvals do NOT go
+   *  through `_block`, so `pending_prompt` can never carry one: they queue in
+   *  `tools/approval`'s `_gateway_queues` and this is their only replay. */
+  pending_approval?: null | PendingApprovalPayload
   queued?: null | {
     user?: string
   }
   resumed: string
   running?: boolean
   session_id: string
+}
+
+/** One unresolved gateway approval, as `_approval_request_payload` shapes it
+ *  for both the `approval.request` event and the `approval.pending` replay. */
+export interface PendingApprovalPayload {
+  allow_permanent?: boolean
+  choices?: unknown
+  command?: unknown
+  description?: unknown
+  request_id?: unknown
+  smart_denied?: boolean
 }
 
 export interface SessionRuntimeInfo {
@@ -742,17 +763,38 @@ export interface CronJob {
   deliver?: null | string | string[]
   enabled: boolean
   id: string
+  // Prior-run context. The reserved entry 'self' is the CONTINUITY toggle — the
+  // job feeding its own last output into the next run. The two serializers
+  // disagree on shape: REST (/api/cron/jobs) returns the raw record with 'self'
+  // still inside this list, while the RPC's `_format_job`
+  // (tools/cronjob_tools.py) strips it and sets `continuity` instead. Read both
+  // through `cronJobContinuity`.
+  context_from?: null | string | string[]
+  continuity?: boolean
   // Delivery failures are tracked APART from last_error (cron/jobs.py
   // mark_job_run): a job can run fine and still reach none of its targets.
   last_delivery_error?: null | string
   last_error?: null | string
+  // A fire the SCHEDULER never got to start (gateway unreachable, listener not
+  // bound) — the "runs manually but never auto-fires" shape. Tracked apart from
+  // last_error, which only covers runs that actually began, and it is a DICT:
+  // cron/jobs.py stamps {"at": iso, "detail": str}. Cleared by the next
+  // successful run.
+  last_fire_error?: { at?: null | string; detail?: null | string } | null
   last_run_at?: null | string
   model?: null | string
   name?: null | string
   next_run_at?: null | string
   no_agent?: boolean
+  // Which per-profile cron store this job came from. Stamped on every record by
+  // web_server `_annotate_cron_job`, including in the aggregated 'all' listing —
+  // which is the only thing that makes a row in that view actionable, since the
+  // routes address a store, not a global job table.
+  profile?: null | string
   prompt?: null | string
   provider?: null | string
+  // A run-count cap plus its progress: {"times": null = forever}.
+  repeat?: { completed?: null | number; times?: null | number } | null
   schedule?: CronJobSchedule
   schedule_display?: null | string
   script?: null | string
@@ -772,6 +814,8 @@ export interface CronDeliveryTarget {
 }
 
 export interface CronJobCreatePayload {
+  /** Prior-run context; 'self' is the continuity toggle. */
+  context_from?: string[]
   deliver?: string
   model?: string
   name?: string
@@ -787,6 +831,9 @@ export interface CronJobSchedule {
 }
 
 export interface CronJobUpdates {
+  /** null clears every ref, including 'self' — that is how continuity is
+   *  turned OFF, since an omitted key leaves the stored list untouched. */
+  context_from?: null | string[]
   deliver?: string
   enabled?: boolean
   model?: null | string
@@ -833,6 +880,10 @@ export interface ProfileCreatePayload {
 }
 
 export interface ProfileInfo {
+  /** Presentation-only label override (profile.yaml `display_name`). Set by
+   *  renaming the DEFAULT profile, whose canonical id stays "default". Never
+   *  used for comparison or routing — read it through `profileLabel()`. */
+  display_name?: string
   has_env: boolean
   is_default: boolean
   model: null | string
@@ -1077,6 +1128,54 @@ export interface ConfigFloorWarning {
   support_floor_version: number
 }
 
+/** The `pressure` enum both resource blocks of `GET /api/status` carry.
+ *  The BACKEND classifies (`gateway/memory_status.py::classify_pressure`,
+ *  `gateway/disk_status.py::classify_disk_pressure`) — a client that re-derived
+ *  a level from the raw MB would disagree with the dashboard and with the NAS
+ *  sweep the moment a threshold moved. `unknown` is "we could not read it", NOT
+ *  "it is fine": every consumer must treat it as absence of evidence. */
+export type ResourcePressure = 'critical' | 'elevated' | 'ok' | 'unknown'
+
+/**
+ * `GET /api/status` → `memory` (`gateway/memory_status.py::collect_memory_status`).
+ *
+ * Distilled from the gateway's 30s loop heartbeat plus the lifecycle sentinel.
+ * `pressure` falls back to `unknown` when the heartbeat is stale (>150s) even
+ * though the MB numbers are still reported — a dead gateway's final gasp must
+ * not render a live "critical" banner forever.
+ *
+ * `boot_id` is the CURRENT gateway life's `started_at`. It changes on every
+ * boot, which is what makes banner dismissal safe to key on: acknowledging one
+ * suspected-OOM restart must not mute the NEXT one, and the hourly-restart loop
+ * is exactly the case that matters.
+ */
+export interface MemoryStatus {
+  boot_id?: null | string
+  gateway_rss_mb?: null | number
+  last_boot_suspected_oom?: boolean
+  last_boot_unclean?: boolean
+  pressure: ResourcePressure
+  sampled_at?: null | string
+  swap_used_mb?: null | number
+  system_available_mb?: null | number
+  system_total_mb?: null | number
+}
+
+/**
+ * `GET /api/status` → `disk` (`gateway/disk_status.py::collect_disk_status`).
+ *
+ * One live `statvfs` on HERMES_HOME's filesystem, so there is no staleness
+ * dimension and no `sampled_at`. Advisory like `memory`: deliberately NOT
+ * folded into `components`/`overall` by the backend, because disk pressure is
+ * banner material, not a liveness verdict.
+ */
+export interface DiskStatus {
+  free_mb?: null | number
+  pressure: ResourcePressure
+  total_mb?: null | number
+  used_percent?: null | number
+}
+
 /**
  * `GET /api/status`.
  *
@@ -1092,6 +1191,10 @@ export interface StatusResponse {
   config_floor_warning?: ConfigFloorWarning | null
   config_path?: string
   config_version: number
+  /** Resource-pressure rollup (NS-656). Absent on a gateway that predates it,
+   *  and degraded to `{pressure: 'unknown'}` when the probe throws — so every
+   *  reader must tolerate both. */
+  disk?: DiskStatus | null
   env_path?: string
   gateway_exit_reason: string | null
   gateway_health_url?: string | null
@@ -1102,6 +1205,8 @@ export interface StatusResponse {
   gateway_updated_at: string | null
   hermes_home?: string
   latest_config_version: number
+  /** See `disk` — same lineage, same "absent or unknown" tolerance. */
+  memory?: MemoryStatus | null
   release_date: string
   version: string
 }
@@ -1356,6 +1461,26 @@ export interface SkillHubScanResult {
   policy_reason: string | null
   findings: SkillHubScanFinding[]
   severity_counts: Record<string, number>
+  /** SkillEvaluator's advisory second opinion. Null when the optional scanner
+   *  isn't installed or `skills.tier1_advisory` is off. ADVISORY: it never
+   *  blocks an install, it only tells the user what another scanner saw. */
+  tier1?: SkillEvaluatorAdvisory | null
+}
+
+/** SkillEvaluator (Tier 1) advisory scan — a second opinion alongside the
+ *  built-in guard, from `GET /api/skills/hub/scan`. */
+export interface SkillEvaluatorAdvisory {
+  passed: boolean
+  incomplete_checks: number
+  findings: {
+    check: string
+    validator: string
+    severity: string
+    message: string
+    file: string | null
+    line: number | null
+    secrets_class: boolean
+  }[]
 }
 
 /** One configured MCP server row from `GET /api/mcp/servers`. */
@@ -1394,6 +1519,11 @@ export interface McpCatalogEntry {
   needs_install: boolean
   installed: boolean
   enabled: boolean
+  /** Composer-suggestion triggers (present when the manifest declares a
+   *  `suggest` block — `hermes_cli/mcp_catalog.py`; null/absent on entries
+   *  without one and on older backends that predate the field, which is what
+   *  `lib/mcp-directory.ts` stays around as the fallback rung for). */
+  suggest?: null | { hosts: string[]; keywords: string[] }
 }
 
 export interface McpCatalogResponse {

@@ -16,6 +16,26 @@ export interface SubagentStreamEntry {
   text: string
 }
 
+/**
+ * The finalize report for a child run under `delegation.worktree_isolation`:
+ * its own checkout on its own branch, inspected once the child exits.
+ *
+ * `commits`/`dirty` are MEASUREMENTS, not defaults — unless `inspectionFailed`
+ * is set, in which case both are placeholders and the only honest thing to say
+ * is "look at the path yourself" (the gateway's `note` carries the reason).
+ * `pruned` means the checkout is gone because it held nothing; anything with
+ * work in it is always kept for review.
+ */
+export interface SubagentWorktree {
+  branch: string
+  commits: number
+  dirty: boolean
+  inspectionFailed?: boolean
+  note?: string
+  path: string
+  pruned: boolean
+}
+
 export interface SubagentProgress {
   id: string
   parentId: null | string
@@ -48,6 +68,22 @@ export interface SubagentProgress {
    * correction the subagent never saw.
    */
   missedSteer?: string
+  /**
+   * The child exhausted its per-child iteration budget. It still returned a
+   * summary and still reports `completed`, so without this flag the row calls a
+   * half-finished run finished (`tools/delegate_tool.py` `exit_reason ==
+   * "max_iterations"`).
+   */
+  truncated?: boolean
+  /**
+   * The child passed 80% of `agent.run_budget_seconds` and was told to wrap up
+   * (`agent/conversation_loop._maybe_inject_run_budget_wrapup`). It did not
+   * simply finish — it was hurried, and its result reflects that. Absent unless
+   * a run budget is configured.
+   */
+  budgetWrapup?: boolean
+  /** Set only when `delegation.worktree_isolation` engaged for this child. */
+  worktree?: SubagentWorktree
 }
 
 export interface SubagentNode extends SubagentProgress {
@@ -135,6 +171,34 @@ const asTail = (v: unknown): TailEntry[] =>
         }))
     : []
 
+const bool = (v: unknown) => (typeof v === 'boolean' ? v : undefined)
+
+const asWorktree = (v: unknown): SubagentWorktree | undefined => {
+  if (!v || typeof v !== 'object') {
+    return undefined
+  }
+
+  const raw = v as Record<string, unknown>
+  const path = str(raw.path)
+  const branch = str(raw.branch)
+
+  // A report that names neither the checkout nor the branch says nothing a user
+  // could act on, and rendering an empty chip is worse than rendering none.
+  if (!path && !branch) {
+    return undefined
+  }
+
+  return {
+    branch,
+    commits: num(raw.commits) ?? 0,
+    dirty: raw.dirty === true,
+    inspectionFailed: raw.inspection_failed === true || undefined,
+    note: str(raw.note) || undefined,
+    path,
+    pruned: raw.pruned === true
+  }
+}
+
 const idOf = (p: SubagentPayload) =>
   str(p.subagent_id) || `${str(p.parent_id) || 'root'}:${num(p.task_index) ?? 0}:${str(p.goal)}`
 
@@ -217,7 +281,10 @@ function toProgress(payload: SubagentPayload, prev: SubagentProgress | undefined
     stream,
     summary: str(payload.summary) || prev?.summary,
     currentTool: TERMINAL.has(status) ? undefined : tool || prev?.currentTool,
-    missedSteer: str(payload.missed_steer) || prev?.missedSteer
+    missedSteer: str(payload.missed_steer) || prev?.missedSteer,
+    truncated: bool(payload.truncated) ?? prev?.truncated,
+    budgetWrapup: bool(payload.budget_wrapup) ?? prev?.budgetWrapup,
+    worktree: asWorktree(payload.worktree) ?? prev?.worktree
   }
 }
 

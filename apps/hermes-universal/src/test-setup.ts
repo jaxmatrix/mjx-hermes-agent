@@ -18,20 +18,36 @@ configureQueryClientForTests()
 // accessor shadows jsdom's Storage and every `localStorage.getItem(...)` in a
 // test throws "Cannot read properties of undefined". Install a real in-memory
 // Storage when the global resolves to nothing, before any test module reads it.
-// Same shim as apps/desktop/vitest.setup.ts — keep the two in step.
+// apps/desktop/vitest.setup.ts installs the Map-backed version of this shim.
+// It is left alone deliberately: nothing in that app enumerates storage keys,
+// so the bug below cannot bite there — port this if that ever changes.
 if (typeof (globalThis as unknown as { localStorage?: Storage }).localStorage === 'undefined') {
-  const store = new Map<string, string>()
+  // The entries live as own enumerable properties OF the storage object, not in
+  // a side Map. `Object.keys(localStorage)` is part of the Web Storage contract
+  // (Storage exposes its keys as named properties) and real code reads it that
+  // way — the stale-surface-grant boot sweep in store/windows.ts finds every
+  // grant with it. A Map-backed literal enumerates as `[]`, so under Node 26 the
+  // sweep swept nothing while jsdom's Storage made it work everywhere else.
+  const storage = {} as Storage & Record<string, string>
 
-  const storage: Storage = {
-    clear: () => store.clear(),
-    getItem: (k: string) => store.get(String(k)) ?? null,
-    key: (i: number) => [...store.keys()][i] ?? null,
-    get length() {
-      return store.size
-    },
-    removeItem: (k: string) => void store.delete(String(k)),
-    setItem: (k: string, v: string) => void store.set(String(k), String(v))
-  }
+  // Non-enumerable so the API never reads back as stored keys; writable and
+  // configurable so a test can still `vi.spyOn(localStorage, 'getItem')`.
+  const method = (value: unknown) => ({ configurable: true, value, writable: true })
+
+  Object.defineProperties(storage, {
+    clear: method(() => {
+      for (const k of Object.keys(storage)) {
+        delete storage[k]
+      }
+    }),
+    // `typeof === 'string'`, not `in`: every stored value is stringified on the
+    // way in, so this is what tells a real entry from one of these methods.
+    getItem: method((k: string) => (typeof storage[String(k)] === 'string' ? storage[String(k)] : null)),
+    key: method((i: number) => Object.keys(storage)[i] ?? null),
+    length: { configurable: true, get: () => Object.keys(storage).length },
+    removeItem: method((k: string) => void delete storage[String(k)]),
+    setItem: method((k: string, v: string) => void (storage[String(k)] = String(v)))
+  })
 
   for (const target of [globalThis, (globalThis as unknown as { window?: Window }).window].filter(Boolean)) {
     Object.defineProperty(target, 'localStorage', {

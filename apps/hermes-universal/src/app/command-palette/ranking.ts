@@ -22,6 +22,9 @@ export interface PaletteItem {
   id: string
   /** Keep the palette open after running (live-preview pickers like theme/mode). */
   keepOpen?: boolean
+  /** Ran when the highlight LANDS on this row — a preview, never a commit.
+   *  Highlighting any row without one clears whatever preview was up. */
+  onHighlight?: () => void
   keywords?: string[]
   label: string
   /** Action to run when selected. Mutually exclusive with `to`. */
