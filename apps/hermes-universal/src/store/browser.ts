@@ -1,18 +1,18 @@
 import { normalizeBrowserAddress } from '@/lib/browser-address'
 import {
   browserCapabilities,
+  type BrowserCapabilities,
   browserErrorOf,
   closeGuest,
   guestBack,
   guestForward,
   guestReload,
+  type GuestState,
   guestStop,
   navigateGuest,
+  type ReachNote,
   reachUrlNative,
-  resetReach,
-  type BrowserCapabilities,
-  type GuestState,
-  type ReachNote
+  resetReach
 } from '@/lib/browser/host'
 import { hostPathLabel } from '@/lib/external-link'
 import { Codecs, persistentAtom } from '@/lib/persisted'

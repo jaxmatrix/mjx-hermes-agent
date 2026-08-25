@@ -57,11 +57,11 @@ import './store/deep-link-builtins'
 import './store/connection-session-router'
 import './store/connection-plugin-source'
 
+import { registerBrowserContributions } from './app/browser/context-target'
 import { installContextMenuBridge } from './app/context-menu/bridge'
+import { installBrowserBridge } from './store/browser-bridge'
 import { initializeConnectionsRegistry, startConnectionsWatcher } from './store/connections'
 import { installNotificationActivation } from './store/plugin-notify-handlers'
-import { installBrowserBridge } from './store/browser-bridge'
-import { registerBrowserContributions } from './app/browser/context-target'
 import { installTourDriver } from './store/tour-bridge'
 import { installWindowBelowReader } from './store/window-below'
 

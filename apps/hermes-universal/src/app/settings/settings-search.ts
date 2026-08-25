@@ -219,6 +219,33 @@ export const CLIENT_PREF_SETTINGS: ReadonlyArray<{
     label: t => t.quickEntry.settingsTitle,
     view: 'advanced'
   },
+  // The in-app browser (MJXHRM-447). NOT `desktopOnly`: a phone with the native
+  // WebView plugin has a real one, and the rows hide themselves when the
+  // platform reports no host.
+  {
+    id: 'advanced.browser-links',
+    keywords: ['browser', 'links', 'web', 'in-app', 'open'],
+    label: t => t.browser.openLinksInApp,
+    view: 'advanced'
+  },
+  {
+    id: 'advanced.browser-store',
+    keywords: ['browser', 'cookies', 'session', 'isolated', 'privacy'],
+    label: t => t.browser.isolatedStore,
+    view: 'advanced'
+  },
+  {
+    id: 'advanced.browser-console',
+    keywords: ['browser', 'console', 'logs', 'preview', 'devtools'],
+    label: t => t.browser.consoleDefault,
+    view: 'advanced'
+  },
+  {
+    id: 'advanced.browser-clear',
+    keywords: ['browser', 'clear', 'cookies', 'cache', 'browsing data'],
+    label: t => t.browser.clearData,
+    view: 'advanced'
+  },
   {
     id: 'workspace.terminal-host',
     keywords: ['shell', 'terminal', 'runs on', 'device', 'gateway', 'remote'],

@@ -1,8 +1,8 @@
 import { oauthStatus } from '@/lib/auth'
 import { loadString, removeKey, saveString } from '@/lib/persist'
-import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import { clearTranscriptTails } from '@/lib/transcript-tail-cache'
 import { atom } from '@/store/atom'
+import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import {
   connect,
   connectCloud,

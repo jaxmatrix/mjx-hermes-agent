@@ -425,6 +425,18 @@ describe('entry import graph', () => {
     expect(modules).toEqual([])
   })
 
+  it('keeps the in-app browser act engine off the boot path', () => {
+    // `engine.js` is imported `?raw` — a ~14 KB STRING of DOM code that is
+    // injected into a guest webview, never executed here. Pulling it onto the
+    // entry graph would cost every cold start the bytes for a feature most
+    // sessions never open. Same shape of guard as driver.js above.
+    const onGraph = [...graph.reached]
+      .filter(file => file.includes('/src/lib/browser-act/'))
+      .map(file => `${path.relative(REPO_ROOT, file)}\n  ${chainTo(graph, file).join('\n  -> ')}`)
+
+    expect(onGraph).toEqual([])
+  })
+
   it('keeps the Radix context-menu primitive out of the coordinator’s module graph', () => {
     // `components/ui/context-menu.tsx` stamps the coordinator's marker, so it
     // needs ONE constant from `app/context-menu/`. Importing anything else from
@@ -471,7 +483,12 @@ describe('entry import graph', () => {
       // main.tsx, so its import MUST be inside the driver callback) and the
       // curated tour the ⌘K palette runs.
       ['store/tour-bridge.ts', "await import('@/lib/tour')"],
-      ['app/command-palette/curated-tour.ts', "await import('@/lib/tour')"]
+      ['app/command-palette/curated-tour.ts', "await import('@/lib/tour')"],
+      // The act engine's door: the actor is registered at BOOT from main.tsx
+      // (a blocked `preview.act.request` cannot wait for a component), so its
+      // import has to be inside the actor callback rather than at module scope.
+      ['store/browser-bridge.ts', "await import('@/lib/browser-act/actor')"],
+      ['lib/browser-act/actor.ts', "from '@/lib/browser-act/engine.js?raw'"]
     ] as const
 
     for (const [file, seam] of seams) {

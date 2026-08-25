@@ -1,19 +1,21 @@
 import { treePanesWithPrefix } from '@/components/pane-shell/tree/store'
+import type { GatewayEvent } from '@/gateway'
 import { normalizeBrowserAddress } from '@/lib/browser-address'
 import { readActiveBrowserPage } from '@/lib/browser/reader'
-import { TILE_PANE_PREFIX, storedIdFromTilePane } from '@/lib/pane-ids'
+import { storedIdFromTilePane, TILE_PANE_PREFIX } from '@/lib/pane-ids'
 import {
-  registerPreviewActor,
-  registerPreviewReader,
   type AgentRequestContext,
-  type PreviewActRequest
+  type PreviewActRequest,
+  registerPreviewActor,
+  registerPreviewReader
 } from '@/store/agent-read-requests'
 import { $browserState, $browserSupported, closeInAppBrowser, ensureBrowserCapabilities, openInAppBrowser } from '@/store/browser'
+import { appendBrowserConsole } from '@/store/browser-console'
 import { $chatBubbles } from '@/store/chat-bubbles'
 import { addGatewayEventListener } from '@/store/gateway'
 import { previewFile } from '@/store/preview-open'
-import { $focusedStoredSessionId } from '@/store/session-states'
 import { $activeStoredSessionId } from '@/store/session'
+import { $focusedStoredSessionId } from '@/store/session-states'
 import { ownsPersistedAppState } from '@/store/windows'
 
 /**
@@ -139,24 +141,7 @@ export function installBrowserBridge(): () => void {
     return actInGuest(request)
   })
 
-  const offEvents = addGatewayEventListener(event => {
-    const payload = (event.payload ?? {}) as Record<string, unknown>
-
-    switch (event.type) {
-      case 'preview.close':
-        handlePreviewClose(payload as { url?: string })
-        break
-
-      case 'preview.open':
-        if (sessionIsOnScreen(event.session_id)) {
-          handlePreviewOpen(payload as PreviewOpenPayload)
-        }
-        break
-
-      default:
-        break
-    }
-  })
+  const offEvents = addGatewayEventListener(routeBrowserEvent)
 
   return () => {
     offReader()
@@ -164,3 +149,48 @@ export function installBrowserBridge(): () => void {
     offEvents()
   }
 }
+
+/** The event half, split out so it is reachable from a test without installing
+ *  the reader and actor registrations too. */
+function routeBrowserEvent(event: GatewayEvent): void {
+  {
+    const payload = (event.payload ?? {}) as Record<string, unknown>
+
+    switch (event.type) {
+      case 'preview.close':
+        handlePreviewClose(payload as { url?: string })
+
+        break
+
+      case 'preview.open':
+        if (sessionIsOnScreen(event.session_id)) {
+          handlePreviewOpen(payload as PreviewOpenPayload)
+        }
+
+        break
+
+      // The restart agent's own narration. It lands in the CONSOLE rather than
+      // in chat: the user asked from the pane and that is where they are
+      // looking, and the console is already the place a dev-server failure
+      // explains itself.
+      case 'preview.restart.complete':
+
+      case 'preview.restart.progress':
+        appendBrowserConsole([
+          {
+            at: Date.now(),
+            level: event.type === 'preview.restart.complete' ? 'info' : 'log',
+            text: String(payload.text ?? '')
+          }
+        ])
+
+        break
+
+      default:
+        break
+    }
+  }
+}
+
+/** Test seam for `routeBrowserEvent` — the gate is the thing worth pinning. */
+export const handleGatewayEventForTest = routeBrowserEvent

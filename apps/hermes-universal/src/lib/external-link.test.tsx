@@ -11,6 +11,17 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 // platform seam has to report Tauri or every case short-circuits to ''.
 vi.mock('@/lib/platform', () => ({ IS_ANDROID: false, IS_MOBILE: false, IS_TAURI: true, PLATFORM: 'linux' }))
 
+// MJXHRM-447: every link now goes through `openLink()`, which routes http(s)
+// into the in-app browser. Mocked here so the funnel's DECISION is what these
+// cases observe, rather than the pane's whole machinery.
+const { openInAppBrowser } = vi.hoisted(() => ({ openInAppBrowser: vi.fn(async (_url: string) => true) }))
+
+vi.mock('@/store/browser', async () => {
+  const { atom } = await import('@/store/atom')
+
+  return { $openLinksInApp: atom(true), openInAppBrowser }
+})
+
 import {
   __resetLinkTitleCache,
   ExternalLink,
@@ -40,6 +51,8 @@ function titleCalls() {
 beforeEach(() => {
   invoke.mockReset()
   invoke.mockImplementation(async () => '')
+  openInAppBrowser.mockReset()
+  openInAppBrowser.mockResolvedValue(true)
 })
 
 afterEach(() => {
@@ -97,13 +110,71 @@ describe('external link helpers', () => {
     expect(titleCalls()).toHaveLength(1)
   })
 
-  it('opens links through the native open_external command', async () => {
+  it('opens a web link in the IN-APP browser', async () => {
+    // The pane exists so that reading a doc does not cost a context switch out
+    // of Hermes, and so the surface is one the agent can read. A per-call-site
+    // opt-in would leave most links outside both.
     render(<ExternalLink href="https://example.com/path/to/resource">Example link</ExternalLink>)
 
     fireEvent.click(screen.getByRole('link', { name: 'Example link' }))
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('open_external', { url: 'https://example.com/path/to/resource' })
+      expect(openInAppBrowser).toHaveBeenCalledWith('https://example.com/path/to/resource')
+    })
+    expect(invoke).not.toHaveBeenCalledWith('open_external', expect.anything())
+  })
+
+  it('escapes to the OS browser on the platform modifier', async () => {
+    // Making `wantsNativeBrowser` always false turns this and the middle-click
+    // case red — they are the only escape hatch the funnel leaves.
+    render(<ExternalLink href="https://example.com/doc">Example link</ExternalLink>)
+
+    fireEvent.click(screen.getByRole('link', { name: 'Example link' }), { metaKey: true })
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('open_external', { url: 'https://example.com/doc' })
+    })
+    expect(openInAppBrowser).not.toHaveBeenCalled()
+  })
+
+  it('escapes to the OS browser on MIDDLE-click, which never fires `click`', async () => {
+    render(<ExternalLink href="https://example.com/doc">Example link</ExternalLink>)
+
+    // `auxclick` is the only event a middle button produces; without the
+    // dedicated handler the escape hatch simply does not exist.
+    fireEvent(
+      screen.getByRole('link', { name: 'Example link' }),
+      new MouseEvent('auxclick', { bubbles: true, button: 1, cancelable: true })
+    )
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('open_external', { url: 'https://example.com/doc' })
+    })
+    expect(openInAppBrowser).not.toHaveBeenCalled()
+  })
+
+  it('always hands a NON-web scheme to the OS', async () => {
+    render(<ExternalLink href="mailto:someone@example.com">Mail</ExternalLink>)
+
+    fireEvent.click(screen.getByRole('link', { name: 'Mail' }))
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('open_external', { url: 'mailto:someone@example.com' })
+    })
+    expect(openInAppBrowser).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the OS browser when the in-app one refuses', async () => {
+    // `openInAppBrowser` resolves false for an address the policy refused or a
+    // platform with no guest host — the click must still do something.
+    openInAppBrowser.mockResolvedValueOnce(false)
+
+    render(<ExternalLink href="https://example.com/doc">Example link</ExternalLink>)
+
+    fireEvent.click(screen.getByRole('link', { name: 'Example link' }))
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('open_external', { url: 'https://example.com/doc' })
     })
   })
 

@@ -3,8 +3,8 @@ import * as React from 'react'
 
 import { HERMES_CONTEXT_MENU_TRIGGER_ATTR } from '@/app/context-menu/markers'
 import { Codicon } from '@/components/ui/codicon'
-import { useGuestOcclusion } from '@/store/browser-occlusion'
 import { cn } from '@/lib/utils'
+import { useGuestOcclusion } from '@/store/browser-occlusion'
 
 function ContextMenu({ ...props }: React.ComponentProps<typeof ContextMenuPrimitive.Root>) {
   return <ContextMenuPrimitive.Root data-slot="context-menu" {...props} />

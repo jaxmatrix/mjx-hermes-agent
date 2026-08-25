@@ -1,3 +1,4 @@
+import { BrowserPane } from '@/app/browser/browser-pane'
 import { CONTEXT_KIT } from '@/components/ui/actions-menu'
 import { Codicon } from '@/components/ui/codicon'
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu'
@@ -21,8 +22,6 @@ import {
   selectPreviewTab
 } from '@/store/preview'
 import { $dirtyPreviewPaths } from '@/store/preview-edit'
-
-import { BrowserPane } from '@/app/browser/browser-pane'
 
 import { ArtifactPreview } from './preview-artifact'
 import { PreviewFile } from './preview-file'

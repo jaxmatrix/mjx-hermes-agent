@@ -3,8 +3,8 @@ import * as React from 'react'
 
 import { Codicon } from '@/components/ui/codicon'
 import { type ControlVariantProps, controlVariants } from '@/components/ui/control'
-import { useGuestOcclusion } from '@/store/browser-occlusion'
 import { cn } from '@/lib/utils'
+import { useGuestOcclusion } from '@/store/browser-occlusion'
 
 function Select({ ...props }: React.ComponentProps<typeof SelectPrimitive.Root>) {
   return <SelectPrimitive.Root data-slot="select" {...props} />

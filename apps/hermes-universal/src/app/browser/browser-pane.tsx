@@ -3,12 +3,15 @@ import { useEffect, useRef, useState } from 'react'
 import { BrowserBar } from '@/app/browser/browser-bar'
 import { BrowserConsolePanel } from '@/app/browser/browser-console-panel'
 import { PREVIEW_BROWSER_ATTR, registerBrowserNav } from '@/app/browser/browser-nav'
+import { MobileBrowserOverlay } from '@/app/browser/mobile-browser-overlay'
+import { isLoopbackUrl } from '@/app/context-menu/target'
 import { Codicon } from '@/components/ui/codicon'
 import { useI18n } from '@/i18n'
 import type { Translations } from '@/i18n/types'
 import { openGuest, setGuestBounds, setGuestVisible, subscribeGuest } from '@/lib/browser/host'
 import { writeClipboardText } from '@/lib/clipboard'
 import { openExternalLink } from '@/lib/external-link'
+import { requestPreviewRestart } from '@/lib/gateway-rpc'
 import { IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
@@ -28,6 +31,8 @@ import {
 } from '@/store/browser'
 import { $browserConsole, appendBrowserConsole, drainBrowserConsole, isModuleMimeFailure } from '@/store/browser-console'
 import { $guestOccluded } from '@/store/browser-occlusion'
+import { notify, notifyError } from '@/store/notifications'
+import { $activeStoredSessionId } from '@/store/session'
 
 /**
  * The pane the guest sits over.
@@ -205,10 +210,12 @@ export function BrowserPane() {
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-preview-browser="" ref={shell} tabIndex={-1}>
-      <BrowserBar />
+      {/* The phone gets an OVERLAY over the page rather than a bar above it —
+          see mobile-browser-overlay.tsx for why there is no address field. */}
+      {IS_MOBILE ? null : <BrowserBar />}
 
       <div
-        className="relative min-h-0 flex-1 bg-layer-1"
+        className="relative min-h-0 flex-1 bg-(--ui-bg-primary)"
         // 448's marker: a see-through browser is unreadable, and a native child
         // view does not participate in the window's compositing anyway — so
         // this is also what stops the pane's CHROME from disagreeing with its
@@ -225,12 +232,13 @@ export function BrowserPane() {
         ref={viewport}
         {...{ [PREVIEW_BROWSER_ATTR]: '' }}
       >
+        {IS_MOBILE ? <MobileBrowserOverlay /> : null}
         {occluded ? <Placeholder title={page.title} url={page.url} /> : null}
         {!page.url && restored ? <Resume title={restored.title} url={restored.url} /> : null}
         {page.error ? <LoadError /> : null}
       </div>
 
-      {consoleOpen ? <BrowserConsolePanel /> : null}
+      {consoleOpen && !IS_MOBILE ? <BrowserConsolePanel /> : null}
     </div>
   )
 }
@@ -286,7 +294,7 @@ function promoteMimeFailure(): void {
 /** While a dialog or menu is above the guest, the pane must not become a hole. */
 function Placeholder({ title, url }: { title: string; url: string }) {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-layer-1 text-xs opacity-70">
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-(--ui-bg-primary) text-xs opacity-70">
       <span className="max-w-[80%] truncate font-medium">{title || url}</span>
       <span className="max-w-[80%] truncate opacity-70">{url}</span>
     </div>
@@ -306,7 +314,7 @@ function Resume({ title, url }: { title: string; url: string }) {
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center text-xs">
       <span className="max-w-full truncate font-medium">{title || url}</span>
       <button
-        className="rounded-md border border-subtle px-2 py-1 hover:bg-layer-2"
+        className="rounded-md border border-(--ui-stroke-tertiary) px-2 py-1 hover:bg-(--ui-control-hover-background)"
         onClick={() => void import('@/store/browser').then(m => m.openInAppBrowser(url))}
         type="button"
       >
@@ -337,14 +345,69 @@ function LoadError() {
       <span className="font-medium">{title}</span>
       <span className="max-w-full truncate opacity-70">{error.description}</span>
       {loopbackNote ? <span className="max-w-[36ch] opacity-70">{t.preview.web.remoteLoopback}</span> : null}
-      <button
-        className="rounded-md border border-subtle px-2 py-1 hover:bg-layer-2"
-        onClick={() => void browserReload()}
-        type="button"
-      >
-        {t.preview.web.tryAgain}
-      </button>
+      <div className="flex gap-2">
+        <button
+          className="rounded-md border border-(--ui-stroke-tertiary) px-2 py-1 hover:bg-(--ui-control-hover-background)"
+          onClick={() => void browserReload()}
+          type="button"
+        >
+          {t.preview.web.tryAgain}
+        </button>
+        {/* Only for a LOOPBACK address: "restart the server" is meaningless for
+            a site that is simply down, and offering it there would be a button
+            that cannot work. */}
+        {isLoopbackUrl(page.url) ? <RestartServerButton /> : null}
+      </div>
     </div>
+  )
+}
+
+/**
+ * "Ask Hermes to restart the server" — the affordance that turns a blank
+ * preview into a fixed one.
+ *
+ * It sends the CONSOLE as context, which is the whole reason the drain runs
+ * after every load even with the panel closed: the module-script/MIME line is
+ * what tells the agent which dev server failed to start.
+ */
+function RestartServerButton() {
+  const { t } = useI18n()
+  const page = useStore($browserState)
+  const sessionId = useStore($activeStoredSessionId)
+  const [busy, setBusy] = useState(false)
+
+  if (!sessionId) {
+    return null
+  }
+
+  return (
+    <button
+      className="rounded-md border border-(--ui-stroke-tertiary) px-2 py-1 hover:bg-(--ui-control-hover-background) disabled:opacity-50"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true)
+
+        try {
+          const context = $browserConsole
+            .get()
+            .slice(-40)
+            .map(entry => `[${entry.level}] ${entry.text}`)
+            .join('\n')
+
+          const taskId = await requestPreviewRestart({ context, sessionId, url: page.url })
+
+          notify({ message: t.preview.web.restartingMessage, title: t.preview.web.restartingTitle })
+          appendBrowserConsole([{ at: Date.now(), level: 'info', text: t.preview.web.lookingRestart(taskId) }])
+        } catch (error) {
+          notifyError(error, t.preview.web.restartFailed)
+        } finally {
+          setBusy(false)
+        }
+      }}
+      type="button"
+    >
+      {busy ? t.preview.web.restarting : t.preview.web.askRestart}
+    </button>
   )
 }
 
@@ -379,7 +442,7 @@ function Refusal({ notes, url }: { notes: string[]; url?: string }) {
       ))}
       {url ? (
         <button
-          className="rounded-md border border-subtle px-2 py-1 hover:bg-layer-2"
+          className="rounded-md border border-(--ui-stroke-tertiary) px-2 py-1 hover:bg-(--ui-control-hover-background)"
           onClick={() => void openExternalLink(url)}
           type="button"
         >

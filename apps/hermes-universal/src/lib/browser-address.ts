@@ -45,6 +45,15 @@ export function normalizeBrowserAddress(value: string): null | string {
     return null
   }
 
+  // A PATH is not an address. `open_preview` accepts "a web URL, a localhost
+  // URL, or a file path" and the gateway passes paths through untouched, so
+  // this is the branch that keeps `/repo/src/main.tsx` out of the guest — and
+  // `new URL('https:///repo/x')` silently reads `repo` as the HOST, so the
+  // parser will not catch it for us.
+  if (/^[/~]|^\.{1,2}\/|^[a-z]:[\\/]/i.test(address)) {
+    return null
+  }
+
   const bareHost = HOST_PORT.test(address) || !HAS_SCHEME.test(address)
 
   const candidate = bareHost ? `${LOOPBACK.test(address) ? 'http' : 'https'}://${address}` : address

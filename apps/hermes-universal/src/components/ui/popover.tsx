@@ -1,8 +1,8 @@
 import { Popover as PopoverPrimitive } from 'radix-ui'
 import * as React from 'react'
 
-import { useGuestOcclusion } from '@/store/browser-occlusion'
 import { cn } from '@/lib/utils'
+import { useGuestOcclusion } from '@/store/browser-occlusion'
 
 // Ported from apps/desktop/src/components/ui/popover.tsx for the plugin SDK —
 // anchored non-menu content, the one primitive universal's kit was missing (core

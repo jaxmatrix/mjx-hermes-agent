@@ -4,15 +4,14 @@ import { PREVIEW_BROWSER_ATTR } from '@/app/browser/browser-nav'
 import { PALETTE_AREA } from '@/app/command-palette/contrib'
 import { CONTEXT_MENU_ITEMS_AREA } from '@/app/context-menu/contrib'
 import {
-  registerContextTarget,
   type ContextMenuItemContext,
-  type ContextMenuSection
+  type ContextMenuSection,
+  registerContextTarget
 } from '@/app/context-menu/registry'
 import { $contextMenu } from '@/app/context-menu/store'
 import { isWebUrl, resolveDomTarget } from '@/app/context-menu/target'
 import { registry } from '@/contrib/registry'
 import { writeClipboardText } from '@/lib/clipboard'
-import { claimGuestOcclusion } from '@/store/browser-occlusion'
 import { openExternalLink } from '@/lib/external-link'
 import {
   $browserState,
@@ -23,6 +22,7 @@ import {
   openInAppBrowser,
   toggleInAppBrowser
 } from '@/store/browser'
+import { claimGuestOcclusion } from '@/store/browser-occlusion'
 
 /**
  * The in-app browser's contributions: two rows in MJXHRM-478's menu, one row in

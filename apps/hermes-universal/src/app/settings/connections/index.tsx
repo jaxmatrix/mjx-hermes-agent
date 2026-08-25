@@ -4,6 +4,7 @@ import { GatewayConfigurator } from '@/app/gateway/gateway-configurator'
 import { MasterDetail } from '@/app/master-detail'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
+import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import {
   CONNECTION_SEARCH_THRESHOLD,
@@ -137,17 +138,19 @@ export function ConnectionsSection() {
                   <Codicon className="shrink-0 text-muted-foreground" name="star-full" size="0.8rem" />
                 )}
                 {latched[row.id] && (
-                  <button
-                    className="shrink-0 text-amber-500"
-                    onClick={event => {
-                      event.stopPropagation()
-                      releaseLatch(row.id)
-                    }}
-                    title={c.latchedMessage(latched[row.id] ?? '')}
-                    type="button"
-                  >
-                    <Codicon name="warning" size="0.85rem" />
-                  </button>
+                  <Tip label={c.latchedMessage(latched[row.id] ?? '')}>
+                    <button
+                      aria-label={c.latchedMessage(latched[row.id] ?? '')}
+                      className="shrink-0 text-amber-500"
+                      onClick={event => {
+                        event.stopPropagation()
+                        releaseLatch(row.id)
+                      }}
+                      type="button"
+                    >
+                      <Codicon name="warning" size="0.85rem" />
+                    </button>
+                  </Tip>
                 )}
                 <span className="shrink-0 text-xs text-muted-foreground">{row.kind}</span>
               </button>

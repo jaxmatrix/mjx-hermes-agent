@@ -50,7 +50,6 @@ export async function runPreviewTour(action: TourAction): Promise<TourResult> {
 
     case 'show':
       return show(action)
-
     case 'start': {
       const steps = (action.steps ?? []).filter(candidate => candidate.selector)
 
@@ -70,6 +69,7 @@ export async function runPreviewTour(action: TourAction): Promise<TourResult> {
       return { action: 'stop', success: true, ...page() }
 
     case 'targets':
+
     default:
       return targets()
   }

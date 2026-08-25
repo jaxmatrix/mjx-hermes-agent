@@ -38,7 +38,8 @@ import {
 
 const rpc = vi.mocked(requestGateway)
 
-const send = (type: string, payload: Record<string, unknown>) => stream.route?.({ type, payload })
+const send = (type: string, payload: Record<string, unknown>, sessionId?: string) =>
+  stream.route?.({ type, payload, ...(sessionId ? { session_id: sessionId } : {}) })
 
 /** The responder answers off a promise chain, so let the microtasks drain. */
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -263,6 +264,18 @@ describe('preview.act.request', () => {
     expect(answer.error).toContain('Nothing was clicked or typed')
   })
 
+  // MJXHRM-447. Dropping the ctx argument turns this red, and with it the only
+  // way an actor can refuse to act in a session the user is not looking at.
+  it('hands the actor the session id from the event ENVELOPE', async () => {
+    const actor = vi.fn().mockReturnValue({ url: 'about:blank' })
+
+    registerPreviewActor(actor)
+    send('preview.act.request', { request_id: 'a9', action: 'click', ref: 'btn-x' }, 'sess-7')
+    await settle()
+
+    expect(actor).toHaveBeenCalledWith({ action: 'click', ref: 'btn-x' }, { sessionId: 'sess-7' })
+  })
+
   // The payload IS the tool call. Forwarding it wholesale is what lets a verb
   // or argument added backend-side reach a registered actor with no change here
   // — so the actor must receive the arguments, and NOT the envelope key.
@@ -273,7 +286,14 @@ describe('preview.act.request', () => {
     send('preview.act.request', { request_id: 'a2', action: 'type', selector: '#q', text: 'hi', submit: true })
     await settle()
 
-    expect(actor).toHaveBeenCalledWith({ action: 'type', selector: '#q', text: 'hi', submit: true })
+    // MJXHRM-447: the second argument is the request CONTEXT. The session id
+    // lives on the event envelope, not in the payload, so without it an actor
+    // cannot tell whose session asked and cannot apply the
+    // "only in the session the user is looking at" rule at all.
+    expect(actor).toHaveBeenCalledWith(
+      { action: 'type', selector: '#q', text: 'hi', submit: true },
+      { sessionId: null }
+    )
     expect(rpc).toHaveBeenCalledWith('preview.act.respond', {
       request_id: 'a2',
       text: JSON.stringify({ url: 'about:blank' })
@@ -354,7 +374,12 @@ describe('tour.request', () => {
     send('tour.request', { request_id: 't2', action: 'targets', surface: 'app', selector: '.rail' })
     await settle()
 
-    expect(driver).toHaveBeenCalledWith({ action: 'targets', surface: 'app', selector: '.rail' })
+    // Same context argument, for symmetry: a bot session's tour must not be
+    // able to take a surface the user is not looking at either.
+    expect(driver).toHaveBeenCalledWith(
+      { action: 'targets', surface: 'app', selector: '.rail' },
+      { sessionId: null }
+    )
     expect(rpc).toHaveBeenCalledWith('tour.respond', {
       request_id: 't2',
       text: JSON.stringify({ matched: 2, step: 0 })

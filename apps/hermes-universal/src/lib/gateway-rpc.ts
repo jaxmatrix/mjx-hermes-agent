@@ -645,6 +645,36 @@ export function respondPreviewAct(requestId: string, text: string): Promise<Agen
 /** Answer a `tour.request` (the agent's tour tool). `text` is a JSON string:
  *  matched targets, the active step, or an error naming the bad selector.
  *  `allow_expired` — driver.js injection into a slow page can outlive the wait. */
+/**
+ * Ask the agent to restart whatever should be serving a preview URL
+ * (MJXHRM-447).
+ *
+ * A client-side helper over an EXISTING method, not a new backend surface. The
+ * gateway spawns a hidden agent thread seeded with the main session's history
+ * and streams `preview.restart.progress` / `.complete` back on the parent
+ * session; a missing `task_id` in the answer is an error rather than something
+ * to shrug at, because there would be nothing to follow.
+ */
+export async function requestPreviewRestart(params: {
+  context?: string
+  cwd?: string
+  sessionId: string
+  url: string
+}): Promise<string> {
+  const answer = await requestGateway<{ task_id?: string }>('preview.restart', {
+    context: params.context ?? '',
+    cwd: params.cwd ?? '',
+    session_id: params.sessionId,
+    url: params.url
+  })
+
+  if (!answer?.task_id) {
+    throw new Error('The gateway did not start a restart task.')
+  }
+
+  return answer.task_id
+}
+
 export function respondTour(requestId: string, text: string): Promise<AgentReadRespondResult> {
   return requestGateway<AgentReadRespondResult>('tour.respond', { request_id: requestId, text })
 }

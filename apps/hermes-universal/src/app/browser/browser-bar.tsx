@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 
 import { CONTEXT_MENU_SKIP_ATTR } from '@/app/context-menu/markers'
 import { Codicon } from '@/components/ui/codicon'
+import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
-import { resolveHermesOpenPath } from '@/lib/hermes-open-target'
-import { openExternalLink } from '@/lib/external-link'
+import { openGuestDevtools } from '@/lib/browser/host'
 import { writeClipboardText } from '@/lib/clipboard'
+import { openExternalLink } from '@/lib/external-link'
+import { resolveHermesOpenPath } from '@/lib/hermes-open-target'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import {
@@ -19,7 +21,6 @@ import {
   submitBrowserAddress
 } from '@/store/browser'
 import { navigateDeepLinkPath } from '@/store/deep-link'
-import { openGuestDevtools } from '@/lib/browser/host'
 
 /**
  * back · forward · reload/stop · address · copy · open externally · console ·
@@ -83,7 +84,7 @@ export function BrowserBar() {
   }
 
   return (
-    <div className="flex items-center gap-1 border-b border-subtle px-1 py-1" data-browser-bar="">
+    <div className="flex items-center gap-1 border-b border-(--ui-stroke-tertiary) px-1 py-1" data-browser-bar="">
       <BarButton
         disabled={!page.canBack}
         icon="arrow-left"
@@ -111,7 +112,7 @@ export function BrowserBar() {
           aria-invalid={invalid || undefined}
           aria-label={t.browser.addressLabel}
           className={cn(
-            'w-full rounded-md bg-layer-2 px-2 py-1 pr-7 font-mono text-xs outline-none',
+            'w-full rounded-md bg-(--ui-control-active-background) px-2 py-1 pe-7 font-mono text-xs outline-none',
             invalid && 'ring-1 ring-red-500'
           )}
           onBlur={() => setDraft(null)}
@@ -142,7 +143,7 @@ export function BrowserBar() {
         />
         <button
           aria-label={t.browser.copyUrl}
-          className="absolute inset-y-0 right-1 flex items-center opacity-60 hover:opacity-100"
+          className="absolute inset-y-0 end-1 flex items-center opacity-60 hover:opacity-100"
           onClick={() => void writeClipboardText(page.url)}
           type="button"
         >
@@ -186,19 +187,20 @@ function BarButton({
   onSelect: () => void
 }) {
   return (
-    <button
-      aria-label={label}
-      className={cn(
-        'flex h-6 w-6 shrink-0 items-center justify-center rounded-md hover:bg-layer-2',
-        active && 'bg-layer-2',
-        disabled && 'pointer-events-none opacity-35'
-      )}
-      disabled={disabled}
-      onClick={onSelect}
-      title={label}
-      type="button"
-    >
-      <Codicon name={icon} size="0.8125rem" />
-    </button>
+    <Tip label={label}>
+      <button
+        aria-label={label}
+        className={cn(
+          'flex h-6 w-6 shrink-0 items-center justify-center rounded-md hover:bg-(--ui-control-hover-background)',
+          active && 'bg-(--ui-control-active-background)',
+          disabled && 'pointer-events-none opacity-35'
+        )}
+        disabled={disabled}
+        onClick={onSelect}
+        type="button"
+      >
+        <Codicon name={icon} size="0.8125rem" />
+      </button>
+    </Tip>
   )
 }

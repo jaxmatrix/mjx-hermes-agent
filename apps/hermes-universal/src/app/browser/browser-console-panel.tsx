@@ -1,12 +1,13 @@
 import { useState } from 'react'
 
+import { requestComposerInsert } from '@/app/chat/composer/focus'
 import { Codicon } from '@/components/ui/codicon'
+import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { writeClipboardText } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
-import { $browserConsole, clearBrowserConsole, type BrowserConsoleEntry } from '@/store/browser-console'
-import { requestComposerInsert } from '@/app/chat/composer/focus'
+import { $browserConsole, type BrowserConsoleEntry, clearBrowserConsole } from '@/store/browser-console'
 import { notify } from '@/store/notifications'
 
 /**
@@ -39,11 +40,11 @@ export function BrowserConsolePanel() {
   const chosen = entries.filter((_, index) => selected.has(index))
 
   return (
-    <div className="flex max-h-[40%] min-h-24 flex-col border-t border-subtle bg-layer-1" data-glass-opaque="">
-      <div className="flex items-center gap-1 border-b border-subtle px-2 py-1 text-[0.6875rem]">
+    <div className="flex max-h-[40%] min-h-24 flex-col border-t border-(--ui-stroke-tertiary) bg-(--ui-bg-primary)" data-glass-opaque="">
+      <div className="flex items-center gap-1 border-b border-(--ui-stroke-tertiary) px-2 py-1 text-[0.6875rem]">
         <span className="font-medium">{t.preview.console.title}</span>
         <span className="opacity-60">{t.preview.console.messages(entries.length)}</span>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ms-auto flex items-center gap-1">
           {chosen.length ? <span className="opacity-60">{t.preview.console.selected(chosen.length)}</span> : null}
           <PanelButton
             label={t.preview.console.sendToChat}
@@ -74,8 +75,8 @@ export function BrowserConsolePanel() {
             <button
               aria-label={selected.has(index) ? t.preview.console.deselect : t.preview.console.select}
               className={cn(
-                'flex w-full gap-2 px-2 py-0.5 text-left hover:bg-layer-2',
-                selected.has(index) && 'bg-layer-2',
+                'flex w-full gap-2 px-2 py-0.5 text-start hover:bg-(--ui-control-hover-background)',
+                selected.has(index) && 'bg-(--ui-control-active-background)',
                 entry.level === 'error' && 'text-red-400',
                 entry.level === 'warn' && 'text-amber-400'
               )}
@@ -95,14 +96,15 @@ export function BrowserConsolePanel() {
 
 function PanelButton({ label, onSelect }: { label: string; onSelect: () => void }) {
   return (
-    <button
-      className="rounded px-1 py-0.5 opacity-70 hover:bg-layer-2 hover:opacity-100"
-      onClick={onSelect}
-      title={label}
-      type="button"
-    >
-      <Codicon name="copy" size="0.6875rem" />
-      <span className="sr-only">{label}</span>
-    </button>
+    <Tip label={label}>
+      <button
+        aria-label={label}
+        className="rounded px-1 py-0.5 opacity-70 hover:bg-(--ui-control-hover-background) hover:opacity-100"
+        onClick={onSelect}
+        type="button"
+      >
+        <Codicon name="copy" size="0.6875rem" />
+      </button>
+    </Tip>
   )
 }

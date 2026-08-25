@@ -5,8 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { X } from '@/lib/icons'
-import { useGuestOcclusion } from '@/store/browser-occlusion'
 import { cn } from '@/lib/utils'
+import { useGuestOcclusion } from '@/store/browser-occlusion'
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
