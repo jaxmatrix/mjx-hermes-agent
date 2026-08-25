@@ -1540,7 +1540,10 @@ mod tests {
         assert_eq!(registry_scope_of(None, None), "");
         assert_eq!(registry_scope_of(None, Some("")), "");
         assert_eq!(registry_scope_of(None, Some("work")), "work");
-        assert_ne!(registry_scope_of(None, Some("work")), registry_scope_of(None, Some("home")));
+        assert_ne!(
+            registry_scope_of(None, Some("work")),
+            registry_scope_of(None, Some("home"))
+        );
         // …and an empty id is the same as no id, so a frontend that sends `""`
         // does not silently mint a second backend.
         assert_eq!(registry_scope_of(Some(""), Some("work")), "work");
@@ -1554,7 +1557,10 @@ mod tests {
         assert_ne!(registry_scope_of(Some("box-a"), Some("work")), "work");
         // A composite can never collide with a bare profile: ':' is invalid in
         // a profile name.
-        assert_eq!(registry_scope_of(Some("box-a"), Some("work")), "conn:box-a::work");
+        assert_eq!(
+            registry_scope_of(Some("box-a"), Some("work")),
+            "conn:box-a::work"
+        );
     }
 
     #[test]

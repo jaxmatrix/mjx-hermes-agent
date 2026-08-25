@@ -155,7 +155,9 @@ pub async fn probe_http_leg(app: &AppHandle, base_url: &str) -> (LegResult, serd
     let started = Instant::now();
     let url = format!("{}/api/status", base_url.trim_end_matches('/'));
 
-    match crate::transport::probe_get_json(app, &url, Duration::from_millis(STATUS_TIMEOUT_MS)).await {
+    match crate::transport::probe_get_json(app, &url, Duration::from_millis(STATUS_TIMEOUT_MS))
+        .await
+    {
         Ok((status, body)) => (
             LegResult {
                 ok: (200..300).contains(&status),
@@ -331,7 +333,10 @@ mod tests {
             ..WsObservation::default()
         };
 
-        assert_eq!(classify_probe(&http_ok(), Some(&ws)), ProbeVerdict::WsUnreachable);
+        assert_eq!(
+            classify_probe(&http_ok(), Some(&ws)),
+            ProbeVerdict::WsUnreachable
+        );
     }
 
     #[test]
@@ -394,9 +399,15 @@ mod tests {
             ..WsObservation::default()
         };
 
-        assert_eq!(classify_probe(&http_ok(), Some(&ws)), ProbeVerdict::SkippedNoToken);
+        assert_eq!(
+            classify_probe(&http_ok(), Some(&ws)),
+            ProbeVerdict::SkippedNoToken
+        );
         assert!(verdict_is_ok(ProbeVerdict::SkippedNoToken));
-        assert_eq!(ws_auth_plan(AuthMode::Token, false), WsAuthPlan::SkipNoToken);
+        assert_eq!(
+            ws_auth_plan(AuthMode::Token, false),
+            WsAuthPlan::SkipNoToken
+        );
         assert_eq!(ws_auth_plan(AuthMode::Token, true), WsAuthPlan::Token);
     }
 
@@ -407,7 +418,10 @@ mod tests {
             ..WsObservation::default()
         };
 
-        assert_eq!(classify_probe(&http_ok(), Some(&ws)), ProbeVerdict::WsUnreachable);
+        assert_eq!(
+            classify_probe(&http_ok(), Some(&ws)),
+            ProbeVerdict::WsUnreachable
+        );
         assert!(!verdict_is_ok(classify_probe(&http_ok(), Some(&ws))));
 
         let unauthorized = WsObservation {
@@ -424,8 +438,14 @@ mod tests {
 
     #[test]
     fn ws_url_swaps_the_scheme_and_encodes_the_auth_param() {
-        assert_eq!(ws_url_for("https://gw.example.com", None), "wss://gw.example.com/api/ws");
-        assert_eq!(ws_url_for("http://127.0.0.1:9119/", None), "ws://127.0.0.1:9119/api/ws");
+        assert_eq!(
+            ws_url_for("https://gw.example.com", None),
+            "wss://gw.example.com/api/ws"
+        );
+        assert_eq!(
+            ws_url_for("http://127.0.0.1:9119/", None),
+            "ws://127.0.0.1:9119/api/ws"
+        );
         assert_eq!(
             ws_url_for("http://gw", Some(("token", "a b/c"))),
             "ws://gw/api/ws?token=a%20b%2Fc"

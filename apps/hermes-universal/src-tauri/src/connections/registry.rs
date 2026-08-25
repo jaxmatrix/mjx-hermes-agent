@@ -346,13 +346,22 @@ pub fn unique_label(desired: &str, taken: &BTreeSet<String>) -> String {
 }
 
 fn clamp_chars(value: &str, max: usize) -> String {
-    value.chars().take(max).collect::<String>().trim().to_string()
+    value
+        .chars()
+        .take(max)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 /// Mint an id for a new connection. Never `"local"` for a non-local kind — that
 /// id is reserved, and a remote entry holding it would read every local
 /// credential out of the bare keyring accounts (§6.2's carve-out).
-pub fn connection_id_for_label(label: &str, kind: ConnectionKind, taken: &BTreeSet<String>) -> String {
+pub fn connection_id_for_label(
+    label: &str,
+    kind: ConnectionKind,
+    taken: &BTreeSet<String>,
+) -> String {
     if kind == ConnectionKind::Local {
         return LOCAL_CONNECTION_ID.to_string();
     }
@@ -421,7 +430,9 @@ pub fn normalize_remote_base_url(raw: &str) -> Result<String, ConnectionsError> 
 /// Filter header names through the deny list. Returns the accepted names
 /// (lowercased) and the rejected ones, because a silently dropped header is how
 /// a Cloudflare-Access source fails with no explanation (rule 9).
-pub fn normalize_remote_headers(names: impl IntoIterator<Item = String>) -> (Vec<String>, Vec<String>) {
+pub fn normalize_remote_headers(
+    names: impl IntoIterator<Item = String>,
+) -> (Vec<String>, Vec<String>) {
     let mut kept: Vec<String> = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
 
@@ -613,7 +624,9 @@ pub fn normalize_connection_input(
 
                     headers.keys().cloned().collect::<Vec<_>>()
                 }
-                None => existing.map(|row| row.header_names.clone()).unwrap_or_default(),
+                None => existing
+                    .map(|row| row.header_names.clone())
+                    .unwrap_or_default(),
             };
 
             let (kept, dropped) = normalize_remote_headers(names);
@@ -650,7 +663,9 @@ pub fn normalize_connection_input(
                 .or_else(|| existing.and_then(|row| row.user.clone()))
                 .filter(|value| !value.trim().is_empty())
                 .map(|value| value.trim().to_string());
-            connection.port = typed_port.or(input.port).or_else(|| existing.and_then(|row| row.port));
+            connection.port = typed_port
+                .or(input.port)
+                .or_else(|| existing.and_then(|row| row.port));
             connection.key_path = input
                 .key_path
                 .clone()
@@ -709,7 +724,11 @@ pub fn merge_connection_input(
         ));
     }
 
-    match registry.connections.iter().position(|row| row.id == connection.id) {
+    match registry
+        .connections
+        .iter()
+        .position(|row| row.id == connection.id)
+    {
         Some(index) => {
             let changed = dial_fields_changed(&registry.connections[index], &connection);
 
@@ -822,7 +841,9 @@ pub fn normalize_registry(registry: &mut Registry, local_supported: bool) -> Opt
 
     if registry.connections.is_empty() && local_supported {
         registry.connections.push(local_connection());
-        registry.legacy_id.get_or_insert_with(|| LOCAL_CONNECTION_ID.to_string());
+        registry
+            .legacy_id
+            .get_or_insert_with(|| LOCAL_CONNECTION_ID.to_string());
     }
 
     let first = registry
@@ -831,11 +852,19 @@ pub fn normalize_registry(registry: &mut Registry, local_supported: bool) -> Opt
         .map(|row| row.id.clone())
         .unwrap_or_else(|| LOCAL_CONNECTION_ID.to_string());
 
-    if !registry.connections.iter().any(|row| row.id == registry.primary) {
+    if !registry
+        .connections
+        .iter()
+        .any(|row| row.id == registry.primary)
+    {
         registry.primary = first.clone();
     }
 
-    if !registry.connections.iter().any(|row| row.id == registry.last_used) {
+    if !registry
+        .connections
+        .iter()
+        .any(|row| row.id == registry.last_used)
+    {
         registry.last_used = registry.primary.clone();
     }
 
@@ -903,7 +932,10 @@ pub fn local_connection() -> Connection {
 /// The one entry it produces becomes both `primary` and `lastUsed`, which is
 /// what makes its scope key collapse to the bare profile — the reason an upgrade
 /// reattaches to a running remote backend instead of orphaning it (§8.6).
-pub fn migrate_from_v1_target(target: Option<&serde_json::Value>, local_supported: bool) -> Registry {
+pub fn migrate_from_v1_target(
+    target: Option<&serde_json::Value>,
+    local_supported: bool,
+) -> Registry {
     let mut registry = Registry {
         version: REGISTRY_VERSION,
         primary: LOCAL_CONNECTION_ID.to_string(),
@@ -1125,7 +1157,13 @@ pub fn pick_canonical_connection<'a>(
 
     candidates
         .iter()
-        .min_by_key(|row| (row.kind.canonical_priority(), row.order, row.connection_id.clone()))
+        .min_by_key(|row| {
+            (
+                row.kind.canonical_priority(),
+                row.order,
+                row.connection_id.clone(),
+            )
+        })
         .expect("pick_canonical_connection needs at least one candidate")
 }
 
@@ -1134,7 +1172,10 @@ pub fn pick_canonical_connection<'a>(
 /// The order is the point: collapse by backend identity FIRST, then apply the
 /// `@name-device` disambiguation. A profile that only *looked* duplicated (one
 /// box, two addresses) keeps its bare name.
-pub fn build_agent_roster(sources: &[SourceProfiles], active_connection_id: Option<&str>) -> AgentRoster {
+pub fn build_agent_roster(
+    sources: &[SourceProfiles],
+    active_connection_id: Option<&str>,
+) -> AgentRoster {
     let mut buckets: Vec<(String, Vec<&SourceProfiles>, String)> = Vec::new();
 
     for source in sources {
@@ -1189,9 +1230,7 @@ pub fn build_agent_roster(sources: &[SourceProfiles], active_connection_id: Opti
         });
     }
 
-    agents.sort_by(|a, b| {
-        (&a.connection_id, &a.profile).cmp(&(&b.connection_id, &b.profile))
-    });
+    agents.sort_by(|a, b| (&a.connection_id, &a.profile).cmp(&(&b.connection_id, &b.profile)));
 
     AgentRoster {
         agents,
@@ -1209,6 +1248,32 @@ pub fn build_agent_roster(sources: &[SourceProfiles], active_connection_id: Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// THE cross-language scope-key table (reconciliation M1).
+    ///
+    /// `src/lib/backend-scope.test.ts` reads these lines out of this file and
+    /// asserts the TS functions produce the same answers, because nothing else
+    /// pins the two languages to each other and a drift is silent until an
+    /// upgrade orphans a running remote backend (the `data_url_read_max.rs`
+    /// precedent).
+    ///
+    /// Flat strings rather than tuples ON PURPOSE: rustfmt reflows a tuple
+    /// across four lines the moment it grows past the width, and a table whose
+    /// shape depends on the formatter is a table the other language cannot
+    /// read. One row per line survives `cargo fmt`.
+    ///
+    /// `connectionId|profile|backendScopeKey|registryBackendScopeKey`, with `~`
+    /// for a `None` argument — distinct from `""`, which is its own case.
+    const SCOPE_KEY_PIN: &[&str] = &[
+        "~|~|default|default",
+        "||default|default",
+        "local|default|default|conn:local::default",
+        "local|work|work|conn:local::work",
+        "~|work|work|work",
+        "box-2|default|conn:box-2::default|conn:box-2::default",
+        "box-2|~|conn:box-2::default|conn:box-2::default",
+        " box-2 | work |conn:box-2::work|conn:box-2::work",
+    ];
 
     fn remote(id: &str, label: &str, url: &str, order: u32) -> Connection {
         Connection {
@@ -1229,7 +1294,14 @@ mod tests {
         }
     }
 
-    fn source(id: &str, label: &str, kind: ConnectionKind, order: u32, profiles: Option<&[&str]>, install: Option<&str>) -> SourceProfiles {
+    fn source(
+        id: &str,
+        label: &str,
+        kind: ConnectionKind,
+        order: u32,
+        profiles: Option<&[&str]>,
+        install: Option<&str>,
+    ) -> SourceProfiles {
         SourceProfiles {
             connection_id: id.to_string(),
             error: None,
@@ -1250,24 +1322,21 @@ mod tests {
     fn scope_key_pin() {
         assert_eq!(LOCAL_CONNECTION_ID, "local");
 
-        let table: &[(Option<&str>, Option<&str>, &str, &str)] = &[
-            // (connectionId, profile, backendScopeKey, registryBackendScopeKey)
-            (None, None, "default", "default"),
-            (Some(""), Some(""), "default", "default"),
-            (Some("local"), Some("default"), "default", "conn:local::default"),
-            (Some("local"), Some("work"), "work", "conn:local::work"),
-            (None, Some("work"), "work", "work"),
-            (Some("box-2"), Some("default"), "conn:box-2::default", "conn:box-2::default"),
-            (Some("box-2"), None, "conn:box-2::default", "conn:box-2::default"),
-            (Some(" box-2 "), Some(" work "), "conn:box-2::work", "conn:box-2::work"),
-        ];
+        for row in SCOPE_KEY_PIN {
+            let cells: Vec<&str> = row.split('|').collect();
+            let arg = |cell: &'static str| if cell == "~" { None } else { Some(cell) };
+            let (id, profile, pooled, registry) = (
+                arg(cells[0]),
+                arg(cells[1]),
+                cells[2].to_string(),
+                cells[3].to_string(),
+            );
 
-        for (id, profile, pooled, registry) in table {
-            assert_eq!(&backend_scope_key(*id, *profile), pooled, "backend_scope_key({id:?}, {profile:?})");
+            assert_eq!(backend_scope_key(id, profile), pooled, "row {row}");
             assert_eq!(
-                &registry_backend_scope_key(*id, *profile),
+                registry_backend_scope_key(id, profile),
                 registry,
-                "registry_backend_scope_key({id:?}, {profile:?})"
+                "row {row}"
             );
         }
     }
@@ -1368,8 +1437,14 @@ mod tests {
             ..ConnectionInput::default()
         };
 
-        let err = normalize_connection_input(&input, Some(&existing), 0, &BTreeSet::new(), &BTreeSet::new())
-            .expect_err("reserved id");
+        let err = normalize_connection_input(
+            &input,
+            Some(&existing),
+            0,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )
+        .expect_err("reserved id");
 
         assert_eq!(err.kind, ConnectionsErrorKind::ReservedId);
     }
@@ -1437,7 +1512,9 @@ mod tests {
             remote_profile: Some("work".to_string()),
             ..ConnectionInput::default()
         };
-        let (first, _) = normalize_connection_input(&one, None, 0, &BTreeSet::new(), &BTreeSet::new()).expect("first");
+        let (first, _) =
+            normalize_connection_input(&one, None, 0, &BTreeSet::new(), &BTreeSet::new())
+                .expect("first");
 
         assert_eq!(first.user.as_deref(), Some("me"));
         assert_eq!(first.host.as_deref(), Some("box"));
@@ -1477,8 +1554,14 @@ mod tests {
             ..ConnectionInput::default()
         };
 
-        let (merged, _) =
-            normalize_connection_input(&input, Some(&stored), 0, &BTreeSet::new(), &BTreeSet::new()).expect("merge");
+        let (merged, _) = normalize_connection_input(
+            &input,
+            Some(&stored),
+            0,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )
+        .expect("merge");
 
         assert_eq!(merged.org.as_deref(), Some("acme"));
         assert_eq!(merged.order, 0);
@@ -1641,7 +1724,10 @@ mod tests {
         // The migrated entry is the PRIMARY, and the primary is dialled through
         // `backend_scope_key`, which collapses to the bare profile — which is
         // what `ssh_ownership_id` hashes. See `ssh/ownership.rs`'s own test.
-        assert_eq!(backend_scope_key(Some(LOCAL_CONNECTION_ID), Some("default")), "default");
+        assert_eq!(
+            backend_scope_key(Some(LOCAL_CONNECTION_ID), Some("default")),
+            "default"
+        );
         assert_ne!(
             backend_scope_key(Some(&registry.primary), Some("default")),
             "default",
@@ -1710,37 +1796,88 @@ mod tests {
     fn unique_profiles_keep_bare_handles() {
         let roster = build_agent_roster(
             &[
-                source("a", "Studio", ConnectionKind::Remote, 0, Some(&["default", "work"]), Some("i1")),
-                source("b", "Laptop", ConnectionKind::Ssh, 1, Some(&["home"]), Some("i2")),
+                source(
+                    "a",
+                    "Studio",
+                    ConnectionKind::Remote,
+                    0,
+                    Some(&["default", "work"]),
+                    Some("i1"),
+                ),
+                source(
+                    "b",
+                    "Laptop",
+                    ConnectionKind::Ssh,
+                    1,
+                    Some(&["home"]),
+                    Some("i2"),
+                ),
             ],
             None,
         );
 
         assert_eq!(roster.agents.len(), 3);
-        assert!(roster.agents.iter().all(|agent| agent.handle == agent.profile));
+        assert!(roster
+            .agents
+            .iter()
+            .all(|agent| agent.handle == agent.profile));
     }
 
     #[test]
     fn duplicated_profiles_across_boxes_get_device_handles() {
         let roster = build_agent_roster(
             &[
-                source("a", "Studio", ConnectionKind::Remote, 0, Some(&["default"]), Some("i1")),
-                source("b", "Laptop", ConnectionKind::Ssh, 1, Some(&["default"]), Some("i2")),
+                source(
+                    "a",
+                    "Studio",
+                    ConnectionKind::Remote,
+                    0,
+                    Some(&["default"]),
+                    Some("i1"),
+                ),
+                source(
+                    "b",
+                    "Laptop",
+                    ConnectionKind::Ssh,
+                    1,
+                    Some(&["default"]),
+                    Some("i2"),
+                ),
             ],
             None,
         );
 
         assert_eq!(roster.agents.len(), 2);
-        assert!(roster.agents.iter().any(|agent| agent.handle == "default-studio"));
-        assert!(roster.agents.iter().any(|agent| agent.handle == "default-laptop"));
+        assert!(roster
+            .agents
+            .iter()
+            .any(|agent| agent.handle == "default-studio"));
+        assert!(roster
+            .agents
+            .iter()
+            .any(|agent| agent.handle == "default-laptop"));
     }
 
     #[test]
     fn two_connections_with_one_install_id_collapse_and_keep_the_bare_handle() {
         let roster = build_agent_roster(
             &[
-                source("host", "By hostname", ConnectionKind::Remote, 0, Some(&["default"]), Some("same")),
-                source("ip", "By Tailscale IP", ConnectionKind::Remote, 1, Some(&["default"]), Some("same")),
+                source(
+                    "host",
+                    "By hostname",
+                    ConnectionKind::Remote,
+                    0,
+                    Some(&["default"]),
+                    Some("same"),
+                ),
+                source(
+                    "ip",
+                    "By Tailscale IP",
+                    ConnectionKind::Remote,
+                    1,
+                    Some(&["default"]),
+                    Some("same"),
+                ),
             ],
             None,
         );
@@ -1756,9 +1893,30 @@ mod tests {
     fn a_third_same_box_connection_folds_too() {
         let roster = build_agent_roster(
             &[
-                source("a", "A", ConnectionKind::Remote, 0, Some(&["default"]), Some("same")),
-                source("b", "B", ConnectionKind::Remote, 1, Some(&["default"]), Some("same")),
-                source("c", "C", ConnectionKind::Remote, 2, Some(&["default"]), Some("same")),
+                source(
+                    "a",
+                    "A",
+                    ConnectionKind::Remote,
+                    0,
+                    Some(&["default"]),
+                    Some("same"),
+                ),
+                source(
+                    "b",
+                    "B",
+                    ConnectionKind::Remote,
+                    1,
+                    Some(&["default"]),
+                    Some("same"),
+                ),
+                source(
+                    "c",
+                    "C",
+                    ConnectionKind::Remote,
+                    2,
+                    Some(&["default"]),
+                    Some("same"),
+                ),
             ],
             None,
         );
@@ -1769,8 +1927,22 @@ mod tests {
     #[test]
     fn the_collapse_prefers_the_active_connection_then_kind_then_order() {
         let sources = [
-            source("remote", "Remote", ConnectionKind::Remote, 0, Some(&["default"]), Some("same")),
-            source("ssh", "Ssh", ConnectionKind::Ssh, 1, Some(&["default"]), Some("same")),
+            source(
+                "remote",
+                "Remote",
+                ConnectionKind::Remote,
+                0,
+                Some(&["default"]),
+                Some("same"),
+            ),
+            source(
+                "ssh",
+                "Ssh",
+                ConnectionKind::Ssh,
+                1,
+                Some(&["default"]),
+                Some("same"),
+            ),
         ];
 
         assert_eq!(
@@ -1778,15 +1950,32 @@ mod tests {
             "remote"
         );
         // With no active connection the kind priority decides: ssh outranks remote.
-        assert_eq!(build_agent_roster(&sources, None).agents[0].connection_id, "ssh");
+        assert_eq!(
+            build_agent_roster(&sources, None).agents[0].connection_id,
+            "ssh"
+        );
     }
 
     #[test]
     fn a_missing_install_id_bypasses_the_collapse() {
         let roster = build_agent_roster(
             &[
-                source("a", "A", ConnectionKind::Remote, 0, Some(&["default"]), None),
-                source("b", "B", ConnectionKind::Remote, 1, Some(&["default"]), None),
+                source(
+                    "a",
+                    "A",
+                    ConnectionKind::Remote,
+                    0,
+                    Some(&["default"]),
+                    None,
+                ),
+                source(
+                    "b",
+                    "B",
+                    ConnectionKind::Remote,
+                    1,
+                    Some(&["default"]),
+                    None,
+                ),
             ],
             None,
         );
@@ -1802,24 +1991,43 @@ mod tests {
         dead.error = Some("unreachable".to_string());
 
         let roster = build_agent_roster(
-            &[source("a", "Studio", ConnectionKind::Remote, 0, Some(&["default"]), Some("i1")), dead],
+            &[
+                source(
+                    "a",
+                    "Studio",
+                    ConnectionKind::Remote,
+                    0,
+                    Some(&["default"]),
+                    Some("i1"),
+                ),
+                dead,
+            ],
             None,
         );
 
         assert_eq!(roster.agents.len(), 1);
         assert_eq!(roster.agents[0].handle, "default");
         assert_eq!(roster.sources.len(), 2);
-        assert!(roster.sources.iter().any(|row| !row.ok && row.error.is_some()));
+        assert!(roster
+            .sources
+            .iter()
+            .any(|row| !row.ok && row.error.is_some()));
     }
 
     #[test]
     fn duplicate_profiles_from_one_connection_remain_one_agent() {
         let roster = build_agent_roster(
-            &[source("a", "A", ConnectionKind::Remote, 0, Some(&["work", "work"]), Some("i1"))],
+            &[source(
+                "a",
+                "A",
+                ConnectionKind::Remote,
+                0,
+                Some(&["work", "work"]),
+                Some("i1"),
+            )],
             None,
         );
 
         assert_eq!(roster.agents.len(), 1);
     }
-
 }

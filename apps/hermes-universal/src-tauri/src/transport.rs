@@ -529,9 +529,9 @@ impl TransportState {
         let base = base.trim_end_matches('/').to_string();
 
         if let Ok(mut table) = self.connection_auth.lock() {
-            table
-                .entries
-                .retain(|(existing, held)| existing != &base && held.connection_id != auth.connection_id);
+            table.entries.retain(|(existing, held)| {
+                existing != &base && held.connection_id != auth.connection_id
+            });
             table.entries.push((base, auth));
         }
     }
@@ -539,7 +539,9 @@ impl TransportState {
     /// Forget one connection's credentials (removed, signed out, recycled).
     pub fn forget_connection_auth(&self, connection_id: &str) {
         if let Ok(mut table) = self.connection_auth.lock() {
-            table.entries.retain(|(_, auth)| auth.connection_id != connection_id);
+            table
+                .entries
+                .retain(|(_, auth)| auth.connection_id != connection_id);
         }
     }
 
@@ -1027,8 +1029,8 @@ fn apply_ws_token(url: &str, token: Option<&str>) -> String {
     }
 
     let separator = if url.contains('?') { '&' } else { '?' };
-    let encoded =
-        percent_encoding::utf8_percent_encode(token, percent_encoding::NON_ALPHANUMERIC).to_string();
+    let encoded = percent_encoding::utf8_percent_encode(token, percent_encoding::NON_ALPHANUMERIC)
+        .to_string();
 
     format!("{url}{separator}token={encoded}")
 }
@@ -1220,7 +1222,9 @@ pub async fn probe_ws(
     // credential completes the upgrade first and closes immediately after, which
     // is indistinguishable from success until you wait.
     match tokio::time::timeout(grace, read.next()).await {
-        Ok(Some(Ok(Message::Close(_))) | Some(Err(_)) | None) => observation.closed_after_open = true,
+        Ok(Some(Ok(Message::Close(_))) | Some(Err(_)) | None) => {
+            observation.closed_after_open = true
+        }
         // Any frame at all is the strongest evidence there is.
         Ok(Some(Ok(_))) => observation.frame = true,
         // Still open, still silent: healthy. The gateway speaks first only after
@@ -1524,11 +1528,10 @@ mod tests {
 
     use super::{
         apply_connection_auth, apply_gateway_bearer, apply_ws_token, caller_set_authorization,
-        forget_socket, pump_reader, redact_bearer,
-        redact_error, redact_message, redact_secret, redact_url, safe_upload_filename,
-        send_binary_frame, take_window_sockets, upload_form, upload_lost_to_redirect,
-        visible_response_headers, ws_upgrade_headers, ConnectionAuth, HashMap, HttpReq, HttpUpload,
-        Message, ReaderSink, SocketHandle, TransportState,
+        forget_socket, pump_reader, redact_bearer, redact_error, redact_message, redact_secret,
+        redact_url, safe_upload_filename, send_binary_frame, take_window_sockets, upload_form,
+        upload_lost_to_redirect, visible_response_headers, ws_upgrade_headers, ConnectionAuth,
+        HashMap, HttpReq, HttpUpload, Message, ReaderSink, SocketHandle, TransportState,
     };
 
     /// A registry entry shaped exactly like a live one: a writer task parked on
@@ -2353,7 +2356,10 @@ mod tests {
         let state = TransportState::new();
 
         state.set_connection_auth("https://host", auth("bare", Some("bare-token")));
-        state.set_connection_auth("https://host/hermes", auth("prefixed", Some("prefixed-token")));
+        state.set_connection_auth(
+            "https://host/hermes",
+            auth("prefixed", Some("prefixed-token")),
+        );
 
         assert_eq!(
             state
@@ -2380,8 +2386,12 @@ mod tests {
         // The `url_is_under` guard, shared with the bearer table: a `starts_with`
         // copy here would hand this connection's session token to an attacker's
         // host on the first REST call.
-        assert!(state.connection_auth_for_url("https://gw.evil.com/api/status").is_none());
-        assert!(state.connection_auth_for_url("https://gw.ev/api/status").is_some());
+        assert!(state
+            .connection_auth_for_url("https://gw.evil.com/api/status")
+            .is_none());
+        assert!(state
+            .connection_auth_for_url("https://gw.ev/api/status")
+            .is_some());
     }
 
     #[test]
@@ -2393,11 +2403,17 @@ mod tests {
 
         // A source moved to a new URL must stop attaching its token at the old
         // one — a table keyed only by base would go on doing so forever.
-        assert!(state.connection_auth_for_url("https://old/api/status").is_none());
-        assert!(state.connection_auth_for_url("https://new/api/status").is_some());
+        assert!(state
+            .connection_auth_for_url("https://old/api/status")
+            .is_none());
+        assert!(state
+            .connection_auth_for_url("https://new/api/status")
+            .is_some());
 
         state.forget_connection_auth("box");
-        assert!(state.connection_auth_for_url("https://new/api/status").is_none());
+        assert!(state
+            .connection_auth_for_url("https://new/api/status")
+            .is_none());
     }
 
     #[test]
@@ -2462,7 +2478,10 @@ mod tests {
 
         let merged = ws_upgrade_headers(Some(&caller), Some(&auth("box", None)));
 
-        assert_eq!(merged, vec![("cf-access-client-id".to_string(), "mine".to_string())]);
+        assert_eq!(
+            merged,
+            vec![("cf-access-client-id".to_string(), "mine".to_string())]
+        );
         assert_eq!(
             ws_upgrade_headers(None, Some(&auth("box", None))),
             vec![("cf-access-client-id".to_string(), "svc".to_string())]
