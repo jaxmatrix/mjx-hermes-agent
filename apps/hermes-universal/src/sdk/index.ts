@@ -894,3 +894,7 @@ export { Blobatar } from 'blobatar/react'
 /** Plugin-local reactive state (share between a trigger and its panel, poll
  *  loops, cross-component signals) — the same primitive `host.state` uses. */
 export { atom, computed } from 'nanostores'
+/** The read-only atom type every `host.state.*` member and every
+ *  `host.sessionPrompts(...)` hands back — a plugin holding one needs to be able
+ *  to NAME it. */
+export type { ReadableAtom, WritableAtom } from 'nanostores'
