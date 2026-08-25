@@ -9,7 +9,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 // Per-platform URL form is the single easiest thing to get backwards here, so
 // the platform seam is mocked and every branch is asserted. Defaults to Linux;
 // individual cases re-import the module under a different platform.
-vi.mock('@/lib/platform', () => ({ IS_ANDROID: false, IS_TAURI: true, PLATFORM: 'linux' }))
+vi.mock('@/lib/platform', () => ({
+  IS_IOS: false, IS_ANDROID: false, IS_TAURI: true, PLATFORM: 'linux' }))
 
 import { canStreamMedia, isMediaStreamUrl, mediaStreamUrl } from '@/lib/media-stream'
 import { $connection } from '@/store/connection'

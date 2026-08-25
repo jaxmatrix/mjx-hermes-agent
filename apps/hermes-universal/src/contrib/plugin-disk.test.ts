@@ -28,6 +28,8 @@ type Root = 'agent-packages' | 'desktop-plugins'
 /** What `plugins_list` answers with, per root — the Rust side chooses the entry
  *  file from the enum, so the two layouts differ. */
 const rustEntry = (name: string, root: Root = 'desktop-plugins', mtime = 100, size = 10) => ({
+  IS_IOS: false,
+  IS_ANDROID: false,
   file:
     root === 'agent-packages'
       ? `/home/u/.hermes/plugins/${name}/desktop/plugin.js`
