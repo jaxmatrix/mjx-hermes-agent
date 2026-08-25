@@ -131,3 +131,25 @@ export function maySweep(input: { owned: boolean; title?: null | string }): bool
 
   return input.title === BOT_CHAT_TITLE || input.title.startsWith('Group: ')
 }
+
+/**
+ * `/new` inside a bot's canonical chat means `/compact`.
+ *
+ * A bot has exactly ONE chat, and that is its memory. `/new` there would fork
+ * it — the durable pin would still point at the old conversation while the user
+ * talked into a fresh one, and the bot would appear to have forgotten
+ * everything with no way back. `/compact` is what the user actually wants: keep
+ * the thread, shorten the context.
+ *
+ * Pure, and scoped by an explicit predicate rather than a guess: OUTSIDE a
+ * canonical chat, `/new` is left completely alone.
+ */
+export function rewriteNewCommand(text: string, inCanonicalChat: boolean): string {
+  if (!inCanonicalChat) {
+    return text
+  }
+
+  // Only a leading `/new`, and only as a whole command — `/newsletter` and a
+  // `/new` quoted mid-sentence are ordinary text.
+  return text.replace(/^\/new(?=$|\s)/, '/compact')
+}

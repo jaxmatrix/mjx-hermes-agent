@@ -17,6 +17,7 @@
 import {
   COMPOSER_AREAS,
   type ComposerAtCompletionSource,
+  type ComposerMiddleware,
   CONTEXT_MENU_ITEMS_AREA,
   type ContextMenuItemsContribution,
   type HermesPlugin,
@@ -35,6 +36,7 @@ import { setRoomTurnRunner } from './driver/registry'
 import { createWebviewRunner } from './driver/webview-runner'
 import { bundles } from './i18n'
 import { botHandle, botMentionTag } from './ids'
+import { rewriteNewCommand } from './model/canonical'
 import { isPassText, matchHandles } from './model/mentions'
 import { visibleRoster } from './model/roster'
 import { $rooms, $roster, $selectedBot, $showHidden, hydrateCaches, watchCaches } from './store/atoms'
@@ -132,6 +134,23 @@ const plugin: HermesPlugin = {
           }))
       } satisfies ComposerAtCompletionSource,
       id: 'mention-completions'
+    })
+
+    // ── /new means /compact inside a bot's ONE chat ─────────────────────────
+
+    ctx.register({
+      area: COMPOSER_AREAS.middleware,
+      data: {
+        handler: draft => {
+          const focused = host.state.focusedStoredSessionId.get()
+          const inCanonical = Boolean(focused) && $roster.get().some(row => row.meta.chat === focused)
+
+          const text = rewriteNewCommand(draft.text, inCanonical)
+
+          return text === draft.text ? draft : { ...draft, text }
+        }
+      } satisfies ComposerMiddleware,
+      id: 'mention-middleware'
     })
 
     // ── the room DM card ────────────────────────────────────────────────────

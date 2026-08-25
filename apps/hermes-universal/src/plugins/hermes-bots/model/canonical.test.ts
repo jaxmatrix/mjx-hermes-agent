@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { maySweep, resolveCanonicalChat } from './canonical'
+import { maySweep, resolveCanonicalChat, rewriteNewCommand } from './canonical'
 
 describe('the canonical Bot Chat ladder', () => {
   it('resumes a live pin', () => {
@@ -85,5 +85,24 @@ describe('the hide sweep guards', () => {
   it('skips a row whose title it could not read, rather than guessing', () => {
     expect(maySweep({ owned: true })).toBe(false)
     expect(maySweep({ owned: true, title: null })).toBe(false)
+  })
+})
+
+describe('the /new reroute', () => {
+  // A bot has ONE chat, and that chat is its memory. `/new` there would fork it:
+  // the durable pin keeps pointing at the old conversation while the user talks
+  // into a fresh one, and the bot appears to have forgotten everything.
+  it('rewrites a leading /new to /compact inside a canonical chat', () => {
+    expect(rewriteNewCommand('/new', true)).toBe('/compact')
+    expect(rewriteNewCommand('/new please', true)).toBe('/compact please')
+  })
+
+  it('leaves /new completely alone OUTSIDE a canonical chat', () => {
+    expect(rewriteNewCommand('/new', false)).toBe('/new')
+  })
+
+  it('only matches a whole leading command', () => {
+    expect(rewriteNewCommand('/newsletter', true)).toBe('/newsletter')
+    expect(rewriteNewCommand('type /new to start over', true)).toBe('type /new to start over')
   })
 })
