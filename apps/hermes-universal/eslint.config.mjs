@@ -171,7 +171,11 @@ export default [
         {
           patterns: [
             {
-              group: ['@/*', '../*', '@hermes/shared'],
+              // `@/*` is the app; `../../*` is an escape from the plugin's own
+              // tree (its sibling plugins, and `src/` beyond them). A plain
+              // `../*` is NOT banned — a plugin is a module tree, and forbidding
+              // `../ids` would force every plugin into one file.
+              group: ['@/*', '../../*', '@hermes/shared'],
               message:
                 'Plugins import only @hermes/plugin-sdk (and react). Missing something? Add it to the SDK — that is the point.'
             }
