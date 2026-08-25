@@ -3,8 +3,8 @@ import { type ReactNode, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { triggerHaptic } from '@/lib/haptics'
-import { useGuestOcclusion } from '@/store/browser-occlusion'
 import { cn } from '@/lib/utils'
+import { useGuestOcclusion } from '@/store/browser-occlusion'
 
 // Ported from apps/desktop/src/app/overlays/overlay-view.tsx. The full-screen
 // modal card that hosts an overlay view (settings, …). Adapted for Tauri: the

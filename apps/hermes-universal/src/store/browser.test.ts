@@ -17,6 +17,7 @@ vi.mock('@/lib/browser/host', () => host)
 
 const { $activeConnection } = await import('./active-connection')
 const { $activePreviewPath, $previewTabs } = await import('./preview')
+
 const {
   $browserState,
   BROWSER_TAB_PATH,

@@ -30,7 +30,9 @@ pub struct Browser<R: Runtime>(PluginHandle<R>);
 
 impl<R: Runtime> Browser<R> {
     pub fn open(&self, request: OpenRequest) -> crate::Result<()> {
-        self.0.run_mobile_plugin("open", request).map_err(Into::into)
+        self.0
+            .run_mobile_plugin("open", request)
+            .map_err(Into::into)
     }
     pub fn navigate(&self, request: NavigateRequest) -> crate::Result<()> {
         self.0
@@ -38,7 +40,9 @@ impl<R: Runtime> Browser<R> {
             .map_err(Into::into)
     }
     pub fn back(&self, request: GuestRequest) -> crate::Result<()> {
-        self.0.run_mobile_plugin("back", request).map_err(Into::into)
+        self.0
+            .run_mobile_plugin("back", request)
+            .map_err(Into::into)
     }
     pub fn forward(&self, request: GuestRequest) -> crate::Result<()> {
         self.0
@@ -51,7 +55,9 @@ impl<R: Runtime> Browser<R> {
             .map_err(Into::into)
     }
     pub fn stop(&self, request: GuestRequest) -> crate::Result<()> {
-        self.0.run_mobile_plugin("stop", request).map_err(Into::into)
+        self.0
+            .run_mobile_plugin("stop", request)
+            .map_err(Into::into)
     }
     pub fn set_bounds(&self, request: BoundsRequest) -> crate::Result<()> {
         self.0
@@ -64,7 +70,9 @@ impl<R: Runtime> Browser<R> {
             .map_err(Into::into)
     }
     pub fn eval(&self, request: EvalRequest) -> crate::Result<EvalResponse> {
-        self.0.run_mobile_plugin("eval", request).map_err(Into::into)
+        self.0
+            .run_mobile_plugin("eval", request)
+            .map_err(Into::into)
     }
     pub fn clear_data(&self, request: GuestRequest) -> crate::Result<()> {
         self.0
