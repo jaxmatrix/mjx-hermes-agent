@@ -9,6 +9,8 @@ import { $dataUrlReadMaxMb, dataUrlReadMaxBytes, readCappedFileBase64 } from '@/
 import { requestGateway } from '@/store/gateway'
 import { notifyError } from '@/store/notifications'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
+import { requestForSession } from '@/store/session-request-router'
+import { $sessionStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
 
 // Attachment staging (Gc8/R7). Pick a file → read bytes → data-URL → file.attach
 // (which stages it server-side and returns a @file:/@image: ref) → the ref is
@@ -132,7 +134,61 @@ export async function stageAttachmentFromBlob(blob: Blob, name?: string): Promis
   })
 }
 
-/** Shared body of the two stagers above: bytes → data URL → `file.attach` → ref. */
+/**
+ * Stage bytes into ONE named session — not the active one.
+ *
+ * `stageAttachment` below resolves `ensureSession()`, which is the session the
+ * user is looking at. That is right for a composer and wrong for anything
+ * staging into a session it names: a Bot Mode room fans one attachment out to
+ * six member sessions, none of them focused, and the active-session resolve
+ * would have quietly put all six copies in the user's own chat.
+ *
+ * Routed through MJXHRM-480's session router rather than `requestGateway`, so a
+ * member on another connection is reached on ITS gateway. `withSessionNotFoundResume`
+ * still guards the runtime id, which is what a sleep/wake invalidates.
+ *
+ * Returns null on failure, having already raised the notification — same
+ * contract as the stagers below.
+ */
+export async function attachToSession(
+  storedSessionId: string,
+  input: { dataUrl: string; name: string; path?: string; profile?: null | string }
+): Promise<StagedAttachment | null> {
+  const { name } = input
+
+  try {
+    const runtimeKey = runtimeKeyForStoredSession(storedSessionId)
+    const live = (runtimeKey ? $sessionStates.get()[runtimeKey]?.runtimeSessionId : null) ?? storedSessionId
+
+    const { result: res } = await withSessionNotFoundResume(live, storedSessionId, sessionId =>
+      requestForSession<{ ref_text?: string }>(
+        storedSessionId,
+        'file.attach',
+        {
+          name,
+          path: input.path,
+          session_id: sessionId,
+          data_url: input.dataUrl
+        },
+        undefined,
+        input.profile ?? undefined
+      )
+    )
+
+    if (res.ref_text) {
+      return { ref: res.ref_text, name }
+    }
+
+    throw new Error(translateNow('composer.attachNoRef'))
+  } catch (error) {
+    notifyError(error, translateNow('composer.attachFailed', name))
+
+    return null
+  }
+}
+
+/** Shared body of the two stagers above: bytes → data URL → `file.attach` → ref.
+ *  The ACTIVE-session caller of `attachToSession`. */
 async function stageAttachment(
   name: string,
   readDataUrl: () => Promise<string>,
@@ -142,10 +198,16 @@ async function stageAttachment(
     const dataUrl = await readDataUrl()
     const { id: sessionId, storedId } = await ensureSession()
 
-    // Attach runs against the RUNTIME session id, so after a sleep/wake it hits
-    // a dead runtime and 'session not found' — while plain text silently
-    // recovered on its own, which is exactly why the bug read as "text works,
-    // images don't". One shared resolver rebinds and retries once (MJXHRM-219).
+    if (storedId) {
+      return attachToSession(storedId, { dataUrl, name, path })
+    }
+
+    // A draft has no stored id to route by, so the runtime id is the only
+    // handle there is. Attach runs against the RUNTIME session id, so after a
+    // sleep/wake it hits a dead runtime and 'session not found' — while plain
+    // text silently recovered on its own, which is exactly why the bug read as
+    // "text works, images don't". One shared resolver rebinds and retries once
+    // (MJXHRM-219).
     const { result: res } = await withSessionNotFoundResume(sessionId, storedId, live =>
       requestGateway<{ ref_text?: string }>('file.attach', {
         name,

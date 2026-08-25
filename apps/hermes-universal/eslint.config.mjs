@@ -149,6 +149,42 @@ export default [
     }
   },
   {
+    // THE PLUGIN FENCE: a plugin speaks `@hermes/plugin-sdk` (+ react), never
+    // `@/…` internals — the same isolation a runtime-fetched published plugin
+    // gets, enforced on the BUNDLED ones so the SDK surface stays honest.
+    //
+    // An in-tree plugin is compiled with the app, so nothing STRUCTURALLY stops
+    // it importing `@/store/…`. That is exactly the hazard: the first time one
+    // does, the app's most demanding plugin stops being a test of the SDK and
+    // every door it should have needed goes unbuilt — which is what makes Bot
+    // Mode's "still missing" list true or a fiction. Ported from
+    // `apps/desktop/eslint.config.mjs`, which has carried this rule since its
+    // own plugin tree existed.
+    //
+    // A test file beside a plugin is exempt: it is not shipped to a plugin host
+    // and needs the app's test doubles.
+    files: ['src/plugins/**/*.{ts,tsx}'],
+    ignores: ['src/plugins/**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              // `@/*` is the app; `../../*` is an escape from the plugin's own
+              // tree (its sibling plugins, and `src/` beyond them). A plain
+              // `../*` is NOT banned — a plugin is a module tree, and forbidding
+              // `../ids` would force every plugin into one file.
+              group: ['@/*', '../../*', '@hermes/shared'],
+              message:
+                'Plugins import only @hermes/plugin-sdk (and react). Missing something? Add it to the SDK — that is the point.'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
     // The browser's own modal dialogs are banned in this app (MJXHRM-479). Two
     // separate traps, hence two rules:
     //

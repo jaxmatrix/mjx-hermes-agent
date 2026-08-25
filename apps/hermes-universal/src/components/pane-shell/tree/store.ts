@@ -1294,10 +1294,115 @@ function adoptContributedPanes(): void {
   finish()
 }
 
+// ---------------------------------------------------------------------------
+// ENFORCED DOCKS — `TileDockHint.enforce`, the standing owner invariant.
+//
+// `adoptContributedPanes` above is a ONE-SHOT per pane lifetime: it only looks
+// at panes MISSING from the tree, so once a pane has been adopted the user owns
+// where it lives forever. That is right for a preference and wrong for a
+// compound surface, where the tile IS the anchor's second tab (Bot Mode's
+// SESSIONS│BOTS strip) and losing the relationship loses the anchor — desktop
+// shipped exactly that regression ("my ui only shows bots now… cant find the
+// sessions").
+//
+// So: once per BOOT, re-home every enforced pane into its anchor's group and
+// force that group's header shown. Not once per registry mutation (an
+// intra-session drag would be undone under the user's cursor) and not
+// persisted (a boot is the whole point). A pane the user has explicitly placed
+// is re-homed too — the invariant beats the drag record, which is the one way
+// this differs from `dockPaneBeside`.
+// ---------------------------------------------------------------------------
+
+/** Panes this boot has already re-homed. Module-level, never persisted. */
+export const $enforcedDocksThisBoot = atom<ReadonlySet<string>>(new Set())
+
+/** Tests only: forget the per-boot ledger so a fresh "launch" can be simulated. */
+export function __resetEnforcedDocks(): void {
+  $enforcedDocksThisBoot.set(new Set())
+}
+
+export function enforceDockedPanes(): void {
+  const tree = $layoutTree.get()
+
+  if (!tree) {
+    return
+  }
+
+  const done = $enforcedDocksThisBoot.get()
+  const byId = tileMap()
+
+  const enforced = getTiles().flatMap(pane => {
+    const dock = tileChrome(byId.get(pane.id)).dock
+
+    return dock?.enforce === true && !done.has(pane.id) ? [{ dock, paneId: pane.id }] : []
+  })
+
+  if (enforced.length === 0) {
+    return
+  }
+
+  let next = tree
+  const marked = new Set(done)
+
+  for (const { dock, paneId } of enforced) {
+    const anchor = findGroupOfPane(next, dock.pane)
+
+    // The anchor is not in the tree (a pane behind a disabled plugin, a preset
+    // that dropped it). Nothing to enforce AGAINST — and marking it done would
+    // spend the boot's one attempt on a tree that could not honour it, so the
+    // next registry change gets to try again.
+    if (!anchor) {
+      continue
+    }
+
+    const home = findGroupOfPane(next, paneId)
+
+    if (!home) {
+      // Missing from the tree entirely — the adoption pass above owns that
+      // case and its `dock` already puts it in the right place.
+      continue
+    }
+
+    if (home.id !== anchor.id) {
+      // Remove + silent insert rather than `movePane`, which activates the
+      // moved pane: re-homing BOTS must not front it over SESSIONS.
+      const without = removePane(next, paneId)
+      const landing = without ? findGroupOfPane(without, dock.pane) : null
+
+      if (without && landing) {
+        next = insertAtGroup(without, landing.id, paneId, dock.pos, dock.before, false) ?? next
+      }
+    }
+
+    // Reachability, every time — co-located is not the same as reachable. A
+    // persisted layout can stack the enforced tab with its anchor and hide the
+    // strip header, which leaves the anchor with no tab to click.
+    const landed = findGroupOfPane(next, paneId)
+
+    if (landed && landed.headerHidden === true) {
+      next = setGroupHeaderHiddenOp(next, landed.id, false)
+    }
+
+    marked.add(paneId)
+  }
+
+  if (marked.size !== done.size) {
+    $enforcedDocksThisBoot.set(marked)
+  }
+
+  if (next !== tree) {
+    commit(next, 'enforce-dock')
+  }
+}
+
 /** Adopt now + on every registry change (call once from the app root). */
 export function watchContributedPanes(): void {
   adoptContributedPanes()
-  registry.subscribe(adoptContributedPanes)
+  enforceDockedPanes()
+  registry.subscribe(() => {
+    adoptContributedPanes()
+    enforceDockedPanes()
+  })
 }
 
 /**

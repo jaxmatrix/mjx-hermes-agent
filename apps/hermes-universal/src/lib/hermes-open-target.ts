@@ -40,6 +40,11 @@ const HERMES_PROTOCOL = 'hermes:'
  */
 export const RESERVED_DEEP_LINK_KINDS: ReadonlySet<string> = new Set([
   'blueprint',
+  // MJXHRM-445: `hermes://bot/<name>` and `hermes://bot/<name>/room/<roomId>`,
+  // registered by the in-tree Bot Mode plugin. In-tree, but the kind is a CORE
+  // reservation — an installed agent package named `bot` must not be able to
+  // claim the notification links Bot Mode's own rooms hand out.
+  'bot',
   'chat',
   'install',
   'mcp',
