@@ -36,6 +36,7 @@
 
 import { atom, computed, type ReadableAtom } from 'nanostores'
 
+import { attachToSession } from '@/app/chat/attachments'
 import { registerPaneCloser, revealTreePane } from '@/components/pane-shell/tree/store'
 import { $narrowViewport } from '@/components/pane-shell/tree/store'
 import { onGatewayEvent } from '@/contrib/events'
@@ -49,6 +50,7 @@ import { $currentCwd, $sessionId } from '@/store/chat'
 import { $connection } from '@/store/connection'
 import { $connectionReady } from '@/store/connection-ready'
 import { $gateway, $gatewayState, requestGateway } from '@/store/gateway'
+import { $liveSessionStatuses, type LiveSessionStatus } from '@/store/live-session-registry'
 import { $currentModel } from '@/store/model'
 import { startNewSession } from '@/store/new-session'
 import { notify, notifyError } from '@/store/notifications'
@@ -59,7 +61,20 @@ import {
   requestPluginProfile
 } from '@/store/plugin-connection-source'
 import { openPluginSession, type PluginOpenSessionOptions, warmProfile } from '@/store/plugin-open-session'
+import {
+  type BindSessionOptions,
+  type BindSessionResult,
+  bindSessionSlice,
+  releaseSessionSlice
+} from '@/store/plugin-session-bind'
 import { $activeGatewayProfile } from '@/store/profile'
+import {
+  sessionApprovalRequest,
+  sessionClarifyRequest,
+  sessionMcpSetupRequest,
+  sessionSecretRequest,
+  sessionSudoRequest
+} from '@/store/prompts'
 import { $activeStoredSessionId, knownSessionProfile } from '@/store/session'
 import { $sessionStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
 import { $focusedRuntimeId, $focusedSessionState, $focusedStoredSessionId } from '@/store/session-states'
@@ -137,6 +152,36 @@ const $busyBySession = computed($sessionStates, states => {
  *  Bounded by the number of sessions a plugin actually asks about. */
 const sessionMessageAtoms = new Map<string, ReadableAtom<ChatMessage[]>>()
 
+/**
+ * The five blocking prompts for ONE session, as a plugin sees them —
+ * READ-ONLY on purpose.
+ *
+ * Answering goes through the mounted `SessionThread` (or the app's own bars),
+ * never through a plugin-forged `approval.respond`: rule 26 says a plugin has
+ * full authority anyway, so the point is not permission, it is that there be
+ * exactly ONE answer path, or MJXHRM-458's `requestId` correlation drifts the
+ * first time a second one is written.
+ */
+export interface SessionPromptSnapshot {
+  approval: null | { command: string; description: string; requestId?: string }
+  /** `questionCount` is 1 for a single question and 2–5 for a batch. */
+  clarify: null | { multiSelect: boolean; questionCount: number; requestId: string }
+  mcpSetup: null | { action: string; requestId: string; server: string }
+  secret: null | { envVar: string; requestId: string }
+  sudo: null | { requestId: string }
+}
+
+const EMPTY_PROMPTS: SessionPromptSnapshot = {
+  approval: null,
+  clarify: null,
+  mcpSetup: null,
+  secret: null,
+  sudo: null
+}
+
+/** Memoised per session key — a subscriber taken once keeps working. */
+const sessionPromptAtoms = new Map<string, ReadableAtom<SessionPromptSnapshot>>()
+
 export const host = {
   state: {
     /** Runtime id of the active chat session (null on a fresh draft). */
@@ -195,6 +240,17 @@ export const host = {
      * same atom, so a plugin and the app can never disagree about it.
      */
     ready: readonlyAtom<boolean>($connectionReady),
+
+    /**
+     * Which sessions the GATEWAY reports as running, by stored id — including
+     * sessions this client has no slice for.
+     *
+     * `busyBySession` above answers about sessions this window has open;
+     * `session.active_list` answers about the machine. A surface driving a
+     * foreign session needs the second one: "is this member still working" is
+     * what stops a second `prompt.submit` landing on a turn already in flight.
+     */
+    liveSessions: readonlyAtom<Record<string, LiveSessionStatus>>($liveSessionStatuses),
 
     /**
      * Which connection the app is routed to. `'local'` for the primary,
@@ -370,7 +426,89 @@ export const host = {
   /** JSON-RPC to ONE agent. Dispatched through MJXHRM-480's session router, so
    *  446 gives it multi-connection reach with no change here. */
   requestProfile: async <T>(route: PluginProfileRoute, method: string, params: Record<string, unknown> = {}) =>
-    requestPluginProfile<T>(route, method, params)
+    requestPluginProfile<T>(route, method, params),
+
+  /**
+   * `host.state.connectionId` as a CALL, for source compatibility with the
+   * desktop SDK, whose plugins are written
+   * `host.state.connectionId?.get?.() || host.activeConnectionId?.()`.
+   *
+   * One value, two handles — deliberately, and the only such pair in this file:
+   * the atom is the door, this reads it.
+   */
+  activeConnectionId: (): string => connectionIdOf($connection.get()),
+
+  /**
+   * Stage bytes into a NAMED session — a session that is not the focused one.
+   *
+   * The composer's own stagers resolve the active session, which is right for a
+   * composer and wrong for a surface fanning one attachment out to several
+   * sessions at once. Resolves the ref to splice into that session's prompt, or
+   * null when the staging failed (the failure has already been surfaced).
+   */
+  attachToSession,
+
+  /**
+   * FOLLOW a session without focusing it — a real, streaming `$sessionStates`
+   * slice for a conversation this window is not looking at.
+   *
+   * `openSession` is the door for "show me this chat"; this is the door for
+   * "drive these six chats behind a surface of my own". Idempotent, and the
+   * returned key is the session KEY every other per-session door takes
+   * (`sessionPrompts`, `host.state.busyBySession`'s stored-id twin).
+   */
+  bindSession: async (storedSessionId: string, options?: BindSessionOptions): Promise<BindSessionResult> =>
+    bindSessionSlice(storedSessionId, options),
+
+  /** Stop following a bound session. Does NOT interrupt it — the turn keeps
+   *  running on the gateway. */
+  releaseSession: (storedSessionId: string): void => releaseSessionSlice(storedSessionId),
+
+  /**
+   * ONE session's blocking prompts, as an atom. Read-only (see
+   * `SessionPromptSnapshot`).
+   *
+   * `sessionKey` is the SLICE key (rule 17) — `host.state.focusedSessionId`'s
+   * space, not a stored id.
+   */
+  sessionPrompts: (sessionKey: string): ReadableAtom<SessionPromptSnapshot> => {
+    let existing = sessionPromptAtoms.get(sessionKey)
+
+    if (!existing) {
+      existing = computed(
+        [
+          sessionApprovalRequest(sessionKey),
+          sessionClarifyRequest(sessionKey),
+          sessionMcpSetupRequest(sessionKey),
+          sessionSecretRequest(sessionKey),
+          sessionSudoRequest(sessionKey)
+        ],
+        (approval, clarify, mcpSetup, secret, sudo) =>
+          approval || clarify || mcpSetup || secret || sudo
+            ? {
+                approval: approval
+                  ? { command: approval.command, description: approval.description, requestId: approval.requestId }
+                  : null,
+                clarify: clarify
+                  ? {
+                      multiSelect: Boolean(clarify.multiSelect),
+                      questionCount: clarify.questions?.length ?? 1,
+                      requestId: clarify.requestId
+                    }
+                  : null,
+                mcpSetup: mcpSetup
+                  ? { action: mcpSetup.action, requestId: mcpSetup.requestId, server: mcpSetup.server }
+                  : null,
+                secret: secret ? { envVar: secret.envVar, requestId: secret.requestId } : null,
+                sudo: sudo ? { requestId: sudo.requestId } : null
+              }
+            : EMPTY_PROMPTS
+      )
+      sessionPromptAtoms.set(sessionKey, existing)
+    }
+
+    return existing
+  }
 }
 
 // -- react bridge -------------------------------------------------------------
@@ -386,6 +524,16 @@ export {
   type ComposerMiddleware
 } from '@/app/chat/composer/contrib'
 
+/**
+ * The app's OWN transcript for one session (MJXHRM-445 §10.3).
+ *
+ * The keystone export: a surface that mounts this can never drift from the
+ * chat, and every transcript feature that ships later — artifacts, media,
+ * directives, tool renderers, approvals, clarify — arrives in it for free.
+ * Desktop's Bot Mode hand-mirrored approvals into its rooms instead, and that
+ * mirror is what this deletes.
+ */
+export { SessionThread } from '@/app/chat/session-thread'
 export { PALETTE_AREA, type PaletteContribution } from '@/app/command-palette/contrib'
 /** Rows in the app-wide right-click / long-press menu (MJXHRM-478). The NORMAL
  *  door: contribute to `contextMenu.items` and your sections are appended to
@@ -411,6 +559,14 @@ export {
  *  `data` contribution is a StatusbarItem; a `render` contribution owns its slot
  *  (arbitrary stateful node) — the only form `titleBar.*` accepts. */
 export { STATUSBAR_AREAS, TITLEBAR_AREAS } from '@/app/contrib/surfaces'
+/** The app's profile editor + its confirmed delete flow.
+ *
+ * `host.deleteProfile` is deliberately NOT minted: a plugin-callable profile
+ * destructor is the one door whose blast radius is a user's whole agent
+ * directory, so the confirmation stays in core and the plugin gets the DIALOG
+ * (445 §2.3 A-2). */
+export { DeleteProfileDialog } from '@/app/profiles/delete-profile-dialog'
+export { ProfileEditor } from '@/app/profiles/profile-editor'
 export { type RouteContribution, ROUTES_AREA, SIDEBAR_NAV_AREA, type SidebarNavContribution } from '@/app/routes'
 /** Desktop exports this from `components/ui/empty-state`; on universal the
  *  canonical one lives in the settings primitives. Same component, same look. */
@@ -627,6 +783,11 @@ export { evaluateRuntimeReadiness, type RuntimeReadinessResult } from '@/lib/run
 /** Canonical time formatting — every timestamp/age string in the app comes
  *  from these (localized `Intl` under the hood). Don't hand-roll "Xm ago". */
 export { coarseElapsed, fmtDateTime, fmtDayTime, relativeTime } from '@/lib/time'
+/** A TAP, not a click. On Android a `click` is the WebView's gesture verdict
+ *  and arrives late (or not at all) on a row that also scrolls or long-presses;
+ *  `createTap` decides from the pointer stream. Use it for every plugin row a
+ *  finger can reach. */
+export { createTap, isCoarsePointer, type Tap, type TapOptions } from '@/lib/touch'
 /** The transcript as a contribution area: register a named `::directive{...}`
  *  and the model can render your component inline in assistant messages. */
 export {
@@ -653,6 +814,27 @@ export { confirm, type ConfirmAnswer, type ConfirmRequest } from '@/store/confir
 /** Toast a delete confirmation the way core surfaces do (desktop's
  *  `useConfirmDelete`, as a plain call — there is no hook state to hold). */
 export { confirmDelete } from '@/store/confirm-delete'
+/** Register a `hermes://<kind>/…` deep-link handler. A kind must be in
+ *  `RESERVED_DEEP_LINK_KINDS` to beat plugin-id resolution — adding one is a
+ *  core decision, not a plugin's. */
+export { type DeepLinkRoute, registerDeepLinkRoute } from '@/store/deep-link'
+/**
+ * Hold the machine awake for a long unattended run, refcounted and OR-ed with
+ * the user's Settings preference — so releasing YOUR hold never turns THEIR
+ * switch off. Desktop-only: on mobile the hold is a no-op that promises
+ * nothing. Always call the disposer in a `finally`.
+ */
+export { $keepAwakeHolds, holdKeepAwake } from '@/store/keep-awake'
+/**
+ * Change ticks + the poll-interval helper.
+ *
+ * `livePollIntervalMs(legacyMs, backstopMs)` answers the fast interval on a
+ * gateway with no change broadcast and the slow backstop on one that has them,
+ * so a plugin's refresh loop is capability-gated instead of guessing. There is
+ * NO `profiles.changed` event — a roster refresh still needs a backstop poll,
+ * and that is why the helper takes two numbers rather than an on/off.
+ */
+export { $changeEventsAvailable, $cronChangeTick, $sessionsChangeTick, livePollIntervalMs } from '@/store/live-sync'
 
 export {
   MAX_NOTIFICATION_ACTIONS,

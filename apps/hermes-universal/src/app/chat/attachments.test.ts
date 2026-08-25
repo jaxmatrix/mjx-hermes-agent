@@ -4,8 +4,10 @@ import { selectRemotePaths } from '@/lib/desktop-fs'
 import { ensureSession } from '@/store/chat'
 import { requestGateway } from '@/store/gateway'
 import { notifyError } from '@/store/notifications'
+import { requestForSession } from '@/store/session-request-router'
 
 import {
+  attachToSession,
   pickFolderAttachment,
   pickRemoteAttachment,
   pickRemoteFolderAttachment,
@@ -25,6 +27,15 @@ vi.mock('@/store/data-url-read-max', () => ({
 }))
 vi.mock('@/store/chat', () => ({ ensureSession: vi.fn() }))
 vi.mock('@/store/gateway', () => ({ requestGateway: vi.fn() }))
+// A session with a STORED id dispatches through MJXHRM-480's router, so an
+// attachment reaches the gateway that owns the session rather than whichever one
+// the window happens to be pointed at (MJXHRM-446 made those two different
+// things). Only the draft path — no stored id yet — still goes direct.
+vi.mock('@/store/session-request-router', () => ({ requestForSession: vi.fn() }))
+vi.mock('@/store/session-state-types', () => ({
+  $sessionStates: { get: () => ({ 'live-1': { runtimeSessionId: 'live-1', storedSessionId: 'stored-1' } }) },
+  runtimeKeyForStoredSession: (storedId: string) => (storedId === 'stored-1' ? 'live-1' : null)
+}))
 vi.mock('@/store/notifications', () => ({ notifyError: vi.fn() }))
 // Stale-runtime recovery reaches store/session -> lib/api -> store/connection,
 // which subscribes to `$gatewayState` at import. Stub the seam: these cases are
@@ -128,6 +139,7 @@ describe('staging failures are reported', () => {
     vi.mocked(ensureSession).mockResolvedValue({ id: 'live-1', storedId: 'stored-1' } as never)
     readCapped.mockReset().mockResolvedValue('AQID')
     vi.mocked(requestGateway).mockReset()
+    vi.mocked(requestForSession).mockReset()
   })
 
   it('raises a notification when the file cannot be read', async () => {
@@ -145,7 +157,7 @@ describe('staging failures are reported', () => {
     readCapped.mockRejectedValueOnce(new Error('Bigger than the 16 MB limit. Raise it in Settings → Chat.'))
 
     await expect(stageAttachmentFromPath('/work/huge.png')).resolves.toBeNull()
-    expect(requestGateway).not.toHaveBeenCalled()
+    expect(requestForSession).not.toHaveBeenCalled()
     expect(notifyError).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining('16 MB') }),
       expect.stringContaining('huge.png')
@@ -157,23 +169,23 @@ describe('staging failures are reported', () => {
   // garbage that still looked like a successful attach.
   it('wraps the reader base64 in a data URL exactly once', async () => {
     readCapped.mockResolvedValueOnce('AQID')
-    vi.mocked(requestGateway).mockResolvedValue({ ref_text: '@file:blob.png' } as never)
+    vi.mocked(requestForSession).mockResolvedValue({ ref_text: '@file:blob.png' } as never)
 
     await stageAttachmentFromPath('/work/blob.png')
 
-    const [, params] = vi.mocked(requestGateway).mock.calls[0] as [string, Record<string, unknown>]
+    const [, params] = vi.mocked(requestForSession).mock.calls[0].slice(1) as [string, Record<string, unknown>]
     expect(params.data_url).toBe('data:image/png;base64,AQID')
   })
 
   it('raises a notification when the gateway answers without a ref', async () => {
-    vi.mocked(requestGateway).mockResolvedValue({} as never)
+    vi.mocked(requestForSession).mockResolvedValue({} as never)
 
     await expect(stageAttachmentFromPath('/work/notes.txt')).resolves.toBeNull()
     expect(notifyError).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('notes.txt'))
   })
 
   it('stays quiet when the gateway does hand back a ref', async () => {
-    vi.mocked(requestGateway).mockResolvedValue({ ref_text: '@file:notes.txt' } as never)
+    vi.mocked(requestForSession).mockResolvedValue({ ref_text: '@file:notes.txt' } as never)
 
     await expect(stageAttachmentFromPath('/work/notes.txt')).resolves.toEqual({
       name: 'notes.txt',
@@ -194,16 +206,17 @@ describe('staging bytes that never had a path', () => {
     vi.mocked(notifyError).mockReset()
     vi.mocked(ensureSession).mockResolvedValue({ id: 'live-1', storedId: 'stored-1' } as never)
     vi.mocked(requestGateway).mockReset()
+    vi.mocked(requestForSession).mockReset()
   })
 
   it('uploads the blob as a data URL with NO path and returns the ref', async () => {
-    vi.mocked(requestGateway).mockResolvedValue({ ref_text: '@image:shot.png' } as never)
+    vi.mocked(requestForSession).mockResolvedValue({ ref_text: '@image:shot.png' } as never)
 
     await expect(
       stageAttachmentFromBlob(new Blob(['\u0001\u0002'], { type: 'image/png' }), 'shot.png')
     ).resolves.toEqual({ name: 'shot.png', ref: '@image:shot.png' })
 
-    const [method, params] = vi.mocked(requestGateway).mock.calls[0] as [string, Record<string, unknown>]
+    const [method, params] = vi.mocked(requestForSession).mock.calls[0].slice(1) as [string, Record<string, unknown>]
     expect(method).toBe('file.attach')
     expect(params.name).toBe('shot.png')
     expect(params.path).toBeUndefined()
@@ -213,11 +226,11 @@ describe('staging bytes that never had a path', () => {
   // A clipboard blob has no filename. The extension has to come off the MIME or
   // the gateway files a screenshot as something it will not treat as an image.
   it('names an unnamed blob from its own MIME type', async () => {
-    vi.mocked(requestGateway).mockResolvedValue({ ref_text: '@image:x' } as never)
+    vi.mocked(requestForSession).mockResolvedValue({ ref_text: '@image:x' } as never)
 
     await stageAttachmentFromBlob(new Blob(['x'], { type: 'image/jpeg' }))
 
-    const [, params] = vi.mocked(requestGateway).mock.calls[0] as [string, Record<string, unknown>]
+    const [, params] = vi.mocked(requestForSession).mock.calls[0].slice(1) as [string, Record<string, unknown>]
     expect(String(params.name)).toMatch(/^pasted-image-\d+\.jpg$/)
   })
 
@@ -229,7 +242,7 @@ describe('staging bytes that never had a path', () => {
     Object.defineProperty(huge, 'size', { value: 17 * 1024 * 1024 })
 
     await expect(stageAttachmentFromBlob(huge, 'huge.png')).resolves.toBeNull()
-    expect(requestGateway).not.toHaveBeenCalled()
+    expect(requestForSession).not.toHaveBeenCalled()
     expect(notifyError).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining('16') }),
       expect.stringContaining('huge.png')
@@ -239,7 +252,7 @@ describe('staging bytes that never had a path', () => {
   // The disagreeing neighbour of the case above: one MB under the same cap has
   // to still attach, or the guard would read as green while blocking everything.
   it('stages a pasted blob just under the cap', async () => {
-    vi.mocked(requestGateway).mockResolvedValue({ ref_text: '@image:ok.png' } as never)
+    vi.mocked(requestForSession).mockResolvedValue({ ref_text: '@image:ok.png' } as never)
 
     const nearly = new Blob(['x'], { type: 'image/png' })
     Object.defineProperty(nearly, 'size', { value: 15 * 1024 * 1024 })
@@ -249,9 +262,70 @@ describe('staging bytes that never had a path', () => {
   })
 
   it('reports a gateway that stages nothing, instead of dropping the paste silently', async () => {
-    vi.mocked(requestGateway).mockResolvedValue({} as never)
+    vi.mocked(requestForSession).mockResolvedValue({} as never)
 
     await expect(stageAttachmentFromBlob(new Blob(['x'], { type: 'image/png' }), 'shot.png')).resolves.toBeNull()
     expect(notifyError).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('shot.png'))
+  })
+})
+
+// `attachToSession` (MJXHRM-445 §2.3 A-5) — staging into a session that is NOT
+// the one on screen. The composer's stagers resolve `ensureSession()`; a room
+// fanning one file out to six member sessions must not, or all six copies land
+// in the user's own chat.
+describe('attachToSession targets the session it is given', () => {
+  beforeEach(() => {
+    vi.mocked(notifyError).mockReset()
+    vi.mocked(requestGateway).mockReset()
+    vi.mocked(requestForSession).mockReset()
+    vi.mocked(ensureSession).mockReset()
+  })
+
+  it('routes by the GIVEN stored id and never resolves the active session', async () => {
+    vi.mocked(requestForSession).mockResolvedValue({ ref_text: '@image:plan.png' } as never)
+
+    await expect(
+      attachToSession('stored-member-3', { dataUrl: 'data:image/png;base64,AQID', name: 'plan.png' })
+    ).resolves.toEqual({ name: 'plan.png', ref: '@image:plan.png' })
+
+    // The whole point: nothing asked what the user is looking at.
+    expect(ensureSession).not.toHaveBeenCalled()
+
+    const [storedId, method, params] = vi.mocked(requestForSession).mock.calls[0] as [
+      string,
+      string,
+      Record<string, unknown>
+    ]
+
+    expect(storedId).toBe('stored-member-3')
+    expect(method).toBe('file.attach')
+    expect(params.name).toBe('plan.png')
+  })
+
+  it('sends the session runtime id when one is known, and the stored id otherwise', async () => {
+    vi.mocked(requestForSession).mockResolvedValue({ ref_text: '@image:a' } as never)
+
+    // `stored-1` has a live slice in the mocked map above.
+    await attachToSession('stored-1', { dataUrl: 'data:image/png;base64,AQID', name: 'a.png' })
+    expect((vi.mocked(requestForSession).mock.calls[0][2] as Record<string, unknown>).session_id).toBe('live-1')
+
+    // A member this window has never bound has no runtime id to send.
+    await attachToSession('stored-cold', { dataUrl: 'data:image/png;base64,AQID', name: 'b.png' })
+    expect((vi.mocked(requestForSession).mock.calls[1][2] as Record<string, unknown>).session_id).toBe('stored-cold')
+  })
+
+  it('carries the owning profile through, so a member on another agent is reached', async () => {
+    vi.mocked(requestForSession).mockResolvedValue({ ref_text: '@image:a' } as never)
+
+    await attachToSession('stored-cold', { dataUrl: 'data:x', name: 'a.png', profile: 'radar' })
+
+    expect(vi.mocked(requestForSession).mock.calls[0][4]).toBe('radar')
+  })
+
+  it('reports a staging failure rather than answering a silent null', async () => {
+    vi.mocked(requestForSession).mockResolvedValue({} as never)
+
+    await expect(attachToSession('stored-1', { dataUrl: 'data:x', name: 'a.png' })).resolves.toBeNull()
+    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('a.png'))
   })
 })
