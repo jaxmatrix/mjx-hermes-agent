@@ -4,6 +4,7 @@ import { GatewayConfigurator } from '@/app/gateway/gateway-configurator'
 import { MasterDetail } from '@/app/master-detail'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
+import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import {
   CONNECTION_SEARCH_THRESHOLD,
@@ -115,42 +116,47 @@ export function ConnectionsSection() {
             )}
 
             {visible.map(row => (
-              <button
-                className={cn(
-                  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-start text-sm hover:bg-accent',
-                  row.id === selected && 'bg-accent'
-                )}
-                key={row.id}
-                onClick={() => {
-                  setDraft(null)
-                  setSelected(row.id)
-                }}
-                type="button"
-              >
-                <Codicon
-                  className={cn('shrink-0', row.id === active?.connectionId ? 'text-foreground' : 'text-transparent')}
-                  name="circle-filled"
-                  size="0.7rem"
-                />
-                <span className="min-w-0 flex-1 truncate">{row.label}</span>
-                {row.id === registry.primary && (
-                  <Codicon className="shrink-0 text-muted-foreground" name="star-full" size="0.8rem" />
-                )}
+              // The latch affordance is a SIBLING of the row button, not a
+              // child: a button inside a button is invalid HTML, and the sidebar
+              // rows already solve this the same way (the kebab is a grid
+              // sibling of `SidebarRowBody`, never a descendant).
+              <div className="flex items-center gap-1" key={row.id}>
+                <button
+                  className={cn(
+                    'flex min-w-0 flex-1 items-center gap-2 rounded-sm px-2 py-1.5 text-start text-sm hover:bg-accent',
+                    row.id === selected && 'bg-accent'
+                  )}
+                  onClick={() => {
+                    setDraft(null)
+                    setSelected(row.id)
+                  }}
+                  type="button"
+                >
+                  <Codicon
+                    className={cn('shrink-0', row.id === active?.connectionId ? 'text-foreground' : 'text-transparent')}
+                    name="circle-filled"
+                    size="0.7rem"
+                  />
+                  <span className="min-w-0 flex-1 truncate">{row.label}</span>
+                  {row.id === registry.primary && (
+                    <Codicon className="shrink-0 text-muted-foreground" name="star-full" size="0.8rem" />
+                  )}
+                  <span className="shrink-0 text-xs text-muted-foreground">{row.kind}</span>
+                </button>
+
                 {latched[row.id] && (
-                  <button
-                    className="shrink-0 text-amber-500"
-                    onClick={event => {
-                      event.stopPropagation()
-                      releaseLatch(row.id)
-                    }}
-                    title={c.latchedMessage(latched[row.id] ?? '')}
-                    type="button"
-                  >
-                    <Codicon name="warning" size="0.85rem" />
-                  </button>
+                  <Tip label={c.latchedMessage(latched[row.id] ?? '')}>
+                    <button
+                      aria-label={c.latchedTitle}
+                      className="shrink-0 rounded-sm px-1 py-1 text-amber-500 hover:bg-accent"
+                      onClick={() => releaseLatch(row.id)}
+                      type="button"
+                    >
+                      <Codicon name="warning" size="0.85rem" />
+                    </button>
+                  </Tip>
                 )}
-                <span className="shrink-0 text-xs text-muted-foreground">{row.kind}</span>
-              </button>
+              </div>
             ))}
 
             {visible.length === 0 && <p className="px-2 py-3 text-sm text-muted-foreground">{c.searchEmpty(term)}</p>}
