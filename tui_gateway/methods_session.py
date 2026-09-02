@@ -191,18 +191,18 @@ def _(rid, params: dict) -> dict:
             # windowed listing back (the param is ignored) and scan it.
             title_lookup = str(params.get("title") or "").strip()
             if title_lookup:
-                row = db.get_session_by_title(title_lookup)
-                if (
-                    not row
-                    or row.get("archived")
-                    or (row.get("source") or "").strip().lower() in deny
-                ):
+                # One copy of the eligibility policy, shared with
+                # profiles.list's canonical_session so the two cannot drift.
+                from .titled_session import resolve_titled_session
+
+                resolved = resolve_titled_session(db, title_lookup)
+                if resolved is None:
                     return _ok(rid, {"sessions": []})
-                try:
-                    tip = db.resolve_resume_session_id(row["id"]) or row["id"]
-                except Exception:
-                    tip = row["id"]
-                tip_row = (db.get_session(tip) or row) if tip != row["id"] else row
+                row, tip, tip_row = resolved
+                # NOTE: ``preview`` is always "" here — there is no preview
+                # column on ``sessions``; only list_sessions_rich synthesises
+                # one. A caller that needs a preview reads profiles.list's
+                # canonical_session, which builds it from the messages table.
                 return _ok(
                     rid,
                     {
