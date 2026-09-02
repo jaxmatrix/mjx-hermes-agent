@@ -43,6 +43,17 @@ export interface RosterRow {
   /** A `kanban`/`tool` worker is running — the profile is ACTIVE even with no
    *  recent human chat. Reading only `last_session` paints a busy agent idle. */
   working: boolean
+  /** Whether this row's `meta` came from a source that actually READ
+   *  `ui_meta`, or is merely the empty default.
+   *
+   *  A source that enumerates NAMES only (`host.agents()` — the Rust roster
+   *  reads `GET /api/profiles` and extracts names) yields `meta: {}`, which is
+   *  indistinguishable from a bot that genuinely has no record. Writing that
+   *  back is a DELETE: `profiles.configure` merges `ui_meta` key-wise, so a
+   *  `{chat, v}` write replaces the whole `hermes-bots` value and takes the
+   *  bot's title, its `hidden` flag and every room membership with it.
+   *  `saveBotMeta` refuses on a row whose meta was never read. */
+  metaKnown: boolean
 }
 
 /** Strip the agent-to-agent wire prefix from a preview. Deliberately not
@@ -51,7 +62,7 @@ const A2A_RE = /^Message from [^(]*\((@[^)]+)\):\s*/
 
 export const stripA2APrefix = (text: string): string => text.replace(A2A_RE, '')
 
-function rowFrom(input: RosterRowInput, connectionId?: string): RosterRow {
+function rowFrom(input: RosterRowInput, connectionId: string | undefined, metaKnown: boolean): RosterRow {
   const meta = decodeBotMeta(input.ui_meta)
   const preferred = input.preferred_session
   const last = input.last_session
@@ -66,6 +77,7 @@ function rowFrom(input: RosterRowInput, connectionId?: string): RosterRow {
     key: groupMemberKey(input.name, connectionId),
     lastActive: Math.max(last?.last_active ?? 0, worker?.last_active ?? 0),
     meta,
+    metaKnown,
     model: input.model ?? null,
     name: meta.title || input.display_name || botDisplayName(input.name),
     preview: stripA2APrefix(preferred?.preview ?? last?.preview ?? ''),
@@ -84,9 +96,18 @@ function rowFrom(input: RosterRowInput, connectionId?: string): RosterRow {
  * single-machine case ugly for a problem it does not have.
  */
 export function mergeMultiSourceRoster(
-  sources: readonly { connectionId?: string; label?: string; rows: readonly RosterRowInput[] }[]
+  sources: readonly {
+    connectionId?: string
+    label?: string
+    /** True only when this source's rows carry a real `ui_meta`. */
+    metaKnown?: boolean
+    rows: readonly RosterRowInput[]
+  }[]
 ): RosterRow[] {
-  const rows = sources.flatMap(source => source.rows.map(row => rowFrom(row, source.connectionId)))
+  const rows = sources.flatMap(source =>
+    source.rows.map(row => rowFrom(row, source.connectionId, source.metaKnown === true))
+  )
+
   const counts = new Map<string, number>()
 
   for (const row of rows) {

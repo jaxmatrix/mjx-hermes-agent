@@ -86,7 +86,10 @@ async function replicate(room: Room, membership: RoomMembership): Promise<string
       const next: BotMeta = withRoom(row.meta, { ...membership, session: room.sessions[memberKey] ?? null })
       const outcome = await saveBotMeta(row, next)
 
-      if (outcome === 'rejected') {
+      // `unsafe` counts as a failure: the write never left, so this member has
+      // no replica of the room. Treating it as success is how a room ends up
+      // existing for some members and not others with nothing said.
+      if (outcome === 'rejected' || outcome === 'unsafe') {
         failed.push(row.name)
       }
     })

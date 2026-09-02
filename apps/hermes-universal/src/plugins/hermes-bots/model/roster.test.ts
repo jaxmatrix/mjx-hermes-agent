@@ -49,6 +49,20 @@ describe('the merged roster', () => {
     expect(bot.lastActive).toBe(99)
   })
 
+  it('marks a row as meta-known only when its source actually read ui_meta', () => {
+    // A names-only source yields `meta: {}`, which is indistinguishable from a
+    // bot with no record — and writing that back deletes the real one.
+    const roster = mergeMultiSourceRoster([
+      { metaKnown: true, rows: [row('radar')] },
+      { connectionId: 'c1', label: 'Laptop', rows: [row('owl')] }
+    ])
+
+    expect(roster.map(r => [r.profile, r.metaKnown])).toEqual([
+      ['radar', true],
+      ['owl', false]
+    ])
+  })
+
   it('strips the agent-to-agent wire prefix from a preview', () => {
     expect(stripA2APrefix('Message from 🤖 radar (@radar): ship it')).toBe('ship it')
     expect(stripA2APrefix('a normal message')).toBe('a normal message')

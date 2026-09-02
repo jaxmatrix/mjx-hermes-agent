@@ -7,7 +7,7 @@ import { host, livePollIntervalMs } from '@hermes/plugin-sdk'
 
 import { BOT_CHAT_TITLE, botHandle, groupSessionTitle, isOwnedSessionTitle } from '../ids'
 import { type CanonicalAction, maySweep, resolveCanonicalChat } from '../model/canonical'
-import { type BotMeta, classifyWrite } from '../model/meta'
+import { type BotMeta, type BotMetaWriteOutcome, classifyWrite } from '../model/meta'
 import { liveRooms, roomsFromRoster, rosterMetaSource } from '../model/rooms'
 import { handleIndex, mergeMultiSourceRoster, type RosterRow, type RosterRowInput, sortRoster } from '../model/roster'
 
@@ -53,7 +53,7 @@ export async function refreshRoster(): Promise<RosterRow[]> {
       const remotes = await remoteRosters()
 
       const roster = sortRoster(
-        mergeMultiSourceRoster([{ rows: local.profiles ?? [] }, ...remotes])
+        mergeMultiSourceRoster([{ metaKnown: true, rows: local.profiles ?? [] }, ...remotes])
       )
 
       $botProtocolSupported.set(local.bot_mode_protocol === true)
@@ -117,16 +117,35 @@ function pinnedChats(): Record<string, string> {
  * already replicated onto the LOCAL members, so the rooms rebuild without it,
  * and a remote agent's look is a cosmetic the local blobatar covers.
  */
-async function remoteRosters(): Promise<{ connectionId: string; label: string; rows: RosterRowInput[] }[]> {
+async function remoteRosters(): Promise<
+  { connectionId: string; label: string; metaKnown: false; rows: RosterRowInput[] }[]
+> {
   try {
     const [roster, connections] = await Promise.all([host.agents(), host.connections()])
     const labelOf = new Map(connections.map(connection => [connection.id, connection.label]))
     const failed = new Set(roster.sources.filter(source => !source.ok).map(source => source.connectionId))
 
+    // THE ACTIVE CONNECTION IS ALREADY IN THE ROSTER — `host.agents()` enumerates
+    // EVERY registered connection including the one this window is routed to, and
+    // `listProfiles()` above has already read that same source, richly. Merging
+    // both lists renders every local profile twice: once bare, once
+    // source-qualified, because `groupMemberKey` keys them differently and
+    // `mergeMultiSourceRoster` collapses handles, not identities.
+    //
+    // The thin duplicate is worse than cosmetic. It carries no `ui_meta`, so
+    // clicking it writes an empty record back over the bot's title, `hidden`
+    // flag and rooms.
+    //
+    // Same rule, same reason as `store/session-sources.ts`'s `excludeConnectionId`.
+    // `primary` is the routed connection (not the registry's launch default);
+    // `host.activeConnectionId()` is the pre-registry fallback for a window with
+    // no row flagged.
+    const primaryId = connections.find(connection => connection.primary)?.id ?? host.activeConnectionId()
+
     const byConnection = new Map<string, RosterRowInput[]>()
 
     for (const agent of roster.agents) {
-      if (failed.has(agent.connectionId)) {
+      if (failed.has(agent.connectionId) || agent.connectionId === primaryId) {
         continue
       }
 
@@ -139,6 +158,9 @@ async function remoteRosters(): Promise<{ connectionId: string; label: string; r
     return [...byConnection.entries()].map(([connectionId, rows]) => ({
       connectionId,
       label: labelOf.get(connectionId) ?? connectionId,
+      // NAMES only — the Rust enumerator reads `GET /api/profiles` and never
+      // `ui_meta`, so these rows must never be a write source.
+      metaKnown: false as const,
       rows
     }))
   } catch {
@@ -228,15 +250,38 @@ export async function pinChat(row: RosterRow, storedId: string): Promise<void> {
   await saveBotMeta(row, { ...row.meta, chat: storedId })
 }
 
+/** What `saveBotMeta` did. `unsafe` is local — the write never left. */
+export type SaveBotMetaOutcome = BotMetaWriteOutcome | 'unsafe'
+
 /**
  * Write one bot's record.
  *
- * Three outcomes and they are DIFFERENT (§11.1): persisted; refused because the
- * record is over the backend's 64 KB cap; or not reported at all by a gateway
+ * Three WIRE outcomes and they are DIFFERENT (§11.1): persisted; refused because
+ * the record is over the backend's 64 KB cap; or not reported at all by a gateway
  * too old to answer per-section. Desktop collapsed the last two and told users
  * their settings had failed when the gateway simply could not say.
+ *
+ * Plus one outcome that never reaches the wire. `profiles.configure` merges
+ * `ui_meta` KEY-WISE, so writing `{chat, v}` REPLACES the whole `hermes-bots`
+ * value — the bot's title, its `hidden` flag and every room it belongs to go
+ * with it. That is correct when `meta` was derived from the record we read, and
+ * it is a silent delete when the row never had one. A row from a names-only
+ * source (`host.agents()`) carries `meta: {}` that is indistinguishable from a
+ * bot with genuinely no record, so the only safe rule is to refuse the write
+ * rather than guess which it is.
  */
-export async function saveBotMeta(row: RosterRow, meta: BotMeta): Promise<ReturnType<typeof classifyWrite>> {
+export async function saveBotMeta(row: RosterRow, meta: BotMeta): Promise<SaveBotMetaOutcome> {
+  if (!row.metaKnown) {
+    // Refused locally, and SAID so: a verb that silently does nothing is the
+    // other half of the bug this guard exists for.
+    host.notifyError(
+      new Error(`no record was read for ${row.profile}`),
+      `${row.name}'s settings cannot be changed from here`
+    )
+
+    return 'unsafe'
+  }
+
   const outcome = classifyWrite(await writeBotMeta(row.profile, { ...meta, v: 1 }, routeFor(row)))
 
   if (outcome === 'persisted') {

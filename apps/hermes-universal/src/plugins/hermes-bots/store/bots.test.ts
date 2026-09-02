@@ -10,7 +10,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { agents, connections, notifyError, openSession, request, requestProfile } = vi.hoisted(() => ({
+const { activeConnectionId, agents, connections, notifyError, openSession, request, requestProfile } = vi.hoisted(() => ({
+  activeConnectionId: vi.fn(),
   agents: vi.fn(),
   connections: vi.fn(),
   notifyError: vi.fn(),
@@ -25,6 +26,7 @@ const { agents, connections, notifyError, openSession, request, requestProfile }
 vi.mock('@hermes/plugin-sdk', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
   host: {
+    activeConnectionId,
     agents,
     connections,
     notifyError,
@@ -37,7 +39,7 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => ({
 }))
 
 import { $rooms, $roster } from './atoms'
-import { openBotChat, refreshRoster, sweepHiddenSessions } from './bots'
+import { openBotChat, refreshRoster, saveBotMeta, sweepHiddenSessions } from './bots'
 
 type Call = [string, Record<string, unknown>]
 
@@ -60,6 +62,7 @@ const row = (name: string, meta: Record<string, unknown> = {}) => ({
   key: name,
   lastActive: 0,
   meta,
+  metaKnown: true,
   model: null,
   name,
   preview: '',
@@ -73,6 +76,7 @@ beforeEach(() => {
   openSession.mockReset().mockResolvedValue({ ok: true, storedSessionId: 'x' })
   agents.mockReset().mockResolvedValue({ agents: [], sources: [] })
   connections.mockReset().mockResolvedValue([])
+  activeConnectionId.mockReset().mockReturnValue('local')
   notifyError.mockReset()
   $roster.set([])
   $rooms.set([])
@@ -339,5 +343,86 @@ describe('the roster', () => {
     await refreshRoster()
 
     expect($roster.get().map(entry => entry.profile).sort()).toEqual(['owl', 'radar'])
+  })
+
+  it('does NOT list the active connection twice, though the union reports it', async () => {
+    // `host.agents()` enumerates EVERY registered connection including the one
+    // this window is routed to, and `profiles.list` has already read that same
+    // source richly. Merging both renders every profile twice — once bare, once
+    // source-qualified — and the thin copy carries no `ui_meta`.
+    agents.mockResolvedValue({
+      agents: [
+        { connectionId: 'remote-1', isDefault: true, label: 'default', profile: 'default' },
+        { connectionId: 'remote-1', isDefault: false, label: 'radar', profile: 'radar' },
+        { connectionId: 'c2', isDefault: false, label: 'owl', profile: 'owl' }
+      ],
+      sources: [
+        { connectionId: 'remote-1', ok: true },
+        { connectionId: 'c2', ok: true }
+      ]
+    })
+    connections.mockResolvedValue([
+      { id: 'remote-1', kind: 'remote', label: 'Server', primary: true },
+      { id: 'c2', kind: 'remote', label: 'Laptop', primary: false }
+    ])
+    request.mockResolvedValue({ profiles: [profile('default'), profile('radar')] })
+
+    await refreshRoster()
+
+    const roster = $roster.get()
+
+    expect(roster.map(entry => entry.profile).sort()).toEqual(['default', 'owl', 'radar'])
+    // Bare, because nothing collides once the echo is gone. A surviving echo
+    // would force `@radar-server` onto the user's own agent.
+    expect(roster.filter(entry => entry.profile === 'radar').map(entry => entry.handle)).toEqual(['radar'])
+    // The surviving local rows are the RICH ones — the thin copy is what makes
+    // a click destroy the record.
+    expect(roster.find(entry => entry.profile === 'radar')?.metaKnown).toBe(true)
+  })
+
+  it('falls back to the active connection id when no registry row is flagged primary', async () => {
+    activeConnectionId.mockReturnValue('remote-1')
+    agents.mockResolvedValue({
+      agents: [{ connectionId: 'remote-1', isDefault: false, label: 'radar', profile: 'radar' }],
+      sources: [{ connectionId: 'remote-1', ok: true }]
+    })
+    connections.mockResolvedValue([{ id: 'remote-1', kind: 'remote', label: 'Server', primary: false }])
+    request.mockResolvedValue({ profiles: [profile('radar')] })
+
+    await refreshRoster()
+
+    expect($roster.get().map(entry => entry.profile)).toEqual(['radar'])
+  })
+})
+
+describe('writing a bot record', () => {
+  it('REFUSES a write for a row whose ui_meta was never read, and says so', async () => {
+    // `profiles.configure` merges `ui_meta` key-wise, so writing `{chat, v}`
+    // built on an empty meta REPLACES the whole `hermes-bots` value — the
+    // title, `hidden`, and every room membership go with it. A names-only
+    // source cannot tell "no record" from "not read", so the write is refused.
+    const thin = { ...row('radar'), connectionId: 'c2', key: 'radar@c2', metaKnown: false }
+
+    const outcome = await saveBotMeta(thin as never, { chat: 'fresh' })
+
+    expect(outcome).toBe('unsafe')
+    expect(calls('profiles.configure')).toEqual([])
+    expect(requestProfile).not.toHaveBeenCalled()
+    expect(notifyError).toHaveBeenCalled()
+  })
+
+  it('writes normally for a row that DID carry a record', async () => {
+    request.mockResolvedValue({ applied: { ui_meta: true }, ok: true })
+
+    const outcome = await saveBotMeta(row('radar', { title: 'Sentinel' }) as never, {
+      chat: 'fresh',
+      title: 'Sentinel'
+    })
+
+    expect(outcome).toBe('persisted')
+    expect(calls('profiles.configure')[0]).toMatchObject({
+      name: 'radar',
+      ui_meta: { 'hermes-bots': expect.objectContaining({ chat: 'fresh', title: 'Sentinel' }) }
+    })
   })
 })
