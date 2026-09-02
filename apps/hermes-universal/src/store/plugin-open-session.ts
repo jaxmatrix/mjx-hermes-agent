@@ -35,6 +35,19 @@ export interface PluginOpenSessionOptions {
   profile?: null | string
   /** Bring it to the front once it is real. */
   focus?: boolean
+  /**
+   * Whether this conversation is expected to HAVE a transcript.
+   *
+   * The wake predicate branches on it (`transcript-cache-sync.ts`): `true`
+   * completes on transcript paint, `false` on the runtime binding. A session
+   * with no messages can only ever satisfy the second — a brand-new one waits
+   * out both budgets and reports `exhausted`, which is a 40-second hang where
+   * the honest answer is "it is open and empty".
+   *
+   * Defaults to `true`: every caller that does not know is opening something a
+   * user has talked in.
+   */
+  expectHistory?: boolean
   timeoutMs?: number
 }
 
@@ -119,7 +132,7 @@ export async function openPluginSession(
   storedSessionId: string,
   options: PluginOpenSessionOptions = {}
 ): Promise<PluginOpenSessionResult> {
-  const { focus = true, timeoutMs = DEFAULT_OPEN_TIMEOUT_MS } = options
+  const { expectHistory = true, focus = true, timeoutMs = DEFAULT_OPEN_TIMEOUT_MS } = options
 
   // Cheap pre-check rather than a second route resolution: the router is 480's
   // and `openSession` already dispatches through it. Asking it to resolve here
@@ -138,7 +151,7 @@ export async function openPluginSession(
   // hydrates. Either way the wake below is what says it is real.
   await openSession(storedSessionId)
 
-  const wake = async () => awaitSessionPainted(storedSessionId, { expectHistory: true, timeoutMs })
+  const wake = async () => awaitSessionPainted(storedSessionId, { expectHistory, timeoutMs })
 
   try {
     await wake()

@@ -90,6 +90,16 @@ describe('openPluginSession', () => {
     expect(result).toMatchObject({ ok: true })
   })
 
+  it('waits only for the runtime binding when the caller says the session is EMPTY', async () => {
+    // A brand-new chat has no transcript to paint, so `expectHistory: true`
+    // burns both budgets and reports `exhausted` — a 40 s hang where the honest
+    // answer is "it is open and empty". Bot Mode's create path needs this.
+    const result = await openPluginSession('s1', { expectHistory: false })
+
+    expect(result).toMatchObject({ ok: true })
+    expect(awaitSessionPainted).toHaveBeenCalledWith('s1', expect.objectContaining({ expectHistory: false }))
+  })
+
   // A compaction can rotate the stored id while the resume is in flight, so the
   // answer is read off the slice rather than echoed back.
   it('reads the canonical id back off the session slice', async () => {
