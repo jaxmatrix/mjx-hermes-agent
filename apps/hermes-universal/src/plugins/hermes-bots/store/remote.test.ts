@@ -56,6 +56,8 @@ describe('sending a DM to a bot on another machine', () => {
     expect(result).toMatchObject({ ok: true, storedId: 'stored-1' })
     expect(bindSession).toHaveBeenCalledWith('stored-1', { profile: 'radar' })
     expect(params('prompt.submit')[0]).toMatchObject({ session_id: 'runtime-77' })
+    // One RPC saved: that read existed only to fetch a pin.
+    expect(params('profiles.list')).toEqual([])
   })
 
   it('titles the runtime id and pins the DURABLE one when it has to mint', async () => {
@@ -79,10 +81,9 @@ describe('sending a DM to a bot on another machine', () => {
 
     expect(result).toMatchObject({ ok: true, storedId: 'stored-9' })
     expect(params('session.title')[0]).toMatchObject({ session_id: 'run-9', title: 'Bot Chat' })
-    // The pin, the bind and the submit all use the durable id — never `run-9`.
-    expect(params('profiles.configure')[0]).toMatchObject({
-      ui_meta: { 'hermes-bots': expect.objectContaining({ chat: 'stored-9' }) }
-    })
+    // Nothing durable is written: identity is the title, so there is no pin to
+    // record and no `profiles.configure` on this path at all.
+    expect(params('profiles.configure')).toEqual([])
     expect(bindSession).toHaveBeenCalledWith('stored-9', { profile: 'radar' })
   })
 

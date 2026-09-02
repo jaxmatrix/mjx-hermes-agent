@@ -22,6 +22,12 @@ export interface RosterRowInput {
   ui_meta?: unknown
   last_session?: null | { id: string; last_active: number; preview: string; root_title?: string; title: string }
   worker_session?: null | { id: string; last_active: number; source: string; title: string }
+  /** The registry's answer for this profile, resolved SERVER-SIDE by title.
+   *  Absent means the gateway could not look; `null` means it looked and this
+   *  bot has no chat yet. Those are different facts and the roster keeps them
+   *  apart, because reading a failure as "no chat" is what makes a client mint
+   *  a duplicate. */
+  canonical_session?: null | { id: string; last_active?: number; preview: string; resolved_id: string }
   preferred_session?: null | {
     id: string
     /** The gateway reports this; ignoring it made a bot whose only activity is
@@ -48,6 +54,10 @@ export interface RosterRow {
   model: null | string
   /** ms epoch of the most recent activity of ANY kind, or 0. */
   lastActive: number
+  /** This bot's canonical chat, as the registry named it. Used to tell a bot's
+   *  forever-chat apart from an ordinary session — they are different modes of
+   *  conversation and must not be confused for one another. */
+  canonicalId?: string
   preview: string
   /** A `kanban`/`tool` worker is running — the profile is ACTIVE even with no
    *  recent human chat. Reading only `last_session` paints a busy agent idle. */
@@ -77,8 +87,11 @@ function rowFrom(input: RosterRowInput, connectionId: string | undefined, metaKn
   const last = input.last_session
   const worker = input.worker_session
 
+  const canonical = input.canonical_session
+
   return {
     ...(connectionId ? { connectionId } : {}),
+    ...(canonical ? { canonicalId: canonical.id } : {}),
     description: input.description ?? '',
     handle: botHandle(input.name),
     hasAvatar: Boolean(input.has_avatar),

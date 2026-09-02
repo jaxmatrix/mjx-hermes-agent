@@ -6,13 +6,21 @@
 import { host, livePollIntervalMs } from '@hermes/plugin-sdk'
 
 import { BOT_CHAT_TITLE, botHandle, groupSessionTitle, isOwnedSessionTitle } from '../ids'
-import { type CanonicalAction, maySweep, resolveCanonicalChat } from '../model/canonical'
+import { maySweep, type RegistryAnswer, resolveCanonicalChat } from '../model/canonical'
 import { type BotMeta, type BotMetaWriteOutcome, classifyWrite } from '../model/meta'
 import { liveRooms, roomsFromRoster, rosterMetaSource } from '../model/rooms'
 import { handleIndex, mergeMultiSourceRoster, type RosterRow, type RosterRowInput, sortRoster } from '../model/roster'
 
 import { $botProtocolSupported, $rooms, $roster, $rosterError, $rosterLoading } from './atoms'
-import { type AgentRoute, createSession, findBotChat, listProfiles, setSessionHidden, writeBotMeta } from './rpc'
+import {
+  type AgentRoute,
+  createSession,
+  findSessionByTitle,
+  listProfiles,
+  setSessionHidden,
+  setSessionTitle,
+  writeBotMeta
+} from './rpc'
 
 /** Roster refresh cadence.
  *
@@ -45,7 +53,7 @@ export async function refreshRoster(): Promise<RosterRow[]> {
     $rosterLoading.set(true)
 
     try {
-      const local = await listProfiles({ preferredSessionIds: pinnedChats() })
+      const local = await listProfiles()
 
       // Agents on other machines, when MJXHRM-446 has any registered. A remote
       // roster that refuses is NOT fatal: the local half still paints, and the
@@ -87,20 +95,6 @@ export async function refreshRoster(): Promise<RosterRow[]> {
   inFlight = run
 
   return run
-}
-
-/** `{profile: pinned chat id}` — so each row's preview describes the session
- *  its click actually opens, rather than whatever chat was most recent. */
-function pinnedChats(): Record<string, string> {
-  const out: Record<string, string> = {}
-
-  for (const row of $roster.get()) {
-    if (!row.connectionId && row.meta.chat) {
-      out[row.profile] = row.meta.chat
-    }
-  }
-
-  return out
 }
 
 /**
@@ -178,49 +172,105 @@ const routeFor = (row: Pick<RosterRow, 'connectionId' | 'profile'>): AgentRoute 
 // ── the canonical Bot Chat ──────────────────────────────────────────────────
 
 export interface OpenChatResult {
-  /** `remote` is not a rung of the ladder — the ladder is never reached. */
-  action: CanonicalAction['kind'] | 'remote'
+  /** `remote` and `unavailable` are not outcomes of the registry lookup —
+   *  one refuses before it, the other is the lookup declining to answer. */
+  action: 'create' | 'open' | 'remote' | 'unavailable'
   storedId?: string
   error?: string
 }
 
-/**
- * Open a bot's private chat, following the six-rung ladder.
- *
- * The LOOKUP is the improvement over desktop: an exact-title `session.list` is
- * O(1) against the unique title index and unaffected by how busy the profile
- * is, where desktop scanned a recency window and minted a duplicate whenever
- * the Bot Chat had fallen out of it.
- */
-export async function openBotChat(row: RosterRow): Promise<OpenChatResult> {
-  const result = await resolveBotChat(row)
+/** The canonical chats this session has opened. Half the basis for the
+ *  `/new` rewrite — exact, but it does not survive a reload, which is why the
+ *  roster's registry answer is OR-ed with it. */
+const openedCanonical = new Set<string>()
 
-  // Reported HERE because all three call sites — the row tap, the kebab verb
-  // and the `hermes://bot/…` deep link — used to drop this on the floor, and a
-  // failure the user cannot see is one they retry by clicking again forever.
-  if (result.error && result.error !== 'superseded') {
-    host.notifyError(
-      new Error(result.error),
-      result.action === 'retry'
-        ? `Could not reach ${row.name}'s chat — try again`
-        : `Could not open ${row.name}'s chat`
-    )
+export const openedCanonicalIds = (): ReadonlySet<string> => openedCanonical
+
+/**
+ * Every session this window believes is a bot's canonical chat.
+ *
+ * Two independent sources, deliberately: the ids we opened here are exact but
+ * do not survive a reload, and the registry ids the roster carries survive one
+ * but are only as fresh as the last poll. Neither costs an RPC to read, which
+ * matters because the caller is a keystroke path.
+ */
+export function knownCanonicalIds(): ReadonlySet<string> {
+  const ids = new Set(openedCanonical)
+
+  for (const row of $roster.get()) {
+    if (row.canonicalId) {
+      ids.add(row.canonicalId)
+    }
   }
 
-  return result
+  return ids
+}
+
+/** One resolve in flight per profile. All three call sites are fire-and-forget
+ *  `void openBotChat(row)`, so a double tap would otherwise run two `create`
+ *  rungs concurrently — and the second would mint over the first. */
+const opensInFlight = new Map<string, Promise<OpenChatResult>>()
+
+/**
+ * Open a bot's private chat.
+ *
+ * The registry is re-resolved on EVERY open. That is not a cost to apologise
+ * for: an exact-title `session.list` is one seek against the unique title
+ * index, and it is what removes the need for anything durable to be kept in
+ * sync between clients, machines and the database.
+ */
+export async function openBotChat(row: RosterRow): Promise<OpenChatResult> {
+  const inFlight = opensInFlight.get(row.profile)
+
+  if (inFlight) {
+    return inFlight
+  }
+
+  const run = (async () => {
+    const result = await resolveBotChat(row)
+
+    // Reported HERE because all three call sites — the row tap, the kebab verb
+    // and the `hermes://bot/…` deep link — used to drop this on the floor, and
+    // a failure the user cannot see is one they retry by clicking again.
+    if (result.error && result.error !== 'superseded') {
+      host.notifyError(
+        new Error(result.error),
+        result.action === 'unavailable'
+          ? `Could not reach ${row.name}'s chat — try again`
+          : `Could not open ${row.name}'s chat`
+      )
+    }
+
+    return result
+  })().finally(() => opensInFlight.delete(row.profile))
+
+  opensInFlight.set(row.profile, run)
+
+  return run
+}
+
+/** Ask the registry: is there a session with exactly this title here? */
+async function askRegistry(route: AgentRoute, title: string = BOT_CHAT_TITLE): Promise<RegistryAnswer> {
+  try {
+    const found = (await findSessionByTitle(title, route)).sessions?.[0]
+
+    return {
+      row: found
+        ? { id: found.id, messageCount: found.message_count, resolvedId: found.resolved_id, title: found.title }
+        : null
+    }
+  } catch {
+    return { failed: true }
+  }
 }
 
 async function resolveBotChat(row: RosterRow): Promise<OpenChatResult> {
-  // A bot on ANOTHER machine cannot have its chat opened here, and pretending
-  // otherwise is the whole of the "session not found" the user sees.
-  //
-  // Every session door the SDK has — `host.openSession`, `host.bindSession` —
-  // takes a PROFILE and no connection. So a remote bot's stored id is resumed
-  // against THIS gateway, which does not have that session: 4007, on every
-  // click, forever, because the pin is not at fault and is never cleared.
-  // Worse, `openSession` first switches the ACTIVE profile to the foreign
-  // name, which repoints every profile-scoped call in the app at a profile
-  // this backend does not have.
+  // A bot on ANOTHER machine cannot have its chat opened here. Every session
+  // door the SDK has — `host.openSession`, `host.bindSession` — takes a PROFILE
+  // and no connection, so a remote session id is resumed against THIS gateway,
+  // which does not have it. Worse, `openSession` first switches the ACTIVE
+  // profile to the foreign name, repointing every profile-scoped call in the
+  // app at a profile this backend does not have.
   //
   // Desktop refuses the same act for the same reason and says the same thing:
   // reach a bot on another machine by @mentioning it, and the window's gateway
@@ -239,75 +289,77 @@ async function resolveBotChat(row: RosterRow): Promise<OpenChatResult> {
   }
 
   const route = routeFor(row)
+  const verdict = resolveCanonicalChat(await askRegistry(route))
 
-  let lookup: Awaited<ReturnType<typeof findBotChat>> | null = null
-  let lookupFailed = false
+  if (verdict.kind === 'unavailable') {
+    return { action: 'unavailable', error: 'the gateway did not answer' }
+  }
+
+  if (verdict.kind === 'open') {
+    return openCanonical(row, verdict.storedId, verdict.expectHistory)
+  }
+
+  return createCanonical(row, route)
+}
+
+/**
+ * Mint the one chat this bot does not have yet.
+ *
+ * `session.create` persists NOTHING — the row is created lazily on the first
+ * prompt, because every launch and every draft opens a session just to paint a
+ * composer. A Bot Mode chat has no first prompt to wait for, so the eager
+ * `session.title` write is what turns it into a row, and the same call applies
+ * the `hidden` flag the create was holding.
+ *
+ * No kickoff message. Universal has no New-Agent flow, and upstream's rule is
+ * that only that flow may introduce a bot — firing an intro from the click path
+ * burns a model turn and stamps a user-attributed greeting into the chat every
+ * time a lookup misses.
+ */
+async function createCanonical(row: RosterRow, route: AgentRoute): Promise<OpenChatResult> {
+  const created = await createSession({ title: BOT_CHAT_TITLE }, route)
+  const runtimeId = created.session_id
+  const storedId = created.stored_session_id
+
+  if (!runtimeId || !storedId) {
+    return { action: 'create', error: 'session.create did not report both ids' }
+  }
 
   try {
-    lookup = await findBotChat(route)
+    await setSessionTitle(runtimeId, BOT_CHAT_TITLE, route)
   } catch {
-    lookupFailed = true
+    // Another writer took the canonical title between our miss and our write —
+    // a second client, a peer DM minting server-side. Adopt the winner. Our own
+    // half-made session holds no messages and no title, so nothing can reach it
+    // and it is simply abandoned.
+    const verdict = resolveCanonicalChat(await askRegistry(route), { mayMint: false })
+
+    return verdict.kind === 'open'
+      ? openCanonical(row, verdict.storedId, verdict.expectHistory)
+      : { action: 'create', error: 'another client holds this bot’s chat title' }
   }
 
-  const found = lookup?.sessions?.[0]
+  // Expected-empty: it was created a moment ago, so there is no transcript to
+  // wait for and waiting would cost 40 seconds and then report failure.
+  return openCanonical(row, storedId, false, 'create')
+}
 
-  const ladder = {
-    lookupFailed,
-    // `null` (looked, nothing there) and `undefined` (did not look) lead to
-    // different rungs, so the failure case must not collapse into a miss.
-    ...(lookupFailed ? {} : { lookup: found ? { id: found.id, resolvedId: found.resolved_id, title: found.title } : null }),
-    pin: row.meta.chat ?? null
-  }
-
-  const action = resolveCanonicalChat(ladder)
-
-  if (action.kind === 'create') {
-    const created = await createSession({ title: BOT_CHAT_TITLE }, route)
-
-    if (!created.session_id) {
-      return { action: 'create', error: 'session.create returned no id' }
-    }
-
-    await pinChat(row, created.session_id)
-    await host.openSession(created.session_id, { profile: row.profile })
-
-    return { action: 'create', storedId: created.session_id }
-  }
-
-  if (action.kind === 'retry') {
-    return { action: 'retry', error: 'the gateway did not answer', storedId: action.storedId || undefined }
-  }
-
-  if (action.kind === 'adopt') {
-    await pinChat(row, action.storedId)
-  }
-
-  // `resume-tip` opens the LIVE tip while the durable pin stays the root: the
-  // pin is a stored id and aliasing is core's job (rule 17).
-  const opened = await host.openSession(action.storedId, { profile: row.profile })
+async function openCanonical(
+  row: RosterRow,
+  storedId: string,
+  expectHistory: boolean,
+  action: OpenChatResult['action'] = 'open'
+): Promise<OpenChatResult> {
+  const opened = await host.openSession(storedId, { expectHistory, profile: row.profile })
 
   if (opened.ok) {
-    return { action: action.kind, storedId: action.storedId }
+    openedCanonical.add(storedId)
+
+    return { action, storedId }
   }
 
   // The user moved on mid-open. Nothing is wrong and nothing is said.
-  if (opened.error === 'superseded') {
-    return { action: action.kind, error: opened.error, storedId: action.storedId }
-  }
-
-  // We now know something the ladder did not: the pin did not hydrate. Feed
-  // that back through the SAME pure function rather than hardcoding the
-  // consequence here — rung 2 turns it into `retry`, never `create`, which is
-  // what stops a gateway hiccup forking the bot's forever-chat. Until now the
-  // flag had no producer at all, so the rung was unreachable.
-  const afterFailure = resolveCanonicalChat({ ...ladder, pinHydrationFailed: true })
-
-  return { action: afterFailure.kind, error: opened.error, storedId: action.storedId }
-}
-
-/** Persist a bot's chat pin, and report honestly when the gateway refused. */
-export async function pinChat(row: RosterRow, storedId: string): Promise<void> {
-  await saveBotMeta(row, { ...row.meta, chat: storedId })
+  return { action, error: opened.error, storedId }
 }
 
 /** What `saveBotMeta` did. `unsafe` is local — the write never left. */
@@ -363,11 +415,16 @@ export async function saveBotMeta(row: RosterRow, meta: BotMeta): Promise<SaveBo
  * Two guards, because `session.set_hidden` flips a session's whole compression
  * lineage — a wrong call buries a real conversation and every ancestor of it:
  *
- *  1. the id must be one we minted (a `chat` pin, or a room member session);
- *  2. the row's TITLE must be one we mint.
+ *  1. PROVENANCE — the id came from an exact-title registry lookup we issued,
+ *     on a profile in our own roster. There is no other door: no listing, no
+ *     recency window, and since the pin is gone, no stored pointer that could
+ *     have gone stale and drifted onto someone's real conversation.
+ *  2. IDENTITY — the title the GATEWAY reported for that row is one we mint.
+ *     Checked separately, because an older gateway answers a title query with
+ *     an ordinary listing whose first row is real work.
  *
- * A stale pin pointing at an ordinary session fails (2), and the repair is to
- * fix the pin, never to hide someone's chat.
+ * The bot half costs nothing: `session.list {title}` already answered while
+ * resolving the roster. The room half is one indexed lookup per member.
  *
  * Idempotent, `allSettled`, one pass — a failure for one id never aborts the
  * sweep.
@@ -378,9 +435,20 @@ export async function sweepHiddenSessions(): Promise<{ failed: number; hidden: n
 
   const owned: { id: string; route: AgentRoute; title: string }[] = []
 
-  for (const row of roster) {
-    if (row.meta.chat) {
-      owned.push({ id: row.meta.chat, route: routeFor(row), title: BOT_CHAT_TITLE })
+  // Ask the registry, per LOCAL bot, what its canonical chat actually is. A
+  // bot with no Bot Chat contributes nothing — where a stale pin used to
+  // contribute a 4001 on every reconnect.
+  const local = roster.filter(row => !row.connectionId)
+
+  const canonical = await Promise.all(
+    local.map(async row => ({ answer: await askRegistry(routeFor(row)), row }))
+  )
+
+  for (const { answer, row } of canonical) {
+    const found = answer.failed ? null : answer.row
+
+    if (found) {
+      owned.push({ id: found.id, route: routeFor(row), title: found.title })
     }
   }
 
@@ -388,8 +456,20 @@ export async function sweepHiddenSessions(): Promise<{ failed: number; hidden: n
     for (const [memberKey, sessionId] of Object.entries(room.sessions)) {
       const member = roster.find(candidate => candidate.key === memberKey)
 
-      if (sessionId && member) {
-        owned.push({ id: sessionId, route: routeFor(member), title: groupSessionTitle(room.name) })
+      if (!sessionId || !member) {
+        continue
+      }
+
+      // Verify, never assume: the recorded id must still be the row the
+      // registry names for this member's `Group:` title. A renamed room's
+      // record is stale, and guessing past that is how the sweep would reach
+      // for a session it does not own.
+      const title = groupSessionTitle(room.name)
+      const answer = await askRegistry(routeFor(member), title)
+      const found = answer.failed ? null : answer.row
+
+      if (found && found.id === sessionId) {
+        owned.push({ id: sessionId, route: routeFor(member), title: found.title })
       }
     }
   }
@@ -402,9 +482,9 @@ export async function sweepHiddenSessions(): Promise<{ failed: number; hidden: n
   // was the common case, not the edge one.
   const results = await Promise.allSettled(
     owned.map(async entry => {
-      // Guard 2 uses the title WE recorded for the id, not one we ask the
-      // gateway for: asking would cost a call per session and would still be
-      // the same claim.
+      // Guard 2 reads the title the GATEWAY reported for this row, not one we
+      // remembered — that is what closes the old-gateway hole in the sweep and
+      // not only in adoption.
       if (!maySweep({ owned: true, title: entry.title }) || !isOwnedSessionTitle(entry.title)) {
         skipped += 1
 
