@@ -58,6 +58,34 @@ describe('sending a DM to a bot on another machine', () => {
     expect(params('prompt.submit')[0]).toMatchObject({ session_id: 'runtime-77' })
   })
 
+  it('titles the runtime id and pins the DURABLE one when it has to mint', async () => {
+    requestProfile.mockImplementation(async (_route: unknown, method: string) => {
+      if (method === 'profiles.list') {
+        return { profiles: [{ name: 'radar' }] }
+      }
+
+      if (method === 'session.list') {
+        return { sessions: [] }
+      }
+
+      if (method === 'session.create') {
+        return { session_id: 'run-9', stored_session_id: 'stored-9' }
+      }
+
+      return { ok: true }
+    })
+
+    const result = await sendRemoteDm(target, 'scout', 'ship it')
+
+    expect(result).toMatchObject({ ok: true, storedId: 'stored-9' })
+    expect(params('session.title')[0]).toMatchObject({ session_id: 'run-9', title: 'Bot Chat' })
+    // The pin, the bind and the submit all use the durable id — never `run-9`.
+    expect(params('profiles.configure')[0]).toMatchObject({
+      ui_meta: { 'hermes-bots': expect.objectContaining({ chat: 'stored-9' }) }
+    })
+    expect(bindSession).toHaveBeenCalledWith('stored-9', { profile: 'radar' })
+  })
+
   it('reports a chat it could not wake, rather than submitting into nothing', async () => {
     bindSession.mockResolvedValue({ error: 'gateway said no', ok: false })
 

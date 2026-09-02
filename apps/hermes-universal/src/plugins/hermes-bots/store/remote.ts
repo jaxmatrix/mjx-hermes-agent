@@ -27,7 +27,15 @@ import { resolveCanonicalChat } from '../model/canonical'
 import { decodeBotMeta } from '../model/meta'
 import type { RosterRow } from '../model/roster'
 
-import { type AgentRoute, createSession, findBotChat, listProfiles, submitPrompt, writeBotMeta } from './rpc'
+import {
+  type AgentRoute,
+  createSession,
+  findBotChat,
+  listProfiles,
+  setSessionTitle,
+  submitPrompt,
+  writeBotMeta
+} from './rpc'
 
 /** The one wire format all three transports share. Agent-facing, never i18n'd. */
 export const dmWireText = (from: string, text: string): string =>
@@ -82,7 +90,12 @@ export async function sendRemoteDm(
     if (action.kind === 'create') {
       const created = await createSession({ title: BOT_CHAT_TITLE }, route)
 
-      storedId = created.session_id ?? null
+      // The DURABLE id, and only after the title write has made it a real row.
+      if (created.session_id && created.stored_session_id) {
+        await setSessionTitle(created.session_id, BOT_CHAT_TITLE, route)
+      }
+
+      storedId = created.stored_session_id ?? null
 
       if (storedId) {
         // Pin it on the REMOTE profile, so the next DM — from any machine —

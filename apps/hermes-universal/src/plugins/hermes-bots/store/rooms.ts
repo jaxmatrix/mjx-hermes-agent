@@ -46,7 +46,7 @@ import {
   setWatermark
 } from './atoms'
 import { refreshRoster, saveBotMeta } from './bots'
-import { type AgentRoute, createSession, readTranscript, submitPrompt } from './rpc'
+import { type AgentRoute, createSession, readTranscript, setSessionTitle, submitPrompt } from './rpc'
 
 /** ms epoch of the last LOCAL write per room — the `fetchedAt` fence's other
  *  half (§8.2). A roster snapshot older than this cannot overlay it back. */
@@ -134,9 +134,16 @@ export async function createRoom(name: string, members: readonly RosterRow[]): P
   const sessions: Record<string, null | string> = {}
 
   for (const row of members) {
+    // Create, then TITLE the runtime id — the title write is what persists the
+    // row and applies `hidden`. Recording `session_id` here (a runtime handle)
+    // is why a room's member sessions could never be bound or resumed.
     const created = await createSession({ title: groupSessionTitle(name) }, routeOf(row))
 
-    sessions[row.key] = created.session_id ?? null
+    if (created.session_id && created.stored_session_id) {
+      await setSessionTitle(created.session_id, groupSessionTitle(name), routeOf(row))
+    }
+
+    sessions[row.key] = created.stored_session_id ?? null
   }
 
   const room: Room = { at, id, members: refs, name, rev: 1, sessions }

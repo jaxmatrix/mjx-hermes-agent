@@ -59,7 +59,9 @@ const row = (name: string, metaKnown: boolean, connectionId?: string) => ({
 beforeEach(() => {
   request.mockReset().mockImplementation(async (method: string) => {
     if (method === 'session.create') {
-      return { session_id: `s-${Math.random().toString(16).slice(2, 8)}` }
+      const n = Math.random().toString(16).slice(2, 8)
+
+      return { session_id: `run-${n}`, stored_session_id: `stored-${n}` }
     }
 
     return { applied: { ui_meta: true }, ok: true }
@@ -89,6 +91,28 @@ describe('replicating a room to its members', () => {
       'Some agents did not accept the room change'
     )
     expect((notifyError.mock.calls[0][0] as Error).message).toContain('radar')
+  })
+
+  it('records the DURABLE id and titles the RUNTIME one, so the row exists at all', async () => {
+    // `session.create` persists nothing; the title write is what makes the row.
+    // Recording `session_id` (a runtime handle) left every member session
+    // unresumable and unbindable.
+    const members = [row('scout', true)]
+
+    $roster.set(members as never)
+
+    const room = await createRoom('Ops', members as never)
+
+    const recorded = room?.sessions.scout ?? ''
+
+    expect(recorded).toMatch(/^stored-/)
+
+    const titled = (request.mock.calls as [string, Record<string, unknown>][]).filter(
+      ([method]) => method === 'session.title'
+    )
+
+    expect(titled).toHaveLength(1)
+    expect(titled[0][1]).toMatchObject({ session_id: expect.stringMatching(/^run-/), title: 'Group: Ops' })
   })
 
   it('says nothing when every member accepted', async () => {
