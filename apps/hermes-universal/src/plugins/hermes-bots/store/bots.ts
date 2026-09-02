@@ -193,6 +193,24 @@ export interface OpenChatResult {
  * the Bot Chat had fallen out of it.
  */
 export async function openBotChat(row: RosterRow): Promise<OpenChatResult> {
+  const result = await resolveBotChat(row)
+
+  // Reported HERE because all three call sites — the row tap, the kebab verb
+  // and the `hermes://bot/…` deep link — used to drop this on the floor, and a
+  // failure the user cannot see is one they retry by clicking again forever.
+  if (result.error && result.error !== 'superseded') {
+    host.notifyError(
+      new Error(result.error),
+      result.action === 'retry'
+        ? `Could not reach ${row.name}'s chat — try again`
+        : `Could not open ${row.name}'s chat`
+    )
+  }
+
+  return result
+}
+
+async function resolveBotChat(row: RosterRow): Promise<OpenChatResult> {
   // A bot on ANOTHER machine cannot have its chat opened here, and pretending
   // otherwise is the whole of the "session not found" the user sees.
   //
@@ -233,13 +251,15 @@ export async function openBotChat(row: RosterRow): Promise<OpenChatResult> {
 
   const found = lookup?.sessions?.[0]
 
-  const action = resolveCanonicalChat({
+  const ladder = {
     lookupFailed,
     // `null` (looked, nothing there) and `undefined` (did not look) lead to
     // different rungs, so the failure case must not collapse into a miss.
     ...(lookupFailed ? {} : { lookup: found ? { id: found.id, resolvedId: found.resolved_id, title: found.title } : null }),
     pin: row.meta.chat ?? null
-  })
+  }
+
+  const action = resolveCanonicalChat(ladder)
 
   if (action.kind === 'create') {
     const created = await createSession({ title: BOT_CHAT_TITLE }, route)
@@ -266,11 +286,23 @@ export async function openBotChat(row: RosterRow): Promise<OpenChatResult> {
   // pin is a stored id and aliasing is core's job (rule 17).
   const opened = await host.openSession(action.storedId, { profile: row.profile })
 
-  if (!opened.ok) {
+  if (opened.ok) {
+    return { action: action.kind, storedId: action.storedId }
+  }
+
+  // The user moved on mid-open. Nothing is wrong and nothing is said.
+  if (opened.error === 'superseded') {
     return { action: action.kind, error: opened.error, storedId: action.storedId }
   }
 
-  return { action: action.kind, storedId: action.storedId }
+  // We now know something the ladder did not: the pin did not hydrate. Feed
+  // that back through the SAME pure function rather than hardcoding the
+  // consequence here — rung 2 turns it into `retry`, never `create`, which is
+  // what stops a gateway hiccup forking the bot's forever-chat. Until now the
+  // flag had no producer at all, so the rung was unreachable.
+  const afterFailure = resolveCanonicalChat({ ...ladder, pinHydrationFailed: true })
+
+  return { action: afterFailure.kind, error: opened.error, storedId: action.storedId }
 }
 
 /** Persist a bot's chat pin, and report honestly when the gateway refused. */

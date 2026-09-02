@@ -399,7 +399,7 @@ describe('the roster', () => {
   })
 })
 
-describe('the hidden-session sweep', () => {
+describe('what the hidden-session sweep reports', () => {
   it('reports a REFUSED hide as failed, not as hidden', async () => {
     // `allSettled` keeps one failure from aborting the sweep, but counting
     // fulfilled-minus-skipped booked a rejection as a success. A stale pin
@@ -414,6 +414,37 @@ describe('the hidden-session sweep', () => {
     })
 
     expect(await sweepHiddenSessions()).toEqual({ failed: 1, hidden: 1, skipped: 0 })
+  })
+})
+
+describe('an open that fails', () => {
+  it('offers RETRY rather than forking the forever-chat when the pin will not hydrate', async () => {
+    // Rung 2 of the ladder had no producer at all — nothing ever passed
+    // `pinHydrationFailed` — so a pin that would not open fell through and the
+    // bot could lose its history to a transient hiccup.
+    request.mockImplementation(async (method: string) =>
+      method === 'session.list' ? { sessions: [{ id: 'pinned', title: 'Bot Chat' }] } : { ok: true }
+    )
+    openSession.mockResolvedValue({ error: 'exhausted', ok: false })
+
+    const result = await openBotChat(row('radar', { chat: 'pinned' }) as never)
+
+    expect(result.action).toBe('retry')
+    expect(calls('session.create')).toEqual([])
+    // The pin is untouched: nothing cleared or re-pointed it.
+    expect(calls('profiles.configure')).toEqual([])
+    expect(notifyError).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('try again'))
+  })
+
+  it('says nothing when the user simply moved on mid-open', async () => {
+    request.mockImplementation(async (method: string) =>
+      method === 'session.list' ? { sessions: [{ id: 'pinned', title: 'Bot Chat' }] } : { ok: true }
+    )
+    openSession.mockResolvedValue({ error: 'superseded', ok: false })
+
+    await openBotChat(row('radar', { chat: 'pinned' }) as never)
+
+    expect(notifyError).not.toHaveBeenCalled()
   })
 })
 
