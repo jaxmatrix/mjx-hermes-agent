@@ -141,7 +141,15 @@ function BotRow({ row }: { row: RosterRow }) {
           {row.connectionId && <Codicon className="opacity-60" name="remote" />}
           {row.working && <StatusDot title="working" tone="good" />}
         </span>
-        <span className="block truncate text-xs text-muted-foreground">{row.preview || `@${botHandle(row.profile)}`}</span>
+        {/* A remote row's `preview` is ALWAYS empty — `host.agents()` reports
+            names only, never a session — so falling through to the handle here
+            reads as "this bot has no conversations", which is a claim we cannot
+            make about a machine we did not ask. Say what is actually true. */}
+        <span className="block truncate text-xs text-muted-foreground">
+          {row.connectionId
+            ? t('roster.onOtherMachine', botHandle(row.profile))
+            : row.preview || `@${botHandle(row.profile)}`}
+        </span>
       </span>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

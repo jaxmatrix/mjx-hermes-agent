@@ -10,15 +10,17 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { activeConnectionId, agents, connections, notifyError, openSession, request, requestProfile } = vi.hoisted(() => ({
-  activeConnectionId: vi.fn(),
-  agents: vi.fn(),
-  connections: vi.fn(),
-  notifyError: vi.fn(),
-  openSession: vi.fn(),
-  request: vi.fn(),
-  requestProfile: vi.fn()
-}))
+const { activeConnectionId, agents, connections, notify, notifyError, openSession, request, requestProfile } =
+  vi.hoisted(() => ({
+    activeConnectionId: vi.fn(),
+    agents: vi.fn(),
+    connections: vi.fn(),
+    notify: vi.fn(),
+    notifyError: vi.fn(),
+    openSession: vi.fn(),
+    request: vi.fn(),
+    requestProfile: vi.fn()
+  }))
 
 // A PARTIAL mock: the store's own atoms come from the real SDK re-export, so
 // only the host doors are stubbed. Mocking the module wholesale would replace
@@ -29,6 +31,7 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => ({
     activeConnectionId,
     agents,
     connections,
+    notify,
     notifyError,
     openSession,
     request,
@@ -77,6 +80,7 @@ beforeEach(() => {
   agents.mockReset().mockResolvedValue({ agents: [], sources: [] })
   connections.mockReset().mockResolvedValue([])
   activeConnectionId.mockReset().mockReturnValue('local')
+  notify.mockReset()
   notifyError.mockReset()
   $roster.set([])
   $rooms.set([])
@@ -392,6 +396,40 @@ describe('the roster', () => {
     await refreshRoster()
 
     expect($roster.get().map(entry => entry.profile)).toEqual(['radar'])
+  })
+})
+
+describe('a bot on another machine', () => {
+  it('REFUSES to open its chat here, and says how to reach it instead', async () => {
+    // Every session door takes a profile and no connection, so resuming a
+    // remote stored id against this gateway is a guaranteed 4007 — and
+    // `openSession` would first repoint the ACTIVE profile at a name this
+    // backend does not have.
+    const remote = { ...row('radar'), connectionId: 'c2', key: 'radar@c2', metaKnown: false }
+
+    const result = await openBotChat(remote as never)
+
+    expect(result.action).toBe('remote')
+    expect(openSession).not.toHaveBeenCalled()
+    expect(calls('session.list')).toEqual([])
+    expect(calls('session.create')).toEqual([])
+    expect(requestProfile).not.toHaveBeenCalled()
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('@radar') })
+    )
+  })
+
+  it('still opens a LOCAL bot normally', async () => {
+    request.mockImplementation(async (method: string) =>
+      method === 'session.list'
+        ? { sessions: [{ id: 'existing', title: 'Bot Chat' }] }
+        : { applied: { ui_meta: true }, ok: true }
+    )
+
+    const result = await openBotChat(row('radar') as never)
+
+    expect(result.action).toBe('adopt')
+    expect(openSession).toHaveBeenCalledWith('existing', { profile: 'radar' })
   })
 })
 

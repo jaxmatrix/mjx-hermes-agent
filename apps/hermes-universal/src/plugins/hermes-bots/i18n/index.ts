@@ -62,6 +62,7 @@ const en = {
     empty: 'No agents yet.',
     hide: 'Hide from roster',
     newAgent: 'New agent',
+    onOtherMachine: (handle: string) => `On another machine — @${handle} to reach it`,
     openChat: 'Open chat',
     retry: 'Retry',
     rooms: 'Rooms',

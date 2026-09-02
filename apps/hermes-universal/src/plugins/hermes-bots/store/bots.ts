@@ -178,7 +178,8 @@ const routeFor = (row: Pick<RosterRow, 'connectionId' | 'profile'>): AgentRoute 
 // ── the canonical Bot Chat ──────────────────────────────────────────────────
 
 export interface OpenChatResult {
-  action: CanonicalAction['kind']
+  /** `remote` is not a rung of the ladder — the ladder is never reached. */
+  action: CanonicalAction['kind'] | 'remote'
   storedId?: string
   error?: string
 }
@@ -192,6 +193,33 @@ export interface OpenChatResult {
  * the Bot Chat had fallen out of it.
  */
 export async function openBotChat(row: RosterRow): Promise<OpenChatResult> {
+  // A bot on ANOTHER machine cannot have its chat opened here, and pretending
+  // otherwise is the whole of the "session not found" the user sees.
+  //
+  // Every session door the SDK has — `host.openSession`, `host.bindSession` —
+  // takes a PROFILE and no connection. So a remote bot's stored id is resumed
+  // against THIS gateway, which does not have that session: 4007, on every
+  // click, forever, because the pin is not at fault and is never cleared.
+  // Worse, `openSession` first switches the ACTIVE profile to the foreign
+  // name, which repoints every profile-scoped call in the app at a profile
+  // this backend does not have.
+  //
+  // Desktop refuses the same act for the same reason and says the same thing:
+  // reach a bot on another machine by @mentioning it, and the window's gateway
+  // stays where it is. `store/remote.ts` is that path.
+  //
+  // English here, like every other notification raised from this store: `t` is
+  // a React hook and a store has no component to hang it on.
+  if (row.connectionId) {
+    host.notify({
+      kind: 'info',
+      message: `Stay in this chat and @${handleOf(row)} to message them — this window's gateway stays on this device.`,
+      title: `${row.name} lives on another machine`
+    })
+
+    return { action: 'remote' }
+  }
+
   const route = routeFor(row)
 
   let lookup: Awaited<ReturnType<typeof findBotChat>> | null = null
