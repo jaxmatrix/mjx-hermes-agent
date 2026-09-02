@@ -141,14 +141,18 @@ function BotRow({ row }: { row: RosterRow }) {
           {row.connectionId && <Codicon className="opacity-60" name="remote" />}
           {row.working && <StatusDot title="working" tone="good" />}
         </span>
-        {/* A remote row's `preview` is ALWAYS empty — `host.agents()` reports
-            names only, never a session — so falling through to the handle here
-            reads as "this bot has no conversations", which is a claim we cannot
-            make about a machine we did not ask. Say what is actually true. */}
+        {/* THREE states, not two, because "this bot has no conversations" and
+            "we have not asked yet" are different claims and only one of them is
+            ours to make. A remote row is a fourth: `host.agents()` reports names
+            only, so we never asked that machine anything. */}
         <span className="block truncate text-xs text-muted-foreground">
           {row.connectionId
             ? t('roster.onOtherMachine', botHandle(row.profile))
-            : row.preview || `@${botHandle(row.profile)}`}
+            : row.canonical === 'present'
+              ? row.preview || `@${botHandle(row.profile)}`
+              : row.canonical === 'none'
+                ? t('roster.noChatYet')
+                : `@${botHandle(row.profile)}`}
         </span>
       </span>
       <DropdownMenu>

@@ -20,7 +20,15 @@ export interface RosterRowInput {
   is_default?: boolean
   model?: null | string
   ui_meta?: unknown
-  last_session?: null | { id: string; last_active: number; preview: string; root_title?: string; title: string }
+  // NO `last_session`, and not by omission. A bot's chat and the profile's most
+  // recent ordinary conversation are different MODES of conversation, and
+  // showing one under the other's name is the overlap this roster must not
+  // create. Deleting the field rather than declining to read it is what makes
+  // "consult recency for a bot row" inexpressible rather than merely discouraged.
+  //
+  // `worker_session` stays: a running kanban/tool worker is a liveness fact
+  // about the profile, not a conversation, and it is what keeps a busy agent
+  // from painting idle.
   worker_session?: null | { id: string; last_active: number; source: string; title: string }
   /** The registry's answer for this profile, resolved SERVER-SIDE by title.
    *  Absent means the gateway could not look; `null` means it looked and this
@@ -28,16 +36,6 @@ export interface RosterRowInput {
    *  apart, because reading a failure as "no chat" is what makes a client mint
    *  a duplicate. */
   canonical_session?: null | { id: string; last_active?: number; preview: string; resolved_id: string }
-  preferred_session?: null | {
-    id: string
-    /** The gateway reports this; ignoring it made a bot whose only activity is
-     *  its pinned Bot Chat sort as idle, because `last_session` cannot see a
-     *  hidden session. */
-    last_active?: number
-    preview: string
-    resolved_id: string
-    root_title: string
-  }
 }
 
 export interface RosterRow {
@@ -54,6 +52,10 @@ export interface RosterRow {
   model: null | string
   /** ms epoch of the most recent activity of ANY kind, or 0. */
   lastActive: number
+  /** What the registry said about this bot's chat. THREE values, because
+   *  "there is no chat" and "we have not asked" are different claims and only
+   *  one of them may be shown to a user as "no conversations yet". */
+  canonical: 'none' | 'present' | 'unknown'
   /** This bot's canonical chat, as the registry named it. Used to tell a bot's
    *  forever-chat apart from an ordinary session — they are different modes of
    *  conversation and must not be confused for one another. */
@@ -83,13 +85,12 @@ export const stripA2APrefix = (text: string): string => text.replace(A2A_RE, '')
 
 function rowFrom(input: RosterRowInput, connectionId: string | undefined, metaKnown: boolean): RosterRow {
   const meta = decodeBotMeta(input.ui_meta)
-  const preferred = input.preferred_session
-  const last = input.last_session
   const worker = input.worker_session
 
   const canonical = input.canonical_session
 
   return {
+    canonical: canonical ? 'present' : canonical === null ? 'none' : 'unknown',
     ...(connectionId ? { connectionId } : {}),
     ...(canonical ? { canonicalId: canonical.id } : {}),
     description: input.description ?? '',
@@ -97,12 +98,12 @@ function rowFrom(input: RosterRowInput, connectionId: string | undefined, metaKn
     hasAvatar: Boolean(input.has_avatar),
     isDefault: Boolean(input.is_default),
     key: groupMemberKey(input.name, connectionId),
-    lastActive: Math.max(preferred?.last_active ?? 0, last?.last_active ?? 0, worker?.last_active ?? 0),
+    lastActive: Math.max(canonical?.last_active ?? 0, worker?.last_active ?? 0),
     meta,
     metaKnown,
     model: input.model ?? null,
     name: meta.title || input.display_name || botDisplayName(input.name),
-    preview: stripA2APrefix(preferred?.preview ?? last?.preview ?? ''),
+    preview: stripA2APrefix(canonical?.preview ?? ''),
     profile: input.name,
     working: Boolean(worker)
   }
