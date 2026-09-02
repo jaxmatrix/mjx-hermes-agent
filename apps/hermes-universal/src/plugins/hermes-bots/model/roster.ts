@@ -22,7 +22,16 @@ export interface RosterRowInput {
   ui_meta?: unknown
   last_session?: null | { id: string; last_active: number; preview: string; root_title?: string; title: string }
   worker_session?: null | { id: string; last_active: number; source: string; title: string }
-  preferred_session?: null | { id: string; preview: string; resolved_id: string; root_title: string }
+  preferred_session?: null | {
+    id: string
+    /** The gateway reports this; ignoring it made a bot whose only activity is
+     *  its pinned Bot Chat sort as idle, because `last_session` cannot see a
+     *  hidden session. */
+    last_active?: number
+    preview: string
+    resolved_id: string
+    root_title: string
+  }
 }
 
 export interface RosterRow {
@@ -75,7 +84,7 @@ function rowFrom(input: RosterRowInput, connectionId: string | undefined, metaKn
     hasAvatar: Boolean(input.has_avatar),
     isDefault: Boolean(input.is_default),
     key: groupMemberKey(input.name, connectionId),
-    lastActive: Math.max(last?.last_active ?? 0, worker?.last_active ?? 0),
+    lastActive: Math.max(preferred?.last_active ?? 0, last?.last_active ?? 0, worker?.last_active ?? 0),
     meta,
     metaKnown,
     model: input.model ?? null,

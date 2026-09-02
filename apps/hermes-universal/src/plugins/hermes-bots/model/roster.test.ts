@@ -63,6 +63,29 @@ describe('the merged roster', () => {
     ])
   })
 
+  it('counts the PINNED chat as activity — a hidden Bot Chat is invisible to last_session', () => {
+    // A bot talked to all day through its Bot Chat reported `lastActive: 0` and
+    // sorted below bots nobody had opened in a week.
+    const [bot] = mergeMultiSourceRoster([
+      {
+        metaKnown: true,
+        rows: [
+          row('radar', {
+            preferred_session: {
+              id: 'p',
+              last_active: 4242,
+              preview: 'hi',
+              resolved_id: 'p',
+              root_title: 'Bot Chat'
+            }
+          })
+        ]
+      }
+    ])
+
+    expect(bot.lastActive).toBe(4242)
+  })
+
   it('strips the agent-to-agent wire prefix from a preview', () => {
     expect(stripA2APrefix('Message from 🤖 radar (@radar): ship it')).toBe('ship it')
     expect(stripA2APrefix('a normal message')).toBe('a normal message')

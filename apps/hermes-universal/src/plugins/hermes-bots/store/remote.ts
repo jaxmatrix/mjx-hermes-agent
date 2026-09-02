@@ -97,7 +97,18 @@ export async function sendRemoteDm(
       return { error: 'no canonical chat on that machine', ok: false, reason: 'no-chat' }
     }
 
-    await submitPrompt(storedId, dmWireText(from, text), route)
+    // BIND FIRST. `prompt.submit` resolves through the gateway's live runtime
+    // map, keyed by RUNTIME id — `submitPrompt`'s own parameter says so — and a
+    // stored id only happens to work while that session is already running. A
+    // canonical Bot Chat almost never is, so this was `session not found`
+    // (4001) most of the time. `store/rooms.ts` has always done it this way.
+    const bound = await host.bindSession(storedId, { profile: target.profile })
+
+    if (!bound.ok) {
+      return { error: bound.error ?? 'could not wake that chat', ok: false, reason: 'no-chat' }
+    }
+
+    await submitPrompt(bound.sessionKey, dmWireText(from, text), route)
 
     return { ok: true, storedId }
   } catch (error) {

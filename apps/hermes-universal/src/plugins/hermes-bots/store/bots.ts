@@ -340,7 +340,7 @@ export async function saveBotMeta(row: RosterRow, meta: BotMeta): Promise<SaveBo
  * Idempotent, `allSettled`, one pass — a failure for one id never aborts the
  * sweep.
  */
-export async function sweepHiddenSessions(): Promise<{ hidden: number; skipped: number }> {
+export async function sweepHiddenSessions(): Promise<{ failed: number; hidden: number; skipped: number }> {
   const roster = $roster.get()
   const rooms = $rooms.get()
 
@@ -364,6 +364,10 @@ export async function sweepHiddenSessions(): Promise<{ hidden: number; skipped: 
 
   let skipped = 0
 
+  // `allSettled`, so one failure never aborts the sweep — but a REJECTION is
+  // neither hidden nor skipped, and counting fulfilled-minus-skipped reported
+  // it as hidden. A stale pin makes `session.set_hidden` return 4001, so this
+  // was the common case, not the edge one.
   const results = await Promise.allSettled(
     owned.map(async entry => {
       // Guard 2 uses the title WE recorded for the id, not one we ask the
@@ -379,7 +383,9 @@ export async function sweepHiddenSessions(): Promise<{ hidden: number; skipped: 
     })
   )
 
-  return { hidden: results.filter(result => result.status === 'fulfilled').length - skipped, skipped }
+  const fulfilled = results.filter(result => result.status === 'fulfilled').length
+
+  return { failed: results.length - fulfilled, hidden: fulfilled - skipped, skipped }
 }
 
 /** A bot's @tag, for the composer completions and the room roster. */

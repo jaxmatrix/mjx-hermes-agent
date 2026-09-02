@@ -399,6 +399,24 @@ describe('the roster', () => {
   })
 })
 
+describe('the hidden-session sweep', () => {
+  it('reports a REFUSED hide as failed, not as hidden', async () => {
+    // `allSettled` keeps one failure from aborting the sweep, but counting
+    // fulfilled-minus-skipped booked a rejection as a success. A stale pin
+    // makes `session.set_hidden` return 4001, so this is the common case.
+    $roster.set([row('radar', { chat: 'gone' }), row('scout', { chat: 'live' })] as never)
+    request.mockImplementation(async (method: string, sent: Record<string, unknown>) => {
+      if (method === 'session.set_hidden' && sent.session_id === 'gone') {
+        throw new Error('session not found')
+      }
+
+      return { ok: true }
+    })
+
+    expect(await sweepHiddenSessions()).toEqual({ failed: 1, hidden: 1, skipped: 0 })
+  })
+})
+
 describe('a bot on another machine', () => {
   it('REFUSES to open its chat here, and says how to reach it instead', async () => {
     // Every session door takes a profile and no connection, so resuming a
