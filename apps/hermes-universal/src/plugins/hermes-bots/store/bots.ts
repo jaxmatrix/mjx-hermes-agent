@@ -327,21 +327,64 @@ async function createCanonical(row: RosterRow, route: AgentRoute): Promise<OpenC
 
   try {
     await setSessionTitle(runtimeId, BOT_CHAT_TITLE, route)
-  } catch {
-    // Another writer took the canonical title between our miss and our write —
-    // a second client, a peer DM minting server-side. Adopt the winner. Our own
-    // half-made session holds no messages and no title, so nothing can reach it
-    // and it is simply abandoned.
-    const verdict = resolveCanonicalChat(await askRegistry(route), { mayMint: false })
+  } catch (error) {
+    if (isTitleConflict(error)) {
+      // Another writer took the canonical title between our miss and our write —
+      // a second client, a peer DM minting server-side. Adopt the winner. Our own
+      // half-made session holds no messages and no title, so nothing can reach it
+      // and it is simply abandoned.
+      const verdict = resolveCanonicalChat(await askRegistry(route), { mayMint: false })
 
-    return verdict.kind === 'open'
-      ? openCanonical(row, verdict.storedId, verdict.expectHistory)
-      : { action: 'create', error: 'another client holds this bot’s chat title' }
+      return verdict.kind === 'open'
+        ? openCanonical(row, verdict.storedId, verdict.expectHistory)
+        : { action: 'create', error: 'another client holds this bot’s chat title' }
+    }
+
+    // Any OTHER failure — an older gateway, a database that would not take the
+    // row — leaves a session that is still perfectly live. Only a conflict means
+    // some other chat holds this bot's name; re-asking the registry or minting
+    // again on anything else is how a second chat gets born. So it is adopted
+    // below all the same, and its row persists on the first prompt, exactly as an
+    // ordinary new chat's does.
   }
 
-  // Expected-empty: it was created a moment ago, so there is no transcript to
-  // wait for and waiting would cost 40 seconds and then report failure.
-  return openCanonical(row, storedId, false, 'create')
+  // ADOPTED, not resumed. The session is live on the gateway under `runtimeId`
+  // right now, so there is nothing to wake. Resuming it instead sent a hidden,
+  // profile-owned chat through machinery built for sidebar sessions: the owner
+  // could not be resolved, the resume missed, and the slice was left bound to a
+  // stored id posing as a runtime id — so the first keystroke came back
+  // `session not found`, or the open ran out its clock as `exhausted`.
+  //
+  // The same holds when the title write only queued (`{pending: true}`): adoption
+  // needs no row.
+  const opened = await host.openCreatedSession({
+    profile: row.profile,
+    runtimeSessionId: runtimeId,
+    storedSessionId: storedId
+  })
+
+  if (!opened.ok) {
+    return { action: 'create', error: opened.error, storedId }
+  }
+
+  openedCanonical.add(storedId)
+
+  return { action: 'create', storedId }
+}
+
+/**
+ * Was a title write refused because the title is already held?
+ *
+ * The gateway raises 4022 from the unique title index. The code is read when the
+ * transport carries it and the message otherwise — the one signal that means
+ * "some other chat is this bot's chat", as opposed to "the write did not land".
+ */
+function isTitleConflict(error: unknown): boolean {
+  if ((error as { code?: unknown } | null)?.code === 4022) {
+    return true
+  }
+
+  return /already in use/i.test(error instanceof Error ? error.message : String(error ?? ''))
 }
 
 async function openCanonical(

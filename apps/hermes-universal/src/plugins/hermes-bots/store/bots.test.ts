@@ -11,17 +11,27 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { activeConnectionId, agents, connections, notify, notifyError, openSession, request, requestProfile } =
-  vi.hoisted(() => ({
-    activeConnectionId: vi.fn(),
-    agents: vi.fn(),
-    connections: vi.fn(),
-    notify: vi.fn(),
-    notifyError: vi.fn(),
-    openSession: vi.fn(),
-    request: vi.fn(),
-    requestProfile: vi.fn()
-  }))
+const {
+  activeConnectionId,
+  agents,
+  connections,
+  notify,
+  notifyError,
+  openCreatedSession,
+  openSession,
+  request,
+  requestProfile
+} = vi.hoisted(() => ({
+  activeConnectionId: vi.fn(),
+  agents: vi.fn(),
+  connections: vi.fn(),
+  notify: vi.fn(),
+  notifyError: vi.fn(),
+  openCreatedSession: vi.fn(),
+  openSession: vi.fn(),
+  request: vi.fn(),
+  requestProfile: vi.fn()
+}))
 
 // A PARTIAL mock: the store's own atoms come from the real SDK re-export, so
 // only the host doors are stubbed. Mocking the module wholesale would replace
@@ -34,6 +44,7 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => ({
     connections,
     notify,
     notifyError,
+    openCreatedSession,
     openSession,
     request,
     requestProfile,
@@ -91,6 +102,12 @@ beforeEach(() => {
   request.mockReset()
   requestProfile.mockReset()
   openSession.mockReset().mockResolvedValue({ ok: true, storedSessionId: 'x' })
+  openCreatedSession
+    .mockReset()
+    .mockImplementation(async (created: { storedSessionId: string }) => ({
+      ok: true,
+      storedSessionId: created.storedSessionId
+    }))
   agents.mockReset().mockResolvedValue({ agents: [], sources: [] })
   connections.mockReset().mockResolvedValue([])
   activeConnectionId.mockReset().mockReturnValue('local')
@@ -143,9 +160,14 @@ describe('opening a bot chat', () => {
     expect(result).toMatchObject({ action: 'create', storedId: 'stored-1' })
     expect(calls('session.create')[0]).toMatchObject({ hidden: true, title: 'Bot Chat' })
     expect(calls('session.title')[0]).toMatchObject({ session_id: 'run-1', title: 'Bot Chat' })
-    // Expected-empty: a chat minted a moment ago has no transcript to wait for,
-    // and waiting costs 40 seconds and then reports failure.
-    expect(openSession).toHaveBeenCalledWith('stored-1', { expectHistory: false, profile: 'radar' })
+    // ADOPTED, not resumed: the session is live under `run-1` already. A resume
+    // here is what left a hidden chat looking open with nothing live behind it.
+    expect(openCreatedSession).toHaveBeenCalledWith({
+      profile: 'radar',
+      runtimeSessionId: 'run-1',
+      storedSessionId: 'stored-1'
+    })
+    expect(openSession).not.toHaveBeenCalled()
   })
 
   it('does the three steps in order — create, title, open', async () => {
@@ -156,6 +178,13 @@ describe('opening a bot chat', () => {
     const order = (request.mock.calls as Call[]).map(([method]) => method).filter(m => m !== 'profiles.list')
 
     expect(order).toEqual(['session.list', 'session.create', 'session.title'])
+
+    // The title write — the one that makes the row — lands before the view does.
+    const titleIndex = (request.mock.calls as Call[]).findIndex(([method]) => method === 'session.title')
+
+    expect(openCreatedSession.mock.invocationCallOrder[0]).toBeGreaterThan(
+      request.mock.invocationCallOrder[titleIndex]
+    )
   })
 
   it('never sends a kickoff message', async () => {
@@ -176,7 +205,7 @@ describe('opening a bot chat', () => {
     await openBotChat(row('radar') as never)
 
     expect(calls('session.create')).toHaveLength(1)
-    expect(openSession).toHaveBeenCalledWith('stored-1', { expectHistory: false, profile: 'radar' })
+    expect(openCreatedSession).toHaveBeenCalledWith(expect.objectContaining({ storedSessionId: 'stored-1' }))
   })
 
   it('ADOPTS the winner when another writer took the title first', async () => {
@@ -228,6 +257,71 @@ describe('opening a bot chat', () => {
 
     await openBotChat(row('radar') as never)
 
+    expect(calls('session.create')).toHaveLength(1)
+    expect(notifyError).toHaveBeenCalled()
+  })
+
+  it('adopts the live session when the title write fails for any OTHER reason', async () => {
+    // Only a title CONFLICT means some other chat is this bot's chat. An older
+    // gateway or a database that would not take the row leaves our session
+    // perfectly live — and re-asking the registry or minting again there is how
+    // a second chat gets born.
+    request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') {
+        return { sessions: [] }
+      }
+
+      if (method === 'session.create') {
+        return { session_id: 'run-1', stored_session_id: 'stored-1' }
+      }
+
+      if (method === 'session.title') {
+        throw new Error('5007 database unavailable')
+      }
+
+      return { ok: true }
+    })
+
+    const result = await openBotChat(row('radar') as never)
+
+    expect(result).toMatchObject({ action: 'create', storedId: 'stored-1' })
+    expect(calls('session.list')).toHaveLength(1)
+    expect(calls('session.create')).toHaveLength(1)
+    expect(openCreatedSession).toHaveBeenCalledWith(expect.objectContaining({ runtimeSessionId: 'run-1' }))
+  })
+
+  it('adopts the live session when the title write only QUEUED', async () => {
+    // `{pending: true}` means the row did not take yet. Adoption needs no row: the
+    // session is live, and the first prompt persists it.
+    request.mockImplementation(async (method: string) => {
+      if (method === 'session.list') {
+        return { sessions: [] }
+      }
+
+      if (method === 'session.create') {
+        return { session_id: 'run-1', stored_session_id: 'stored-1' }
+      }
+
+      if (method === 'session.title') {
+        return { pending: true, title: 'Bot Chat' }
+      }
+
+      return { ok: true }
+    })
+
+    const result = await openBotChat(row('radar') as never)
+
+    expect(result).toMatchObject({ action: 'create', storedId: 'stored-1' })
+    expect(openCreatedSession).toHaveBeenCalledWith(expect.objectContaining({ storedSessionId: 'stored-1' }))
+  })
+
+  it('reports an adoption the host refused, without minting again', async () => {
+    request.mockImplementation(registry([]))
+    openCreatedSession.mockResolvedValue({ error: 'no-gateway', ok: false })
+
+    const result = await openBotChat(row('radar') as never)
+
+    expect(result).toMatchObject({ action: 'create', error: 'no-gateway' })
     expect(calls('session.create')).toHaveLength(1)
     expect(notifyError).toHaveBeenCalled()
   })
