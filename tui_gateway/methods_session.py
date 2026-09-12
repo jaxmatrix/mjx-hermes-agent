@@ -407,7 +407,29 @@ def _(rid, params: dict) -> dict:
                 # streams the whole turn anyway and the row exists by upgrade time.
                 found = {}
             else:
-                return _err(rid, 4007, "session not found")
+                # A LIVE session with no row yet: every fresh Bot Chat, and any
+                # chat whose first prompt has not landed. The database has never
+                # heard of it, but the gateway is holding it — and refusing it
+                # here "killed messaging for never-spoken bots" upstream. Match it
+                # by stored key (or a title still pending) under THIS profile
+                # home, and reattach it exactly as the live fast path below does.
+                from .live_unpersisted import find_live_unpersisted
+
+                live_unpersisted = find_live_unpersisted(_sessions, target, profile_home)
+                if live_unpersisted is None:
+                    return _err(rid, 4007, "session not found")
+                live_sid, live_session = live_unpersisted
+                with _session_resume_lock:
+                    payload = _live_session_payload(
+                        live_sid,
+                        live_session,
+                        cols=cols,
+                        touch=True,
+                        transport=current_transport() or _stdio_transport,
+                        omit_messages=omit_messages,
+                    )
+                payload["resumed"] = target
+                return _ok(rid, payload)
 
         # Follow the compression-continuation chain to the live tip so a resume on
         # a rotated-out parent id binds to the descendant that actually holds the
