@@ -90,6 +90,28 @@ export const registrySessionRouter: SessionRequestRouter = {
       return timeoutMs === undefined ? requestGateway<T>(method, sent) : requestGateway<T>(method, sent, timeoutMs)
     }
 
+    // The SAME connection, another profile. The gateway serves every profile over
+    // one socket and takes `profile` on the request, so this goes over the socket
+    // the app already holds. A secondary here bought nothing and cost three
+    // things: `connections_resolve` needs a registry row a URL connection may not
+    // have, so it failed outright as `no-gateway`; `local` and `ssh` have no
+    // address a second socket could dial at all; and a session resumed over one
+    // streams its events to a socket reaped after a minute idle — not to the chat
+    // the user is looking at.
+    if (route.connectionId === active.connectionId) {
+      if ($gatewaySwitching.get()) {
+        throw new SessionRouteError('switching', route.scopeKey)
+      }
+
+      if ($gatewayState.get() !== 'open') {
+        throw new SessionRouteError('no-gateway', route.scopeKey)
+      }
+
+      const scoped = { ...params, profile: route.profile }
+
+      return timeoutMs === undefined ? requestGateway<T>(method, scoped) : requestGateway<T>(method, scoped, timeoutMs)
+    }
+
     // Another source. A secondary is request-only and is never handed out as
     // "the gateway" — see `store/gateway-secondaries.ts`.
     const lease = await leaseSecondary(route.scopeKey, route.connectionId).catch(() => null)
