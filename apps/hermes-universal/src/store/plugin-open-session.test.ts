@@ -11,6 +11,7 @@ const openSession = vi.fn()
 const focusOpenSession = vi.fn()
 const selectProfile = vi.fn()
 const knownSessionProfile = vi.fn<(id: string) => string | undefined>()
+const adoptLiveSession = vi.fn()
 const resolveSessionProfile = vi.fn<() => Promise<string | undefined>>()
 
 vi.mock('./transcript-cache-sync', async importOriginal => {
@@ -20,6 +21,7 @@ vi.mock('./transcript-cache-sync', async importOriginal => {
 })
 
 vi.mock('./session', () => ({
+  adoptLiveSession: (input: unknown) => adoptLiveSession(input),
   knownSessionProfile: (id: string) => knownSessionProfile(id),
   openSession: (id: string) => openSession(id),
   resolveSessionProfile: () => resolveSessionProfile()
@@ -58,7 +60,7 @@ vi.mock('./connection-ready', async () => {
 })
 
 import { $connectionReady } from './connection-ready'
-import { $resumeExhaustedSessionId, openPluginSession } from './plugin-open-session'
+import { $resumeExhaustedSessionId, openCreatedPluginSession, openPluginSession } from './plugin-open-session'
 import { $activeGatewayProfile } from './profile'
 
 // Both are writable ATOMS under the mocks above; the real modules publish them
@@ -72,6 +74,7 @@ beforeEach(() => {
   $resumeExhaustedSessionId.set(null)
   awaitSessionPainted.mockReset().mockResolvedValue(undefined)
   openSession.mockReset()
+  adoptLiveSession.mockReset()
   focusOpenSession.mockReset()
   selectProfile.mockReset()
   knownSessionProfile.mockReset().mockReturnValue(undefined)
@@ -190,5 +193,45 @@ describe('openPluginSession', () => {
     await openPluginSession('s1')
 
     expect($resumeExhaustedSessionId.get()).toBeNull()
+  })
+})
+
+describe('openCreatedPluginSession', () => {
+  const created = { profile: 'radar', runtimeSessionId: 'run-1', storedSessionId: 'stored-1' }
+
+  it('binds a just-created session to its LIVE runtime id, and never resumes it', async () => {
+    // A session created a moment ago has nothing to resume. Routing it through a
+    // cold hydrate is what left a hidden session looking open with nothing live
+    // behind it, so the first keystroke came back "session not found".
+    const result = openCreatedPluginSession(created)
+
+    expect(result).toEqual({ ok: true, storedSessionId: 'stored-1' })
+    expect(adoptLiveSession).toHaveBeenCalledWith(created)
+    expect(openSession).not.toHaveBeenCalled()
+    expect(awaitSessionPainted).not.toHaveBeenCalled()
+  })
+
+  it('does not switch the app to the session owner', async () => {
+    // A profile switch repoints every profile-scoped call in the app; the live
+    // session already carries its own profile on the gateway.
+    openCreatedPluginSession(created)
+
+    expect(selectProfile).not.toHaveBeenCalled()
+  })
+
+  it('brings it to the front, unless told not to', async () => {
+    openCreatedPluginSession(created)
+    expect(focusOpenSession).toHaveBeenCalledWith('stored-1')
+
+    focusOpenSession.mockReset()
+    openCreatedPluginSession(created, { focus: false })
+    expect(focusOpenSession).not.toHaveBeenCalled()
+  })
+
+  it('refuses without a gateway, and adopts nothing', async () => {
+    READY.set(false)
+
+    expect(openCreatedPluginSession(created)).toEqual({ error: 'no-gateway', ok: false })
+    expect(adoptLiveSession).not.toHaveBeenCalled()
   })
 })

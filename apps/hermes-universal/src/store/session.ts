@@ -155,6 +155,23 @@ export function clearSessionProfileCache(): void {
 
 $profiles.listen(clearSessionProfileCache)
 
+/**
+ * Record a session's owner that the caller already knows for certain.
+ *
+ * For a session no listing will ever contain — a plugin's hidden session, minted
+ * a moment ago — `knownSessionProfile` has no row to read and
+ * `resolveSessionProfile` would have to probe every backend for an answer the
+ * caller is already holding. Probing is also where it goes wrong: a miss routes
+ * the resume and the transcript read to whichever database is live.
+ */
+export function rememberSessionProfile(storedSessionId: string, profile: string): void {
+  const owner = profile.trim()
+
+  if (storedSessionId && owner) {
+    profileByStoredId.set(storedSessionId, owner)
+  }
+}
+
 /** The owning profile we ALREADY know, with no network round-trip: the row's own
  *  stamp, or a previous resolution. Used where an await would be wrong (the
  *  remembered-id subscriber) or wasteful (an optimistic mutation). */
@@ -1101,6 +1118,52 @@ export function openSession(storedId: string, options?: OpenSessionOptions): Pro
   }
 
   return hydrateColdSession(storedId)
+}
+
+/**
+ * Put a session the caller JUST CREATED on screen, bound to its live runtime id.
+ *
+ * NOT a resume, and that is the whole point. `session.create` answers with a
+ * runtime id the gateway is already holding live, so there is nothing to wake:
+ * this is the same binding `ensureSession` and `forkBranchSession` make, and the
+ * same promotion `openSession`'s warm path makes, with no database row, no REST
+ * read and no route resolution in between.
+ *
+ * Going through `openSession` instead is what broke a plugin's hidden session. A
+ * cold hydrate assumes a session some listing contains: it cannot find the owner
+ * of a hidden row, it resumes against whichever database is live, and when that
+ * fails it rekeys the slice with a stored id posing as a runtime id — so the open
+ * reports success and the first keystroke is refused as `session not found`.
+ *
+ * Deliberately writes NO sidebar row. `registerNewSession` would; a session a
+ * plugin keeps hidden must not appear in the shared list, which is exactly the
+ * overlap between two modes of conversation that hiding exists to prevent.
+ */
+export function adoptLiveSession(input: {
+  cwd?: null | string
+  profile?: null | string
+  runtimeSessionId: string
+  storedSessionId: string
+}): void {
+  const { runtimeSessionId, storedSessionId } = input
+
+  if (input.profile) {
+    rememberSessionProfile(storedSessionId, input.profile)
+  }
+
+  ensureSessionSlice(runtimeSessionId, {
+    busy: false,
+    cwd: (input.cwd ?? '').trim(),
+    messages: [],
+    runtimeSessionId,
+    sessionStartedAt: Date.now(),
+    storedSessionId
+  })
+
+  openGeneration++ // cancel any hydrate still in flight
+  resetUnscopedStreamPin()
+  $activeStoredSessionId.set(storedSessionId)
+  $activeSessionKey.set(runtimeSessionId)
 }
 
 /**

@@ -60,7 +60,13 @@ import {
   type PluginProfileRoute,
   requestPluginProfile
 } from '@/store/plugin-connection-source'
-import { openPluginSession, type PluginOpenSessionOptions, warmProfile } from '@/store/plugin-open-session'
+import {
+  openCreatedPluginSession,
+  openPluginSession,
+  type PluginCreatedSession,
+  type PluginOpenSessionOptions,
+  warmProfile
+} from '@/store/plugin-open-session'
 import {
   type BindSessionOptions,
   type BindSessionResult,
@@ -320,6 +326,17 @@ export const host = {
    */
   openSession: async (storedSessionId: string, options?: PluginOpenSessionOptions) =>
     openPluginSession(storedSessionId, options),
+
+  /**
+   * Show a session THIS plugin just created with `session.create`, bound to the
+   * live runtime id it answered with.
+   *
+   * Use this, not `openSession`, for a session minted a moment ago: there is
+   * nothing to resume, and a resume of a session no listing contains cannot find
+   * its owner. Writes no sidebar row — a plugin's hidden session stays hidden.
+   */
+  openCreatedSession: async (created: PluginCreatedSession, options?: { focus?: boolean }) =>
+    openCreatedPluginSession(created, options),
 
   /** The owning profile of a stored session, as far as the client knows. */
   sessionProfile: (storedSessionId: string): string | undefined => knownSessionProfile(storedSessionId),

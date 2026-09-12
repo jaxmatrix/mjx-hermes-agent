@@ -40,7 +40,13 @@ import { requestGateway } from '@/store/gateway'
 import * as notifications from '@/store/notifications'
 import { $showAllProfiles } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
-import { $sessionStates, hydratingKey, updateSession } from '@/store/session-state-types'
+import {
+  $activeSessionKey,
+  $sessionStates,
+  hydratingKey,
+  runtimeKeyForStoredSession,
+  updateSession
+} from '@/store/session-state-types'
 import { $transcriptPaint, __resetTranscriptPaint } from '@/store/transcript-paint'
 import { clearAllTurns, getInflightTurn } from '@/store/turn-lifecycle'
 import { resetSessionStates, seedActiveSession, seedSession } from '@/test-sessions'
@@ -59,6 +65,7 @@ import {
   $sessionsTotal,
   $unreadFinishedSessionIds,
   $workingSessionIds,
+  adoptLiveSession,
   archiveSessionLocal,
   branchCurrentSession,
   branchStoredSession,
@@ -1741,5 +1748,49 @@ describe('openSession — the cached-tail paint', () => {
 
     expect(readTranscriptTail('stored-9')).toBeNull()
     expect(readTranscriptTail('stored-root')).toBeNull()
+  })
+})
+
+describe('adoptLiveSession — a session created a moment ago', () => {
+  it('binds the LIVE runtime id and focuses it, with no resume and no transcript read', () => {
+    resetSessionStates()
+    $sessions.set([])
+    vi.mocked(requestGateway).mockClear()
+    vi.mocked(getSessionMessages).mockClear()
+
+    adoptLiveSession({ profile: 'radar', runtimeSessionId: 'run-1', storedSessionId: 'stored-1' })
+
+    expect($activeSessionKey.get()).toBe('run-1')
+    expect($activeStoredSessionId.get()).toBe('stored-1')
+    expect($sessionStates.get()['run-1']).toMatchObject({
+      busy: false,
+      runtimeSessionId: 'run-1',
+      storedSessionId: 'stored-1'
+    })
+    // Found again by its durable id — what the router and the focus lookup use.
+    expect(runtimeKeyForStoredSession('stored-1')).toBe('run-1')
+    // There is nothing to wake: a resume here is what broke a hidden session.
+    expect(requestGateway).not.toHaveBeenCalled()
+    expect(getSessionMessages).not.toHaveBeenCalled()
+  })
+
+  it('writes NO sidebar row — a hidden session stays out of the shared list', () => {
+    // A bot's forever-chat and an ordinary session are different modes of
+    // conversation; a row here is exactly the overlap hiding exists to prevent.
+    resetSessionStates()
+    $sessions.set([])
+
+    adoptLiveSession({ profile: 'radar', runtimeSessionId: 'run-2', storedSessionId: 'stored-2' })
+
+    expect($sessions.get()).toEqual([])
+  })
+
+  it('remembers the owner that no listing could ever report', () => {
+    resetSessionStates()
+    $sessions.set([])
+
+    adoptLiveSession({ profile: 'radar', runtimeSessionId: 'run-3', storedSessionId: 'stored-3' })
+
+    expect(knownSessionProfile('stored-3')).toBe('radar')
   })
 })

@@ -2,7 +2,7 @@ import { atom } from '@/store/atom'
 
 import { $connectionReady } from './connection-ready'
 import { $activeGatewayProfile, normalizeProfileKey, selectProfile } from './profile'
-import { knownSessionProfile, openSession, resolveSessionProfile } from './session'
+import { adoptLiveSession, knownSessionProfile, openSession, resolveSessionProfile } from './session'
 import { $sessionStates, runtimeKeyForStoredSession } from './session-state-types'
 import { focusOpenSession } from './session-states'
 import { awaitSessionPainted, SessionWakeError } from './transcript-cache-sync'
@@ -190,4 +190,48 @@ export async function openPluginSession(
   }
 
   return { ok: true, storedSessionId: canonicalStoredId(storedSessionId) }
+}
+
+/** A session a plugin has JUST created with `session.create`, as it answered. */
+export interface PluginCreatedSession {
+  /** The RUNTIME handle — the id the gateway is holding live right now. */
+  runtimeSessionId: string
+  /** The DURABLE row key. What the slice is remembered and routed by. */
+  storedSessionId: string
+  /** The profile it was created under, which the client could not otherwise
+   *  learn for a session no listing contains. */
+  profile?: null | string
+  cwd?: null | string
+}
+
+/**
+ * `host.openCreatedSession(created)` — show a session the plugin just created.
+ *
+ * The companion to `openPluginSession`, and the difference is the whole reason
+ * it exists: that door RESUMES a stored session, and a session created a moment
+ * ago has nothing to resume. It is live on the gateway already, under the
+ * runtime id `session.create` handed back, so it is bound straight to that id —
+ * no resume, no transcript wait, and no profile switch.
+ *
+ * A plugin that routed a fresh session through `openPluginSession` instead got a
+ * cold hydrate built for sidebar sessions: an owner it could not resolve for a
+ * hidden row, a resume against the wrong database, and a slice left looking open
+ * with nothing live behind it.
+ */
+export function openCreatedPluginSession(
+  created: PluginCreatedSession,
+  options: { focus?: boolean } = {}
+): PluginOpenSessionResult {
+  if (!$connectionReady.get()) {
+    return { error: 'no-gateway', ok: false }
+  }
+
+  adoptLiveSession(created)
+  $resumeExhaustedSessionId.set(null)
+
+  if (options.focus !== false) {
+    focusOpenSession(created.storedSessionId)
+  }
+
+  return { ok: true, storedSessionId: created.storedSessionId }
 }
