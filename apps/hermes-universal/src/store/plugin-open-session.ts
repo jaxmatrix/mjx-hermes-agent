@@ -2,7 +2,13 @@ import { atom } from '@/store/atom'
 
 import { $connectionReady } from './connection-ready'
 import { $activeGatewayProfile, normalizeProfileKey, selectProfile } from './profile'
-import { adoptLiveSession, knownSessionProfile, openSession, resolveSessionProfile } from './session'
+import {
+  adoptLiveSession,
+  knownSessionProfile,
+  openSession,
+  rememberSessionProfile,
+  resolveSessionProfile
+} from './session'
 import { $sessionStates, runtimeKeyForStoredSession } from './session-state-types'
 import { focusOpenSession } from './session-states'
 import { awaitSessionPainted, SessionWakeError } from './transcript-cache-sync'
@@ -139,6 +145,15 @@ export async function openPluginSession(
   // as well would be a second routing decision for one act.
   if (!$connectionReady.get()) {
     return { error: 'no-gateway', ok: false }
+  }
+
+  // The caller KNOWS whose session this is. Recording it before the open is what
+  // lets the hydrate scope its transcript read and its resume to that profile: a
+  // session no listing contains — a plugin's hidden one — has no row to resolve
+  // an owner from, and a probe that misses routes both to whichever database is
+  // live.
+  if (options.profile) {
+    rememberSessionProfile(storedSessionId, options.profile)
   }
 
   const owner = options.profile ?? knownSessionProfile(storedSessionId) ?? (await resolveSessionProfile(storedSessionId))

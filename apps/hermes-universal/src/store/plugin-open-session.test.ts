@@ -12,6 +12,7 @@ const focusOpenSession = vi.fn()
 const selectProfile = vi.fn()
 const knownSessionProfile = vi.fn<(id: string) => string | undefined>()
 const adoptLiveSession = vi.fn()
+const rememberSessionProfile = vi.fn()
 const resolveSessionProfile = vi.fn<() => Promise<string | undefined>>()
 
 vi.mock('./transcript-cache-sync', async importOriginal => {
@@ -24,6 +25,7 @@ vi.mock('./session', () => ({
   adoptLiveSession: (input: unknown) => adoptLiveSession(input),
   knownSessionProfile: (id: string) => knownSessionProfile(id),
   openSession: (id: string) => openSession(id),
+  rememberSessionProfile: (id: string, owner: string) => rememberSessionProfile(id, owner),
   resolveSessionProfile: () => resolveSessionProfile()
 }))
 
@@ -75,6 +77,7 @@ beforeEach(() => {
   awaitSessionPainted.mockReset().mockResolvedValue(undefined)
   openSession.mockReset()
   adoptLiveSession.mockReset()
+  rememberSessionProfile.mockReset()
   focusOpenSession.mockReset()
   selectProfile.mockReset()
   knownSessionProfile.mockReset().mockReturnValue(undefined)
@@ -193,6 +196,24 @@ describe('openPluginSession', () => {
     await openPluginSession('s1')
 
     expect($resumeExhaustedSessionId.get()).toBeNull()
+  })
+})
+
+describe('openPluginSession — the owner it was handed', () => {
+  it('records the owner BEFORE opening, so the resume is scoped to it', async () => {
+    // A hidden session has no listing row to resolve an owner from, and a probe
+    // that misses sends the resume and the transcript read to whichever
+    // database is live.
+    await openPluginSession('s1', { profile: 'radar' })
+
+    expect(rememberSessionProfile).toHaveBeenCalledWith('s1', 'radar')
+    expect(rememberSessionProfile.mock.invocationCallOrder[0]).toBeLessThan(openSession.mock.invocationCallOrder[0])
+  })
+
+  it('records nothing when it was handed no owner', async () => {
+    await openPluginSession('s1')
+
+    expect(rememberSessionProfile).not.toHaveBeenCalled()
   })
 })
 

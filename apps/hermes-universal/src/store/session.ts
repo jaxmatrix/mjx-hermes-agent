@@ -225,9 +225,12 @@ export async function resolveSessionProfile(storedSessionId: null | string): Pro
     .map(profile => normalizeProfileKey(profile.name))
     .filter(key => key !== activeKey)
 
-  // The active profile first, unscoped — one row lookup that covers every
-  // single-profile install and any id on the live backend.
-  const candidates: (string | undefined)[] = [undefined, ...others]
+  // The ACTIVE profile first, BY NAME. An unscoped lookup reads the backend's
+  // LAUNCH database, which is the active profile only when the two happen to
+  // coincide — and the active profile is excluded from `others` above, so an
+  // unscoped first probe meant the one profile most likely to own the id was
+  // never actually asked.
+  const candidates: (string | undefined)[] = [activeKey, ...others]
 
   for (const candidate of candidates) {
     try {

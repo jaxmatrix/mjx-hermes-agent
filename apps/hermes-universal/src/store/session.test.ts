@@ -549,6 +549,18 @@ describe('owning profile', () => {
     expect(getSession).not.toHaveBeenCalled()
   })
 
+  it('asks the ACTIVE profile BY NAME first, not the launch database', async () => {
+    // Unscoped, the first probe read the backend's launch database — and the
+    // active profile is excluded from the rest of the list, so the profile most
+    // likely to own the id was never actually asked.
+    $profiles.set([profile('default'), profile('work')])
+    vi.mocked(getSession).mockReset().mockResolvedValueOnce({ id: 'stored-e', profile: 'default' } as SessionInfo)
+
+    await expect(resolveSessionProfile('stored-e')).resolves.toBe('default')
+
+    expect(vi.mocked(getSession).mock.calls[0]).toEqual(['stored-e', 'default'])
+  })
+
   it('probes other profiles for a session outside the loaded rows', async () => {
     $profiles.set([profile('default'), profile('work')])
     vi.mocked(getSession)
