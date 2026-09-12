@@ -1109,6 +1109,18 @@ export function openSession(storedId: string, options?: OpenSessionOptions): Pro
       return undefined
     }
 
+    // A warm slice with NO runtime binding is not a live session. It is what a
+    // failed resume leaves behind: the history on screen and nothing live behind
+    // it. Promoting it gives a chat that can neither stream nor submit, and a
+    // caller waiting on its binding runs out the clock. Hydrate again instead —
+    // the only way to get a bound session — after dropping the husk, so the
+    // stored id is indexed to exactly one slice.
+    if (!$sessionStates.get()[warm]?.runtimeSessionId) {
+      dropSessionState(warm)
+
+      return hydrateColdSession(storedId)
+    }
+
     openGeneration++ // cancel any hydrate still in flight
     resetUnscopedStreamPin()
     $activeStoredSessionId.set(storedId)
@@ -1485,13 +1497,18 @@ async function hydrateColdSession(storedId: string): Promise<void> {
     }
 
     // The resume RPC failed. Fall back to the REST transcript alone (already
-    // painted above when it resolved) so the chat at least shows its history,
-    // with no live runtime binding.
+    // painted above when it resolved) so the chat at least shows its history —
+    // with NO live runtime binding, and that is load-bearing. This used to write
+    // `runtimeSessionId: storedId`: a stored id posing as a runtime id. The wake
+    // took it for a binding, the open reported success, and the first keystroke
+    // went out as `prompt.submit` with an id the gateway's runtime map had never
+    // held — "session not found". Left unbound, a send takes `ensureSession`'s
+    // resume-or-throw branch, and a re-open hydrates again (see `openSession`).
     const transcript = await transcriptPromise
 
     if (transcript) {
       rekeySession(key, storedId, {
-        runtimeSessionId: storedId,
+        runtimeSessionId: null,
         storedSessionId: storedId,
         messages: toChatMessages(transcript.messages ?? [])
       })

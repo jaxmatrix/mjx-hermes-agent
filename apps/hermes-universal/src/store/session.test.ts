@@ -30,6 +30,7 @@ vi.mock('@/store/gateway', async () => {
   }
 })
 
+import { GatewayRpcError } from '@/gateway/rpc-error'
 import { deleteSession, getSession, getSessionMessages, listAllProfileSessions, renameSession } from '@/hermes'
 import { ApiError } from '@/lib/api'
 import type { ChatMessage } from '@/lib/chat-messages'
@@ -1792,5 +1793,66 @@ describe('adoptLiveSession — a session created a moment ago', () => {
     adoptLiveSession({ profile: 'radar', runtimeSessionId: 'run-3', storedSessionId: 'stored-3' })
 
     expect(knownSessionProfile('stored-3')).toBe('radar')
+  })
+})
+
+describe('openSession — a resume that fails never fakes a live binding', () => {
+  const liveKeyOf = (storedId: string) => {
+    const key = runtimeKeyForStoredSession(storedId)
+
+    return key ? ($sessionStates.get()[key]?.runtimeSessionId ?? null) : null
+  }
+
+  it('keeps the history on screen but leaves the session UNBOUND', async () => {
+    // A stored id posing as a runtime id made the open look successful, and the
+    // first keystroke then went out as prompt.submit with an id the gateway's
+    // runtime map has never held: "session not found".
+    resetSessionStates()
+    vi.mocked(getSessionMessages).mockReset().mockResolvedValue({
+      messages: [{ content: 'earlier words', role: 'user' }],
+      session_id: 'stored-dead'
+    } as never)
+    vi.mocked(requestGateway).mockReset().mockRejectedValue(new GatewayRpcError('session not found', 4007))
+
+    await openSession('stored-dead')
+
+    expect($messages.get().some(message => message.role === 'user')).toBe(true)
+    expect($sessionId.get()).toBeFalsy()
+    expect(liveKeyOf('stored-dead')).toBeFalsy()
+  })
+
+  it('leaves it unbound when the transcript page is merely empty, too', async () => {
+    // `{messages: []}` is truthy — it took the same fake-binding branch.
+    resetSessionStates()
+    vi.mocked(getSessionMessages)
+      .mockReset()
+      .mockResolvedValue({ messages: [], session_id: 'stored-dead-2' } as never)
+    vi.mocked(requestGateway).mockReset().mockRejectedValue(new GatewayRpcError('session not found', 4007))
+
+    await openSession('stored-dead-2')
+
+    expect($sessionId.get()).toBeFalsy()
+  })
+
+  it('re-opening an unbound session resumes again, and binds when it now succeeds', async () => {
+    // Promoting a warm-but-UNBOUND slice without a resume is a chat that can
+    // neither stream nor submit, and a plugin waiting on its binding ran out the
+    // clock as "exhausted".
+    resetSessionStates()
+    vi.mocked(getSessionMessages)
+      .mockReset()
+      .mockResolvedValue({ messages: [{ content: 'hi', role: 'user' }], session_id: 'stored-3' } as never)
+    vi.mocked(requestGateway).mockReset().mockRejectedValue(new GatewayRpcError('session not found', 4007))
+
+    await openSession('stored-3')
+    expect($sessionId.get()).toBeFalsy()
+
+    vi.mocked(requestGateway).mockReset().mockResolvedValue({ messages: [], session_id: 'runtime-3' })
+
+    await openSession('stored-3')
+
+    expect(requestGateway).toHaveBeenCalled()
+    expect($sessionId.get()).toBe('runtime-3')
+    expect(liveKeyOf('stored-3')).toBe('runtime-3')
   })
 })
