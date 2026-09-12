@@ -13,6 +13,7 @@ const selectProfile = vi.fn()
 const knownSessionProfile = vi.fn<(id: string) => string | undefined>()
 const adoptLiveSession = vi.fn()
 const rememberSessionProfile = vi.fn()
+const markPluginOwnedSession = vi.fn()
 const resolveSessionProfile = vi.fn<() => Promise<string | undefined>>()
 
 vi.mock('./transcript-cache-sync', async importOriginal => {
@@ -24,6 +25,7 @@ vi.mock('./transcript-cache-sync', async importOriginal => {
 vi.mock('./session', () => ({
   adoptLiveSession: (input: unknown) => adoptLiveSession(input),
   knownSessionProfile: (id: string) => knownSessionProfile(id),
+  markPluginOwnedSession: (id: string) => markPluginOwnedSession(id),
   openSession: (id: string) => openSession(id),
   rememberSessionProfile: (id: string, owner: string) => rememberSessionProfile(id, owner),
   resolveSessionProfile: () => resolveSessionProfile()
@@ -78,6 +80,7 @@ beforeEach(() => {
   openSession.mockReset()
   adoptLiveSession.mockReset()
   rememberSessionProfile.mockReset()
+  markPluginOwnedSession.mockReset()
   focusOpenSession.mockReset()
   selectProfile.mockReset()
   knownSessionProfile.mockReset().mockReturnValue(undefined)
@@ -214,6 +217,23 @@ describe('openPluginSession — the owner it was handed', () => {
     await openPluginSession('s1')
 
     expect(rememberSessionProfile).not.toHaveBeenCalled()
+  })
+})
+
+describe('openPluginSession — a hidden session', () => {
+  it('marks it plugin-owned BEFORE opening, so it is never remembered as the place to land', async () => {
+    // The open's active-id write is what the last-session subscriber reacts to;
+    // marked after it, the hidden chat is already remembered.
+    await openPluginSession('s1', { hidden: true, profile: 'radar' })
+
+    expect(markPluginOwnedSession).toHaveBeenCalledWith('s1')
+    expect(markPluginOwnedSession.mock.invocationCallOrder[0]).toBeLessThan(openSession.mock.invocationCallOrder[0])
+  })
+
+  it('marks nothing for an ordinary session', async () => {
+    await openPluginSession('s1', { profile: 'radar' })
+
+    expect(markPluginOwnedSession).not.toHaveBeenCalled()
   })
 })
 

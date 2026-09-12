@@ -95,9 +95,18 @@ const LAST_SESSION_KEY = 'hermes.lastSessionId.byProfile'
 
 const $lastSessionByProfile = persistentAtom<Record<string, string>>(LAST_SESSION_KEY, {}, Codecs.stringRecord)
 
+/**
+ * Sessions a plugin owns and keeps HIDDEN — a bot's forever-chat.
+ *
+ * Never remembered as a profile's place. Boot lands on the remembered id as an
+ * ordinary chat in the main pane, and a hidden session there is exactly the
+ * overlap between two modes of conversation that hiding exists to prevent.
+ */
+const pluginOwnedSessionIds = new Set<string>()
+
 if (ownsPersistedAppState()) {
   $activeStoredSessionId.subscribe(id => {
-    if (!id) {
+    if (!id || pluginOwnedSessionIds.has(id)) {
       return
     }
 
@@ -113,6 +122,34 @@ if (ownsPersistedAppState()) {
 /** The session to land on at boot, if any — the one last open on THIS profile. */
 export function lastOpenedSessionId(): null | string {
   return $lastSessionByProfile.get()[$activeGatewayProfile.get()] ?? null
+}
+
+/**
+ * Mark a session as a plugin's HIDDEN session, so it is never remembered as the
+ * place to land at boot.
+ *
+ * Also forgets it if it was ALREADY remembered: an install that opened a bot's
+ * chat before this guard existed has that id sitting in the persisted memory, and
+ * would otherwise keep restoring it into the main pane on every launch. The purge
+ * is a write to persisted app state, so only the window that owns it makes it.
+ */
+export function markPluginOwnedSession(storedSessionId: string): void {
+  if (!storedSessionId) {
+    return
+  }
+
+  pluginOwnedSessionIds.add(storedSessionId)
+
+  if (!ownsPersistedAppState()) {
+    return
+  }
+
+  const remembered = $lastSessionByProfile.get()
+  const kept = Object.fromEntries(Object.entries(remembered).filter(([, id]) => id !== storedSessionId))
+
+  if (Object.keys(kept).length !== Object.keys(remembered).length) {
+    $lastSessionByProfile.set(kept)
+  }
 }
 
 /**
@@ -1156,6 +1193,8 @@ export function openSession(storedId: string, options?: OpenSessionOptions): Pro
  */
 export function adoptLiveSession(input: {
   cwd?: null | string
+  /** A plugin's hidden session: never remembered as the profile's place. */
+  hidden?: boolean
   profile?: null | string
   runtimeSessionId: string
   storedSessionId: string
@@ -1164,6 +1203,12 @@ export function adoptLiveSession(input: {
 
   if (input.profile) {
     rememberSessionProfile(storedSessionId, input.profile)
+  }
+
+  // BEFORE the active id is set below: that write is what the last-session
+  // subscriber reacts to.
+  if (input.hidden) {
+    markPluginOwnedSession(storedSessionId)
   }
 
   ensureSessionSlice(runtimeSessionId, {

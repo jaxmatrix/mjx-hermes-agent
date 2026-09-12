@@ -357,7 +357,10 @@ async function createCanonical(row: RosterRow, route: AgentRoute): Promise<OpenC
   //
   // The same holds when the title write only queued (`{pending: true}`): adoption
   // needs no row.
+  // HIDDEN: a bot's forever-chat is never remembered as the place to land, so a
+  // restart can never put it in the main pane as an ordinary chat.
   const opened = await host.openCreatedSession({
+    hidden: true,
     profile: row.profile,
     runtimeSessionId: runtimeId,
     storedSessionId: storedId
@@ -393,7 +396,7 @@ async function openCanonical(
   expectHistory: boolean,
   action: OpenChatResult['action'] = 'open'
 ): Promise<OpenChatResult> {
-  const opened = await host.openSession(storedId, { expectHistory, profile: row.profile })
+  const opened = await host.openSession(storedId, { expectHistory, hidden: true, profile: row.profile })
 
   if (opened.ok) {
     openedCanonical.add(storedId)

@@ -5,6 +5,7 @@ import { $activeGatewayProfile, normalizeProfileKey, selectProfile } from './pro
 import {
   adoptLiveSession,
   knownSessionProfile,
+  markPluginOwnedSession,
   openSession,
   rememberSessionProfile,
   resolveSessionProfile
@@ -41,6 +42,12 @@ export interface PluginOpenSessionOptions {
   profile?: null | string
   /** Bring it to the front once it is real. */
   focus?: boolean
+  /**
+   * A plugin's HIDDEN session — a bot's forever-chat. Never remembered as the
+   * profile's place to land at boot, so it is never restored into the main pane
+   * as an ordinary chat.
+   */
+  hidden?: boolean
   /**
    * Whether this conversation is expected to HAVE a transcript.
    *
@@ -156,6 +163,12 @@ export async function openPluginSession(
     rememberSessionProfile(storedSessionId, options.profile)
   }
 
+  // BEFORE `openSession`: its active-id write is what the last-session subscriber
+  // reacts to.
+  if (options.hidden) {
+    markPluginOwnedSession(storedSessionId)
+  }
+
   const owner = options.profile ?? knownSessionProfile(storedSessionId) ?? (await resolveSessionProfile(storedSessionId))
 
   if (owner && normalizeProfileKey(owner) !== $activeGatewayProfile.get() && !(await warmProfile(owner))) {
@@ -217,6 +230,8 @@ export interface PluginCreatedSession {
    *  learn for a session no listing contains. */
   profile?: null | string
   cwd?: null | string
+  /** A plugin's hidden session: never remembered as the profile's place. */
+  hidden?: boolean
 }
 
 /**

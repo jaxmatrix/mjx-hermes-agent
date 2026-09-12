@@ -76,7 +76,9 @@ import {
   isMessagingSource,
   isSessionPinned,
   knownSessionProfile,
+  lastOpenedSessionId,
   loadMoreSessions,
+  markPluginOwnedSession,
   messagingSourceLabel,
   openSession,
   pinnedSessionRows,
@@ -1866,5 +1868,35 @@ describe('openSession — a resume that fails never fakes a live binding', () =>
     expect(requestGateway).toHaveBeenCalled()
     expect($sessionId.get()).toBe('runtime-3')
     expect(liveKeyOf('stored-3')).toBe('runtime-3')
+  })
+})
+
+describe('last-session memory — a hidden plugin session is never the place to land', () => {
+  it('remembers an ordinary session (the control) but never a hidden one', () => {
+    resetSessionStates()
+    $sessions.set([])
+
+    // CONTROL. If the last-session subscriber did not run under test at all, the
+    // hidden assertion below would pass for nothing.
+    adoptLiveSession({ runtimeSessionId: 'run-c', storedSessionId: 'stored-control' })
+    expect(lastOpenedSessionId()).toBe('stored-control')
+
+    // A bot's forever-chat restored into the main pane at boot is two modes of
+    // conversation overlapping.
+    adoptLiveSession({ hidden: true, runtimeSessionId: 'run-h', storedSessionId: 'stored-hidden' })
+    expect(lastOpenedSessionId()).toBe('stored-control')
+  })
+
+  it('forgets a hidden session that was ALREADY remembered', () => {
+    // An install that opened a bot's chat before this guard has that id persisted.
+    resetSessionStates()
+    $sessions.set([])
+
+    adoptLiveSession({ runtimeSessionId: 'run-p', storedSessionId: 'stored-polluted' })
+    expect(lastOpenedSessionId()).toBe('stored-polluted')
+
+    markPluginOwnedSession('stored-polluted')
+
+    expect(lastOpenedSessionId()).not.toBe('stored-polluted')
   })
 })

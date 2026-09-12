@@ -128,7 +128,7 @@ describe('opening a bot chat', () => {
     // Identity is the title, so there is nothing durable to write down. The
     // click path must not touch the bot's record at all.
     expect(calls('profiles.configure')).toEqual([])
-    expect(openSession).toHaveBeenCalledWith('existing', { expectHistory: true, profile: 'radar' })
+    expect(openSession).toHaveBeenCalledWith('existing', { expectHistory: true, hidden: true, profile: 'radar' })
   })
 
   it('asks the registry with include_hidden — a canonical chat is born hidden', async () => {
@@ -147,7 +147,7 @@ describe('opening a bot chat', () => {
     const result = await openBotChat(row('radar') as never)
 
     expect(result.storedId).toBe('tip')
-    expect(openSession).toHaveBeenCalledWith('tip', { expectHistory: true, profile: 'radar' })
+    expect(openSession).toHaveBeenCalledWith('tip', { expectHistory: true, hidden: true, profile: 'radar' })
   })
 
   it('mints, TITLES the runtime id, then opens the durable one', async () => {
@@ -163,6 +163,7 @@ describe('opening a bot chat', () => {
     // ADOPTED, not resumed: the session is live under `run-1` already. A resume
     // here is what left a hidden chat looking open with nothing live behind it.
     expect(openCreatedSession).toHaveBeenCalledWith({
+      hidden: true,
       profile: 'radar',
       runtimeSessionId: 'run-1',
       storedSessionId: 'stored-1'
@@ -235,7 +236,7 @@ describe('opening a bot chat', () => {
 
     expect(result).toMatchObject({ storedId: 'theirs' })
     expect(calls('session.create')).toHaveLength(1)
-    expect(openSession).toHaveBeenCalledWith('theirs', { expectHistory: true, profile: 'radar' })
+    expect(openSession).toHaveBeenCalledWith('theirs', { expectHistory: true, hidden: true, profile: 'radar' })
   })
 
   it('refuses to mint TWICE when the second lookup still misses', async () => {
