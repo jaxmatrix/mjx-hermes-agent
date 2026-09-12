@@ -191,18 +191,18 @@ def _(rid, params: dict) -> dict:
             # windowed listing back (the param is ignored) and scan it.
             title_lookup = str(params.get("title") or "").strip()
             if title_lookup:
-                row = db.get_session_by_title(title_lookup)
-                if (
-                    not row
-                    or row.get("archived")
-                    or (row.get("source") or "").strip().lower() in deny
-                ):
+                # One copy of the eligibility policy, shared with
+                # profiles.list's canonical_session so the two cannot drift.
+                from .titled_session import resolve_titled_session
+
+                resolved = resolve_titled_session(db, title_lookup)
+                if resolved is None:
                     return _ok(rid, {"sessions": []})
-                try:
-                    tip = db.resolve_resume_session_id(row["id"]) or row["id"]
-                except Exception:
-                    tip = row["id"]
-                tip_row = (db.get_session(tip) or row) if tip != row["id"] else row
+                row, tip, tip_row = resolved
+                # NOTE: ``preview`` is always "" here — there is no preview
+                # column on ``sessions``; only list_sessions_rich synthesises
+                # one. A caller that needs a preview reads profiles.list's
+                # canonical_session, which builds it from the messages table.
                 return _ok(
                     rid,
                     {
@@ -407,7 +407,29 @@ def _(rid, params: dict) -> dict:
                 # streams the whole turn anyway and the row exists by upgrade time.
                 found = {}
             else:
-                return _err(rid, 4007, "session not found")
+                # A LIVE session with no row yet: every fresh Bot Chat, and any
+                # chat whose first prompt has not landed. The database has never
+                # heard of it, but the gateway is holding it — and refusing it
+                # here "killed messaging for never-spoken bots" upstream. Match it
+                # by stored key (or a title still pending) under THIS profile
+                # home, and reattach it exactly as the live fast path below does.
+                from .live_unpersisted import find_live_unpersisted
+
+                live_unpersisted = find_live_unpersisted(_sessions, target, profile_home)
+                if live_unpersisted is None:
+                    return _err(rid, 4007, "session not found")
+                live_sid, live_session = live_unpersisted
+                with _session_resume_lock:
+                    payload = _live_session_payload(
+                        live_sid,
+                        live_session,
+                        cols=cols,
+                        touch=True,
+                        transport=current_transport() or _stdio_transport,
+                        omit_messages=omit_messages,
+                    )
+                payload["resumed"] = target
+                return _ok(rid, payload)
 
         # Follow the compression-continuation chain to the live tip so a resume on
         # a rotated-out parent id binds to the descendant that actually holds the

@@ -36,11 +36,11 @@ import { setRoomTurnRunner } from './driver/registry'
 import { createWebviewRunner } from './driver/webview-runner'
 import { bundles } from './i18n'
 import { botHandle, botMentionTag } from './ids'
-import { rewriteNewCommand } from './model/canonical'
+import { isCanonicalChatSession, rewriteNewCommand } from './model/canonical'
 import { isPassText, matchHandles } from './model/mentions'
 import { visibleRoster } from './model/roster'
 import { $rooms, $roster, $selectedBot, $showHidden, hydrateCaches, watchCaches } from './store/atoms'
-import { openBotChat, refreshRoster, sweepHiddenSessions } from './store/bots'
+import { knownCanonicalIds, openBotChat, openedCanonicalIds, refreshRoster, sweepHiddenSessions } from './store/bots'
 import { pauseRooms, resumeRooms } from './store/rooms'
 import { submitPrompt } from './store/rpc'
 import { botRowVerbs, BotsPane } from './ui/bots-pane'
@@ -143,7 +143,9 @@ const plugin: HermesPlugin = {
       data: {
         handler: draft => {
           const focused = host.state.focusedStoredSessionId.get()
-          const inCanonical = Boolean(focused) && $roster.get().some(row => row.meta.chat === focused)
+          // A bot's forever-chat and an ordinary session are different modes
+          // of conversation; this is the line that tells them apart.
+          const inCanonical = isCanonicalChatSession(focused ?? null, openedCanonicalIds(), knownCanonicalIds())
 
           const text = rewriteNewCommand(draft.text, inCanonical)
 

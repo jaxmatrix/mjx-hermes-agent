@@ -1101,6 +1101,12 @@ pub struct SourceProfiles {
     /// `None` = the source did not answer. An unreachable source contributes
     /// NOTHING; it must not be able to shrink the roster or fake a duplicate.
     pub profiles: Option<Vec<String>>,
+    /// Whether `profiles` was ENUMERATED (now, or on an earlier pass whose
+    /// answer is still cached) rather than SEEDED by the connect-on-demand
+    /// carve-out. `ok` alone cannot say: a seeded list is `Some`, so a source
+    /// nothing has ever dialled reports reachable. Consumers that need "is
+    /// there really a backend there" must read this, not `ok`.
+    pub observed: bool,
     pub install_id: Option<String>,
     pub error: Option<String>,
 }
@@ -1121,6 +1127,9 @@ pub struct RosterAgent {
 pub struct RosterSource {
     pub connection_id: String,
     pub ok: bool,
+    /// See `SourceProfiles::observed`. `ok && !observed` means "clickable, but
+    /// nothing has been dialled" — not "a backend is running there".
+    pub observed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -1172,6 +1181,22 @@ pub fn pick_canonical_connection<'a>(
 /// The order is the point: collapse by backend identity FIRST, then apply the
 /// `@name-device` disambiguation. A profile that only *looked* duplicated (one
 /// box, two addresses) keeps its bare name.
+/// Whether a source with NO addressable URL still contributes its profile.
+///
+/// Pure, so the rule is assertable without an `AppHandle` — desktop keeps its
+/// twin (`shouldDeferLocalEnumeration`) pure for the same reason.
+///
+/// `ssh` and the rest seed: the device stays clickable and connecting is how
+/// you find out what is on it. `local` does NOT. "This device" is in every
+/// registry unconditionally and cannot be removed, so seeding it invents a
+/// `default` agent on a machine running no Hermes — which then appears in the
+/// roster and room pickers, and forces `-device` disambiguation onto the real
+/// agent of a user who is connected to a remote. Dialling it instead would
+/// spawn a backend nobody asked for.
+pub fn seeds_when_unreachable(kind: ConnectionKind) -> bool {
+    kind != ConnectionKind::Local
+}
+
 pub fn build_agent_roster(
     sources: &[SourceProfiles],
     active_connection_id: Option<&str>,
@@ -1239,6 +1264,7 @@ pub fn build_agent_roster(
             .map(|source| RosterSource {
                 connection_id: source.connection_id.clone(),
                 error: source.error.clone(),
+                observed: source.observed,
                 ok: source.profiles.is_some(),
             })
             .collect(),
@@ -1308,9 +1334,104 @@ mod tests {
             install_id: install.map(str::to_string),
             kind,
             label: label.to_string(),
+            // A fixture that hands over a profile list is standing in for a
+            // source that ANSWERED; the seeded case is exercised explicitly
+            // below, where the distinction is the thing under test.
+            observed: profiles.is_some(),
             order,
             profiles: profiles.map(|list| list.iter().map(|value| value.to_string()).collect()),
         }
+    }
+
+    #[test]
+    fn local_does_not_seed_when_it_has_no_backend() {
+        // "This device" is in every registry and cannot be removed. Seeding it
+        // invents a `default` agent on a machine running no Hermes.
+        assert!(!seeds_when_unreachable(ConnectionKind::Local));
+
+        // Everything else stays clickable — connecting is how you find out.
+        assert!(seeds_when_unreachable(ConnectionKind::Ssh));
+        assert!(seeds_when_unreachable(ConnectionKind::Remote));
+        assert!(seeds_when_unreachable(ConnectionKind::Cloud));
+    }
+
+    #[test]
+    fn a_source_that_did_not_answer_contributes_no_agents() {
+        let roster = build_agent_roster(
+            &[
+                source("local", "This device", ConnectionKind::Local, 0, None, None),
+                source(
+                    "remote-1",
+                    "Server",
+                    ConnectionKind::Remote,
+                    1,
+                    Some(&["default", "radar"]),
+                    None,
+                ),
+            ],
+            Some("remote-1"),
+        );
+
+        assert_eq!(
+            roster
+                .agents
+                .iter()
+                .map(|a| a.profile.as_str())
+                .collect::<Vec<_>>(),
+            vec!["default", "radar"]
+        );
+        // Bare handles: with no phantom local `default`, nothing collides, so
+        // the real agent is not forced into `-device` disambiguation.
+        assert_eq!(
+            roster
+                .agents
+                .iter()
+                .map(|a| a.handle.as_str())
+                .collect::<Vec<_>>(),
+            vec!["default", "radar"]
+        );
+    }
+
+    #[test]
+    fn seeded_and_answered_sources_are_distinguishable() {
+        // `ok` cannot tell them apart — a seeded list is `Some` too — which is
+        // why `observed` exists and why a client asking "is a backend really
+        // there" must read it instead.
+        let mut seeded = source(
+            "box",
+            "Box",
+            ConnectionKind::Ssh,
+            0,
+            Some(&["default"]),
+            None,
+        );
+        seeded.observed = false;
+        seeded.error = Some("connect-on-demand".to_string());
+
+        let answered = source(
+            "remote-1",
+            "Server",
+            ConnectionKind::Remote,
+            1,
+            Some(&["radar"]),
+            None,
+        );
+
+        let roster = build_agent_roster(&[seeded, answered], None);
+
+        let by_id = |id: &str| {
+            roster
+                .sources
+                .iter()
+                .find(|s| s.connection_id == id)
+                .expect("source reported")
+                .clone()
+        };
+
+        assert!(by_id("box").ok, "a seeded source stays clickable");
+        assert!(!by_id("box").observed, "but nothing was ever dialled");
+        assert!(by_id("remote-1").ok);
+        assert!(by_id("remote-1").observed);
     }
 
     // --- the cross-language pin (reconciliation M1) ------------------------

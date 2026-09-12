@@ -126,6 +126,7 @@ describe('@hermes/plugin-sdk', () => {
       'ensureAgent',
       'getGateway',
       'newChat',
+      'openCreatedSession',
       'openSession',
       'openWorkspace',
       'paneVisibility',

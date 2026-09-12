@@ -23,11 +23,10 @@ import { host } from '@hermes/plugin-sdk'
 
 import { REMOTE_DM_TIMEOUT_MS } from '../driver/types'
 import { BOT_CHAT_TITLE, botDisplayName, botHandle } from '../ids'
-import { resolveCanonicalChat } from '../model/canonical'
-import { decodeBotMeta } from '../model/meta'
+import { type RegistryAnswer, resolveCanonicalChat } from '../model/canonical'
 import type { RosterRow } from '../model/roster'
 
-import { type AgentRoute, createSession, findBotChat, listProfiles, submitPrompt, writeBotMeta } from './rpc'
+import { type AgentRoute, createSession, findBotChat, setSessionTitle, submitPrompt } from './rpc'
 
 /** The one wire format all three transports share. Agent-facing, never i18n'd. */
 export const dmWireText = (from: string, text: string): string =>
@@ -50,6 +49,16 @@ export type DmResult =
  * same pure decision function the local path uses — one definition of what a
  * bot's chat is, wherever it lives.
  */
+async function askRemoteRegistry(route: AgentRoute): Promise<RegistryAnswer> {
+  const found = (await findBotChat(route)).sessions?.[0]
+
+  return {
+    row: found
+      ? { id: found.id, messageCount: found.message_count, resolvedId: found.resolved_id, title: found.title }
+      : null
+  }
+}
+
 export async function sendRemoteDm(
   target: { connectionId: string; profile: string },
   from: string,
@@ -60,44 +69,52 @@ export async function sendRemoteDm(
   let storedId: null | string = null
 
   try {
-    const roster = await listProfiles({ route })
-    const row = roster.profiles?.find(profile => profile.name === target.profile)
-    const meta = decodeBotMeta(row?.ui_meta)
-
-    let lookup: Awaited<ReturnType<typeof findBotChat>> | null = null
+    // The registry, on the REMOTE machine. No `profiles.list` read first: that
+    // call existed only to fetch a pin, and there is no pin any more — the
+    // chat is whichever session is titled exactly `Bot Chat` over there.
+    let answer: Awaited<ReturnType<typeof askRemoteRegistry>>
 
     try {
-      lookup = await findBotChat(route)
+      answer = await askRemoteRegistry(route)
     } catch {
-      lookup = null
+      answer = { failed: true }
     }
 
-    const found = lookup?.sessions?.[0]
+    const verdict = resolveCanonicalChat(answer)
 
-    const action = resolveCanonicalChat({
-      lookup: found ? { id: found.id, resolvedId: found.resolved_id, title: found.title } : null,
-      pin: meta.chat ?? null
-    })
+    if (verdict.kind === 'unavailable') {
+      return { error: 'that machine did not answer', ok: false, reason: 'no-chat' }
+    }
 
-    if (action.kind === 'create') {
+    if (verdict.kind === 'open') {
+      storedId = verdict.storedId
+    } else {
       const created = await createSession({ title: BOT_CHAT_TITLE }, route)
 
-      storedId = created.session_id ?? null
-
-      if (storedId) {
-        // Pin it on the REMOTE profile, so the next DM — from any machine —
-        // lands in the same conversation instead of minting another.
-        await writeBotMeta(target.profile, { ...meta, chat: storedId, v: 1 }, route)
+      // The title write is what makes it a row; the durable id is what we keep.
+      if (created.session_id && created.stored_session_id) {
+        await setSessionTitle(created.session_id, BOT_CHAT_TITLE, route)
       }
-    } else if (action.kind !== 'retry') {
-      storedId = action.storedId
+
+      storedId = created.stored_session_id ?? null
     }
 
     if (!storedId) {
       return { error: 'no canonical chat on that machine', ok: false, reason: 'no-chat' }
     }
 
-    await submitPrompt(storedId, dmWireText(from, text), route)
+    // BIND FIRST. `prompt.submit` resolves through the gateway's live runtime
+    // map, keyed by RUNTIME id — `submitPrompt`'s own parameter says so — and a
+    // stored id only happens to work while that session is already running. A
+    // canonical Bot Chat almost never is, so this was `session not found`
+    // (4001) most of the time. `store/rooms.ts` has always done it this way.
+    const bound = await host.bindSession(storedId, { profile: target.profile })
+
+    if (!bound.ok) {
+      return { error: bound.error ?? 'could not wake that chat', ok: false, reason: 'no-chat' }
+    }
+
+    await submitPrompt(bound.sessionKey, dmWireText(from, text), route)
 
     return { ok: true, storedId }
   } catch (error) {

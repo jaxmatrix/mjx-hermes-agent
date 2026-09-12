@@ -25,7 +25,8 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
 
 use super::registry::{
-    build_agent_roster, AgentRoster, Connection, ConnectionKind, Registry, SourceProfiles,
+    build_agent_roster, seeds_when_unreachable, AgentRoster, Connection, ConnectionKind, Registry,
+    SourceProfiles,
 };
 
 /// Per source. A source slower than this is reported unreachable and retried on
@@ -138,6 +139,7 @@ async fn enumerate(
         install_id: None,
         kind: connection.kind,
         label: connection.label.clone(),
+        observed: false,
         order: connection.order,
         profiles: None,
     };
@@ -149,11 +151,19 @@ async fn enumerate(
     };
 
     let Some(base_url) = base_url else {
-        // Rule 2 / the local carve-out. An ssh source is seeded with the one
-        // profile its backend runs as, so the device stays clickable without
-        // anything being dialled; a `local` source with no live child seeds
-        // `default` for the same reason. Both carry the reason, because
-        // "connect to find out" and "this is broken" are different facts.
+        if !seeds_when_unreachable(connection.kind) {
+            // A local source with no live child contributes NOTHING until one
+            // is up — the rule and its reasoning live on the predicate.
+            report.error = Some("not-running".to_string());
+
+            return report;
+        }
+
+        // Seeded with the one profile its backend runs as, so the device stays
+        // clickable without anything being dialled — desktop does the same
+        // (`rememberSshEnumeration`). It stays `observed: false`, because
+        // "connect to find out" and "a backend answered" are different facts
+        // and only the flag can tell them apart.
         report.error = Some("connect-on-demand".to_string());
         report.profiles = Some(vec![connection
             .remote_profile
@@ -167,6 +177,7 @@ async fn enumerate(
         Ok(profiles) => {
             cache.remember(&connection.id, &profiles).await;
             report.install_id = cache.install_id(&app, &base_url, force).await;
+            report.observed = true;
             report.profiles = Some(profiles);
         }
         Err(error) => {
@@ -175,6 +186,10 @@ async fn enumerate(
             // empty on purpose: an unreachable URL is not evidence a backend
             // exists there.
             report.profiles = cache.recall(&connection.id).await;
+            // A recalled list WAS enumerated, just not on this pass — the
+            // backend demonstrably existed. That is what keeps a briefly
+            // unreachable machine's bots on screen instead of blinking out.
+            report.observed = report.profiles.is_some();
         }
     }
 
@@ -216,6 +231,7 @@ pub async fn collect_roster(
                     install_id: None,
                     kind,
                     label,
+                    observed: false,
                     order,
                     profiles: None,
                 },

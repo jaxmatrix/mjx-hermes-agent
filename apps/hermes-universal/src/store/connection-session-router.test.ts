@@ -69,6 +69,31 @@ describe('the registry router', () => {
     expect(leaseSecondary).not.toHaveBeenCalled()
   })
 
+  it('sends ANOTHER PROFILE on the SAME connection over the ambient socket, with its profile', async () => {
+    // A secondary for the same connection needs a registry row a URL connection
+    // may not have, and a session resumed over it streams to a socket reaped
+    // after a minute idle. The gateway takes `profile` per request, so the
+    // socket the app already holds is the right one.
+    await expect(requestForSession('s1', 'session.resume', { cols: 96 }, undefined, 'work')).resolves.toBe('ambient')
+
+    expect(requestGateway).toHaveBeenCalledWith('session.resume', { cols: 96, profile: 'work' })
+    expect(leaseSecondary).not.toHaveBeenCalled()
+  })
+
+  it('still refuses another profile on the same connection mid-switch and with a closed socket', async () => {
+    $gatewaySwitching.set(true)
+    await expect(requestForSession('s1', 'session.resume', {}, undefined, 'work')).rejects.toBeInstanceOf(
+      SessionRouteError
+    )
+
+    $gatewaySwitching.set(false)
+    $gatewayState.set('closed')
+    await expect(requestForSession('s1', 'session.resume', {}, undefined, 'work')).rejects.toBeInstanceOf(
+      SessionRouteError
+    )
+    expect(leaseSecondary).not.toHaveBeenCalled()
+  })
+
   it('leases a secondary for a FOREIGN source and releases it in finally', async () => {
     const request = vi.fn(async () => 'remote-answer')
 
