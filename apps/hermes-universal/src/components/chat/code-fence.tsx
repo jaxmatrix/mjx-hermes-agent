@@ -1,7 +1,7 @@
 import { type CSSProperties, type RefObject, useEffect, useMemo, useRef } from 'react'
 
 import { CodeCard } from '@/components/chat/code-card'
-import { CodeTokenBody } from '@/components/ui/code-token-body'
+import { CodeTokenBody, TOKEN_COLOR } from '@/components/ui/code-token-body'
 import { CopyButton } from '@/components/ui/copy-button'
 import { useI18n } from '@/i18n'
 import { exceedsHighlightBudget } from '@/lib/code-budget'
@@ -186,9 +186,26 @@ export function CodeFence({
       const result = tokenizeCode(trimmed, cleanLanguage)
 
       if (isRecording()) {
+        // `spans`, not just `tokens`: a plain token renders as a bare text node
+        // and a coloured one renders as an inline `<span>`, so only the coloured
+        // count says how much INLINE LAYOUT this fence adds. That is the number
+        // that decides whether fences are worth containing — a transcript's
+        // total across a capture is the evidence, and without it the question
+        // can only be argued.
+        let coloured = 0
+
+        for (const token of result) {
+          if (TOKEN_COLOR[token.kind]) {
+            coloured += 1
+          }
+        }
+
         recordSpan('code-fence.tokenized', startedAt, performance.now(), {
+          chars: trimmed.length,
           language: cleanLanguage,
-          tokens: String(result.length)
+          lines: countLines(trimmed),
+          spans: coloured,
+          tokens: result.length
         })
       }
 
