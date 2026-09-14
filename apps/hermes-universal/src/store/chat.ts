@@ -31,9 +31,11 @@ import {
 import { replayPendingApproval } from '@/store/approvals'
 import { atom, computed } from '@/store/atom'
 import { requestGateway } from '@/store/gateway'
+import { newSessionOverrides } from '@/store/model'
 import { clearNotifications, notifyError } from '@/store/notifications'
 import { setPetActivity } from '@/store/pet'
 import { clearPreviewArtifacts } from '@/store/preview-status'
+import { $activeProfile } from '@/store/profiles'
 import { resolveNewSessionCwd } from '@/store/project-scope'
 import {
   $approval,
@@ -155,9 +157,8 @@ export const $messagesEmpty = computed($messages, messages => messages.length ==
  * here would break nanostores' dedupe and re-render every transcript on every
  * token.
  */
-export const $paintedMessages = computed(
-  [$messages, $transcriptPaint, $activeSessionKey],
-  (messages, paint, key) => (messages.length ? messages : (paint[key]?.messages ?? messages))
+export const $paintedMessages = computed([$messages, $transcriptPaint, $activeSessionKey], (messages, paint, key) =>
+  messages.length ? messages : (paint[key]?.messages ?? messages)
 )
 
 export const $paintedMessagesEmpty = computed($paintedMessages, messages => messages.length === 0)
@@ -311,10 +312,23 @@ export async function ensureSession(): Promise<{ created: boolean; id: string; s
   // `source: 'desktop'` (MJXHRM-480), gated on IS_TAURI: it is what the gateway
   // stamps on the row and later reads back as the session's PLATFORM, and it is
   // the literal that unlocks the `desktop_ui` toolset. See `lib/session-source.ts`.
+  //
+  // The gateway resolves an OMITTED profile to its launch profile, so on a
+  // shared remote/cloud gateway every new chat landed on "default" whatever the
+  // rail showed (desktop's #45057, never ported). Branch/resume already pass it;
+  // this is the one path that did not. The sticky model/effort/fast ride along
+  // as per-session overrides. (`store/model` imports `$sessionId` from here;
+  // the cycle is safe because neither side reads the other at module scope, and
+  // an `await import()` here would issue the create a tick late — callers
+  // interrupting a draft rely on it being in flight synchronously.)
+  const profile = $activeProfile.get()
+
   const created = await requestGateway<SessionCreateResponse>('session.create', {
     cols: 96,
     ...SESSION_SOURCE_PARAMS,
-    ...(cwd && { cwd })
+    ...(cwd && { cwd }),
+    ...(profile ? { profile } : {}),
+    ...newSessionOverrides()
   })
 
   const id = created.session_id
@@ -330,10 +344,15 @@ export async function ensureSession(): Promise<{ created: boolean; id: string; s
   //
   // The session clock starts on create (statusbar session timer); resumed
   // sessions have no reliable start on this client, so it stays hidden for them.
+  // `info.model/provider` echo the override (or the profile default) now, so
+  // the composer — which reads the slice — paints the right name before the
+  // deferred agent build's `session.info` lands.
   rekeySession(draftKey, id, {
     runtimeSessionId: id,
     storedSessionId: storedId,
     cwd: (created.info?.cwd ?? cwd ?? '').trim(),
+    model: (created.info?.model ?? '').trim(),
+    provider: (created.info?.provider ?? '').trim(),
     sessionStartedAt: Date.now()
   })
 

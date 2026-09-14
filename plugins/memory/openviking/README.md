@@ -65,15 +65,18 @@ OpenViking's server config is separate from Hermes:
   `~/.openviking/ovcli.conf`.
 
 Hermes-side provider config is read from environment variables in the active
-profile's `.env`:
+profile's `.env`, then a linked `ovcli.conf`, then `memory.openviking.*` in
+`config.yaml` (the desktop/universal memory settings write there):
 
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `OPENVIKING_ENDPOINT` | `http://127.0.0.1:1933` | Server URL |
-| `OPENVIKING_API_KEY` | (none) | User/admin API key for authenticated servers |
-| `OPENVIKING_ACCOUNT` | `default` | Tenant account for local/trusted mode |
-| `OPENVIKING_USER` | `default` | Tenant user for local/trusted mode |
-| `OPENVIKING_AGENT` | `hermes` | Hermes peer ID in OpenViking, used for peer-scoped memories |
+| Env Var | `config.yaml` key | Default | Description |
+|---------|-------------------|---------|-------------|
+| `OPENVIKING_ENDPOINT` | `endpoint` | `http://127.0.0.1:1933` | Server URL |
+| `OPENVIKING_API_KEY` | — | (none) | User/admin API key for authenticated servers |
+| `OPENVIKING_ACCOUNT` | `account` | (blank → server's default tenant) | Tenant account for local/trusted mode |
+| `OPENVIKING_USER` | `user` | (blank → server's default user) | Tenant user for local/trusted mode |
+| `OPENVIKING_AGENT` | `agent` | `hermes` | Hermes peer ID in OpenViking, used for peer-scoped memories |
+| `OPENVIKING_SERVER_COMMAND` | `server_command` | `openviking-server` | Command used to autostart a local server; point at a source checkout to run a branch |
+| `OPENVIKING_RECALL_*` | `recall_*` | see docs | Recall tuning — full table in the memory-providers guide |
 
 When `OPENVIKING_API_KEY` is set, Hermes lets OpenViking derive account/user
 identity from the key. In local or trusted deployments without an API key,

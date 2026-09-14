@@ -443,6 +443,12 @@ export interface Translations {
         noMatches: string
         toggleFailed: (name: string) => string
         updateBackendToManage: string
+        required: string
+        keySet: string
+        keepCurrent: string
+        saveKey: string
+        keySaved: (name: string) => string
+        keyFailed: (name: string) => string
         sources: Record<string, string>
       }
     }
@@ -632,6 +638,16 @@ export interface Translations {
       openInPlayStore: string
       openInAppStore: string
       tapCheck: string
+      /** Mobile, while the Play/App Store listings are unpublished. */
+      storePendingTitle: string
+      storePendingPlay: string
+      storePendingAppStore: string
+      comingSoonSuffix: string
+      /** Desktop self-install: progress and failure. */
+      preparingDownload: string
+      downloadingPercent: (percent: number) => string
+      installFailed: string
+      updateChannelSigned: string
       updateReady: (count: number) => string
       lastChecked: (age: string) => string
       justNowSuffix: string

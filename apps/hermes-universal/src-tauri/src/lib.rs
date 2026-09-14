@@ -98,7 +98,7 @@ use transport::{
     cookies_export, cookies_import, http_request, ws_close, ws_open, ws_send, TransportState,
 };
 use tray::{tray_set_labels, tray_set_status, TrayState};
-use updates::{update_check, update_open_download, UpdateState};
+use updates::{update_check, update_install, update_open_download, UpdateState};
 use voice::{
     voice_arm, voice_close, voice_force_turn, voice_open, voice_suspend, voice_update_auth,
     voice_wake_listen, VoiceState,
@@ -217,7 +217,7 @@ pub fn run() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
 
-    builder
+    let builder = builder
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_mic::init())
         // The native WebView guest host. Registered on both targets so the
@@ -233,7 +233,18 @@ pub fn run() {
         // targets: the scheme is claimed by the bundler on desktop and by the
         // Android intent-filter / iOS CFBundleURLTypes on mobile.
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_clipboard_manager::init());
+
+    // Signed self-update (MJXHRM-144). Desktop-only — the plugin has no mobile
+    // implementation, and a phone updates through its store anyway. Driven
+    // entirely from `updates.rs`, so the webview never calls it and
+    // `capabilities/default.json` needs no updater permission. Bound by a
+    // cfg'd shadow rather than a helper because the plugin's `TauriPlugin`
+    // carries its own config type, so the two branches aren't one type.
+    #[cfg(all(desktop, feature = "update-checks"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .manage(TransportState::new())
         .manage(MediaState::default())
         .manage(ArtifactState::default())
@@ -428,6 +439,7 @@ pub fn run() {
             is_satellite_window_visible,
             resize_satellite_window,
             update_check,
+            update_install,
             update_open_download,
             ssh_connect,
             ssh_test,

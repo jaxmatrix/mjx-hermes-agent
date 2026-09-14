@@ -462,6 +462,12 @@ export const zh: Translations = {
         noMatches: '没有匹配的插件。',
         toggleFailed: (name: string) => `无法切换 ${name}`,
         updateBackendToManage: '请更新 Hermes 后端，才能在这里开启或关闭该插件。',
+        required: '必填',
+        keySet: '已设置',
+        keepCurrent: '留空以保留当前值',
+        saveKey: '保存',
+        keySaved: (name: string) => `已保存 ${name}`,
+        keyFailed: (name: string) => `无法保存 ${name}`,
         sources: { bundled: '内置', entrypoint: 'pip', git: 'git', project: '项目', user: '用户' }
       }
     },
@@ -917,11 +923,19 @@ export const zh: Translations = {
       openInPlayStore: '在 Play 商店中打开',
       openInAppStore: '在 App Store 中打开',
       tapCheck: '点击"立即检查"以查找更新。',
+      storePendingTitle: '应用商店上架即将开放。',
+      storePendingPlay: 'Hermes 尚未在 Google Play 上架。上架后，更新将从那里推送。',
+      storePendingAppStore: 'Hermes 尚未在 App Store 上架。上架后，更新将从那里推送。',
+      comingSoonSuffix: '（即将推出）',
+      preparingDownload: '正在准备下载…',
+      downloadingPercent: percent => `正在下载… ${percent}%`,
+      installFailed: '无法安装此更新。',
+      updateChannelSigned: '已签名的发布版本 · 安装前会先验证',
       updateReady: count => `已准备好新更新 (包含 ${count} 项更改)。`,
       lastChecked: age => `上次检查:${age}`,
       justNowSuffix: ' · 刚刚',
       automaticUpdates: '自动更新',
-      automaticUpdatesDesc: 'Hermes 会在后台自动检查更新，并在有可用更新时通知你。',
+      automaticUpdatesDesc: 'Hermes 会在你打开此页面时检查新版本，最多每六小时检查一次。',
       branchCommit: (branch, commit) => `分支 ${branch} · 提交 ${commit}`,
       never: '从未',
       justNow: '刚刚',
@@ -1162,7 +1176,11 @@ export const zh: Translations = {
       noKeyring: '此设备没有凭据存储，因此无法保存网关令牌。请使用浏览器登录或未加密的网关。',
       localUnsupported: '此设备无法运行 Hermes 后端 — 请通过 SSH 或网址连接到一个后端。',
       kindHint: kind =>
-        kind === 'ssh' ? 'Hermes 将在该主机上启动（或重新接入）后端并建立隧道。' : kind === 'cloud' ? '通过门户访问的 Hermes Cloud 代理。' : '可通过网址访问的 Hermes 后端。',
+        kind === 'ssh'
+          ? 'Hermes 将在该主机上启动（或重新接入）后端并建立隧道。'
+          : kind === 'cloud'
+            ? '通过门户访问的 Hermes Cloud 代理。'
+            : '可通过网址访问的 Hermes 后端。',
       save: '保存',
       saved: '网关已保存',
       saveFailed: '无法保存该网关',
@@ -3317,7 +3335,8 @@ export const zh: Translations = {
       fallbackTitle: '预览',
       // The ONE key desktop has that universal lacked: why a loopback
       // address cannot load when the gateway is somewhere else.
-      remoteLoopback: '该地址指向 Hermes 所连接的那台机器，而当前网关没有通往它的隧道。请改用 SSH 连接，或在那台机器上打开该页面。'
+      remoteLoopback:
+        '该地址指向 Hermes 所连接的那台机器，而当前网关没有通往它的隧道。请改用 SSH 连接，或在那台机器上打开该页面。'
     }
   },
 

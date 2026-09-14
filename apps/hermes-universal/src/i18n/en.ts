@@ -488,6 +488,12 @@ export const en: Translations = {
         noMatches: 'No plugins match your search.',
         toggleFailed: (name: string) => `Could not toggle ${name}`,
         updateBackendToManage: 'Update the Hermes backend to turn this one on or off from here.',
+        required: 'required',
+        keySet: 'set',
+        keepCurrent: 'Leave blank to keep the current value',
+        saveKey: 'Save',
+        keySaved: (name: string) => `${name} saved`,
+        keyFailed: (name: string) => `Could not save ${name}`,
         sources: { bundled: 'bundled', entrypoint: 'pip', git: 'git', project: 'project', user: 'user' }
       }
     },
@@ -610,7 +616,8 @@ export const en: Translations = {
       introSplashTitle: 'Intro Splash',
       introSplashDesc: 'The wordmark and tagline shown on a new, empty chat.',
       restorePaintTitle: 'Show Your Last Conversation While Reconnecting',
-      restorePaintDesc: 'Paint the last screen of your most recent chat behind the connecting screen, before the gateway is up.',
+      restorePaintDesc:
+        'Paint the last screen of your most recent chat behind the connecting screen, before the gateway is up.',
       reactionsTitle: 'Message Reactions',
       reactionsDesc: 'iMessage-style emoji tapbacks — react to messages, and Hermes can react to yours.',
       uiScaleTitle: 'UI Scale',
@@ -748,12 +755,19 @@ export const en: Translations = {
       openInPlayStore: 'Open in Play Store',
       openInAppStore: 'Open in App Store',
       tapCheck: 'Tap "Check now" to look for updates.',
+      storePendingTitle: 'Store listing coming soon.',
+      storePendingPlay: "Hermes isn't on Google Play yet. Once it's published, updates will arrive there.",
+      storePendingAppStore: "Hermes isn't on the App Store yet. Once it's published, updates will arrive there.",
+      comingSoonSuffix: ' (coming soon)',
+      preparingDownload: 'Preparing download…',
+      downloadingPercent: percent => `Downloading… ${percent}%`,
+      installFailed: "The update couldn't be installed.",
+      updateChannelSigned: 'Signed release · verified before it installs',
       updateReady: count => `A new update is ready (${count} change${count === 1 ? '' : 's'} included).`,
       lastChecked: age => `Last checked ${age}`,
       justNowSuffix: ' · just now',
       automaticUpdates: 'Automatic updates',
-      automaticUpdatesDesc:
-        'Hermes checks for updates automatically in the background and lets you know when one is ready.',
+      automaticUpdatesDesc: 'Hermes looks for a new version when you open this page, at most once every six hours.',
       branchCommit: (branch, commit) => `Branch ${branch} · Commit ${commit}`,
       never: 'never',
       justNow: 'just now',
@@ -1004,7 +1018,8 @@ export const en: Translations = {
       fieldRemoteProfile: 'Remote profile',
       fieldToken: 'Gateway token',
       fieldTokenPlaceholder: 'Only if this gateway needs one',
-      noKeyring: 'This device has no credential store, so a gateway token cannot be saved. Use browser sign-in, or an ungated gateway.',
+      noKeyring:
+        'This device has no credential store, so a gateway token cannot be saved. Use browser sign-in, or an ungated gateway.',
       localUnsupported: "This device can't run a Hermes backend — connect to one over SSH or a URL.",
       kindHint: kind =>
         kind === 'ssh'
@@ -1049,7 +1064,7 @@ export const en: Translations = {
       latchedTitle: 'That gateway is on hold',
       latchedMessage: reason =>
         reason === 'host-key-changed'
-          ? "The host key for this gateway changed, so Hermes stopped trying. Trust the new key to continue."
+          ? 'The host key for this gateway changed, so Hermes stopped trying. Trust the new key to continue.'
           : reason === 'reauth-required'
             ? 'This gateway refused the saved sign-in. Sign in again to continue.'
             : 'This gateway failed to start and will not be retried automatically.',
@@ -3103,14 +3118,16 @@ export const en: Translations = {
     resume: 'Resume',
     paletteOpen: 'Open in-app browser',
     openLinksInApp: 'Open web links in Hermes',
-    openLinksInAppDescription: 'Web links open in the in-app browser. Hold ⌘/Ctrl or middle-click to use your own browser instead.',
-    isolatedStore: 'Keep the in-app browser\'s cookies separate',
-    isolatedStoreDescription: 'Signing in to a site in the pane never touches the account Hermes itself uses. Changing this clears what is already stored.',
+    openLinksInAppDescription:
+      'Web links open in the in-app browser. Hold ⌘/Ctrl or middle-click to use your own browser instead.',
+    isolatedStore: "Keep the in-app browser's cookies separate",
+    isolatedStoreDescription:
+      'Signing in to a site in the pane never touches the account Hermes itself uses. Changing this clears what is already stored.',
     consoleDefault: 'Show the preview console by default',
     consoleDefaultDescription: 'Open the console deck whenever the in-app browser opens.',
     clearData: 'Clear browsing data',
     clearDataDescription: 'Cookies, storage and cache for the in-app browser only.',
-    clearDataConfirm: 'Clear the in-app browser\'s cookies, storage and cache?',
+    clearDataConfirm: "Clear the in-app browser's cookies, storage and cache?",
     cleared: 'Browsing data cleared',
     sharedCookies: 'This browser shares cookies with Hermes on this device.',
     ephemeralStore: 'This browser forgets logins when Hermes restarts.'
@@ -3208,7 +3225,8 @@ export const en: Translations = {
       fallbackTitle: 'Preview',
       // The ONE key desktop has that universal lacked: why a loopback
       // address cannot load when the gateway is somewhere else.
-      remoteLoopback: 'This address points at the machine Hermes is talking to, and this gateway has no tunnel to it. Connect over SSH, or open the page on that machine.'
+      remoteLoopback:
+        'This address points at the machine Hermes is talking to, and this gateway has no tunnel to it. Connect over SSH, or open the page on that machine.'
     }
   },
 

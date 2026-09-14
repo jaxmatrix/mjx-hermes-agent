@@ -324,7 +324,11 @@ export const zhHant = defineLocale({
       noKeyring: '此裝置沒有憑證儲存區，因此無法儲存閘道權杖。請改用瀏覽器登入或未加密的閘道。',
       localUnsupported: '此裝置無法執行 Hermes 後端 — 請透過 SSH 或網址連線至一個後端。',
       kindHint: kind =>
-        kind === 'ssh' ? 'Hermes 會在該主機上啟動（或重新接上）後端並建立通道。' : kind === 'cloud' ? '透過入口網站存取的 Hermes Cloud 代理。' : '可透過網址存取的 Hermes 後端。',
+        kind === 'ssh'
+          ? 'Hermes 會在該主機上啟動（或重新接上）後端並建立通道。'
+          : kind === 'cloud'
+            ? '透過入口網站存取的 Hermes Cloud 代理。'
+            : '可透過網址存取的 Hermes 後端。',
       save: '儲存',
       saved: '閘道已儲存',
       saveFailed: '無法儲存此閘道',
@@ -430,6 +434,12 @@ export const zhHant = defineLocale({
         noMatches: '沒有符合的外掛。',
         toggleFailed: (name: string) => `無法切換 ${name}`,
         updateBackendToManage: '請更新 Hermes 後端，才能在這裡開啟或關閉此外掛。',
+        required: '必填',
+        keySet: '已設定',
+        keepCurrent: '留空以保留目前的值',
+        saveKey: '儲存',
+        keySaved: (name: string) => `已儲存 ${name}`,
+        keyFailed: (name: string) => `無法儲存 ${name}`,
         sources: { bundled: '內建', entrypoint: 'pip', git: 'git', project: '專案', user: '使用者' }
       }
     },
@@ -865,11 +875,19 @@ export const zhHant = defineLocale({
       openInPlayStore: '在 Play 商店開啟',
       openInAppStore: '在 App Store 開啟',
       tapCheck: '點選「立即檢查」以尋找更新。',
+      storePendingTitle: '應用程式商店上架即將開放。',
+      storePendingPlay: 'Hermes 尚未在 Google Play 上架。上架後，更新將從那裡推送。',
+      storePendingAppStore: 'Hermes 尚未在 App Store 上架。上架後，更新將從那裡推送。',
+      comingSoonSuffix: '（即將推出）',
+      preparingDownload: '正在準備下載…',
+      downloadingPercent: percent => `正在下載… ${percent}%`,
+      installFailed: '無法安裝此更新。',
+      updateChannelSigned: '已簽署的發布版本 · 安裝前會先驗證',
       updateReady: count => `新更新已就緒（包含 ${count} 項變更）。`,
       lastChecked: age => `上次檢查：${age}`,
       justNowSuffix: ' · 剛剛',
       automaticUpdates: '自動更新',
-      automaticUpdatesDesc: 'Hermes 會在背景自動檢查更新，並在有可用更新時通知你。',
+      automaticUpdatesDesc: 'Hermes 會在你開啟此頁面時檢查新版本，最多每六小時檢查一次。',
       branchCommit: (branch, commit) => `分支 ${branch} · 提交 ${commit}`,
       never: '從未',
       justNow: '剛剛',
@@ -2822,7 +2840,8 @@ export const zhHant = defineLocale({
       fallbackTitle: '預覽',
       // The ONE key desktop has that universal lacked: why a loopback
       // address cannot load when the gateway is somewhere else.
-      remoteLoopback: '此網址指向 Hermes 所連線的那台機器，而目前的閘道沒有通往它的通道。請改用 SSH 連線，或在那台機器上開啟該頁面。'
+      remoteLoopback:
+        '此網址指向 Hermes 所連線的那台機器，而目前的閘道沒有通往它的通道。請改用 SSH 連線，或在那台機器上開啟該頁面。'
     }
   },
 
