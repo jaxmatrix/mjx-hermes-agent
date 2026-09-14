@@ -1,5 +1,6 @@
 import { normalizeMathDelimiters } from '@assistant-ui/react-streamdown'
 
+import { renderFileRefs } from '@/lib/chat-media'
 import { isLikelyProseFence, sanitizeLanguageTag } from '@/lib/markdown-code'
 import { stripPreviewTargets } from '@/lib/preview-targets'
 import { linkifySessionRefs } from '@/lib/session-refs'
@@ -154,9 +155,16 @@ function autoLinkRawUrls(text: string): string {
 // URL, so it is rewritten after the autolinker has had its pass — and only
 // OUTSIDE code spans, because a ref quoted in backticks is being talked about
 // rather than linked to.
+//
+// `renderFileRefs` FIRST: it consumes both `MEDIA:` markers and
+// `[label](target)` syntax, so it has to see them before the autolinker
+// rewrites any target, and the `#media:` href it emits is inert to both passes
+// that follow.
 function rewriteProseSegment(segment: string): string {
   return linkifySessionRefs(
-    autoLinkRawUrls(segment.replace(/`{3,}/g, '').replace(LOCAL_PREVIEW_URL_RE, '$1').replace(CITATION_MARKER_RE, ''))
+    autoLinkRawUrls(
+      renderFileRefs(segment.replace(/`{3,}/g, '').replace(LOCAL_PREVIEW_URL_RE, '$1').replace(CITATION_MARKER_RE, ''))
+    )
   )
 }
 
