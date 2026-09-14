@@ -14,9 +14,14 @@
 //!
 //! Storage lives in `store`; this module owns *what may be named*.
 
+pub mod code_identity;
 pub mod error;
 pub mod gate;
 pub mod store;
+// Only macOS seals secrets into the vault (see `store`); tests exercise the format
+// on every platform.
+#[cfg(any(test, target_os = "macos"))]
+pub mod vault;
 
 use serde::{Deserialize, Serialize};
 
@@ -204,6 +209,15 @@ pub struct SecretsStatus {
     pub gate_enforced: bool,
     /// Whether a lease is open right now.
     pub unlocked: bool,
+    /// Whether THIS build is the reason macOS asks for a password at all.
+    ///
+    /// True only for an ad-hoc signed macOS bundle, whose code signature no
+    /// keychain ACL can bind to — see [`code_identity`]. Such a build raises one
+    /// keychain dialog per launch, to unlock the credential vault; a signed one
+    /// raises none. Nothing the app does at runtime changes it, so it is here for
+    /// the UI to explain the prompt rather than leave the user concluding the app
+    /// is broken.
+    pub ad_hoc_signed: bool,
 }
 
 /// Whether reading a credential requires a device unlock.
@@ -312,6 +326,7 @@ pub async fn secrets_status() -> SecretsStatus {
         gate_available: gate::available(),
         gate_enforced: ENFORCE_UNLOCK,
         unlocked: gate::is_unlocked(),
+        ad_hoc_signed: code_identity::current().prompts_for_keychain_access(),
     }
 }
 
@@ -427,6 +442,29 @@ mod tests {
         for key in SecretKey::all() {
             assert_ne!(account, key.account());
         }
+    }
+
+    /// Nothing nameable may collide with the vault's own master key. On macOS that
+    /// account is the ONE keychain item left: routing a secret onto it would hand a
+    /// webview the key that seals every other secret, and a sign-out would delete it
+    /// and orphan the whole vault.
+    #[test]
+    fn nothing_nameable_collides_with_the_vault_key() {
+        let vault_key = store::MASTER_KEY_ACCOUNT;
+
+        for key in SecretKey::all() {
+            assert_ne!(key.account(), vault_key);
+        }
+
+        assert_ne!(
+            OwnedKey::NativeAuth.account("https://gw.example.com"),
+            vault_key
+        );
+        assert_ne!(OwnedKey::ConnectionToken.account("box"), vault_key);
+        assert_ne!(
+            OwnedKey::ConnectionHeader.account("box/header/x"),
+            vault_key
+        );
     }
 
     #[test]

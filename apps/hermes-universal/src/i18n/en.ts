@@ -1025,6 +1025,8 @@ export const en: Translations = {
       saveFailed: 'Could not save gateway settings',
       connectingTitle: 'Connecting to Hermes',
       reconnectingTo: target => `Reconnecting to ${target}…`,
+      connectStoppedTitle: "Couldn't connect",
+      connectStoppedTo: target => `Stopped trying to reach ${target}.`,
       useDifferentGateway: 'Use a different gateway',
       startOver: 'Start over'
     },

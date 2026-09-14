@@ -84,13 +84,26 @@ export interface SecureStoreStatus {
   gateEnforced: boolean
   /** Whether an unlock lease is open right now. */
   unlocked: boolean
+  /**
+   * Whether this build is why macOS asks for the keychain password at all.
+   *
+   * True only for an ad-hoc signed macOS bundle. Such a build has no code
+   * identity a keychain ACL can bind to, so "Always Allow" has nothing to stick
+   * to. It costs one dialog per launch — Rust keeps a single keychain item and
+   * seals the rest into a file (src-tauri/src/secrets/vault.rs), so it is no
+   * longer one dialog per credential. Nothing the app does at runtime changes it;
+   * surfaced so the UI can explain that one prompt rather than leaving the user
+   * to conclude the app is broken.
+   */
+  adHocSigned: boolean
 }
 
 const UNAVAILABLE: SecureStoreStatus = {
   available: false,
   gateAvailable: false,
   gateEnforced: false,
-  unlocked: false
+  unlocked: false,
+  adHocSigned: false
 }
 
 export async function secureStoreStatus(): Promise<SecureStoreStatus> {

@@ -405,7 +405,7 @@ function hintFor(resolved: ResolvedDial): ConnectionDescriptorHint {
   }
 }
 
-async function dialResolved(resolved: ResolvedDial): Promise<void> {
+async function dialResolved(resolved: ResolvedDial, allowInteractive: boolean): Promise<void> {
   const profile = resolved.profile ?? null
 
   setPendingConnectionHint(hintFor(resolved))
@@ -434,7 +434,7 @@ async function dialResolved(resolved: ResolvedDial): Promise<void> {
       return connectCloud(resolved.baseUrl ?? '', profile)
 
     default:
-      return connect({ url: resolved.baseUrl ?? '' })
+      return connect({ url: resolved.baseUrl ?? '', allowInteractive })
   }
 }
 
@@ -449,7 +449,21 @@ async function dialResolved(resolved: ResolvedDial): Promise<void> {
  * `connections_set_last_used` is swallowed, because a full disk must not turn a
  * successful switch into a failed one.
  */
-export async function selectConnection(connectionId: string): Promise<void> {
+export interface SelectConnectionOptions {
+  /**
+   * May this switch hand the user to a login page?
+   *
+   * False by default, like `connect`'s own flag, because most switches are not a
+   * person asking: the post-sign-in resume, a peer window's switch broadcast and
+   * the boot re-point all come through here. Only a click on a source (the
+   * switcher, the command palette, the editor's Connect button) passes `true`, so
+   * picking a signed-out source still opens its sign-in while a background re-home
+   * surfaces a Sign in prompt instead of hijacking the webview.
+   */
+  allowInteractive?: boolean
+}
+
+export async function selectConnection(connectionId: string, options: SelectConnectionOptions = {}): Promise<void> {
   const active = $activeConnection.get()
 
   if (active?.connectionId === connectionId) {
@@ -486,7 +500,7 @@ export async function selectConnection(connectionId: string): Promise<void> {
   }
 
   try {
-    await softSwitchGateway(resolved.mode, () => dialResolved(resolved))
+    await softSwitchGateway(resolved.mode, () => dialResolved(resolved, options.allowInteractive === true))
   } catch {
     // `softSwitchGateway` already rolled back onto the previous source and
     // surfaced the failure; a failed switch is never remembered.

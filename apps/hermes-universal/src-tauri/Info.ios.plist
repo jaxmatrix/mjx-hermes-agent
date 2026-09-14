@@ -46,6 +46,15 @@
   App Store note: NSAllowsArbitraryLoadsInWebContent can draw a justification request
   at review. The justification is real — this app connects to gateways its user runs
   on their own private network, which cannot carry a publicly trusted certificate.
+
+  NSLocalNetworkUsageDescription covers the same gateways the ATS keys above do.
+  iOS 14+ puts local-network access behind a consent prompt, and the prompt needs
+  this string; without it the connection to a LAN gateway is refused rather than
+  merely unprompted.
+
+  ITSAppUsesNonExemptEncryption=false answers the export-compliance question at
+  build time instead of once per upload. The claim is accurate: everything here is
+  standard TLS and the platform Keychain, which is exempt.
 -->
 <plist version="1.0">
 <dict>
@@ -74,5 +83,9 @@
     <key>UIApplicationSupportsMultipleScenes</key>
     <true/>
   </dict>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Hermes connects to the gateways you run on your local network.</string>
+  <key>ITSAppUsesNonExemptEncryption</key>
+  <false/>
 </dict>
 </plist>

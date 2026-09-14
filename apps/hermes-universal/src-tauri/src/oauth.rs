@@ -3,13 +3,10 @@
 //! # RFC 8252 native flow (preferred, MJXHRM-77)
 //!
 //! When `/api/status` advertises `auth_flows: [... "native_pkce"]` the gateway can
-//! broker a real native-app login: system browser + client-side PKCE + a loopback
-//! redirect, ending in bearer tokens handed to us in a JSON body with no cookie
-//! anywhere. That is strictly better than the webview flow below:
+//! broker a real native-app login: client-side PKCE + a loopback redirect, ending in
+//! bearer tokens handed to us in a JSON body with no cookie anywhere. That is
+//! strictly better than the webview flow below:
 //!
-//!   * **No second webview.** On DESKTOP the system browser is a separate app, so
-//!     nothing has to be built, bound to a partition, or dismissed. Mobile cannot
-//!     use that shape at all — see below.
 //!   * **No cookie plumbing.** Nothing has to be scraped out of a webview jar and
 //!     replayed into reqwest; the gated middleware accepts
 //!     `Authorization: Bearer` on every non-public route, ws-ticket included.
@@ -25,16 +22,33 @@
 //!
 //! ## Where the user types their password (the platform split)
 //!
-//! Desktop hands the authorize URL to the SYSTEM BROWSER. Mobile must not, and this
-//! is the whole reason the flow was broken there: an app that opens Safari is
-//! backgrounded, and iOS then SUSPENDS it — there is no `UIBackgroundModes`, no
-//! `beginBackgroundTask` and `background.rs` is `cfg(desktop)`. A suspended process
-//! cannot accept on its own loopback listener, so the redirect the browser makes to
-//! `127.0.0.1:<port>` hangs until Safari gives up on an error page. Nothing brings
-//! the app back either: there is no deep-link plugin, no `CFBundleURLTypes` and no
-//! `BROWSABLE` intent-filter anywhere in this project, and `callback_response` can
-//! only ask the user to switch back by hand. The token never reached the keyring and
-//! the user was left in a browser.
+//! **Neither platform uses the system browser.** They differ only in WHICH webview
+//! hosts the login: desktop builds a window beside the app, mobile takes over the
+//! calling webview. Both then answer the same loopback listener, which is a plain
+//! TCP socket and does not care which process connects to it.
+//!
+//! Both arms used to hand the authorize URL to the SYSTEM BROWSER, and the return
+//! leg is why neither does now.
+//!
+//! On MOBILE it could never work: an app that opens Safari is backgrounded, and iOS
+//! then SUSPENDS it — there is no `UIBackgroundModes`, no `beginBackgroundTask` and
+//! `background.rs` is `cfg(desktop)`. A suspended process cannot accept on its own
+//! loopback listener, so the redirect the browser makes to `127.0.0.1:<port>` hangs
+//! until Safari gives up on an error page.
+//!
+//! On DESKTOP it worked on paper — we are never suspended, so the listener stays
+//! live — but in practice the hop from the browser back to `127.0.0.1:<port>` is at
+//! the mercy of things we do not control: a browser that refuses a plaintext
+//! loopback navigation out of an https page, a proxy that eats the 302, an
+//! extension. Hosting the login in our own window costs nothing (PKCE, the code
+//! exchange and the keyring result are all unchanged) and removes that entire class
+//! of failure.
+//!
+//! When the return leg does fail there is nothing to fall back on. The app does own
+//! `hermes://` (MJXHRM-455), but the gateway will not redirect to a custom scheme
+//! (see below), so the loopback socket is the only way home and `callback_response`
+//! can only ask the user to switch back by hand. The token never reached the keyring and the user was left signed in inside
+//! a browser we cannot read.
 //!
 //! A custom-scheme redirect would fix the return leg, but the gateway will not take
 //! one: `_validate_loopback_redirect_uri` (`routes.py`) accepts ONLY
@@ -42,13 +56,20 @@
 //! So `ASWebAuthenticationSession` (which needs a custom callback scheme) is out
 //! without a server change.
 //!
-//! What the webview CAN do is load our own loopback URL. So on mobile we navigate the
-//! CALLING webview to the authorize URL, let the gateway 302 it to
-//! `http://127.0.0.1:<port>/callback`, answer that from the listener we already
-//! bound, and navigate back — the same navigate-away contract the cookie cascade
-//! below and `cloud.rs::portal_login` already use, one-shot resume marker included.
-//! The gateway's `hermes_session_pkce` broker cookie round-trips inside that webview
-//! for both hops, so nothing extra has to be plumbed.
+//! What a webview CAN do is load our own loopback URL. So both arms point a webview
+//! at the authorize URL, let the gateway 302 it to `http://127.0.0.1:<port>/callback`
+//! and answer that from the listener we already bound. The gateway's
+//! `hermes_session_pkce` broker cookie round-trips inside that webview for both hops,
+//! so nothing extra has to be plumbed.
+//!
+//!   * DESKTOP builds a dedicated `OAUTH_WINDOW_LABEL` window beside the app, waits
+//!     on the listener, and closes the window. The app's own UI is never disturbed,
+//!     so closing that window is also the cancel gesture — see
+//!     `await_loopback_code_in_window`.
+//!   * MOBILE navigates the CALLING webview, because neither phone can host a
+//!     dismissable second window, then navigates back — the same navigate-away
+//!     contract the cookie cascade below and `cloud.rs::portal_login` already use,
+//!     one-shot resume marker included.
 //!
 //! # Legacy webview-cookie flow (fallback)
 //!
@@ -92,10 +113,11 @@ use tokio::sync::oneshot;
 use crate::transport::TransportState;
 
 /// The single label for the interactive sign-in window (desktop). Reused (closed +
-/// rebuilt) across attempts so a stale window never lingers. Not used on mobile, which
-/// drives the login through the calling webview instead of a second window.
-#[cfg(desktop)]
-const OAUTH_WINDOW_LABEL: &str = "hermes-oauth";
+/// rebuilt) across attempts so a stale window never lingers. Only BUILT on desktop —
+/// mobile drives the login through the calling webview instead of a second window —
+/// but the constant is unconditional because `lib.rs`'s credential gate has to
+/// recognise the label on every platform it compiles for.
+pub(crate) const OAUTH_WINDOW_LABEL: &str = "hermes-oauth";
 
 /// How long to wait for the interactive login before giving up (desktop: the app UI
 /// stays put behind the sign-in window, so a generous window is fine).
@@ -207,22 +229,50 @@ impl Drop for SignInLease {
     }
 }
 
-/// Claim `label`'s sign-in slot, or report that one is already running.
-pub(crate) fn claim_sign_in(label: &str) -> Result<SignInLease, String> {
-    let mut in_flight = SIGN_IN_IN_FLIGHT
+/// Is any interactive sign-in running right now?
+///
+/// Asked by the credential gate in `lib.rs`, which locks the keyring whenever the app
+/// loses focus. Opening the sign-in window IS the app losing focus, so without this the
+/// gate slammed shut at the exact moment the flow needs it open, and every gated read
+/// for the rest of the sign-in failed. The lease is the right signal rather than a
+/// window-label check alone: it spans the whole command, including the desktop system
+/// browser arm, where no window of ours is involved at all and the app is defocused by
+/// Safari.
+pub(crate) fn sign_in_active() -> bool {
+    SIGN_IN_IN_FLIGHT
         .lock()
-        .map_err(|_| "the sign-in registry is unusable".to_string())?;
+        // A poisoned registry says nothing about whether a sign-in is running, and
+        // guessing "no" here would re-introduce the lock this exists to prevent.
+        .map(|in_flight| !in_flight.is_empty())
+        .unwrap_or(true)
+}
+
+/// Claim `label`'s sign-in slot. `None` means one is already running.
+///
+/// `None` and not `Err`, because losing this race is a NORMAL outcome, not a
+/// failure: it means a sign-in the user asked for is already under way and this
+/// caller should simply defer to it. Reporting it as an error had a consequence
+/// far worse than the noise — `beginOAuthLogin` treats a rejection as proof that
+/// it never navigated, and clears the one-shot resume marker. Since that marker is
+/// global, the LOSER was deleting the WINNER's. The user completed a sign-in, the
+/// SPA reloaded, found no marker, and dropped them on the connect screen holding a
+/// login they had just finished.
+pub(crate) fn claim_sign_in(label: &str) -> Option<SignInLease> {
+    // A poisoned registry is recovered, not propagated: the guarded value is a set
+    // of labels with no invariant to corrupt, and refusing every sign-in for the
+    // rest of the process is a far worse outcome than the panic that poisoned it.
+    let mut in_flight = match SIGN_IN_IN_FLIGHT.lock() {
+        Ok(in_flight) => in_flight,
+        Err(poisoned) => poisoned.into_inner(),
+    };
 
     if !in_flight.insert(label.to_string()) {
-        log::warn!("[oauth] refusing a second sign-in for webview {label:?}");
+        log::info!("[oauth] a sign-in already owns webview {label:?}; deferring to it");
 
-        return Err(
-            "A sign-in is already in progress. Finish or cancel it before starting another."
-                .to_string(),
-        );
+        return None;
     }
 
-    Ok(SignInLease(label.to_string()))
+    Some(SignInLease(label.to_string()))
 }
 
 /// Is the webview already sitting on the sign-in host?
@@ -793,23 +843,32 @@ fn now_secs() -> i64 {
 
 /// Persist a token set, reporting whether it actually landed.
 ///
-/// The `Result` matters on mobile and only there. Desktop keeps the token set alive in
-/// process memory via `register_bearer_base`, so a machine with no working keyring
-/// (a Linux box with no Secret Service) still gets a usable session for the run —
-/// which is why this used to be a bare `log::warn!`. Mobile has no such grace: the
-/// sign-in ends by reloading the SPA, and the boot that follows reads the KEYRING
-/// (`ensure_native_tokens` → `load_native_tokens`). A write that silently failed there
-/// presents as "I signed in and the token was never captured", with the reason buried
-/// in a warning nobody is streaming.
+/// The `Result` still matters on EVERY platform, and a caller that discards it is
+/// claiming a session it does not have. `cache_bearer_tokens` keeps the set alive
+/// for THIS run only — it is a read-through cache, not storage. A write that fails
+/// leaves a session that dies at the next launch, which is exactly the failure the
+/// `Result` exists to report, so it is still wrong to swallow.
+///
+/// This doc used to say there was "no in-memory fallback anywhere in this module",
+/// and that every later read went `gateway_bearer` → `ensure_native_tokens` →
+/// `load_native_tokens` → the keyring. That was true and it was the bug: on macOS a
+/// keyring read is an ACL check, so a build whose code signature the ACL cannot
+/// match (an ad-hoc signed one) raised a password dialog PER REQUEST. The cache
+/// below is keyed on the token's own `expires_at` via `native::needs_refresh`, so it
+/// cannot serve a set the gateway would reject for age, and `force_refresh` skips it
+/// entirely. Note this is a different thing from the storage fallback that
+/// `secrets/store.rs` still correctly forbids: that one would have DIVERTED
+/// credentials away from the OS store; this one only remembers what the OS store
+/// already told us.
 fn store_native_tokens(
     _app: &AppHandle,
     state: &TransportState,
     base: &str,
     tokens: &native::NativeTokenSet,
 ) -> Result<(), String> {
-    // Registered even when the keyring write below fails: the token set is live
-    // for this run either way, and the transport has to know to attach it.
-    state.register_bearer_base(base);
+    // Cached even when the keyring write below fails: the token set is live for
+    // this run either way, and the transport has to know to attach it.
+    state.cache_bearer_tokens(base, tokens.clone());
 
     let json = serde_json::to_string(tokens)
         .map_err(|e| format!("could not serialize the token set: {e}"))?;
@@ -821,8 +880,22 @@ fn store_native_tokens(
     Ok(())
 }
 
+/// The stored token set for `base`, or `None` when there is not one.
+///
+/// A keyring that REFUSES the read is not the same as one that has nothing, and the two
+/// used to be indistinguishable here (`.ok()??`). They still return the same `None` — the
+/// caller has nothing better to do either way — but the refusal now says so, because
+/// "signed out" caused by a broken credential store is exactly the failure this module
+/// has no other way to report.
 fn load_native_tokens(_app: &AppHandle, base: &str) -> Option<native::NativeTokenSet> {
-    let json = crate::secrets::read_owned(crate::secrets::OwnedKey::NativeAuth, base).ok()??;
+    let json = match crate::secrets::read_owned(crate::secrets::OwnedKey::NativeAuth, base) {
+        Ok(found) => found?,
+        Err(e) => {
+            log::warn!("[oauth] could not read the stored session: {}", e.message);
+
+            return None;
+        }
+    };
 
     serde_json::from_str(&json).ok()
 }
@@ -957,18 +1030,159 @@ async fn await_loopback_code(
     }
 }
 
+/// Build the interactive sign-in window at `url` (desktop).
+///
+/// On the main thread because gtk/WKWebView require it, with a `oneshot` carrying
+/// the build result back so a failure surfaces here instead of as a dead wait on a
+/// listener nothing will ever reach. Any stale window from a previous attempt is
+/// dropped first — `OAUTH_WINDOW_LABEL` is a single reused label, and building over
+/// a live one fails.
+///
+/// The same shape the cookie cascade in `oauth_login` uses; both run through here.
+#[cfg(desktop)]
+async fn open_sign_in_window(app: &AppHandle, url: Url) -> Result<(), String> {
+    let (build_tx, build_rx) = oneshot::channel::<Result<(), String>>();
+    let app_build = app.clone();
+
+    app.run_on_main_thread(move || {
+        if let Some(existing) = app_build.get_webview_window(OAUTH_WINDOW_LABEL) {
+            let _ = existing.close();
+        }
+
+        let build =
+            WebviewWindowBuilder::new(&app_build, OAUTH_WINDOW_LABEL, WebviewUrl::External(url))
+                .title("Sign in to Hermes")
+                .inner_size(520.0, 720.0)
+                .build();
+
+        let _ = build_tx.send(
+            build
+                .map(|_| ())
+                .map_err(|e| format!("could not open sign-in window: {e}")),
+        );
+    })
+    .map_err(|e| format!("failed to schedule sign-in window: {e}"))?;
+
+    build_rx
+        .await
+        .map_err(|_| "failed to open sign-in window".to_string())?
+}
+
+/// Drop the interactive sign-in window if it is still up (desktop).
+#[cfg(desktop)]
+fn close_sign_in_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window(OAUTH_WINDOW_LABEL) {
+        let _ = win.close();
+    }
+}
+
+/// Wait for the loopback code, giving up as soon as the user closes the window.
+///
+/// The close watch is what keeps an abandoned sign-in from pinning the flow for the
+/// whole budget. It polls rather than subscribing to a window event because the
+/// window is torn down from the main thread and `get_webview_window` going `None` is
+/// the one signal that is true for every way it can die — closed by the user,
+/// closed by us, or destroyed by the platform. 500 ms matches the cookie cascade's
+/// poll, and the cost is a hashmap lookup.
+///
+/// The wait itself is unchanged (`await_loopback_code`); this only adds a second way
+/// out of it.
+#[cfg(desktop)]
+async fn await_loopback_code_in_window(
+    app: &AppHandle,
+    listener: tokio::net::TcpListener,
+    expected_state: &str,
+    timeout_secs: u64,
+) -> Result<String, NativeLoginError> {
+    let closed = async {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+            if app.get_webview_window(OAUTH_WINDOW_LABEL).is_none() {
+                return;
+            }
+        }
+    };
+
+    tokio::select! {
+        // Biased so a code that landed in the same tick as the close wins: the
+        // window is closed BY the callback arriving, and reporting that as a
+        // cancellation would throw away a completed sign-in.
+        biased;
+        // A timeout or listener failure keeps `navigated: false` (via `From<String>`)
+        // so a gateway with broken native routes still falls through to the cookie
+        // cascade — that fallback is the whole compatibility story.
+        code = await_loopback_code(listener, expected_state, timeout_secs, true) => {
+            code.map_err(NativeLoginError::from)
+        }
+        // A cancel is different in kind: the user dismissed the sign-in on purpose,
+        // and answering that by opening a second sign-in window would be the exact
+        // "I ended up on some other login screen" behaviour this flag exists to stop.
+        () = closed => Err(NativeLoginError {
+            message: "Sign-in window was closed before completing".to_string(),
+            navigated: true,
+        }),
+    }
+}
+
 /// POST a native-auth endpoint and parse the token set out of it.
 ///
 /// The secret (code + verifier, or the refresh token) is in the BODY, which
 /// reqwest never puts in an error — but reqwest does embed the request URL, and a
 /// base URL can carry userinfo or query material, so the URL is swapped for its
 /// redacted form the way `transport.rs` does (MJXHRM-217, PR #103).
+/// Why a token POST failed, and — the part that matters — whether the credential
+/// it carried is actually dead.
+///
+/// `status` is `Some(code)` when the gateway ANSWERED and refused. It is `None`
+/// when the request never got an answer at all: DNS, connection refused, TLS,
+/// timeout. Collapsing those two into one `String` is what let a flaky network
+/// delete a perfectly good session: `ensure_native_tokens` cleared the keyring on
+/// any `Err`, so one unreachable moment cost the user an interactive sign-in.
+#[derive(Debug)]
+struct TokenPostError {
+    message: String,
+    /// The HTTP status the gateway answered with, or `None` if it never answered.
+    status: Option<u16>,
+}
+
+impl TokenPostError {
+    fn unreachable(message: String) -> Self {
+        Self {
+            message,
+            status: None,
+        }
+    }
+
+    /// True only when the gateway answered and rejected the credential itself.
+    ///
+    /// 401 is the refusal the auth gate emits for a dead bearer or a refresh token
+    /// it will not rotate; 403 covers a grant that still parses but is no longer
+    /// entitled. Everything else — 5xx from a restarting gateway, 502 from a proxy,
+    /// 429 — says nothing about the credential and must leave it alone.
+    fn credential_rejected(&self) -> bool {
+        matches!(self.status, Some(401) | Some(403))
+    }
+}
+
+impl From<TokenPostError> for String {
+    fn from(err: TokenPostError) -> Self {
+        err.message
+    }
+}
+
+impl std::fmt::Display for TokenPostError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 async fn post_native_tokens(
     state: &TransportState,
     base: &str,
     path: &str,
     body: serde_json::Value,
-) -> Result<native::NativeTokenSet, String> {
+) -> Result<native::NativeTokenSet, TokenPostError> {
     let url = format!("{base}{path}");
     // The refresh token rides in the body, so it is scrubbed out of any error
     // too — reqwest has no reason to quote a body back at us, but this error
@@ -986,13 +1200,13 @@ async fn post_native_tokens(
         .send()
         .await
         .map_err(|e| {
-            format!(
+            TokenPostError::unreachable(format!(
                 "{path} request failed: {}",
                 crate::transport::redact_secret(
                     crate::transport::redact_error(e.to_string(), &url),
                     &secret
                 )
-            )
+            ))
         })?;
 
     let status = resp.status();
@@ -1000,22 +1214,29 @@ async fn post_native_tokens(
     if !status.is_success() {
         // The gateway keeps these deliberately generic (no verifier oracle); pass
         // the status through and nothing else.
-        return Err(format!("{path} rejected the request (HTTP {status})"));
+        return Err(TokenPostError {
+            message: format!("{path} rejected the request (HTTP {status})"),
+            status: Some(status.as_u16()),
+        });
     }
 
     // reqwest appends ` for url (…)` to a decode error too, so this one carries
     // the request URL exactly like the send failure above does.
+    //
+    // Answered-but-unreadable is NOT a credential refusal: the gateway took the
+    // token and replied 2xx, so the fault is the body, not the grant. It keeps
+    // `status: None` so it never reaches `credential_rejected`.
     let parsed: serde_json::Value = resp.json().await.map_err(|e| {
-        format!(
+        TokenPostError::unreachable(format!(
             "{path} returned an unreadable body: {}",
             crate::transport::redact_error(e.to_string(), &url)
-        )
+        ))
     })?;
 
-    native::parse_token_response(&parsed)
+    native::parse_token_response(&parsed).map_err(TokenPostError::unreachable)
 }
 
-/// Why a native login failed, and whether it disturbed the app's UI on the way.
+/// Why a native login failed, and whether falling back would help or just repeat it.
 ///
 /// `navigated` is the entire reason this is a struct and not a `String`. On mobile the
 /// login runs in the app's ONLY webview, so a failure after the hand-off leaves the
@@ -1025,11 +1246,21 @@ async fn post_native_tokens(
 /// screen" this flow was reported for. See the match in `oauth_login`.
 struct NativeLoginError {
     message: String,
-    /// Set once the hand-off has been ISSUED, which is not the same as the webview
-    /// having moved — a refused navigation counts too. That is deliberate: the cookie
-    /// cascade would ask the same webview for a page on the same unreachable host and
-    /// be refused identically, so falling back there buys a second failure and a
-    /// second wait.
+    /// "The user has already been put in front of a sign-in surface, and showing them
+    /// another one is not a recovery." Both platforms set it; they just reach it
+    /// differently.
+    ///
+    /// MOBILE sets it once the hand-off has been ISSUED, which is not the same as the
+    /// webview having moved — a refused navigation counts too. That is deliberate: the
+    /// cookie cascade would ask the same webview for a page on the same unreachable
+    /// host and be refused identically, so falling back there buys a second failure
+    /// and a second wait.
+    ///
+    /// DESKTOP sets it only when the user CLOSED the sign-in window, i.e. cancelled.
+    /// A desktop timeout or transport failure deliberately leaves it false and does
+    /// fall through: that is the compatibility path for a gateway whose native routes
+    /// are broken. But answering a cancel by immediately opening a second sign-in
+    /// window is the one thing that is never right.
     navigated: bool,
 }
 
@@ -1106,21 +1337,56 @@ async fn run_native_login(
 
     #[cfg(desktop)]
     {
-        use tauri_plugin_opener::OpenerExt;
-
-        // The login happens in another application; ours is untouched.
+        // The login runs in OUR OWN window, not the system browser.
+        //
+        // It used to be the browser (that is what RFC 8252 §8.1 asks for), and on
+        // paper desktop can host that shape: unlike a phone we are never suspended,
+        // so the loopback listener stays live while the user is in another app. In
+        // practice the return leg is at the mercy of whatever is between the browser
+        // and `127.0.0.1:<port>` — a default browser that refuses a plaintext
+        // loopback hop out of an https page, a gateway or proxy that drops the 302,
+        // an extension. When it fails there is NOTHING to fall back on: the gateway
+        // accepts only a loopback redirect (never our `hermes://` scheme), so the
+        // socket is the only door home and the user is left signed in inside a
+        // browser we cannot read.
+        //
+        // Hosting the same flow in a webview we own removes that whole class of
+        // failure without giving anything up: the listener is a plain TCP socket on
+        // loopback and does not care which process connects, so PKCE, the one-shot
+        // code exchange and the bearer-in-the-keyring result are all unchanged. The
+        // mobile arm below already drives exactly this authorize -> loopback redirect
+        // through a Tauri webview; this is the same trick with a window beside the
+        // app instead of the app's own webview.
+        //
+        // The webview is a plain external-URL window with no IPC: `hermes-oauth` is
+        // deliberately outside the `windows` globs in capabilities/default.json.
         let _ = webview;
 
-        log::info!("[oauth] native sign-in: loopback on 127.0.0.1:{port}, opening system browser");
+        let authorize_url =
+            Url::parse(&authorize).map_err(|e| format!("invalid authorize URL: {e}"))?;
 
-        // The opener plugin's Rust API, not the JS one: a Rust-internal call is not
-        // gated by the opener ACL/scope (same reason `open_external` in lib.rs uses it).
-        app.opener()
-            .open_url(authorize, None::<&str>)
-            .map_err(|e| format!("could not open the system browser: {e}"))?;
+        log::info!(
+            "[oauth] native sign-in: loopback on 127.0.0.1:{port}, opening the sign-in window"
+        );
 
+        open_sign_in_window(app, authorize_url).await?;
+
+        // `in_app: true` — the callback page is rendered inside the window we are
+        // about to close, so it says "Returning to Hermes…" rather than telling the
+        // user to close a tab that is not theirs.
+        //
+        // Raced against the window going away so that closing it cancels the sign-in
+        // immediately. Without that race an abandoned login pins the flow for the
+        // full NATIVE_LOGIN_TIMEOUT_SECS with no UI to explain itself, which is
+        // indistinguishable from the app having hung.
         let code =
-            await_loopback_code(listener, &csrf_state, NATIVE_LOGIN_TIMEOUT_SECS, false).await?;
+            await_loopback_code_in_window(app, listener, &csrf_state, NATIVE_LOGIN_TIMEOUT_SECS)
+                .await;
+
+        // Close the window on every exit, exactly as the cookie cascade does.
+        close_sign_in_window(app);
+
+        let code = code?;
 
         let tokens = post_native_tokens(
             state,
@@ -1128,14 +1394,23 @@ async fn run_native_login(
             "/auth/native/token",
             serde_json::json!({ "code": code, "code_verifier": pkce.verifier }),
         )
-        .await?;
+        .await
+        .map_err(|e| e.message)?;
 
-        // Survivable here: `register_bearer_base` keeps the session live for this run
-        // even on a machine with no working keyring, and nothing is about to reload and
-        // read it back. Mobile cannot say the same — see the other arm.
-        if let Err(e) = store_native_tokens(app, state, base, &tokens) {
-            log::warn!("[oauth] native session will not survive restart: {e}");
-        }
+        // NOT survivable, despite how this read for a long time. A token set that did
+        // not reach the keyring cannot be read back by `ensure_native_tokens`, so
+        // returning `Ok` here hands the caller a signed-in answer for a session that is
+        // already dead — the user completes a sign-in in the window above and the app
+        // says signed out. Fail instead.
+        //
+        // Failing is also the gentler option, which is why it is safe to do here: this
+        // converts with `navigated: false`, so `oauth_login` drops through to the cookie
+        // cascade rather than dead-ending. A machine whose keyring genuinely does not
+        // work (a Linux box with no Secret Service) therefore degrades to the flow that
+        // predates this one, which keeps its session in the reqwest jar and needs no
+        // keyring at all.
+        store_native_tokens(app, state, base, &tokens)
+            .map_err(|e| format!("Signed in, but the credential could not be saved: {e}"))?;
 
         log::info!("[oauth] native sign-in complete for base={base}");
 
@@ -1302,7 +1577,8 @@ async fn native_login_after_navigate(
         "/auth/native/token",
         serde_json::json!({ "code": code, "code_verifier": verifier }),
     )
-    .await?;
+    .await
+    .map_err(|e| e.message)?;
 
     // Written BEFORE the caller navigates back, and a failure here fails the sign-in.
     // The restore reloads the SPA, whose boot calls `oauth_status` — i.e. reads this
@@ -1317,29 +1593,84 @@ async fn native_login_after_navigate(
     Ok(tokens)
 }
 
+/// One refresh at a time, per gateway.
+///
+/// Nothing used to serialise `ensure_native_tokens`, and on boot several callers
+/// reach it at once — `oauth_status`, every `transport::http_request`, every
+/// `files.rs` transfer. Each loaded the SAME refresh token and POSTed it. The
+/// gateway rotates refresh tokens with reuse detection, so the first rotation
+/// invalidated the token the others were already presenting: every loser got a
+/// 401 and (before this change) deleted the winner's freshly stored rotation.
+/// The user then had to sign in interactively on every single launch, which is
+/// exactly what the device log shows — a refresh 401 as line one, every time.
+///
+/// Keyed by base because two gateways have two unrelated grants. A `tokio` mutex,
+/// not a `std` one: it is held across the refresh `.await`.
+static REFRESH_GATES: std::sync::Mutex<
+    std::collections::BTreeMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>,
+> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn refresh_gate(base: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    // A poisoned registry is recovered rather than propagated: the guarded value
+    // is a map of handles with no invariant to corrupt, and refusing to refresh
+    // for the rest of the process would be far worse than the panic that poisoned
+    // it. Mirrors `claim_sign_in`.
+    let mut gates = match REFRESH_GATES.lock() {
+        Ok(gates) => gates,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    gates.entry(base.to_string()).or_default().clone()
+}
+
 /// The live token set for this gateway, refreshing first when the stored access
 /// token is at or inside the skew window (or when `force_refresh` says the
 /// gateway just rejected it). `None` means "no native session" — the caller falls
 /// back to the cookie jar, exactly as before.
 ///
-/// A refusal from `/auth/native/refresh` clears the stored set: a refresh token
-/// the gateway will not rotate is dead, and keeping it would make every later call
-/// spend a doomed round trip.
+/// A REFUSAL from `/auth/native/refresh` (401/403) clears the stored set: a
+/// refresh token the gateway will not rotate is dead, and keeping it would make
+/// every later call spend a doomed round trip.
+///
+/// An UNREACHABLE gateway does not. That distinction is the whole point: this
+/// used to clear on any `Err`, so a phone that lost signal for one request threw
+/// away a working session and forced an interactive sign-in to get it back. When
+/// the refresh cannot be completed we hand back the set we already hold — stale
+/// or not, presenting it costs one round trip and `transport.rs`'s 401 ladder is
+/// there to catch it if the gateway really has moved on.
 async fn ensure_native_tokens(
     app: &AppHandle,
     state: &TransportState,
     base: &str,
     force_refresh: bool,
 ) -> Option<native::NativeTokenSet> {
-    let Some(tokens) = load_native_tokens(app, base) else {
-        // Stops `bearer_base_for_url`'s origin fallback re-reading the keyring
-        // on every single request to a gateway that has no native session.
-        state.note_no_bearer_base(base);
-
-        return None;
+    // The cached set first, so a live token costs no keyring round trip at all.
+    // `force_refresh` MUST skip the cache: that path exists because the gateway
+    // just answered 401 to this very token, and serving it again from memory
+    // would turn one rejected request into an infinite loop of them.
+    let cached = if force_refresh {
+        None
+    } else {
+        state.cached_bearer_tokens(base)
     };
 
-    state.register_bearer_base(base);
+    let tokens = match cached {
+        Some(tokens) => tokens,
+        None => {
+            let Some(tokens) = load_native_tokens(app, base) else {
+                // Stops `bearer_base_for_url`'s origin fallback re-reading the
+                // keyring on every single request to a gateway that has no
+                // native session.
+                state.note_no_bearer_base(base);
+
+                return None;
+            };
+
+            tokens
+        }
+    };
+
+    state.cache_bearer_tokens(base, tokens.clone());
 
     if !force_refresh && !native::needs_refresh(&tokens, now_secs()) {
         return Some(tokens);
@@ -1349,6 +1680,23 @@ async fn ensure_native_tokens(
         clear_native_tokens(app, state, base);
 
         return None;
+    }
+
+    // Everything below rotates the grant, so only one caller per gateway may run it.
+    let gate = refresh_gate(base);
+    let _guard = gate.lock().await;
+
+    // Re-read under the gate. If someone rotated while we queued, THAT is the answer —
+    // re-POSTing the refresh token they just consumed is precisely the reuse-detection
+    // cascade this gate exists to stop. The access-token comparison is what keeps a
+    // `force_refresh` caller honest: it was sent here because the gateway rejected a
+    // specific bearer, so it may only accept a set that is demonstrably a different one.
+    if let Some(rotated) = state.cached_bearer_tokens(base) {
+        if rotated.access_token != tokens.access_token
+            && !native::needs_refresh(&rotated, now_secs())
+        {
+            return Some(rotated);
+        }
     }
 
     match post_native_tokens(
@@ -1370,11 +1718,20 @@ async fn ensure_native_tokens(
 
             Some(rotated)
         }
-        Err(e) => {
-            log::info!("[oauth] native refresh failed, dropping the stored session: {e}");
+        Err(e) if e.credential_rejected() => {
+            log::info!("[oauth] native refresh was refused, dropping the stored session: {e}");
             clear_native_tokens(app, state, base);
 
             None
+        }
+        Err(e) => {
+            // Unreachable, 5xx, or an unreadable body. None of those say the grant is
+            // dead, so the session stays exactly where it is and we retry on the next
+            // call. Handing back the set we hold keeps requests flowing the moment the
+            // network returns, instead of stranding a signed-in user on a sign-in CTA.
+            log::info!("[oauth] native refresh could not be completed, keeping the session: {e}");
+
+            Some(tokens)
         }
     }
 }
@@ -1532,11 +1889,53 @@ pub async fn oauth_login(
     state: State<'_, TransportState>,
     base: String,
     provider: Option<String>,
-) -> Result<(), String> {
+) -> Result<SignInOutcome, String> {
     // Before anything else, and held for the whole command: three callers can drive a
     // sign-in and none of them coordinate. See `SIGN_IN_IN_FLIGHT`.
-    let _lease = claim_sign_in(webview.label())?;
+    //
+    // Losing the race is reported, not raised. The caller must be able to tell "another
+    // flow owns this" from "your sign-in failed", because the two demand opposite
+    // reactions — defer quietly, versus tear down the resume state and surface an error.
+    let Some(_lease) = claim_sign_in(webview.label()) else {
+        return Ok(SignInOutcome::busy());
+    };
 
+    run_oauth_login(app, webview, state, base, provider).await?;
+
+    Ok(SignInOutcome::started())
+}
+
+/// What an `oauth_login` call actually did.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignInOutcome {
+    /// True when another sign-in already owned this webview, so this call did
+    /// nothing at all. Not an error: the flow the user asked for is still running,
+    /// and the caller must leave its state — above all the resume marker — alone.
+    busy: bool,
+}
+
+impl SignInOutcome {
+    fn busy() -> Self {
+        Self { busy: true }
+    }
+
+    fn started() -> Self {
+        Self { busy: false }
+    }
+}
+
+/// The sign-in itself, once the lease is held.
+///
+/// Split from the command purely so the lease has exactly one claim site and one
+/// scope — this body has a dozen early returns across two platform arms.
+async fn run_oauth_login(
+    app: AppHandle,
+    webview: WebviewWindow,
+    state: State<'_, TransportState>,
+    base: String,
+    provider: Option<String>,
+) -> Result<(), String> {
     let base = normalize_base(&base);
     let provider = provider.unwrap_or_else(|| "nous".to_string());
     let base_url = Url::parse(&base).map_err(|e| format!("invalid gateway URL {base:?}: {e}"))?;
@@ -1588,37 +1987,12 @@ pub async fn oauth_login(
 
     #[cfg(desktop)]
     {
-        // The caller hosts the login only on mobile; here we build our own window.
+        // The caller hosts the login only on mobile; here we build our own window —
+        // the same one the native flow above uses, via the same helper, so the two
+        // cannot drift apart in title, size, or stale-window handling.
         let _ = webview;
 
-        // Build the window on the main thread (gtk/WKWebView requirement). A oneshot
-        // carries the build result back so a failure surfaces instead of a dead poll.
-        let (build_tx, build_rx) = oneshot::channel::<Result<(), String>>();
-        let app_build = app.clone();
-        app.run_on_main_thread(move || {
-            // Drop any stale window from a previous attempt first.
-            if let Some(existing) = app_build.get_webview_window(OAUTH_WINDOW_LABEL) {
-                let _ = existing.close();
-            }
-            let build = WebviewWindowBuilder::new(
-                &app_build,
-                OAUTH_WINDOW_LABEL,
-                WebviewUrl::External(login_url),
-            )
-            .title("Sign in to Hermes")
-            .inner_size(520.0, 720.0)
-            .build();
-            let _ = build_tx.send(
-                build
-                    .map(|_| ())
-                    .map_err(|e| format!("could not open sign-in window: {e}")),
-            );
-        })
-        .map_err(|e| format!("failed to schedule sign-in window: {e}"))?;
-
-        build_rx
-            .await
-            .map_err(|_| "failed to open sign-in window".to_string())??;
+        open_sign_in_window(&app, login_url).await?;
 
         log::info!("[oauth] sign-in window opened; polling cookies for base={base}");
 
@@ -1634,9 +2008,7 @@ pub async fn oauth_login(
         .await;
 
         // Close the interactive window either way.
-        if let Some(win) = app.get_webview_window(OAUTH_WINDOW_LABEL) {
-            let _ = win.close();
-        }
+        close_sign_in_window(&app);
 
         outcome
     }
@@ -1733,6 +2105,17 @@ pub enum SessionKind {
 #[serde(rename_all = "camelCase")]
 pub struct OauthStatus {
     signed_in: bool,
+    /// Whether we actually got an answer. `false` means "could not tell" — the
+    /// gateway was unreachable or answered a server error — and is NOT the same
+    /// as signed out.
+    ///
+    /// Without this the reply had only two states, so an unreachable gateway was
+    /// indistinguishable from a revoked session and the caller sent a signed-in
+    /// user to an interactive sign-in for what was really a dropped connection.
+    /// Callers must branch on all three: signed in, signed out, or unknown.
+    reachable: bool,
+    /// Why we could not tell, when `reachable` is false. Already redacted.
+    error: Option<String>,
     email: Option<String>,
     display_name: Option<String>,
     /// Which credential backs the live session, or `None` when signed out.
@@ -1748,6 +2131,21 @@ impl OauthStatus {
     fn signed_out() -> Self {
         Self {
             signed_in: false,
+            reachable: true,
+            error: None,
+            email: None,
+            display_name: None,
+            session_kind: None,
+        }
+    }
+
+    /// We hold (or held) a session but could not confirm it. The caller must treat
+    /// this as a network fault and retry, never as a reason to sign in again.
+    fn unknown(error: String) -> Self {
+        Self {
+            signed_in: false,
+            reachable: false,
+            error: Some(error),
             email: None,
             display_name: None,
             session_kind: None,
@@ -1766,6 +2164,8 @@ impl OauthStatus {
 
         Self {
             signed_in: true,
+            reachable: true,
+            error: None,
             email: string("email"),
             display_name: string("display_name"),
             session_kind: Some(match tokens {
@@ -1805,22 +2205,40 @@ pub async fn oauth_status(
     // `redact_error` and not `redact_bearer` alone: reqwest quotes the request
     // URL back at us, and a hand-typed base can carry a basic-auth password in
     // its userinfo. This string is rendered on the connect screen.
-    let resp = request.send().await.map_err(|e| {
-        format!(
-            "auth/me request failed: {}",
-            crate::transport::redact_error(e.to_string(), &url)
-        )
-    })?;
+    // An unreachable gateway is reported, not raised. Raising sent every caller
+    // through `.catch(() => ({ signedIn: false }))`, which turned "the network is
+    // down" into "you are signed out" and pushed the user at a sign-in button that
+    // could not possibly help.
+    let resp = match request.send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            return Ok(OauthStatus::unknown(format!(
+                "auth/me request failed: {}",
+                crate::transport::redact_error(e.to_string(), &url)
+            )));
+        }
+    };
 
-    if !resp.status().is_success() {
-        // A bearer the gateway rejects is dead (the middleware answers a bad
+    let status = resp.status();
+
+    if !status.is_success() {
+        // A bearer the gateway REFUSES is dead (the middleware answers a bad
         // bearer with 401 rather than falling through to the cookie), so drop it
         // instead of re-presenting it on every probe.
-        if tokens.is_some() {
-            clear_native_tokens(&app, state.inner(), &base);
+        if matches!(status.as_u16(), 401 | 403) {
+            if tokens.is_some() {
+                clear_native_tokens(&app, state.inner(), &base);
+            }
+
+            return Ok(OauthStatus::signed_out());
         }
 
-        return Ok(OauthStatus::signed_out());
+        // Anything else — 502 from a proxy, 503 from a gateway still booting — is
+        // the gateway's problem, not the credential's. Clearing the keyring here
+        // meant a restart on the server cost the user a sign-in on the client.
+        return Ok(OauthStatus::unknown(format!(
+            "auth/me answered HTTP {status}"
+        )));
     }
 
     let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
@@ -1940,13 +2358,41 @@ mod tests {
 
         // The regression this exists for: two flows driving one webview, the second
         // capturing the first's login page as its return target.
-        assert!(claim_sign_in("lease-test-main").is_err());
+        assert!(claim_sign_in("lease-test-main").is_none());
 
         drop(first);
 
         // And the slot is usable again afterwards — a lease that leaked on any of
         // `oauth_login`'s early returns would wedge sign-in for the whole process.
-        assert!(claim_sign_in("lease-test-main").is_ok());
+        assert!(claim_sign_in("lease-test-main").is_some());
+    }
+
+    /// Losing the race is `None`, never an `Err`, and the difference is the whole
+    /// reason `SignInOutcome` exists.
+    ///
+    /// `beginOAuthLogin` reads a rejection as proof that it never navigated, and
+    /// responds by clearing the one-shot resume marker. That marker is global, so
+    /// the loser was deleting the WINNER's: the user finished signing in, the SPA
+    /// reloaded, found nothing to resume, and landed back on the connect screen.
+    #[test]
+    fn losing_the_race_is_reported_as_busy_rather_than_as_a_failure() {
+        let _held = claim_sign_in("lease-test-busy").expect("the first claim wins");
+
+        let outcome = match claim_sign_in("lease-test-busy") {
+            Some(_) => SignInOutcome::started(),
+            None => SignInOutcome::busy(),
+        };
+
+        let json = serde_json::to_string(&outcome).unwrap();
+
+        assert_eq!(json, r#"{"busy":true}"#);
+    }
+
+    #[test]
+    fn a_sign_in_that_actually_ran_is_not_busy() {
+        let json = serde_json::to_string(&SignInOutcome::started()).unwrap();
+
+        assert_eq!(json, r#"{"busy":false}"#);
     }
 
     #[test]
@@ -1955,6 +2401,18 @@ mod tests {
         // lease must not be global.
         let _a = claim_sign_in("lease-test-alpha").expect("alpha");
         let _b = claim_sign_in("lease-test-beta").expect("beta is a separate webview");
+    }
+
+    #[test]
+    fn a_lease_marks_a_sign_in_as_active() {
+        // What the credential gate in lib.rs reads. Before this, opening the sign-in
+        // window defocused `main`, the gate locked, and every gated secret read for
+        // the rest of the flow failed.
+        let lease = claim_sign_in("lease-test-active").expect("claim");
+
+        assert!(sign_in_active());
+
+        drop(lease);
     }
 
     // ── The loopback listener ────────────────────────────────────────────────
@@ -2054,5 +2512,200 @@ mod tests {
             .unwrap_err();
 
         assert!(err.contains("timed out"), "{err}");
+    }
+
+    // ---------------------------------------------------------------------
+    // Credential lifecycle: WHICH failures are allowed to end a session.
+    //
+    // `ensure_native_tokens` used to clear the keyring on any `Err` from the
+    // refresh POST, so one unreachable moment on a phone threw away a working
+    // grant and forced an interactive sign-in. These pin the classification it
+    // now branches on; `post_native_tokens` is driven against a real loopback
+    // socket so the status really does come off the wire.
+    // ---------------------------------------------------------------------
+
+    /// Answer exactly one request with a canned status, then hang up.
+    fn serve_once(
+        listener: tokio::net::TcpListener,
+        status_line: &'static str,
+        body: &'static str,
+    ) {
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+
+            let mut buf = [0u8; 2048];
+            let _ = sock.read(&mut buf).await;
+
+            let reply = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+
+            let _ = sock.write_all(reply.as_bytes()).await;
+            let _ = sock.flush().await;
+        });
+    }
+
+    async fn refresh_against(status_line: &'static str, body: &'static str) -> TokenPostError {
+        let (listener, port) = bound_listener().await;
+        serve_once(listener, status_line, body);
+
+        let state = TransportState::new();
+
+        post_native_tokens(
+            &state,
+            &format!("http://127.0.0.1:{port}"),
+            "/auth/native/refresh",
+            serde_json::json!({ "refresh_token": "rt-secret", "provider": "nous" }),
+        )
+        .await
+        .expect_err("the canned reply is never a success")
+    }
+
+    #[tokio::test]
+    async fn a_refused_refresh_is_a_credential_rejection() {
+        let err = refresh_against("401 Unauthorized", "{}").await;
+
+        assert_eq!(err.status, Some(401));
+        assert!(err.credential_rejected(), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_forbidden_refresh_is_a_credential_rejection() {
+        assert!(refresh_against("403 Forbidden", "{}")
+            .await
+            .credential_rejected());
+    }
+
+    /// The regression this whole change exists for. A gateway that is restarting
+    /// answers 502/503; treating that as a dead grant is what cost the user a
+    /// sign-in every time the server bounced.
+    #[tokio::test]
+    async fn a_gateway_error_never_ends_the_session() {
+        for status in [
+            "500 Internal Server Error",
+            "502 Bad Gateway",
+            "503 Service Unavailable",
+        ] {
+            let err = refresh_against(status, "{}").await;
+
+            assert!(
+                !err.credential_rejected(),
+                "{status} must not be read as a refusal: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rate_limit_never_ends_the_session() {
+        assert!(!refresh_against("429 Too Many Requests", "{}")
+            .await
+            .credential_rejected());
+    }
+
+    /// No answer at all says nothing about the credential — this is the flaky
+    /// network in the device log.
+    #[tokio::test]
+    async fn an_unreachable_gateway_never_ends_the_session() {
+        let (listener, port) = bound_listener().await;
+        drop(listener); // nothing is listening on `port` any more
+
+        let state = TransportState::new();
+
+        let err = post_native_tokens(
+            &state,
+            &format!("http://127.0.0.1:{port}"),
+            "/auth/native/refresh",
+            serde_json::json!({ "refresh_token": "rt-secret", "provider": "nous" }),
+        )
+        .await
+        .expect_err("nothing is listening");
+
+        assert_eq!(err.status, None);
+        assert!(!err.credential_rejected(), "{err}");
+    }
+
+    /// A 2xx the gateway answered with an unreadable body is the body's fault,
+    /// not the grant's.
+    #[tokio::test]
+    async fn an_unreadable_success_body_never_ends_the_session() {
+        let err = refresh_against("200 OK", "{ not json").await;
+
+        assert!(!err.credential_rejected(), "{err}");
+    }
+
+    #[tokio::test]
+    async fn the_refresh_error_never_quotes_the_refresh_token() {
+        let err = refresh_against("401 Unauthorized", "{}").await;
+
+        assert!(!err.message.contains("rt-secret"), "{err}");
+    }
+
+    // --- the per-gateway refresh gate ---
+
+    #[test]
+    fn one_gateway_shares_a_single_refresh_gate() {
+        let base = "https://gate-shared.example";
+
+        assert!(std::sync::Arc::ptr_eq(
+            &refresh_gate(base),
+            &refresh_gate(base)
+        ));
+    }
+
+    #[test]
+    fn two_gateways_do_not_block_each_other() {
+        assert!(!std::sync::Arc::ptr_eq(
+            &refresh_gate("https://gate-a.example"),
+            &refresh_gate("https://gate-b.example")
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_gate_admits_one_refresher_at_a_time() {
+        let gate = refresh_gate("https://gate-serialised.example");
+        let held = gate.lock().await;
+
+        assert!(
+            gate.try_lock().is_err(),
+            "a second refresher must queue behind the first, not race it"
+        );
+
+        drop(held);
+        assert!(
+            gate.try_lock().is_ok(),
+            "the gate reopens once the winner is done"
+        );
+    }
+
+    // --- the third status state ---
+
+    #[test]
+    fn an_unknown_status_is_not_a_signed_out_status() {
+        let json = serde_json::to_string(&OauthStatus::unknown("host is down".into())).unwrap();
+
+        assert!(json.contains("\"reachable\":false"), "{json}");
+        assert!(json.contains("\"signedIn\":false"), "{json}");
+        assert!(json.contains("host is down"), "{json}");
+    }
+
+    #[test]
+    fn a_signed_out_status_says_the_gateway_answered() {
+        let json = serde_json::to_string(&OauthStatus::signed_out()).unwrap();
+
+        assert!(json.contains("\"reachable\":true"), "{json}");
+    }
+
+    #[test]
+    fn a_live_status_says_the_gateway_answered() {
+        let json =
+            serde_json::to_string(&OauthStatus::live(&me_body(), Some(&token_set()))).unwrap();
+
+        assert!(json.contains("\"reachable\":true"), "{json}");
+        assert!(json.contains("\"signedIn\":true"), "{json}");
     }
 }

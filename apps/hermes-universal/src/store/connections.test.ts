@@ -112,6 +112,21 @@ describe('selectConnection', () => {
     expect(broadcastGatewaySwitch).not.toHaveBeenCalled() // no saved target in this env
   })
 
+  // Only a person's click may open a login page (838bc8fd38). The registry path is
+  // the one mjx adds on top of connect(), so it has to carry the same rule: a
+  // background re-home stays non-interactive, a click passes permission through.
+  it('dials a source non-interactively unless the caller says a person asked', async () => {
+    await selectConnection('studio')
+
+    expect(connect).toHaveBeenCalledWith(expect.objectContaining({ allowInteractive: false }))
+  })
+
+  it('passes a click through as permission to open the sign-in', async () => {
+    await selectConnection('studio', { allowInteractive: true })
+
+    expect(connect).toHaveBeenCalledWith(expect.objectContaining({ allowInteractive: true }))
+  })
+
   it('is a no-op except for lastUsed when the same source is re-clicked', async () => {
     await selectConnection('studio')
     softSwitchGateway.mockClear()

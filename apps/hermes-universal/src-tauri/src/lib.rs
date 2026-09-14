@@ -7,7 +7,8 @@
 //! `JsonRpcGatewayClient` via an IPC-backed WebSocket.
 //!
 //! (Android note: the generated `RustWebView.getCookies` is patched null-safe by
-//! `build.rs` to avoid a wry 0.55 crash on cookie polling — see that file.)
+//! `gen/android/buildSrc/.../BuildTask.kt` to avoid a wry 0.55 crash on cookie
+//! polling — see that file.)
 
 mod app_state;
 mod appearance;
@@ -97,7 +98,8 @@ use ssh::{
 use surface::below::read_window_below;
 use surface::{surface_capabilities, surface_set_interactive_rect};
 use transport::{
-    cookies_export, cookies_import, http_request, ws_close, ws_open, ws_send, TransportState,
+    cookies_clear, cookies_export, cookies_import, http_request, ws_close, ws_open, ws_send,
+    TransportState,
 };
 use tray::{tray_set_labels, tray_set_status, TrayState};
 use updates::{update_check, update_install, update_open_download, UpdateState};
@@ -150,6 +152,32 @@ fn reveal_in_file_manager(app: tauri::AppHandle, path: String) -> Result<(), Str
         .map_err(|e| e.to_string())
 }
 
+/// Should a window losing focus end the credential unlock?
+///
+/// Normally yes — that is the whole point of the lease. The exception is an
+/// interactive sign-in, which defocuses the app BY DESIGN: the desktop cookie flow
+/// opens its own `hermes-oauth` window over the app, the portal flow opens
+/// `hermes-portal`, and the RFC 8252 flow hands the login to the system browser and
+/// backgrounds us entirely. All three used to slam the gate shut at the exact moment
+/// the flow needs it open, and every gated `secrets_get` for the rest of the sign-in —
+/// the cookie jar, the saved token — then failed with `locked`.
+///
+/// Two signals, because neither covers the other. The lease
+/// (`oauth::sign_in_active`) spans the whole command including the system-browser arm,
+/// where no window of ours exists to match on. The labels cover the moment a sign-in
+/// window itself loses focus, which can outlive the lease by a beat while the window
+/// is torn down.
+fn defocus_ends_the_lease(label: &str) -> bool {
+    if oauth::sign_in_active() {
+        return false;
+    }
+
+    !matches!(
+        label,
+        oauth::OAUTH_WINDOW_LABEL | cloud::PORTAL_WINDOW_LABEL
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Route Rust `log::` output somewhere a person can read it on mobile (tao
@@ -181,6 +209,21 @@ pub fn run() {
     let _ = oslog::OsLogger::new("com.jaxmatrix.mjx-unofficial-hermes")
         .level_filter(log::LevelFilter::Info)
         .init();
+
+    // The desktop half, and the last platform to get one. Its absence hid the macOS
+    // keychain failure completely: `store_native_tokens` could not write, said so with
+    // a `log::warn!`, and nothing on desktop consumed `log::` — so a sign-in that
+    // finished and left the app signed out came with no diagnostic at all.
+    //
+    // Fire-and-forget for the same reason as the two above: `telemetry::init` may win
+    // the race to install the global logger (tracing_log's LogTracer), and losing it
+    // must cost a log sink, never the app. `try_init` (not `init`) is what makes that
+    // true — `init` panics.
+    //
+    // RUST_LOG still wins when it is set; this only supplies the default.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .try_init();
 
     // Span tracing. FIRST, so boot itself lands inside the trace rather than
     // before it. Compiled out entirely without `--features tracing`, and inert
@@ -312,6 +355,23 @@ pub fn run() {
         // registration for the same wry/Linux reason as above.
         .register_asynchronous_uri_scheme_protocol(ARTIFACT_SCHEME, artifact::handle)
         .setup(|app| {
+            // Where the sealed credential vault lives, before anything can ask for a
+            // credential: every `secrets_*` command and `gateway_bearer` call arrives
+            // after `setup` returns, and on macOS a read that beat this would be
+            // refused rather than answered from the wrong place. Not fatal — a machine
+            // that names no data directory cannot persist credentials, the same "we
+            // store nothing, and say so" outcome `store::ensure` already reports.
+            {
+                use tauri::Manager;
+
+                match app.path().app_data_dir() {
+                    Ok(dir) => secrets::store::configure(dir),
+                    Err(e) => log::error!(
+                        "[secrets] no app data directory, so credentials cannot be stored: {e}"
+                    ),
+                }
+            }
+
             // WebKitGTK (Linux desktop) auto-denies `getUserMedia` unless the
             // embedder answers the WebView's `permission-request` signal — wry
             // does not, so voice/dictation fails instantly with a permission
@@ -361,6 +421,21 @@ pub fn run() {
                 let ready = tray::install(app.handle());
 
                 app.state::<BackgroundState>().set_tray_ready(ready);
+            }
+
+            // Logged unconditionally at boot, because the symptom it explains
+            // shows up long before anyone thinks to look at `secrets_status`:
+            // macOS asking for the login-keychain password. An ad-hoc signed
+            // bundle has no code identity a keychain ACL can bind to, so "Always
+            // Allow" has nothing to stick to. It is one prompt per launch now
+            // rather than one per credential — see `secrets::store` — but one is
+            // still one more than a signed build shows.
+            if secrets::code_identity::current().prompts_for_keychain_access() {
+                log::warn!(
+                    "[secrets] this build is ad-hoc signed, so macOS cannot bind a keychain ACL \
+                     to it and will ask for your password once per launch to unlock the \
+                     credential vault. Only a Developer ID signed build stops that."
+                );
             }
 
             deep_link::setup(app.handle());
@@ -424,6 +499,7 @@ pub fn run() {
             oauth_login,
             oauth_status,
             oauth_logout,
+            cookies_clear,
             cookies_export,
             cookies_import,
             local_backend_spawn,
@@ -519,12 +595,18 @@ pub fn run() {
             // ends it, and "no window has focus" / "the app is suspending" is the
             // closest signal we get to that. Losing it costs one extra prompt;
             // keeping it costs an unattended machine with the credentials open.
+            //
+            // A sign-in is the one defocus that is not the user walking away — see
+            // `defocus_ends_the_lease`.
             match &event {
                 tauri::RunEvent::WindowEvent {
+                    label,
                     event: tauri::WindowEvent::Focused(false),
                     ..
-                }
-                | tauri::RunEvent::ExitRequested { .. } => secrets::gate::lock(),
+                } if defocus_ends_the_lease(label) => secrets::gate::lock(),
+
+                // Suspending or quitting always ends it, sign-in or not.
+                tauri::RunEvent::ExitRequested { .. } => secrets::gate::lock(),
 
                 _ => {}
             }
