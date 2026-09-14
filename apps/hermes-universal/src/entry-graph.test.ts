@@ -20,10 +20,11 @@ import { describe, expect, it } from 'vitest'
  * So the property worth asserting is reachability, not size — and it has to
  * cover node_modules, because that is where the defeat came from.
  *
- * Three of those four seams remain. The fourth was the chat code fence, which
- * was rebuilt to compute its own colours; it has no seam because it has no
- * shiki, and the `keeps shiki out of the code fence entirely` assertion holds it
- * to that.
+ * Two of those four seams remain. The other two compute their own colours from
+ * `lib/code-tokens` instead and so have no shiki to hide: the chat code fence
+ * (the iOS one-line collapse) and the file preview's source view (the empty
+ * source pane, which is the same bug seen from the other side). The
+ * `keeps shiki out of …` assertion at the bottom of this file holds both to that.
  *
  * driver.js joined the list with the tour engine (MJXHRM-473). It is the same
  * shape of risk with a shorter fuse: `lib/tour/index.ts` pulls driver.js AND
@@ -482,7 +483,6 @@ describe('entry import graph', () => {
     const seams = [
       ['components/chat/diff-lines.tsx', "React.lazy(() => import('@/components/chat/diff-lines-shiki'))"],
       ['components/chat/diff-lines.tsx', "import('shiki')"],
-      ['app/right-pane/preview/preview-file.tsx', "lazy(() => import('@/app/right-pane/preview/preview-shiki-block'))"],
       // The tour engine's two doors: the agent bridge (registered at boot from
       // main.tsx, so its import MUST be inside the driver callback) and the
       // curated tour the ⌘K palette runs.
@@ -500,13 +500,24 @@ describe('entry import graph', () => {
     }
   })
 
-  it('keeps shiki out of the code fence entirely', () => {
-    // Stronger than the seam list, and the point of the fence rebuild: the
-    // transcript's fence must reach shiki by NO route — not statically, not behind a lazy
-    // boundary, not at all. Its colours are computed by `lib/code-tokens`,
-    // which is itself required to have no imports whatsoever, so no chunk can
-    // fail to arrive and no engine can be refused by a CSP.
+  it('keeps shiki out of the code fence and the preview source view entirely', () => {
+    // Stronger than the seam list, and the point of the fence and source-view
+    // rebuilds: these two must reach shiki by NO route — not statically, not
+    // behind a lazy boundary, not at all. Their colours are computed by
+    // `lib/code-tokens`, which is itself required to have no imports whatsoever,
+    // so no chunk can fail to arrive and no engine can be refused by a CSP. A
+    // pane with no chunk to wait for has no empty state to sit in.
     expect(fs.readFileSync(path.join(SRC, 'components/chat/code-fence.tsx'), 'utf8')).not.toMatch(/from '.*shiki/)
+    // Static OR dynamic — the preview must not even have a chunk to await.
+    // (Prose mentioning shiki is fine; this matches specifiers.)
+    const noShikiSpecifier = /(?:from|import\()\s*'[^']*shiki/
+
+    expect(fs.readFileSync(path.join(SRC, 'app/right-pane/preview/preview-source.tsx'), 'utf8')).not.toMatch(
+      noShikiSpecifier
+    )
+    expect(fs.readFileSync(path.join(SRC, 'app/right-pane/preview/preview-file.tsx'), 'utf8')).not.toMatch(
+      noShikiSpecifier
+    )
     expect(fs.readFileSync(path.join(SRC, 'lib/code-tokens.ts'), 'utf8')).not.toMatch(/^import /m)
   })
 })
