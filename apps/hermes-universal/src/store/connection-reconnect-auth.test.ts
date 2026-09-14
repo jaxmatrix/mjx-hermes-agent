@@ -261,16 +261,22 @@ describe('auto-reconnect — who may drive an interactive sign-in', () => {
 
     expect(conn.$connectionError.get()).toContain('Network request failed')
 
-    // Stand the old loop down and switch sources, as softSwitchGateway does.
+    // Switch sources the way softSwitchGateway does: stand the old loop down, then
+    // DIAL the new source. The dial is what re-arms the supervisor
+    // (`armReconnect` clears `intentionalClose`); without it no later drop could
+    // start a loop at all, and this test could not fail.
     conn.beginGatewaySwitch()
     await vi.advanceTimersByTimeAsync(20_000)
+    vi.mocked(gateway.connectGateway).mockResolvedValueOnce(undefined)
+    await conn.connect({ url: 'gw2.example.com' })
     conn.endGatewaySwitch()
-    conn.$connectionError.set(null)
     gateway.$gatewayState.set('idle')
-    await vi.advanceTimersByTimeAsync(0)
 
+    // The new source now drops once, transiently.
+    vi.mocked(gateway.connectGateway).mockRejectedValue(new Error('Network request failed'))
     await dropSocket(gateway)
 
+    expect(conn.$connectionPhase.get()).not.toBe('ready')
     // One quick failure on the new source is not yet an error worth publishing.
     expect(conn.$connectionError.get()).toBeNull()
   })

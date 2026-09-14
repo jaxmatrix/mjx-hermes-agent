@@ -18,6 +18,7 @@ vi.mock('@/store/gateway', async () => {
     addGatewayEventListener: () => () => {},
     connectGateway: vi.fn().mockResolvedValue(undefined),
     closeGateway: vi.fn(),
+    lastGatewayCloseCode: vi.fn(() => undefined),
     $gatewayState: atom('idle')
   }
 })
