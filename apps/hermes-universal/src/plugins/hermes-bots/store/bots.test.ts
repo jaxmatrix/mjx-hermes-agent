@@ -693,10 +693,12 @@ describe('writing a bot record', () => {
 
 describe('recognising a bot chat for the /new reroute', () => {
   it('knows a compacted chat by its TIP — the id its tab holds after a reload — as well as its root', () => {
-    $roster.set([{ ...row('radar'), canonicalId: 'root', canonicalTipId: 'tip' }] as never)
+    // Ids no other test here opens: `openedCanonical` is module state, and a tip
+    // an earlier test opened would satisfy this with the roster ignored entirely.
+    $roster.set([{ ...row('radar'), canonicalId: 'root-never-opened', canonicalTipId: 'tip-never-opened' }] as never)
 
-    expect(knownCanonicalIds().has('tip')).toBe(true)
-    expect(knownCanonicalIds().has('root')).toBe(true)
+    expect(knownCanonicalIds().has('tip-never-opened')).toBe(true)
+    expect(knownCanonicalIds().has('root-never-opened')).toBe(true)
   })
 })
 
