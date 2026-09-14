@@ -403,7 +403,14 @@ describe('PluginsSettings ▸ agent plugins', () => {
 
 // The manifest's declared env vars (API keys) edited under the plugin itself.
 describe('PluginsSettings ▸ agent plugin keys', () => {
-  const falKey = { description: 'FAL API key', is_set: false, name: 'FAL_KEY', password: true, required: true, url: null }
+  const falKey = {
+    description: 'FAL API key',
+    is_set: false,
+    name: 'FAL_KEY',
+    password: true,
+    required: true,
+    url: null
+  }
 
   it('saves a declared key through /api/env and refetches the list', async () => {
     loadedWith([agentRow({ env: [falKey], key: 'video_gen/fal', name: 'fal' })])
