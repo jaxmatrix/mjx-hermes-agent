@@ -2621,6 +2621,7 @@ dependencies = [
  "tracing-subscriber",
  "webkit2gtk",
  "window-vibrancy",
+ "windows 0.61.3",
  "windows-native-keyring-store",
  "windows-sys 0.61.2",
  "x11rb",
