@@ -161,7 +161,10 @@ export async function awaitRemoteReply(
     }
 
     const messages = bound.messages ?? []
-    const reply = messages.slice(before).reverse().find(message => message.role === 'assistant')
+    const reply = messages
+      .slice(before)
+      .reverse()
+      .find(message => message.role === 'assistant')
 
     if (reply) {
       return reply.text

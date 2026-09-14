@@ -55,11 +55,7 @@ import { $currentModel } from '@/store/model'
 import { startNewSession } from '@/store/new-session'
 import { notify, notifyError } from '@/store/notifications'
 import { $paneVisible } from '@/store/pane-visibility-store'
-import {
-  pluginConnectionSource,
-  type PluginProfileRoute,
-  requestPluginProfile
-} from '@/store/plugin-connection-source'
+import { pluginConnectionSource, type PluginProfileRoute, requestPluginProfile } from '@/store/plugin-connection-source'
 import {
   openCreatedPluginSession,
   openPluginSession,
@@ -557,10 +553,7 @@ export { PALETTE_AREA, type PaletteContribution } from '@/app/command-palette/co
  *  whatever target the gesture landed on, in contribution `order`. `provide()`
  *  runs per gesture, which is how live state reaches it — `when()` is not
  *  reactive. */
-export {
-  CONTEXT_MENU_ITEMS_AREA,
-  type ContextMenuItemsContribution
-} from '@/app/context-menu/contrib'
+export { CONTEXT_MENU_ITEMS_AREA, type ContextMenuItemsContribution } from '@/app/context-menu/contrib'
 /** Claim a whole new target KIND (the sharp door — MJXHRM-447's browser webview
  *  is its first user). `order < 100` is reserved for core and `dom` is total at
  *  100, so a provider registered below it can swallow the app's own menu. */
@@ -875,7 +868,11 @@ export {
   type PluginProfileRoute,
   setPluginConnectionSource
 } from '@/store/plugin-connection-source'
-export type { PluginOpenSessionError, PluginOpenSessionOptions, PluginOpenSessionResult } from '@/store/plugin-open-session'
+export type {
+  PluginOpenSessionError,
+  PluginOpenSessionOptions,
+  PluginOpenSessionResult
+} from '@/store/plugin-open-session'
 export { $accentOverride, setAccentOverride } from '@/themes/accent-override'
 /** OKLCH colour maths, for anything deriving a palette rather than hardcoding
  *  one: perceptual conversion, the sRGB gamut boundary, WCAG contrast, and

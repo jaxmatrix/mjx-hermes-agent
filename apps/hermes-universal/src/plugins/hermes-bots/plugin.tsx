@@ -265,7 +265,9 @@ const plugin: HermesPlugin = {
             return true
           }
 
-          const row = $roster.get().find(candidate => botHandle(candidate.profile) === name || candidate.profile === name)
+          const row = $roster
+            .get()
+            .find(candidate => botHandle(candidate.profile) === name || candidate.profile === name)
 
           if (!row) {
             return false
@@ -294,14 +296,17 @@ const plugin: HermesPlugin = {
       })
     )
 
-    let timer: ReturnType<typeof setInterval> | null = setInterval(() => {
-      if (host.paneVisibility(BOTS_PANE).get()) {
-        void refreshRoster()
-      }
-      // There is no `profiles.changed` event, so this backstop cannot be
-      // deleted — but it IS capability-gated, so a gateway that broadcasts
-      // change events gets the slow interval.
-    }, livePollIntervalMs(15_000, 90_000))
+    let timer: ReturnType<typeof setInterval> | null = setInterval(
+      () => {
+        if (host.paneVisibility(BOTS_PANE).get()) {
+          void refreshRoster()
+        }
+        // There is no `profiles.changed` event, so this backstop cannot be
+        // deleted — but it IS capability-gated, so a gateway that broadcasts
+        // change events gets the slow interval.
+      },
+      livePollIntervalMs(15_000, 90_000)
+    )
 
     ctx.onDispose(() => {
       if (timer) {
@@ -371,7 +376,10 @@ function runnerDeps() {
     },
     settledText: (plan: { member: { storedSessionId: string } }, before: number) => {
       const messages = host.sessionMessages(plan.member.storedSessionId).get()
-      const fresh = messages.slice(before).reverse().find(message => message.role === 'assistant')
+      const fresh = messages
+        .slice(before)
+        .reverse()
+        .find(message => message.role === 'assistant')
 
       if (!fresh || fresh.pending) {
         return null

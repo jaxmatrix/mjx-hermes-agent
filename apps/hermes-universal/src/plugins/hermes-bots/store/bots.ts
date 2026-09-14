@@ -60,9 +60,7 @@ export async function refreshRoster(): Promise<RosterRow[]> {
       // member card is what says a machine is unreachable.
       const remotes = await remoteRosters()
 
-      const roster = sortRoster(
-        mergeMultiSourceRoster([{ metaKnown: true, rows: local.profiles ?? [] }, ...remotes])
-      )
+      const roster = sortRoster(mergeMultiSourceRoster([{ metaKnown: true, rows: local.profiles ?? [] }, ...remotes]))
 
       $botProtocolSupported.set(local.bot_mode_protocol === true)
       $roster.set(roster)
@@ -73,7 +71,9 @@ export async function refreshRoster(): Promise<RosterRow[]> {
       $rooms.set(
         liveRooms(
           roomsFromRoster(
-            roster.map(row => rosterMetaSource({ name: row.profile, ui_meta: { 'hermes-bots': row.meta } }, row.connectionId)),
+            roster.map(row =>
+              rosterMetaSource({ name: row.profile, ui_meta: { 'hermes-bots': row.meta } }, row.connectionId)
+            ),
             fetchedAt
           )
         )
@@ -486,9 +486,7 @@ export async function sweepHiddenSessions(): Promise<{ failed: number; hidden: n
   // contribute a 4001 on every reconnect.
   const local = roster.filter(row => !row.connectionId)
 
-  const canonical = await Promise.all(
-    local.map(async row => ({ answer: await askRegistry(routeFor(row)), row }))
-  )
+  const canonical = await Promise.all(local.map(async row => ({ answer: await askRegistry(routeFor(row)), row })))
 
   for (const { answer, row } of canonical) {
     const found = answer.failed ? null : answer.row

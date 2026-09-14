@@ -25,8 +25,7 @@ export interface AgentRoute {
   profile: string
 }
 
-const isRemote = (route?: AgentRoute): route is AgentRoute & { connectionId: string } =>
-  Boolean(route?.connectionId)
+const isRemote = (route?: AgentRoute): route is AgentRoute & { connectionId: string } => Boolean(route?.connectionId)
 
 /**
  * ONE dispatch point.
@@ -83,7 +82,10 @@ export const createProfile = (params: {
   provider?: string
 }): Promise<{ name?: string; ok?: boolean }> => call('profiles.create', { ...params })
 
-export const getAvatar = (name: string, route?: AgentRoute): Promise<{ data?: string; found: boolean; mime?: string }> =>
+export const getAvatar = (
+  name: string,
+  route?: AgentRoute
+): Promise<{ data?: string; found: boolean; mime?: string }> =>
   call('profiles.get_asset', { asset: 'avatar', name }, route)
 
 export const setAvatar = (name: string, data: string): Promise<{ ok?: boolean; size?: number }> =>
@@ -137,7 +139,11 @@ export const findSessionByTitle = (title: string, route?: AgentRoute): Promise<{
 /** Mint a session. NOT `startNewSession()` — a Bot Mode session is born hidden,
  *  titled and owned by a named profile. */
 export const createSession = (params: { cwd?: string; title: string }, route?: AgentRoute): Promise<CreatedSession> =>
-  call('session.create', { cols: 96, hidden: true, title: params.title, ...(params.cwd ? { cwd: params.cwd } : {}) }, route)
+  call(
+    'session.create',
+    { cols: 96, hidden: true, title: params.title, ...(params.cwd ? { cwd: params.cwd } : {}) },
+    route
+  )
 
 /**
  * Write the title, and by doing so MATERIALISE the row.
