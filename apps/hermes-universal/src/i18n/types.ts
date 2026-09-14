@@ -1898,7 +1898,6 @@ export interface Translations {
     allPinned: string
     shiftClickHint: string
     noWorkspace: string
-    noProject: string
     projectEmpty: string
     noSessions: string
     /** The sidebar header's filter/view menu. */
@@ -2643,7 +2642,8 @@ export interface Translations {
 
   mobileWorkspace: {
     backToChat: string
-    noProject: string
+    /** Title shown in the bar while the Workspace panel is open. */
+    menu: string
     tabsAria: string
     review: string
     files: string

@@ -2071,7 +2071,6 @@ export const ja = defineLocale({
     allPinned: 'ここにあるものはすべてピン留めされています。チャットのピン留めを解除すると最近のものに表示されます。',
     shiftClickHint: 'Shift クリックでピン留め · ドラッグで並べ替え',
     noWorkspace: 'ワークスペースなし',
-    noProject: 'プロジェクトなし',
     projectEmpty: 'セッションはまだありません',
     noSessions: 'セッションはまだありません',
     filters: {
@@ -3468,5 +3467,9 @@ export const ja = defineLocale({
       email: 'メール',
       github_comment: 'GitHub コメント'
     }
+  },
+
+  mobileWorkspace: {
+    menu: 'メニュー'
   }
 })

@@ -1997,7 +1997,6 @@ export const zhHant = defineLocale({
     allPinned: '這裡的全部已釘選。取消釘選某個聊天即可在最近中顯示。',
     shiftClickHint: 'Shift + 點擊聊天以釘選 · 拖曳以重新排序',
     noWorkspace: '無工作區',
-    noProject: '無專案',
     projectEmpty: '尚無工作階段',
     noSessions: '尚無工作階段',
     filters: {
@@ -3323,5 +3322,9 @@ export const zhHant = defineLocale({
       email: '電子郵件',
       github_comment: 'GitHub 留言'
     }
+  },
+
+  mobileWorkspace: {
+    menu: '選單'
   }
 })
