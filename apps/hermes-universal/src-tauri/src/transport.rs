@@ -622,6 +622,21 @@ fn caller_set_authorization(headers: &HashMap<String, String>) -> bool {
         .any(|key| key.eq_ignore_ascii_case("authorization"))
 }
 
+/// Should a 401 be replayed after forcing a rotation?
+///
+/// Yes whenever the credential we would send is not the one that was just
+/// refused — and "no credential at all" is a different credential. That arm is
+/// the one mobile depends on: a refresh that fails drops the stored session
+/// (`oauth::ensure_native_tokens`) and returns `None`, and replaying WITHOUT the
+/// dead bearer is what lets the gated middleware finally read the cookie session
+/// it refuses to look at while an invalid bearer is present.
+///
+/// No when the rotation handed back the same token, because that is the one case
+/// where the replay is guaranteed to be refused identically.
+fn bearer_retry_warranted(sent: Option<&str>, rotated: Option<&str>) -> bool {
+    rotated != sent
+}
+
 /// Attach the gateway bearer, if we hold one. Split out so the "the header is
 /// actually on the request" invariant is testable without a network or a
 /// keyring: `RequestBuilder::build` produces the request without sending it.
@@ -840,11 +855,27 @@ pub async fn http_request(
     // try exactly once more — this is the retry that used to live in the JS
     // ws-ticket mint. Replaying is safe for any method: a 401 means the gateway
     // rejected the request before acting on it.
+    //
+    // The retry fires whenever the credential CHANGED, and "changed to nothing"
+    // counts. A refresh that FAILS is the case that matters on mobile: coming back
+    // from the background the access token is past its skew, the refresh runs, and
+    // if the refresh token has itself expired or rotated away `ensure_native_tokens`
+    // drops the stored set and returns None. Requiring `rotated.is_some()` skipped
+    // the replay in exactly that case and handed the raw 401 back to the ws-ticket
+    // mint, which phrases it as "Session expired — sign in again".
+    //
+    // That 401 is not the truth about the session. The gated middleware
+    // short-circuits on a presented-but-invalid bearer and answers 401 WITHOUT
+    // reading the session cookies, so a live cookie session is invisible on that
+    // request. `clear_native_tokens` has already forgotten the base, so the replay
+    // below carries no Authorization header at all and the gateway finally falls
+    // through to the cookie session it was never allowed to see. The connection's
+    // own static credential (`connection`) rides along unchanged either way.
     if resp.status() == reqwest::StatusCode::UNAUTHORIZED && bearer.is_some() {
         if let Some(base) = &auth_base {
             let rotated = crate::oauth::gateway_bearer(&app, state.inner(), base, true).await;
 
-            if rotated.is_some() && rotated != bearer {
+            if bearer_retry_warranted(bearer.as_deref(), rotated.as_deref()) {
                 resp = send_http(
                     &state.http,
                     &method,
@@ -1527,11 +1558,12 @@ mod tests {
     use tauri::ipc::{Channel, InvokeResponseBody};
 
     use super::{
-        apply_connection_auth, apply_gateway_bearer, apply_ws_token, caller_set_authorization,
-        forget_socket, pump_reader, redact_bearer, redact_error, redact_message, redact_secret,
-        redact_url, safe_upload_filename, send_binary_frame, take_window_sockets, upload_form,
-        upload_lost_to_redirect, visible_response_headers, ws_upgrade_headers, ConnectionAuth,
-        HashMap, HttpReq, HttpUpload, Message, ReaderSink, SocketHandle, TransportState,
+        apply_connection_auth, apply_gateway_bearer, apply_ws_token, bearer_retry_warranted,
+        caller_set_authorization, forget_socket, pump_reader, redact_bearer, redact_error,
+        redact_message, redact_secret, redact_url, safe_upload_filename, send_binary_frame,
+        take_window_sockets, upload_form, upload_lost_to_redirect, visible_response_headers,
+        ws_upgrade_headers, ConnectionAuth, HashMap, HttpReq, HttpUpload, Message, ReaderSink,
+        SocketHandle, TransportState,
     };
 
     /// A registry entry shaped exactly like a live one: a writer task parked on
@@ -1761,6 +1793,30 @@ mod tests {
             .headers()
             .get(reqwest::header::AUTHORIZATION)
             .is_none());
+    }
+
+    // ── replaying a 401 after a forced rotation ──────────────────────────────
+
+    /// The mobile bug this exists for: the forced refresh FAILS because the
+    /// refresh token has itself expired, and `gateway_bearer` returns None. The
+    /// replay still has to happen — without the dead bearer — or a live cookie
+    /// session reads as "Session expired — sign in again".
+    #[test]
+    fn replays_without_a_bearer_when_the_refresh_failed_outright() {
+        assert!(bearer_retry_warranted(Some("at-dead"), None));
+    }
+
+    /// The ordinary case: the rotation produced a different token.
+    #[test]
+    fn replays_with_the_rotated_bearer_when_one_was_minted() {
+        assert!(bearer_retry_warranted(Some("at-old"), Some("at-new")));
+    }
+
+    /// The one case that must NOT replay: the gateway just refused this exact
+    /// token, and sending it again buys a second identical 401.
+    #[test]
+    fn does_not_replay_a_token_the_gateway_already_refused() {
+        assert!(!bearer_retry_warranted(Some("at-1"), Some("at-1")));
     }
 
     #[test]
