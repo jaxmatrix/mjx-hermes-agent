@@ -1619,6 +1619,9 @@ export interface GitRootResult {
 export interface DefaultCwdResult {
   branch: string
   cwd: string
+  /** The GATEWAY's home directory — where sessions actually run, so it is the
+   *  right "Home" for the file tree. Absent on a gateway that predates it. */
+  home?: string
 }
 
 // Remote git status + diffs (Track K14) — read-only; no git binary on Android.
