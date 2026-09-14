@@ -259,6 +259,15 @@ base64 = "0.22"
 # PTY: Unix openpty / Windows ConPTY. Gated OFF the mobile targets — a phone has no
 # local shell, the right pane isn't shown there, and this keeps it out of the NDK build.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Route Rust `log::` output to stderr on desktop — the third of the three logger
+# entries in this file, and the last platform that had none. Its absence hid a
+# real bug: macOS could not write to the keychain at all, and the one line that
+# said so (`store_native_tokens` failing inside the RFC 8252 sign-in) was a
+# `log::warn!` on a platform where nothing consumed `log::`.
+#
+# `default-features = false` drops regex/colour/humantime; the level still comes
+# from RUST_LOG, and `run()` sets a default so a plain launch is not silent.
+env_logger = { version = "0.11", default-features = false }
 portable-pty = "0.9"
 # System-sleep inhibitor behind the keep-awake toggle (keep_awake.rs, desktop-only):
 # macOS IOPMAssertion, Windows SetThreadExecutionState, Linux systemd-inhibit over
