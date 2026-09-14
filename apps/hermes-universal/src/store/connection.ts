@@ -13,7 +13,13 @@ import { loadString, saveString } from '@/lib/persist'
 import { IS_NATIVE_MOBILE } from '@/lib/platform'
 import { reconnectBackoffDelayMs } from '@/lib/reconnect-backoff'
 import { clearSecrets, loadSecrets, loadSshSecrets, saveSecrets, type Secrets } from '@/lib/secure-store'
-import { forgetPersistedSessionCookies, persistSessionCookies } from '@/lib/session-persist'
+import {
+  clearSessionJar,
+  forgetPersistedSessionCookies,
+  persistSessionCookies,
+  resumeSessionCookiePersistence,
+  suspendSessionCookiePersistence
+} from '@/lib/session-persist'
 import {
   $activeConnection,
   describeConnection,
@@ -33,7 +39,15 @@ import {
 import { isLatched, latchBackendFailure, releaseLatch } from '@/store/connection-latches'
 import { $gatewayState, closeGateway, connectGateway } from '@/store/gateway'
 import { chooseGatedAuth, type Connection } from '@/store/gateway-config'
-import { loadGatewayTarget, saveGatewayTarget, savePendingOAuth, takePendingOAuth } from '@/store/gateway-restore'
+import {
+  clearGatewayTarget,
+  clearPendingOAuth,
+  clearPendingPortal,
+  loadGatewayTarget,
+  saveGatewayTarget,
+  savePendingOAuth,
+  takePendingOAuth
+} from '@/store/gateway-restore'
 import { getInstallationId } from '@/store/installation-id'
 import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import {
@@ -522,14 +536,34 @@ export function disconnect(): void {
 
 /**
  * Sign out: unlike disconnect() (which only drops the socket), this invalidates
- * the session — revokes the gateway OAuth cookie, clears the portal (Privy)
- * session for cloud, forgets stored secrets (incl. the persisted cookie jar),
- * then disconnects.
+ * the session — tells the gateway to revoke it, clears the portal (Privy) session
+ * for cloud, forgets stored secrets (incl. the persisted cookie jar), drops the
+ * auto-dial target, then disconnects.
+ *
+ * The three things this has to get right, each of which it previously got wrong:
+ *
+ *  1. **Every gated session is revoked, not just `oauth`.** A `ticket` session is
+ *     a password login whose cookie lives in the same Rust jar; skipping the
+ *     logout POST for it meant the gateway never heard about the sign-out and the
+ *     cookie stayed live. `oauth_logout` is the right call for both — it drops any
+ *     native tokens (a no-op when there are none) and POSTs `/auth/logout`, whose
+ *     clearing `Set-Cookie` reqwest applies to the jar.
+ *  2. **The jar is emptied locally too**, because (1) needs a network. A sign-out
+ *     on a plane must not come back signed in.
+ *  3. **The auto-dial target goes.** Leaving `hermes.connection.last` behind is
+ *     what made the next launch seed `$restoring`, paint "Reconnecting", and dial
+ *     a gateway with no credential — which then opened an interactive sign-in
+ *     nobody asked for. The URL and username stay: they are the prefill, so the
+ *     user lands on a sign-in screen that already knows where they were going.
  */
 export async function signOut(): Promise<void> {
   const conn = $connection.get()
 
-  if (conn?.authMode === 'oauth') {
+  // Before the network calls, not after: everything below can fail or hang, and a
+  // sign-out must not be able to leave persistence armed behind it.
+  suspendSessionCookiePersistence()
+
+  if (conn && (conn.authMode === 'oauth' || conn.authMode === 'ticket')) {
     await oauthLogout(conn.baseUrl).catch(() => {})
   }
 
@@ -537,7 +571,20 @@ export async function signOut(): Promise<void> {
     await portalLogout().catch(() => {})
   }
 
+  // Only THIS gateway's cookies. The Rust jar is still shared by every registered
+  // connection (MJXHRM-526 splits it), so emptying it wholesale would sign the
+  // user out of every other source too.
+  if (conn) {
+    await clearSessionJar(conn.baseUrl)
+  }
+
   await forgetSavedLogin().catch(() => {})
+
+  // Nothing to auto-dial and nothing to resume.
+  clearGatewayTarget()
+  clearPendingOAuth()
+  clearPendingPortal()
+
   disconnect()
 }
 
@@ -669,6 +716,10 @@ let switching = false
 /** Allow auto-reconnect after a fresh (re)connect attempt. */
 function armReconnect(): void {
   intentionalClose = false
+  // A deliberate dial is the one thing that undoes a sign-out's persistence
+  // latch: the user is asking for a session again, so the jar this connect
+  // produces is theirs to keep. Every connect* path comes through here.
+  resumeSessionCookiePersistence()
 }
 
 /**

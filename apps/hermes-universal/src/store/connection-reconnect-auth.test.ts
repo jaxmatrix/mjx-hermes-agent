@@ -32,8 +32,11 @@ vi.mock('@/lib/secure-store', () => ({
   clearSecrets: vi.fn().mockResolvedValue(undefined)
 }))
 vi.mock('@/lib/session-persist', () => ({
+  clearSessionJar: vi.fn().mockResolvedValue(undefined),
   forgetPersistedSessionCookies: vi.fn(),
-  persistSessionCookies: vi.fn().mockResolvedValue(undefined)
+  persistSessionCookies: vi.fn().mockResolvedValue(undefined),
+  resumeSessionCookiePersistence: vi.fn(),
+  suspendSessionCookiePersistence: vi.fn()
 }))
 vi.mock('@/store/local-backend', () => ({
   spawnLocalBackend: vi.fn(),

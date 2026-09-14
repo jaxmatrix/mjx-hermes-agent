@@ -32,8 +32,48 @@ import { loadSessionCookies, saveSessionCookies } from '@/lib/secure-store'
  */
 let lastPersisted: string | null = null
 
+/**
+ * Set by sign-out, cleared by the next deliberate connect.
+ *
+ * Sign-out is not a single instant — the logout POST, the keyring wipe and the
+ * socket teardown all resolve separately, and `flushSessionCookies()` fires on
+ * the very next backgrounding. Without this latch that flush would export
+ * whatever is left in the jar and write it straight back to the keyring the
+ * sign-out had just cleared, signing the user back in on the following launch.
+ * A user who signed out stays signed out until they ask to connect again.
+ */
+let suspended = false
+
+/** Stop persisting the jar until the next deliberate connect. Sign-out only. */
+export function suspendSessionCookiePersistence(): void {
+  suspended = true
+  forgetPersistedSessionCookies()
+}
+
+/** Re-arm persistence. Called from `armReconnect`, i.e. from every deliberate dial. */
+export function resumeSessionCookiePersistence(): void {
+  suspended = false
+}
+
+/**
+ * Drop the cookies the live Rust jar would send to `base`. Best-effort — see
+ * `cookies_clear` in transport.rs. Scoped to one gateway because the jar is shared
+ * by every registered connection.
+ */
+export async function clearSessionJar(base: string): Promise<void> {
+  try {
+    await invoke('cookies_clear', { base })
+  } catch {
+    // No Tauri runtime, or a poisoned jar. The keyring entry is wiped either way.
+  }
+}
+
 /** Serialize the live jar and stash it in the keyring. Call after a successful connect. */
 export async function persistSessionCookies(): Promise<void> {
+  if (suspended) {
+    return
+  }
+
   try {
     const json = await invoke<string>('cookies_export')
 

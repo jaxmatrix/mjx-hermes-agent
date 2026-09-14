@@ -173,6 +173,19 @@ export function takePendingOAuth(): PendingOAuth | null {
   }
 }
 
+/**
+ * Discard a queued OAuth resume without consuming it as one.
+ *
+ * Separate from `takePendingOAuth` because the two mean opposite things at the
+ * call site: `take` is "I am the resume, hand me the intent", this is "there is
+ * nothing left to resume TO". Sign-out needs the second — a marker left behind by
+ * a sign-in the user has since abandoned would otherwise fire on some later
+ * launch and drive a connect to a gateway they just left.
+ */
+export function clearPendingOAuth(): void {
+  removeKey(PENDING_OAUTH_KEY)
+}
+
 /** Whether an OAuth resume is queued — read synchronously to seed `$restoring`. */
 export function hasPendingOAuth(): boolean {
   return Boolean(loadString(PENDING_OAUTH_KEY))
@@ -199,6 +212,11 @@ export function takePendingPortal(): boolean {
   removeKey(PENDING_PORTAL_KEY)
 
   return Boolean(raw)
+}
+
+/** Discard a queued portal resume. See {@link clearPendingOAuth}. */
+export function clearPendingPortal(): void {
+  removeKey(PENDING_PORTAL_KEY)
 }
 
 /** Whether a restorable connection exists — read synchronously at module load so

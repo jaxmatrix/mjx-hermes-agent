@@ -1592,6 +1592,58 @@ pub fn cookies_import(state: State<'_, TransportState>, json: String) -> Result<
     Ok(())
 }
 
+/// Drop every cookie the shared jar would send to `base`. Sign-out only.
+///
+/// `POST /auth/logout` normally clears the session by answering with max-age=0
+/// `Set-Cookie` headers, which reqwest applies to this jar in the same round
+/// trip. That covers the happy path and nothing else: a sign-out with no network,
+/// or against a gateway that is down, leaves the live session cookie sitting in
+/// the jar. It would then be exported to the keyring by the next background
+/// flush, and a user who deliberately signed out would find themselves signed
+/// back in on the following launch. So the jar is cleared locally too, whatever
+/// the logout POST did.
+///
+/// Scoped to ONE gateway, not the whole jar. The jar is still shared by every
+/// registered connection (MJXHRM-446; MJXHRM-526 splits it), so emptying it
+/// wholesale would sign the user out of every other cookie-backed source as a
+/// side effect of signing out of this one.
+#[tauri::command]
+pub fn cookies_clear(state: State<'_, TransportState>, base: String) -> Result<(), String> {
+    let url = reqwest::Url::parse(&base).map_err(|e| format!("invalid gateway URL: {e}"))?;
+    let mut store = state
+        .cookies()
+        .lock()
+        .map_err(|_| "cookie jar poisoned".to_string())?;
+
+    clear_cookies_for(&mut store, &url);
+    Ok(())
+}
+
+/// Remove every cookie, expired or not, whose domain matches `url`'s host.
+///
+/// Domain, not domain-and-path: a gateway mounted under a path prefix still owns
+/// the cookies it set on `/`, and a cookie scoped to a sub-path of this host is
+/// this host's cookie all the same. A cookie shared with another gateway through
+/// a parent `Domain=` attribute goes too — it is sent to this gateway, so it is
+/// part of the session being signed out.
+fn clear_cookies_for(store: &mut cookie_store::CookieStore, url: &reqwest::Url) {
+    let doomed: Vec<(String, String, String)> = store
+        .iter_any()
+        .filter(|cookie| cookie.domain.matches(url))
+        .map(|cookie| {
+            (
+                String::from(&cookie.domain),
+                String::from(&cookie.path),
+                cookie.name().to_string(),
+            )
+        })
+        .collect();
+
+    for (domain, path, name) in doomed {
+        store.remove(&domain, &path, &name);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -1600,11 +1652,11 @@ mod tests {
 
     use super::{
         apply_connection_auth, apply_gateway_bearer, apply_ws_token, bearer_retry_warranted,
-        caller_set_authorization, forget_socket, pump_reader, redact_bearer, redact_error,
-        redact_message, redact_secret, redact_url, safe_upload_filename, send_binary_frame,
-        take_window_sockets, upload_form, upload_lost_to_redirect, visible_response_headers,
-        ws_upgrade_headers, ConnectionAuth, HashMap, HttpReq, HttpUpload, Message, ReaderSink,
-        SocketHandle, TransportState,
+        caller_set_authorization, clear_cookies_for, forget_socket, pump_reader, redact_bearer,
+        redact_error, redact_message, redact_secret, redact_url, safe_upload_filename,
+        send_binary_frame, take_window_sockets, upload_form, upload_lost_to_redirect,
+        visible_response_headers, ws_upgrade_headers, ConnectionAuth, HashMap, HttpReq, HttpUpload,
+        Message, ReaderSink, SocketHandle, TransportState,
     };
 
     /// A registry entry shaped exactly like a live one: a writer task parked on
@@ -1834,6 +1886,33 @@ mod tests {
             .headers()
             .get(reqwest::header::AUTHORIZATION)
             .is_none());
+    }
+
+    // ── signing out of one gateway ───────────────────────────────────────────
+
+    /// The per-connection rule, rather than a whole-jar clear: signing out of one
+    /// gateway must not sign the user out of another source sharing the jar.
+    #[test]
+    fn clearing_one_gateway_keeps_every_other_gateways_cookies() {
+        let a = reqwest::Url::parse("https://gw-a.example.com/").unwrap();
+        let b = reqwest::Url::parse("https://gw-b.example.com/").unwrap();
+        let mut store = cookie_store::CookieStore::default();
+
+        store
+            .parse("hermes_session_rt=a-rt; Path=/; Max-Age=3600", &a)
+            .unwrap();
+        store
+            .parse("hermes_session_at=a-at; Path=/api; Max-Age=3600", &a)
+            .unwrap();
+        store
+            .parse("hermes_session_rt=b-rt; Path=/; Max-Age=3600", &b)
+            .unwrap();
+
+        clear_cookies_for(&mut store, &a);
+
+        assert_eq!(store.iter_any().filter(|c| c.domain.matches(&a)).count(), 0);
+        let left: Vec<String> = store.iter_any().map(|c| c.value().to_string()).collect();
+        assert_eq!(left, vec!["b-rt".to_string()]);
     }
 
     // ── replaying a 401 after a forced rotation ──────────────────────────────
