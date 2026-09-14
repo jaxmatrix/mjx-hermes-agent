@@ -73,10 +73,9 @@ def _extract_dict_keys(source: str, dict_name: str) -> set[str]:
 
 
 def _cli_env_map_keys() -> set[str]:
-    """terminal config keys bridged by cli.load_cli_config()."""
+    """terminal config keys bridged by cli.load_cli_config() (via _mirror_config_to_env)."""
     import cli
-    source = inspect.getsource(cli.load_cli_config)
-    return _extract_dict_keys(source, "env_mappings")
+    return set(cli._TERMINAL_ENV_MAPPINGS.keys())
 
 
 def _gateway_env_map_keys() -> set[str]:
@@ -326,6 +325,15 @@ def test_docker_forward_env_is_bridged_everywhere():
     assert "TERMINAL_DOCKER_FORWARD_ENV" in _terminal_tool_env_var_names()
 
 
+def test_docker_snap_compat_is_bridged_everywhere():
+    """#9730: ``terminal.docker_snap_compat`` must reach the container on the CLI, gateway and
+    ``hermes config set`` paths, like every other docker_* key (see docker_extra_args above)."""
+    assert "docker_snap_compat" in _cli_env_map_keys()
+    assert "docker_snap_compat" in _gateway_env_map_keys()
+    assert "docker_snap_compat" in _save_config_env_sync_keys()
+    assert "TERMINAL_DOCKER_SNAP_COMPAT" in _terminal_tool_env_var_names()
+
+
 # ---------------------------------------------------------------------------
 # The general invariant.
 #
@@ -364,6 +372,11 @@ _JUSTIFIED_PARTIAL = {
     # cmd_dashboard. The classic CLI and the messaging gateway host no such
     # endpoint, so bridging it there would be noise.
     "shell_pty",
+    # Upstream d7be3f649d bridges terminal.temp_dir only via TERMINAL_CONFIG_ENV_MAP
+    # (`hermes config set` / `hermes serve`), consumed by LocalEnvironment.get_temp_dir().
+    # Kept as upstream shipped it in the v2026.9.14 sync rather than widening launcher
+    # behaviour inside a merge; CLI/gateway bridging is an open audit item.
+    "temp_dir",
 }
 
 # cli.py names the backend key `env_type` (the legacy cli-config.yaml spelling)
@@ -428,6 +441,8 @@ def test_bridged_env_vars_are_actually_consumed():
         "TERMINAL_SANDBOX_DIR",
         "TERMINAL_HOME_MODE",
         "TERMINAL_SHELL_PTY",
+        # TERMINAL_TEMP_DIR -> tools/environments/local.py::LocalEnvironment.get_temp_dir
+        "TERMINAL_TEMP_DIR",
     }
 
     orphans = {

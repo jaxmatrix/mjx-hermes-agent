@@ -17,12 +17,18 @@ So the rule for this file: **write a real config.yaml and call the real
 resolution it is supposed to be verifying is not evidence.
 """
 
+import os
 import textwrap
 
 import pytest
 import yaml
 
 from hermes_cli import web_server
+# The picker route and its probe live in web_routers/tools.py, which looks
+# _probe_terminal_backend up as its own module global at call time — patching the
+# web_server name would not reach it. The schema overrides live in web_server_config.
+import hermes_cli.web_routers.tools as _tools_router
+import hermes_cli.web_server_config as _web_server_config
 from hermes_cli.config import get_config_path, load_config
 
 # Every TERMINAL_* var the switches under test consult. The hermetic conftest
@@ -41,6 +47,16 @@ _TERMINAL_ENV_VARS = (
 def _no_terminal_env(monkeypatch):
     for name in _TERMINAL_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
+    # Starting the real app (test_health_features_track_the_switch uses
+    # `with TestClient`) runs the dashboard lifespan, whose startup imports bridge
+    # this test's config.yaml terminal.* keys into os.environ behind monkeypatch's
+    # back — TERMINAL_SHELL_PTY=False from a `shell_pty: off` fixture then disables
+    # /api/shell-pty for every later test in the process. Put TERMINAL_* back.
+    before = {k: v for k, v in os.environ.items() if k.startswith("TERMINAL_")}
+    yield
+    for name in [k for k in os.environ if k.startswith("TERMINAL_") and k not in before]:
+        del os.environ[name]
+    os.environ.update(before)
 
 
 def _write_config(body: str) -> None:
@@ -185,7 +201,7 @@ async def test_picker_reports_restart_required(monkeypatch):
         """)
     monkeypatch.setenv("TERMINAL_ENV", "local")
     # Probes shell out to docker/ssh; the payload shape is what is under test.
-    monkeypatch.setattr(web_server, "_probe_terminal_backend", lambda *a, **k: ("ready", ""))
+    monkeypatch.setattr(_tools_router, "_probe_terminal_backend", lambda *a, **k: ("ready", ""))
 
     payload = await web_server.get_terminal_backends()
 
@@ -205,7 +221,7 @@ async def test_picker_agrees_when_nothing_is_pinned(monkeypatch):
         terminal:
           backend: docker
         """)
-    monkeypatch.setattr(web_server, "_probe_terminal_backend", lambda *a, **k: ("ready", ""))
+    monkeypatch.setattr(_tools_router, "_probe_terminal_backend", lambda *a, **k: ("ready", ""))
 
     payload = await web_server.get_terminal_backends()
 
@@ -292,7 +308,7 @@ def test_modal_mode_options_are_accepted_by_the_coercer():
     accepts neither, so both choices silently became "auto"."""
     from tools.tool_backend_helpers import coerce_modal_mode
 
-    options = web_server._SCHEMA_OVERRIDES["terminal.modal_mode"]["options"]
+    options = _web_server_config._SCHEMA_OVERRIDES["terminal.modal_mode"]["options"]
 
     assert options, "modal_mode must offer options"
     for option in options:
@@ -302,7 +318,7 @@ def test_modal_mode_options_are_accepted_by_the_coercer():
 
 
 def test_shell_pty_schema_options_round_trip():
-    options = web_server._SCHEMA_OVERRIDES["terminal.shell_pty"]["options"]
+    options = _web_server_config._SCHEMA_OVERRIDES["terminal.shell_pty"]["options"]
 
     assert set(options) == {"auto", "off"}
     for option in options:

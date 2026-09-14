@@ -114,12 +114,21 @@ jobs:
           # keeps the installed major aligned with the npm12 cache-key tag.
           npm --version | grep -q '^12\.' || npm i -g npm@12
 
-      # Same rationale as the discovery job's cache above, but this ``npm ci``
-      # runs WITH install scripts, so the tree includes postinstall artifacts
-      # (electron's postinstall unpacks its binary into node_modules/electron/
-      # dist, which lives inside the cached tree — the ~/.cache/electron
-      # download cache is deliberately NOT cached: with npm ci skipped on hit
-      # it would never be read, only inflate the archive).
+      # The ``cache: npm`` option of ``setup-node`` caches only the ~/.npm
+      # tarball cache. The job then extracts the full workspace node_modules
+      # again and runs the postinstalls again, which includes the Electron
+      # binary fetch. This caches the installed tree itself, keyed on the
+      # lockfile, and skips ``npm ci`` on an exact hit. There are no
+      # restore-keys: a partial hit leaves a stale tree, so anything other
+      # than an exact lockfile match reinstalls from the start.
+      #
+      # This install runs WITH scripts, so the tree holds the postinstall
+      # artifacts. The postinstall of electron unpacks its binary into
+      # node_modules/electron/dist, which is inside the cached tree.
+      #
+      # The ~/.cache/electron download cache stays out of the key on purpose.
+      # ``npm ci`` is skipped on a hit, so nothing reads that cache. It only
+      # makes the archive larger.
       - name: Restore node_modules
         id: node-modules-cache
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4

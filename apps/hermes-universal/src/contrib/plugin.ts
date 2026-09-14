@@ -16,13 +16,19 @@
  * ACCIDENTAL collisions, not deliberate reach.
  */
 
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
+
 import { toTileContribution } from '@/components/pane-shell/tile/registry'
 import type { Tile } from '@/components/pane-shell/tile/types'
 import { pluginRest, type PluginRestOptions } from '@/hermes'
 import { createPluginI18n, type PluginI18n } from '@/i18n'
 import { writeClipboardText } from '@/lib/clipboard'
+import { gatewayOwnsLocalFs, selectRemotePaths } from '@/lib/desktop-fs'
 import { tryOpenExternalLink } from '@/lib/external-link'
-import { nativeNotificationCapabilities, type NativeNotificationCapabilities } from '@/lib/native-notification-capabilities'
+import {
+  nativeNotificationCapabilities,
+  type NativeNotificationCapabilities
+} from '@/lib/native-notification-capabilities'
 import { pluginSocket } from '@/lib/plugin-transport'
 import { tryRevealPathInFileManager } from '@/lib/reveal-path'
 import { readKey, writeKey } from '@/lib/storage'
@@ -88,8 +94,29 @@ export interface PluginOs {
    *  when unavailable — including on mobile, which has no file manager to
    *  reveal into. */
   revealPath: (path: string) => Promise<boolean>
+  /** Save dialog. Resolves the chosen path, or null on cancel / when
+   *  unavailable. The path is on the BACKEND's filesystem, so hand it to a
+   *  `rest` call rather than trying to write it from the webview.
+   *
+   *  Desktop can always use the native dialog because its backend shares its
+   *  disk. Here the native dialog is only honest when this window spawned the
+   *  gateway itself (`gatewayOwnsLocalFs`); on a remote / ssh / cloud gateway
+   *  and on every phone there is no way to name a new file on the backend, so
+   *  this resolves null there. */
+  pickSavePath: (options?: PluginFileDialogOptions) => Promise<null | string>
+  /** Open dialog, single file. Resolves the chosen path, or null on cancel /
+   *  when unavailable. Same BACKEND-path rule as `pickSavePath`: the native
+   *  dialog when the gateway owns this machine's disk, otherwise the in-app
+   *  picker that browses the gateway's filesystem. */
+  pickOpenPath: (options?: PluginFileDialogOptions) => Promise<null | string>
   /** Write text to the system clipboard. Resolves false when unavailable. */
   writeClipboard: (text: string) => Promise<boolean>
+}
+
+export interface PluginFileDialogOptions {
+  defaultPath?: string
+  filters?: Array<{ extensions: string[]; name: string }>
+  title?: string
 }
 
 export interface PluginContext {
@@ -124,8 +151,8 @@ export interface PluginContext {
    *  can fail on an expired session, and neither is reported back to you. */
   socket: (path: string, onMessage: (data: unknown) => void) => () => void
   /** The curated OS door: native notification, open-external, reveal-in-file-
-   *  manager, clipboard — attributed to this plugin, result-shaped (never throws
-   *  for a missing capability). */
+   *  manager, save/open pickers, clipboard — attributed to this plugin,
+   *  result-shaped (never throws for a missing capability). */
   os: PluginOs
   /** Plugin-scoped persistence. */
   storage: PluginStorage
@@ -188,6 +215,15 @@ function createPluginOs(pluginId: string): PluginOs {
     }
   }
 
+  // Same shape as `attempt`, for the pickers that answer with a path.
+  const attemptPath = async (run: () => Promise<null | string | undefined>): Promise<null | string> => {
+    try {
+      return (await run()) || null
+    } catch {
+      return null
+    }
+  }
+
   return {
     notify: async input => {
       try {
@@ -209,6 +245,27 @@ function createPluginOs(pluginId: string): PluginOs {
     // do this" rather than as the bug it was. `lib/external-link` explains the
     // ACL in full.
     openExternal: url => tryOpenExternalLink(url),
+    // The picked path is handed to the BACKEND, so it must name a file on the
+    // backend's disk — `lib/desktop-fs` explains why a locally-picked path on a
+    // remote gateway is worse than no path. `profile-share` makes the same call.
+    pickOpenPath: options =>
+      attemptPath(async () => {
+        if (gatewayOwnsLocalFs()) {
+          const picked = await openDialog({ ...options, directory: false, multiple: false })
+
+          return typeof picked === 'string' ? picked : null
+        }
+
+        const picked = await selectRemotePaths({ ...options, directories: false, multiple: false })
+
+        return picked[0]
+      }),
+    pickSavePath: options =>
+      attemptPath(async () =>
+        gatewayOwnsLocalFs()
+          ? saveDialog({ defaultPath: options?.defaultPath, filters: options?.filters, title: options?.title })
+          : null
+      ),
     revealPath: path => tryRevealPathInFileManager(path),
     // The app's single clipboard write seam (@/lib/clipboard), which throws only
     // when BOTH the OS plugin and the engine refuse — WebKitGTK gates the async

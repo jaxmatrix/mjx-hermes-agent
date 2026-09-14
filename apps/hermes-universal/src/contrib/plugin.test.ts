@@ -2,6 +2,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type * as PlatformModule from '@/lib/platform'
 
+// `vi.mock` is hoisted above every top-level binding, so the spies have to exist
+// by the time the factories run.
+const { openDialog, saveDialog } = vi.hoisted(() => ({
+  openDialog: vi.fn<(options?: unknown) => Promise<null | string | string[]>>(async () => null),
+  saveDialog: vi.fn<(options?: unknown) => Promise<null | string>>(async () => null)
+}))
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({ open: openDialog, save: saveDialog }))
+vi.mock('@/lib/desktop-fs', () => ({
+  gatewayOwnsLocalFs: vi.fn(() => false),
+  selectRemotePaths: vi.fn(async () => [])
+}))
 vi.mock('@/lib/plugin-transport', () => ({ pluginSocket: vi.fn(() => () => {}) }))
 // Pretend we're inside the Tauri webview — several modules in this graph gate on it.
 vi.mock('@/lib/platform', async importOriginal => ({
@@ -14,6 +26,7 @@ vi.mock('@/lib/clipboard', () => ({ writeClipboardText: vi.fn(async () => {}) })
 vi.mock('@/store/native-notifications', () => ({ dispatchPluginNativeNotification: vi.fn() }))
 
 import { writeClipboardText } from '@/lib/clipboard'
+import { gatewayOwnsLocalFs, selectRemotePaths } from '@/lib/desktop-fs'
 import { tryOpenExternalLink } from '@/lib/external-link'
 import { pluginSocket } from '@/lib/plugin-transport'
 import { tryRevealPathInFileManager } from '@/lib/reveal-path'
@@ -174,5 +187,70 @@ describe('ctx.os — the curated OS door', () => {
     })
 
     expect(() => createPluginContext('kanban').os.notify({ title: 'boom' })).not.toThrow()
+  })
+})
+
+// The kanban board export/import flows hand the picked path to the BACKEND, so a
+// path from this machine's native dialog is only right when the gateway shares
+// this machine's disk. Every fixture below makes the WRONG door return a path
+// too, so a pick routed through it can't pass by accident.
+describe('ctx.os file pickers', () => {
+  const FILTERS = [{ extensions: ['tar.gz', 'tgz'], name: 'Hermes board' }]
+
+  it('uses the native dialogs when the gateway owns this machine’s disk', async () => {
+    vi.mocked(gatewayOwnsLocalFs).mockReturnValue(true)
+    vi.mocked(selectRemotePaths).mockResolvedValue(['/backend/wrong.tar.gz'])
+    saveDialog.mockResolvedValue('/local/out.tar.gz')
+    openDialog.mockResolvedValue('/local/board.tar.gz')
+
+    const ctx = createPluginContext('kanban')
+
+    await expect(ctx.os.pickSavePath({ defaultPath: 'b.tar.gz', filters: FILTERS, title: 'Export' })).resolves.toBe(
+      '/local/out.tar.gz'
+    )
+    expect(saveDialog).toHaveBeenCalledWith({ defaultPath: 'b.tar.gz', filters: FILTERS, title: 'Export' })
+
+    await expect(ctx.os.pickOpenPath({ filters: FILTERS, title: 'Import' })).resolves.toBe('/local/board.tar.gz')
+    expect(openDialog).toHaveBeenCalledWith({ directory: false, filters: FILTERS, multiple: false, title: 'Import' })
+    expect(selectRemotePaths).not.toHaveBeenCalled()
+  })
+
+  it('resolves null when the native dialogs are cancelled or throw', async () => {
+    vi.mocked(gatewayOwnsLocalFs).mockReturnValue(true)
+    const ctx = createPluginContext('kanban')
+
+    saveDialog.mockResolvedValueOnce(null)
+    openDialog.mockResolvedValueOnce(null)
+    await expect(ctx.os.pickSavePath()).resolves.toBeNull()
+    await expect(ctx.os.pickOpenPath()).resolves.toBeNull()
+
+    saveDialog.mockRejectedValueOnce(new Error('no dialog in a plain browser'))
+    openDialog.mockRejectedValueOnce(new Error('no dialog in a plain browser'))
+    await expect(ctx.os.pickSavePath()).resolves.toBeNull()
+    await expect(ctx.os.pickOpenPath()).resolves.toBeNull()
+  })
+
+  it('browses the backend to open, and cannot save, on a gateway with another disk', async () => {
+    vi.mocked(gatewayOwnsLocalFs).mockReturnValue(false)
+    saveDialog.mockResolvedValue('/local/wrong-host.tar.gz')
+    openDialog.mockResolvedValue('/local/wrong-host.tar.gz')
+    vi.mocked(selectRemotePaths).mockResolvedValue(['/backend/board.tar.gz'])
+
+    const ctx = createPluginContext('kanban')
+
+    await expect(ctx.os.pickOpenPath({ filters: FILTERS, title: 'Import' })).resolves.toBe('/backend/board.tar.gz')
+    expect(selectRemotePaths).toHaveBeenCalledWith({
+      directories: false,
+      filters: FILTERS,
+      multiple: false,
+      title: 'Import'
+    })
+    await expect(ctx.os.pickSavePath({ defaultPath: 'b.tar.gz' })).resolves.toBeNull()
+    expect(saveDialog).not.toHaveBeenCalled()
+    expect(openDialog).not.toHaveBeenCalled()
+
+    // Cancelling the backend picker resolves an empty list.
+    vi.mocked(selectRemotePaths).mockResolvedValue([])
+    await expect(ctx.os.pickOpenPath()).resolves.toBeNull()
   })
 })

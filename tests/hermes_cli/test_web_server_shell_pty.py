@@ -6,6 +6,8 @@ monkeypatch PtyBridge.spawn with a fake, bypass the WS auth gates."""
 import pytest
 
 from hermes_cli import web_server
+import hermes_cli.web_server_chat as _web_server_chat
+import hermes_cli.web_server_shell_pty as _shell_pty
 
 
 @pytest.mark.asyncio
@@ -20,8 +22,9 @@ async def test_shell_pty_spawns_shell_and_pumps(monkeypatch):
         def read(self, timeout):
             return self._outbox.pop(0) if self._outbox else b""
 
-        def write(self, data):
+        async def write(self, data):
             self._outbox.append(bytes(data))  # a shell echoes stdin back to the tty
+            return True
 
         def resize(self, cols, rows):
             resizes.append((cols, rows))
@@ -35,11 +38,11 @@ async def test_shell_pty_spawns_shell_and_pumps(monkeypatch):
         captured["env"] = kwargs.get("env") or {}
         return FakeBridge()
 
-    monkeypatch.setattr(web_server.PtyBridge, "spawn", staticmethod(fake_spawn))
-    monkeypatch.setattr(web_server, "_PTY_BRIDGE_AVAILABLE", True)
-    monkeypatch.setattr(web_server, "_ws_auth_reason", lambda ws: (None, "test"))
-    monkeypatch.setattr(web_server, "_ws_host_origin_reason", lambda ws: None)
-    monkeypatch.setattr(web_server, "_ws_client_reason", lambda ws: None)
+    monkeypatch.setattr(_web_server_chat.PtyBridge, "spawn", staticmethod(fake_spawn))
+    monkeypatch.setattr(_web_server_chat, "_PTY_BRIDGE_AVAILABLE", True)
+    monkeypatch.setattr(_web_server_chat, "_ws_auth_reason", lambda ws: (None, "test"))
+    monkeypatch.setattr(_web_server_chat, "_ws_host_origin_reason", lambda ws: None)
+    monkeypatch.setattr(_web_server_chat, "_ws_client_reason", lambda ws: None)
     # A gateway secret in the env must NOT leak into the child shell (finding 2).
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sekret")
 
@@ -73,11 +76,11 @@ async def test_shell_pty_disabled_off(monkeypatch):
         spawned.append(list(argv))
         raise AssertionError("spawn must not be called when shell_pty is off")
 
-    monkeypatch.setattr(web_server.PtyBridge, "spawn", staticmethod(fake_spawn))
-    monkeypatch.setattr(web_server, "_PTY_BRIDGE_AVAILABLE", True)
-    monkeypatch.setattr(web_server, "_ws_auth_reason", lambda ws: (None, "test"))
-    monkeypatch.setattr(web_server, "_ws_host_origin_reason", lambda ws: None)
-    monkeypatch.setattr(web_server, "_ws_client_reason", lambda ws: None)
+    monkeypatch.setattr(_web_server_chat.PtyBridge, "spawn", staticmethod(fake_spawn))
+    monkeypatch.setattr(_web_server_chat, "_PTY_BRIDGE_AVAILABLE", True)
+    monkeypatch.setattr(_web_server_chat, "_ws_auth_reason", lambda ws: (None, "test"))
+    monkeypatch.setattr(_web_server_chat, "_ws_host_origin_reason", lambda ws: None)
+    monkeypatch.setattr(_web_server_chat, "_ws_client_reason", lambda ws: None)
     monkeypatch.setenv("TERMINAL_SHELL_PTY", "off")
 
     from starlette.testclient import TestClient
@@ -100,10 +103,10 @@ async def test_shell_pty_disabled_off(monkeypatch):
 
 def _bypass_ws_gates(monkeypatch):
     """Neutralize the auth/host/client WS gates so tests hit the routing logic."""
-    monkeypatch.setattr(web_server, "_PTY_BRIDGE_AVAILABLE", True)
-    monkeypatch.setattr(web_server, "_ws_auth_reason", lambda ws: (None, "test"))
-    monkeypatch.setattr(web_server, "_ws_host_origin_reason", lambda ws: None)
-    monkeypatch.setattr(web_server, "_ws_client_reason", lambda ws: None)
+    monkeypatch.setattr(_web_server_chat, "_PTY_BRIDGE_AVAILABLE", True)
+    monkeypatch.setattr(_web_server_chat, "_ws_auth_reason", lambda ws: (None, "test"))
+    monkeypatch.setattr(_web_server_chat, "_ws_host_origin_reason", lambda ws: None)
+    monkeypatch.setattr(_web_server_chat, "_ws_client_reason", lambda ws: None)
 
 
 @pytest.mark.asyncio
@@ -117,8 +120,8 @@ async def test_shell_pty_docker_happy_path(monkeypatch):
         def read(self, timeout):
             return self._outbox.pop(0) if self._outbox else b""
 
-        def write(self, data):
-            pass
+        async def write(self, data):
+            return True
 
         def resize(self, cols, rows):
             pass
@@ -131,16 +134,16 @@ async def test_shell_pty_docker_happy_path(monkeypatch):
         return FakeBridge()
 
     _bypass_ws_gates(monkeypatch)
-    monkeypatch.setattr(web_server.PtyBridge, "spawn", staticmethod(fake_spawn))
-    monkeypatch.setattr(web_server, "_probe_docker_backend", lambda: ("ready", ""))
-    monkeypatch.setattr(web_server, "load_config", lambda: {"terminal": {"backend": "docker"}})
+    monkeypatch.setattr(_web_server_chat.PtyBridge, "spawn", staticmethod(fake_spawn))
+    monkeypatch.setattr(_shell_pty, "_probe_docker_backend", lambda *_a: ("ready", ""))
+    monkeypatch.setattr(_shell_pty, "load_config", lambda: {"terminal": {"backend": "docker"}})
     # TERMINAL_ENV would otherwise win over the config backend.
     monkeypatch.delenv("TERMINAL_ENV", raising=False)
 
     class _CP:
         stdout = "abc123def456\n"
 
-    monkeypatch.setattr(web_server.subprocess, "run", lambda *a, **k: _CP())
+    monkeypatch.setattr(_shell_pty.subprocess, "run", lambda *a, **k: _CP())
 
     from starlette.testclient import TestClient
 
@@ -164,13 +167,13 @@ async def test_shell_pty_docker_daemon_down_refuses(monkeypatch):
         raise AssertionError("spawn must not be called when the daemon is down")
 
     _bypass_ws_gates(monkeypatch)
-    monkeypatch.setattr(web_server.PtyBridge, "spawn", staticmethod(fake_spawn))
+    monkeypatch.setattr(_web_server_chat.PtyBridge, "spawn", staticmethod(fake_spawn))
     monkeypatch.setattr(
-        web_server,
+        _shell_pty,
         "_probe_docker_backend",
-        lambda: ("needs_setup", "Docker daemon not reachable — start Docker and retry."),
+        lambda *_a: ("needs_setup", "Docker daemon not reachable — start Docker and retry."),
     )
-    monkeypatch.setattr(web_server, "load_config", lambda: {"terminal": {"backend": "docker"}})
+    monkeypatch.setattr(_shell_pty, "load_config", lambda: {"terminal": {"backend": "docker"}})
     monkeypatch.delenv("TERMINAL_ENV", raising=False)
 
     from starlette.testclient import TestClient
@@ -194,8 +197,8 @@ async def test_shell_pty_network_local_refuses(monkeypatch):
         raise AssertionError("spawn must not be called on a network bind + local")
 
     _bypass_ws_gates(monkeypatch)
-    monkeypatch.setattr(web_server.PtyBridge, "spawn", staticmethod(fake_spawn))
-    monkeypatch.setattr(web_server, "load_config", lambda: {"terminal": {"backend": "local"}})
+    monkeypatch.setattr(_web_server_chat.PtyBridge, "spawn", staticmethod(fake_spawn))
+    monkeypatch.setattr(_shell_pty, "load_config", lambda: {"terminal": {"backend": "local"}})
     monkeypatch.delenv("TERMINAL_ENV", raising=False)
     # setattr (not a bare assignment) so monkeypatch restores the prior value on
     # teardown — a leaked non-loopback bound_host arms the host-header gate for
@@ -220,14 +223,26 @@ class _IdleBridge:
     def read(self, timeout):
         return b""
 
-    def write(self, data):
-        pass
+    async def write(self, data):
+        return True
 
     def resize(self, cols, rows):
         pass
 
     def close(self):
         pass
+
+
+class _PromptBridge(_IdleBridge):
+    """An idle shell that prints one prompt, so a test can wait until spawn happened."""
+
+    PROMPT = b"$ "
+
+    def __init__(self):
+        self._outbox = [self.PROMPT]
+
+    def read(self, timeout):
+        return self._outbox.pop(0) if self._outbox else b""
 
 
 @pytest.mark.asyncio
@@ -238,12 +253,12 @@ async def test_shell_pty_network_local_allowed_by_opt_in(monkeypatch):
 
     def fake_spawn(argv, **kwargs):
         spawned.append(list(argv))
-        return _IdleBridge()
+        return _PromptBridge()
 
     _bypass_ws_gates(monkeypatch)
-    monkeypatch.setattr(web_server.PtyBridge, "spawn", staticmethod(fake_spawn))
+    monkeypatch.setattr(_web_server_chat.PtyBridge, "spawn", staticmethod(fake_spawn))
     monkeypatch.setattr(
-        web_server,
+        _shell_pty,
         "load_config",
         lambda: {"terminal": {"backend": "local", "allow_unsandboxed_shell": True}},
     )
@@ -256,7 +271,11 @@ async def test_shell_pty_network_local_allowed_by_opt_in(monkeypatch):
 
     client = TestClient(web_server.app)
     with client.websocket_connect("/api/shell-pty") as ws:
-        ws.send_bytes(b"hi")
+        # Wait for the spawned shell's first frame. Leaving the block straight away
+        # disconnects while the route is still resolving the target off-thread
+        # (asyncio.to_thread), the app task is cancelled before PtyBridge.spawn, and
+        # the assertion below races the server.
+        assert ws.receive_bytes() == _PromptBridge.PROMPT
 
     assert spawned and spawned[0][-1] == "-l"
 
@@ -269,16 +288,16 @@ async def test_shell_pty_backend_overrides_agent_backend(monkeypatch):
 
     def fake_spawn(argv, **kwargs):
         spawned.append(list(argv))
-        return _IdleBridge()
+        return _PromptBridge()
 
-    def _no_docker():
+    def _no_docker(*_a):
         raise AssertionError("the docker backend must not be probed for the pane")
 
     _bypass_ws_gates(monkeypatch)
-    monkeypatch.setattr(web_server.PtyBridge, "spawn", staticmethod(fake_spawn))
-    monkeypatch.setattr(web_server, "_probe_docker_backend", _no_docker)
+    monkeypatch.setattr(_web_server_chat.PtyBridge, "spawn", staticmethod(fake_spawn))
+    monkeypatch.setattr(_shell_pty, "_probe_docker_backend", _no_docker)
     monkeypatch.setattr(
-        web_server,
+        _shell_pty,
         "load_config",
         lambda: {"terminal": {"backend": "docker", "shell_pty_backend": "local"}},
     )
@@ -290,7 +309,11 @@ async def test_shell_pty_backend_overrides_agent_backend(monkeypatch):
 
     client = TestClient(web_server.app)
     with client.websocket_connect("/api/shell-pty") as ws:
-        ws.send_bytes(b"hi")
+        # Wait for the spawned shell's first frame. Leaving the block straight away
+        # disconnects while the route is still resolving the target off-thread
+        # (asyncio.to_thread), the app task is cancelled before PtyBridge.spawn, and
+        # the assertion below races the server.
+        assert ws.receive_bytes() == _PromptBridge.PROMPT
 
     assert spawned and spawned[0][-1] == "-l"
 
@@ -301,11 +324,11 @@ async def test_shell_pty_refusal_rides_the_close_frame(monkeypatch):
     the client with a bare "disabled" — the reason must be on the close frame."""
     _bypass_ws_gates(monkeypatch)
     monkeypatch.setattr(
-        web_server.PtyBridge,
+        _web_server_chat.PtyBridge,
         "spawn",
         staticmethod(lambda *a, **k: pytest.fail("spawn must not be called")),
     )
-    monkeypatch.setattr(web_server, "load_config", lambda: {"terminal": {"backend": "local"}})
+    monkeypatch.setattr(_shell_pty, "load_config", lambda: {"terminal": {"backend": "local"}})
     monkeypatch.delenv("TERMINAL_ENV", raising=False)
     monkeypatch.delenv("TERMINAL_SHELL_PTY_BACKEND", raising=False)
     monkeypatch.delenv("TERMINAL_ALLOW_UNSANDBOXED_SHELL", raising=False)
@@ -335,8 +358,8 @@ async def test_shell_pty_modal_refuses(monkeypatch):
         raise AssertionError("spawn must not be called for a non-interactive backend")
 
     _bypass_ws_gates(monkeypatch)
-    monkeypatch.setattr(web_server.PtyBridge, "spawn", staticmethod(fake_spawn))
-    monkeypatch.setattr(web_server, "load_config", lambda: {"terminal": {"backend": "modal"}})
+    monkeypatch.setattr(_web_server_chat.PtyBridge, "spawn", staticmethod(fake_spawn))
+    monkeypatch.setattr(_shell_pty, "load_config", lambda: {"terminal": {"backend": "modal"}})
     monkeypatch.delenv("TERMINAL_ENV", raising=False)
 
     from starlette.testclient import TestClient
@@ -385,8 +408,8 @@ async def test_shell_pty_attach_registers_and_reattaches(monkeypatch):
             # drop.
             return self._outbox.pop(0) if self._outbox else b""
 
-        def write(self, data):
-            pass
+        async def write(self, data):
+            return True
 
         def resize(self, cols, rows):
             pass
@@ -399,7 +422,7 @@ async def test_shell_pty_attach_registers_and_reattaches(monkeypatch):
         return FakeBridge()
 
     _bypass_ws_gates(monkeypatch)
-    monkeypatch.setattr(web_server.PtyBridge, "spawn", staticmethod(fake_spawn))
+    monkeypatch.setattr(_web_server_chat.PtyBridge, "spawn", staticmethod(fake_spawn))
 
     from starlette.testclient import TestClient
 
@@ -409,7 +432,7 @@ async def test_shell_pty_attach_registers_and_reattaches(monkeypatch):
             assert ws1.receive_bytes() == _BANNER
             ws1.send_bytes(b"hi")
         # Registered under the namespaced key, kept alive after the socket dropped.
-        assert "shellpty:TOK1" in web_server.PTY_REGISTRY._sessions
+        assert "shellpty:TOK1" in _web_server_chat.PTY_REGISTRY._sessions
 
         # Reattach with the same token: no respawn, and the ring buffer replays.
         with client.websocket_connect("/api/shell-pty?attach=TOK1") as ws2:
@@ -422,9 +445,9 @@ async def test_shell_pty_attach_registers_and_reattaches(monkeypatch):
             assert ws3.receive_bytes() == _BANNER
             ws3.send_bytes(b"other")
         assert len(spawned) == 2
-        assert "shellpty:TOK2" in web_server.PTY_REGISTRY._sessions
+        assert "shellpty:TOK2" in _web_server_chat.PTY_REGISTRY._sessions
     finally:
-        web_server.PTY_REGISTRY._sessions.clear()
+        _web_server_chat.PTY_REGISTRY._sessions.clear()
 
 
 @pytest.mark.asyncio
@@ -437,8 +460,8 @@ async def test_shell_pty_attach_second_live_connect_supersedes(monkeypatch):
             def read(self, timeout):
                 return b""
 
-            def write(self, data):
-                pass
+            async def write(self, data):
+                return True
 
             def resize(self, cols, rows):
                 pass
@@ -449,7 +472,7 @@ async def test_shell_pty_attach_second_live_connect_supersedes(monkeypatch):
         return FakeBridge()
 
     _bypass_ws_gates(monkeypatch)
-    monkeypatch.setattr(web_server.PtyBridge, "spawn", staticmethod(fake_spawn))
+    monkeypatch.setattr(_web_server_chat.PtyBridge, "spawn", staticmethod(fake_spawn))
 
     from starlette.testclient import TestClient
     from starlette.websockets import WebSocketDisconnect
@@ -467,7 +490,7 @@ async def test_shell_pty_attach_second_live_connect_supersedes(monkeypatch):
 
             assert excinfo.value.code == WS_CLOSE_SUPERSEDED
     finally:
-        web_server.PTY_REGISTRY._sessions.clear()
+        _web_server_chat.PTY_REGISTRY._sessions.clear()
 
 
 @pytest.mark.asyncio
@@ -490,7 +513,7 @@ async def test_health_advertises_shell_pty_reattach(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_shell_pty_rejects_unauthenticated(monkeypatch):
-    monkeypatch.setattr(web_server, "_ws_auth_reason", lambda ws: ("missing", ""))
+    monkeypatch.setattr(_web_server_chat, "_ws_auth_reason", lambda ws: ("missing", ""))
 
     from starlette.testclient import TestClient
     from starlette.websockets import WebSocketDisconnect

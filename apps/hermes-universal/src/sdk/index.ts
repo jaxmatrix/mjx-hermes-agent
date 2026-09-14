@@ -28,10 +28,12 @@
  *    `UploadFile` parameter expects): no multi-file, no extra form fields, no
  *    progress, and the whole file is held in memory. Desktop takes the same
  *    shape but refuses an upload outright against an OAuth-gated backend.
- *  - `ctx.os` has the same four members and the same result contract, but sits
- *    over Tauri instead of the Electron preload bridge — so on mobile (and in a
- *    plain-browser dev run) more of them resolve `false` than on the desktop
- *    app. Branch on the result; never assume the door opened.
+ *  - `ctx.os` has the same members and the same result contract, but sits over
+ *    Tauri instead of the Electron preload bridge — so on mobile (and in a
+ *    plain-browser dev run) more of them resolve `false` / `null` than on the
+ *    desktop app. `pickSavePath` resolves null on any gateway that does not
+ *    share this machine's disk, and `pickOpenPath` browses the gateway's
+ *    filesystem there. Branch on the result; never assume the door opened.
  */
 
 import { atom, computed, type ReadableAtom } from 'nanostores'
@@ -772,6 +774,8 @@ export type { HermesOpenTarget } from '@/lib/hermes-open-target'
 export { isSafeAppPath, resolveHermesOpenPath } from '@/lib/hermes-open-target'
 /** The app's icon set (RefreshCw, LayoutDashboard, Activity, …). */
 export * as icons from '@/lib/icons'
+/** Enter pressed as a real submit — not an IME composition commit. */
+export { isSubmitEnter } from '@/lib/ime'
 export { type KeybindContribution, KEYBINDS_AREA } from '@/lib/keybinds/actions'
 export { formatModifierToken } from '@/lib/keybinds/combo'
 

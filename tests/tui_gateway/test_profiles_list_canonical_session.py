@@ -1,26 +1,32 @@
-"""Tests: profiles.list ``canonical_session`` — the bot's chat, resolved by title.
+"""Tests: profiles.list ``canonical_session`` registry summaries.
 
-Why: a bot's canonical chat and a user's ordinary sessions are SEPARATE
-entities — two modes of conversation that must never overlap.  Identity is the
-pair ``(profile, session titled exactly "Bot Chat")``; there is no
-client-supplied session-id pin, and recency is never consulted.  Resolving it
-server-side is what makes a roster row's preview and the session that row's
-click opens the same session by construction.
+Why: a bot's canonical forever-chat has exactly ONE identity — the session
+titled "Bot Chat" on that bot's profile (core UNIQUE(title) makes it a
+registry of at most one row). The desktop BOTS roster previews it and clicks
+open it, so the gateway resolves the registry row server-side on every
+``profiles.list`` and reports it per profile as ``canonical_session``.
+Upstream removed the ``preferred_session_ids`` pin contract; this fork keeps it
+alongside (apps/hermes-universal still sends it) — ``canonical_session`` is the
+authoritative answer, ``preferred_session`` only echoes a pinned id.
 
 Contract under test:
-- ``canonical_session`` is a summary dict for an eligible exact-title hit,
-  mirroring ``preferred_session``'s keys so clients need no new parsing.
-- Hidden rows DO resolve (a canonical chat is born hidden).
-- Archived rows and deny-listed internal sources (``kanban``/``tool``) count
-  as ABSENT — a worker carrying the title is not a conversation.
-- Compression lineages resolve to the live tip while ``id`` stays the root.
-- ``null`` means "looked, there is none". An ABSENT key means "could not
-  look" — a distinction the client depends on, because reading a failure as
-  "no chat exists" makes it mint a duplicate and fork the bot's memory.
-- ``canonical_session_title`` on the envelope discloses the capability.
-- Matching is EXACT: no case-folding, no trimming, and never the numbered
-  ``"<title> #N"`` lineage variants ``resolve_session_by_title`` would find.
-- ``last_session`` behaviour is unchanged, and never substituted.
+- Every profile row (with include_sessions on) whose state.db could be read
+  carries ``canonical_session``: a summary dict when a "Bot Chat" row exists,
+  ``None`` when it does not. A profile whose lookup could not run (no/corrupt
+  state.db) OMITS the key — absent != null, because a client reading a failure
+  as "no chat" mints a duplicate (fork tri-state, MJXHRM-517). The envelope's
+  ``canonical_session_title`` discloses the capability
+  (no row, denied internal source, deliberately archived; a row archived by
+  a recoverable accident — ws_orphan_reap/agent_close — is resurrected,
+  #92687).
+- Summary keys: ``id`` (the durable registry row), ``resolved_id`` (live
+  compression tip; equal to ``id`` when uncompressed), ``root_title``,
+  ``title``, ``preview`` (newest user/assistant text at the tip),
+  ``started_at``, ``last_active``, ``message_count``.
+- Hidden rows resolve (canonical chats are always hidden).
+- ``last_session`` behaviour is unchanged in every case.
+- ``include_sessions: false`` skips resolution entirely.
+- Resolution reads each profile's OWN state.db (strict per-profile scoping).
 """
 
 from __future__ import annotations
@@ -28,7 +34,6 @@ from __future__ import annotations
 import pytest
 
 import tui_gateway.server as srv
-from tools.bot_mode_probe import BOT_CHAT_TITLE
 
 
 @pytest.fixture
@@ -48,150 +53,551 @@ def _db(profile_dir):
 
 def _add_session(db, sid, *, source="cli", title="", ts, text, hidden=False,
                  parent=None, end_reason=None, archived=False):
-    """One session with a single user message at an exact timestamp.
-
-    NOTE: ``idx_sessions_title_unique`` is a UNIQUE partial index on
-    ``sessions(title)``, so every session in one db needs a DISTINCT title —
-    two rows both defaulting to "" raise IntegrityError.
-    """
+    """Create one session with a single user message at an exact timestamp."""
     db.create_session(sid, source, parent_session_id=parent)
     db.append_message(sid, "user", text, timestamp=ts)
     with db._lock:
         db._conn.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, sid))
-        if archived:
-            db._conn.execute("UPDATE sessions SET archived = 1 WHERE id = ?", (sid,))
         if end_reason:
+            # Mark ended AFTER appending: the DB (correctly) refuses writes
+            # to a compression-closed session.
             db._conn.execute(
                 "UPDATE sessions SET ended_at = ?, end_reason = ? WHERE id = ?",
                 (ts + 1, end_reason, sid),
             )
+        if archived:
+            db._conn.execute(
+                "UPDATE sessions SET archived = 1 WHERE id = ?", (sid,))
     if hidden:
         db.set_session_hidden(sid, True)
 
 
-def _envelope(params):
-    return srv._methods["profiles.list"](1, params)["result"]
-
-
 def _profiles(params):
-    return _envelope(params)["profiles"]
+    envelope = srv._methods["profiles.list"](1, params)
+    return envelope["result"]["profiles"]
 
 
 def _row(profiles, name):
     return next(p for p in profiles if p["name"] == name)
 
 
+def _resume(params, monkeypatch):
+    """Cold resume far enough to read the remapped stored id, no agent build."""
+    monkeypatch.setattr(srv, "_schedule_resume_hydration", lambda *a, **k: None)
+    monkeypatch.setattr(srv, "_schedule_session_cap_enforcement", lambda *a, **k: None)
+    monkeypatch.setattr(srv, "_enable_gateway_prompts", lambda: None)
+    known = set(srv._sessions)
+    try:
+        return srv._methods["session.resume"](1, {
+            **params,
+            "defer_history": True,
+            "omit_messages": True,
+        })
+    finally:
+        for sid in [s for s in srv._sessions if s not in known]:
+            srv._sessions.pop(sid, None)
+
+
 # ---------------------------------------------------------------------------
-# The anti-recency contract
+# canonical_session resolution
 # ---------------------------------------------------------------------------
 
 
-def test_canonical_wins_over_a_newer_ordinary_session(home):
-    """The bot's chat is the bot's chat, however recently the user chatted."""
+def test_canonical_session_is_the_bot_chat_row_not_latest(home):
     db = _db(home)
-    _add_session(db, "botchat", title=BOT_CHAT_TITLE, ts=1000, text="bot words", hidden=True)
-    _add_session(db, "ordinary", title="Refactor the parser", ts=9000, text="user words")
+    _add_session(db, "forever1", title="Bot Chat", ts=1000, text="forever chat content")
+    _add_session(db, "other1", title="Scratch", ts=2000, text="scratch pad content")
+    db.close()
 
     row = _row(_profiles({}), "default")
 
-    assert row["canonical_session"]["id"] == "botchat"
-    assert row["canonical_session"]["preview"] == "bot words"
-    # last_session still reports recency — the two answer different questions.
-    assert row["last_session"]["id"] == "ordinary"
+    canonical = row["canonical_session"]
+    assert canonical["id"] == "forever1"
+    assert canonical["resolved_id"] == "forever1"
+    assert canonical["root_title"] == "Bot Chat"
+    assert canonical["title"] == "Bot Chat"
+    assert "forever chat content" in canonical["preview"]
+    # last_session keeps its own contract: the most recently active session.
+    assert row["last_session"]["id"] == "other1"
+
+
+def test_canonical_session_resolves_hidden_row(home):
+    db = _db(home)
+    _add_session(db, "hiddenchat", title="Bot Chat", ts=1000,
+                 text="hidden bot chat content", hidden=True)
+    _add_session(db, "visible1", title="Visible", ts=2000, text="visible content")
+    db.close()
+
+    row = _row(_profiles({}), "default")
+
+    # Canonical chats are always hidden — the registry lookup must see them.
+    assert row["canonical_session"] is not None
+    assert row["canonical_session"]["id"] == "hiddenchat"
+    assert "hidden bot chat content" in row["canonical_session"]["preview"]
+    # …while the generic latest-session listing still excludes hidden rows.
+    assert row["last_session"]["id"] == "visible1"
+
+
+def test_canonical_session_none_when_no_bot_chat_row(home):
+    db = _db(home)
+    _add_session(db, "real1", title="Real", ts=1000, text="real content")
+    db.close()
+
+    row = _row(_profiles({}), "default")
+
+    assert row["canonical_session"] is None
+    assert row["last_session"]["id"] == "real1"
+
+
+def test_canonical_session_denied_internal_source_returns_none(home):
+    db = _db(home)
+    _add_session(db, "toolrun", source="tool", title="Bot Chat", ts=1000, text="tool output")
+    _add_session(db, "human1", title="Human", ts=2000, text="human content")
+    db.close()
+
+    row = _row(_profiles({}), "default")
+
+    # Internal sources (tool sub-agent runs, kanban workers) are not
+    # conversations — a registry row minted by one resolves as absent.
+    assert row["canonical_session"] is None
+
+
+def test_canonical_session_resolves_compression_tip(home):
+    db = _db(home)
+    _add_session(db, "root1", title="Bot Chat", ts=1000,
+                 text="pre-compression content", end_reason="compression")
+    _add_session(db, "tip1", title="Bot Chat (continued)", ts=3000,
+                 text="post-compression content", parent="root1")
+    _add_session(db, "other1", title="Other", ts=4000, text="other content")
+    db.close()
+
+    row = _row(_profiles({}), "default")
+
+    canonical = row["canonical_session"]
+    # The registry row keeps its durable identity; the summary comes from the
+    # live tip.
+    assert canonical["id"] == "root1"
+    assert canonical["resolved_id"] == "tip1"
+    assert canonical["root_title"] == "Bot Chat"
+    assert canonical["title"] == "Bot Chat (continued)"
+    assert "post-compression content" in canonical["preview"]
+
+
+def test_canonical_session_ignores_unmarked_normal_child(home):
+    db = _db(home)
+    _add_session(db, "root1", title="Bot Chat", ts=1000,
+                 text="canonical bot content")
+    _add_session(db, "normal1", title="Friendly greeting", ts=3000,
+                 text="ordinary chat content", parent="root1")
+    db.close()
+
+    canonical = _row(_profiles({}), "default")["canonical_session"]
+
+    assert canonical["id"] == "root1"
+    assert canonical["resolved_id"] == "root1"
+    assert canonical["title"] == "Bot Chat"
+    assert "canonical bot content" in canonical["preview"]
+
+
+# ---------------------------------------------------------------------------
+# Recoverable-archive resurrection (#92687)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("reason", ["ws_orphan_reap", "agent_close"])
+def test_canonical_session_archived_by_recoverable_reason_is_resurrected(home, reason):
+    # The ws-orphan reaper (and older agent cleanup) archives by ACCIDENT —
+    # the canonical forever-chat must come back with the SAME id, un-archived.
+    db = _db(home)
+    _add_session(db, "reaped1", title="Bot Chat", ts=1000,
+                 text="surviving forever chat", hidden=True,
+                 end_reason=reason, archived=True)
+    db.close()
+
+    row = _row(_profiles({}), "default")
+
+    canonical = row["canonical_session"]
+    assert canonical is not None
+    assert canonical["id"] == "reaped1"
+    assert "surviving forever chat" in canonical["preview"]
+
+    # Idempotence: a second listing resolves the same row again (the stale
+    # end stamp was cleared, nothing re-hides or re-resurrects in a loop).
+    again = _row(_profiles({}), "default")["canonical_session"]
+    assert again is not None and again["id"] == "reaped1"
+
+    # The archive flag was durably cleared, not just masked for this call —
+    # and the accidental end stamp went with it.
+    db = _db(home)
+    try:
+        fresh = db.get_session("reaped1")
+        assert not fresh["archived"]
+        assert fresh["end_reason"] is None
+    finally:
+        db.close()
+
+
+def test_resurrection_unarchives_the_whole_compression_lineage(home):
+    # unarchive_recoverable_session promises lineage-wide un-archive via
+    # set_session_archived: a compressed canonical chat (root + tip both
+    # archived by the reaper) must fully resurrect, resolved to the tip.
+    db = _db(home)
+    _add_session(db, "root1", title="Bot Chat", ts=1000,
+                 text="pre-compression", hidden=True,
+                 end_reason="compression", archived=True)
+    _add_session(db, "tip1", ts=2000, text="post-compression content",
+                 parent="root1", end_reason="ws_orphan_reap", archived=True)
+    db.close()
+
+    row = _row(_profiles({}), "default")
+    canonical = row["canonical_session"]
+    assert canonical is not None
+    assert canonical["id"] == "root1"
+    assert canonical["resolved_id"] == "tip1"
+
+    db = _db(home)
+    try:
+        assert not db.get_session("root1")["archived"]
+        assert not db.get_session("tip1")["archived"]
+    finally:
+        db.close()
+
+
+def test_canonical_session_deliberately_archived_stays_archived(home):
+    # No recoverable end_reason ⇒ the user retired it on purpose: absent.
+    db = _db(home)
+    _add_session(db, "retired1", title="Bot Chat", ts=1000,
+                 text="deliberately retired", hidden=True, archived=True)
+    db.close()
+
+    row = _row(_profiles({}), "default")
+    assert row["canonical_session"] is None
+
+    db = _db(home)
+    try:
+        assert db.get_session("retired1")["archived"]
+    finally:
+        db.close()
+
+
+def test_canonical_session_archived_with_explicit_boundary_stays_archived(home):
+    # Explicit boundary reasons (session_reset) are not recoverable either.
+    db = _db(home)
+    _add_session(db, "reset1", title="Bot Chat", ts=1000,
+                 text="reset boundary", hidden=True,
+                 end_reason="session_reset", archived=True)
+    db.close()
+
+    row = _row(_profiles({}), "default")
+    assert row["canonical_session"] is None
+
+
+def test_non_canonical_archived_session_untouched_by_resurrection(home):
+    # Ordinary sessions keep today's behavior exactly: an archived
+    # non-canonical row stays archived even with a recoverable reason.
+    db = _db(home)
+    _add_session(db, "plain1", title="Scratch", ts=1000, text="scratch",
+                 end_reason="ws_orphan_reap", archived=True)
+    _add_session(db, "chat1", title="Bot Chat", ts=2000, text="forever")
+    db.close()
+
+    row = _row(_profiles({}), "default")
+    assert row["canonical_session"]["id"] == "chat1"
+
+    db = _db(home)
+    try:
+        assert db.get_session("plain1")["archived"]
+    finally:
+        db.close()
+
+
+def test_session_list_title_lookup_resurrects_recoverable_bot_chat(home, monkeypatch):
+    # The exact-title registry lookup (session.list title=) — the desktop's
+    # click-open path — must also resurrect instead of returning no rows.
+    db = _db(home)
+    _add_session(db, "reaped2", title="Bot Chat", ts=1000,
+                 text="click target", hidden=True,
+                 end_reason="ws_orphan_reap", archived=True)
+    monkeypatch.setattr(srv, "_get_db", lambda: db)
+
+    envelope = srv._methods["session.list"](1, {"title": "Bot Chat"})
+    sessions = envelope["result"]["sessions"]
+    assert len(sessions) == 1
+    assert sessions[0]["id"] == "reaped2"
+
+    # The archive flag was durably cleared.
+    assert not db.get_session("reaped2")["archived"]
+    db.close()
+
+
+def test_session_list_title_lookup_keeps_deliberate_archive_hidden(home, monkeypatch):
+    db = _db(home)
+    _add_session(db, "retired2", title="Bot Chat", ts=1000,
+                 text="retired", hidden=True, archived=True)
+    monkeypatch.setattr(srv, "_get_db", lambda: db)
+
+    envelope = srv._methods["session.list"](1, {"title": "Bot Chat"})
+    assert envelope["result"]["sessions"] == []
+    assert db.get_session("retired2")["archived"]
+    db.close()
+
+
+def test_session_list_title_lookup_ignores_unmarked_normal_child(home, monkeypatch):
+    db = _db(home)
+    _add_session(db, "root2", title="Bot Chat", ts=1000,
+                 text="canonical click target", hidden=True)
+    _add_session(db, "normal2", title="Friendly greeting", ts=3000,
+                 text="ordinary click target", parent="root2")
+    monkeypatch.setattr(srv, "_get_db", lambda: db)
+
+    envelope = srv._methods["session.list"](1, {"title": "Bot Chat"})
+    sessions = envelope["result"]["sessions"]
+
+    assert len(sessions) == 1
+    assert sessions[0]["id"] == "root2"
+    assert sessions[0]["resolved_id"] == "root2"
+    db.close()
+
+
+def test_session_list_title_lookup_resolves_compression_tip(home, monkeypatch):
+    db = _db(home)
+    _add_session(db, "root3", title="Bot Chat", ts=1000,
+                 text="pre-compression click target", hidden=True,
+                 end_reason="compression")
+    _add_session(db, "tip3", title="Bot Chat (continued)", ts=3000,
+                 text="post-compression click target", parent="root3")
+    monkeypatch.setattr(srv, "_get_db", lambda: db)
+
+    envelope = srv._methods["session.list"](1, {"title": "Bot Chat"})
+    sessions = envelope["result"]["sessions"]
+
+    assert len(sessions) == 1
+    assert sessions[0]["id"] == "root3"
+    assert sessions[0]["resolved_id"] == "tip3"
+    db.close()
+
+
+def test_canonical_session_resurrects_despite_unmarked_normal_child(home):
+    # Recoverability is judged at the compression tip, not the legacy resume
+    # walker. An unmarked side chat must not hide a reaped Bot Chat.
+    db = _db(home)
+    _add_session(db, "reaped3", title="Bot Chat", ts=1000,
+                 text="surviving forever chat", hidden=True,
+                 end_reason="ws_orphan_reap", archived=True)
+    _add_session(db, "normal3", title="Friendly greeting", ts=3000,
+                 text="ordinary chat content", parent="reaped3")
+    db.close()
+
+    canonical = _row(_profiles({}), "default")["canonical_session"]
+    assert canonical is not None
+    assert canonical["id"] == "reaped3"
+    assert canonical["resolved_id"] == "reaped3"
+
+    db = _db(home)
+    try:
+        assert not db.get_session("reaped3")["archived"]
+    finally:
+        db.close()
+
+
+def test_session_resume_bot_chat_ignores_unmarked_normal_child(home, monkeypatch):
+    db = _db(home)
+    _add_session(db, "root4", title="Bot Chat", ts=1000,
+                 text="canonical resume target", hidden=True)
+    _add_session(db, "normal4", title="Friendly greeting", ts=3000,
+                 text="ordinary resume target", parent="root4")
+    monkeypatch.setattr(srv, "_get_db", lambda: db)
+
+    envelope = _resume({"session_id": "root4"}, monkeypatch)
+    assert "error" not in envelope, envelope
+    assert envelope["result"]["resumed"] == "root4"
+    assert envelope["result"]["session_key"] == "root4"
+    db.close()
+
+
+def test_session_resume_bot_chat_resolves_compression_tip(home, monkeypatch):
+    db = _db(home)
+    _add_session(db, "root5", title="Bot Chat", ts=1000,
+                 text="pre-compression resume target", hidden=True,
+                 end_reason="compression")
+    _add_session(db, "tip5", title="Bot Chat (continued)", ts=3000,
+                 text="post-compression resume target", parent="root5")
+    monkeypatch.setattr(srv, "_get_db", lambda: db)
+
+    envelope = _resume({"session_id": "root5"}, monkeypatch)
+    assert "error" not in envelope, envelope
+    assert envelope["result"]["resumed"] == "tip5"
+    assert envelope["result"]["session_key"] == "tip5"
+    db.close()
+
+
+def test_session_resume_ordinary_chat_still_follows_unmarked_child(home, monkeypatch):
+    db = _db(home)
+    _add_session(db, "plain-root", title="Scratch", ts=1000, text="parent chat")
+    _add_session(db, "plain-child", title="Follow-up", ts=3000,
+                 text="child chat", parent="plain-root")
+    monkeypatch.setattr(srv, "_get_db", lambda: db)
+
+    envelope = _resume({"session_id": "plain-root"}, monkeypatch)
+    assert "error" not in envelope, envelope
+    assert envelope["result"]["resumed"] == "plain-child"
+    db.close()
+
+
+def test_deliberate_archive_after_resurrection_stays_archived(home):
+    # Resurrection must clear the accidental end stamp: if ws_orphan_reap
+    # survived on the row, a LATER deliberate archive (which writes no
+    # end_reason) would auto-resurrect on the next lookup — permanently
+    # overriding user intent.
+    db = _db(home)
+    _add_session(db, "cycle1", title="Bot Chat", ts=1000,
+                 text="reaped then retired", hidden=True,
+                 end_reason="ws_orphan_reap", archived=True)
+    db.close()
+
+    # First lookup resurrects (accidental archive).
+    row = _row(_profiles({}), "default")
+    assert row["canonical_session"] is not None
+
+    # User now deliberately archives the resurrected row.
+    db = _db(home)
+    assert db.get_session("cycle1")["end_reason"] is None  # stamp cleared
+    db.set_session_archived("cycle1", True)
+    db.close()
+
+    # Second lookup must respect the deliberate archive.
+    row = _row(_profiles({}), "default")
+    assert row["canonical_session"] is None
+
+
+# ---------------------------------------------------------------------------
+# Contract guards
+# ---------------------------------------------------------------------------
+
+
+def test_include_sessions_false_skips_canonical(home):
+    db = _db(home)
+    _add_session(db, "s1", title="Bot Chat", ts=1000, text="content")
+    db.close()
+
+    row = _row(_profiles({"include_sessions": False}), "default")
+    assert "last_session" not in row
+    assert "canonical_session" not in row
+
+
+def test_canonical_session_scoped_per_profile_db(home):
+    # A "Bot Chat" row in BOTH profiles' state.db files, different content —
+    # each roster row must summarize its own profile's database.
+    default_db = _db(home)
+    _add_session(default_db, "chat-default", title="Bot Chat", ts=1000,
+                 text="default profile content")
+    default_db.close()
+
+    ops_db = _db(home / "profiles" / "ops")
+    _add_session(ops_db, "chat-ops", title="Bot Chat", ts=1000,
+                 text="ops profile content")
+    ops_db.close()
+
+    rows = _profiles({})
+    assert "default profile content" in _row(rows, "default")["canonical_session"]["preview"]
+    assert "ops profile content" in _row(rows, "ops")["canonical_session"]["preview"]
+
+
+def test_profiles_list_opens_session_db_read_only(home, monkeypatch):
+    """Roster inspection must not take a writable SessionDB (20s lock patience)."""
+    import hermes_state
+
+    db = _db(home)
+    _add_session(db, "bot", title="Bot Chat", ts=1000, text="hello")
+    db.close()
+
+    seen = []
+    Real = hermes_state.SessionDB
+
+    class Spy(Real):
+        def __init__(self, *args, **kwargs):
+            seen.append(kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(hermes_state, "SessionDB", Spy)
+
+    row = _row(_profiles({}), "default")
+    assert row["canonical_session"]["preview"]
+    assert seen, "profiles.list should open the profile state.db"
+    assert all(call.get("read_only") is True for call in seen)
+
+
+def test_profiles_list_does_not_wait_out_write_lock(home):
+    """A live writer on state.db must not stall the whole roster RPC."""
+    import sqlite3
+    import time
+
+    db = _db(home)
+    _add_session(db, "bot", title="Bot Chat", ts=1000, text="hello from bot")
+    db.close()
+
+    holder = sqlite3.connect(str(home / "state.db"), isolation_level=None, timeout=0)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        started = time.monotonic()
+        rows = _profiles({})
+        elapsed = time.monotonic() - started
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+
+    assert elapsed < 3.0, elapsed
+    row = _row(rows, "default")
+    assert row["name"] == "default"
+    canonical = row["canonical_session"]
+    assert canonical is not None, "WAL readers must still resolve Bot Chat under a live writer"
+    assert "hello from bot" in canonical["preview"]
+
+
+# ---------------------------------------------------------------------------
+# Fork contract: tri-state, exact title, envelope, pin path (MJXHRM-517)
+# ---------------------------------------------------------------------------
+
+
+def _envelope(params):
+    return srv._methods["profiles.list"](1, params)["result"]
 
 
 def test_no_bot_chat_is_an_explicit_null(home):
     """Looked, and there is none — distinct from having failed to look."""
     db = _db(home)
     _add_session(db, "ordinary", title="Refactor the parser", ts=1000, text="user words")
+    db.close()
 
     row = _row(_profiles({}), "default")
 
     assert "canonical_session" in row
     assert row["canonical_session"] is None
-    assert row["last_session"]["id"] == "ordinary"
-
-
-def test_a_hidden_bot_chat_still_resolves(home):
-    """Hidden means "not in shared lists", never "does not exist"."""
-    db = _db(home)
-    _add_session(db, "botchat", title=BOT_CHAT_TITLE, ts=1000, text="hi", hidden=True)
-
-    row = _row(_profiles({}), "default")
-
-    assert row["canonical_session"]["id"] == "botchat"
-    # It is hidden, so the recency listing cannot see it at all.
-    assert row["last_session"] is None
-
-
-def test_an_archived_bot_chat_counts_as_absent(home):
-    """And the ordinary session must not be substituted for it."""
-    db = _db(home)
-    _add_session(db, "botchat", title=BOT_CHAT_TITLE, ts=1000, text="hi", archived=True)
-    _add_session(db, "ordinary", title="Refactor the parser", ts=2000, text="user words")
-
-    row = _row(_profiles({}), "default")
-
-    assert row["canonical_session"] is None
-
-
-@pytest.mark.parametrize("source", ["kanban", "tool"])
-def test_a_denied_worker_carrying_the_title_is_not_a_conversation(home, source):
-    db = _db(home)
-    _add_session(db, "worker", source=source, title=BOT_CHAT_TITLE, ts=1000, text="working")
-
-    row = _row(_profiles({}), "default")
-
-    assert row["canonical_session"] is None
-
-
-def test_a_compression_lineage_resolves_to_the_tip_and_keeps_the_root(home):
-    db = _db(home)
-    _add_session(db, "root", title=BOT_CHAT_TITLE, ts=1000, text="early",
-                 end_reason="compression")
-    _add_session(db, "tip", title=f"{BOT_CHAT_TITLE} (continued)", ts=3000, text="later",
-                 parent="root")
-
-    canonical = _row(_profiles({}), "default")["canonical_session"]
-
-    assert canonical["id"] == "root"
-    assert canonical["resolved_id"] == "tip"
-    assert canonical["root_title"] == BOT_CHAT_TITLE
-    assert canonical["title"] == f"{BOT_CHAT_TITLE} (continued)"
-    assert canonical["preview"] == "later"
-
-
-# ---------------------------------------------------------------------------
-# Could-not-look degrades to SILENCE, never to a false negative
-# ---------------------------------------------------------------------------
 
 
 def test_a_missing_database_omits_the_key_rather_than_reporting_none(home):
-    """`ops` has no state.db. Absent ≠ null: null would make a client mint."""
+    """`ops` has no state.db. Absent != null: null would make a client mint."""
     db = _db(home)
-    _add_session(db, "botchat", title=BOT_CHAT_TITLE, ts=1000, text="hi")
+    _add_session(db, "botchat", title="Bot Chat", ts=1000, text="hi")
+    db.close()
 
     profiles = _profiles({})
 
     assert "canonical_session" not in _row(profiles, "ops")
-    # …and one unreadable profile never costs another profile its answer.
+    # ...and one unreadable profile never costs another profile its answer.
     assert _row(profiles, "default")["canonical_session"]["id"] == "botchat"
 
 
 def test_a_corrupt_database_omits_the_key(home):
     (home / "profiles" / "ops" / "state.db").write_bytes(b"not a database at all")
     db = _db(home)
-    _add_session(db, "botchat", title=BOT_CHAT_TITLE, ts=1000, text="hi")
+    _add_session(db, "botchat", title="Bot Chat", ts=1000, text="hi")
+    db.close()
 
     profiles = _profiles({})
 
     assert "canonical_session" not in _row(profiles, "ops")
     assert _row(profiles, "default")["canonical_session"]["id"] == "botchat"
-
-
-# ---------------------------------------------------------------------------
-# Exactness, scoping, and the envelope
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -201,32 +607,14 @@ def test_only_an_exact_title_counts(home, title):
     """Pins the ban on resolve_session_by_title's numbered-variant fallback."""
     db = _db(home)
     _add_session(db, "nearly", title=title, ts=1000, text="close but no")
+    db.close()
 
     assert _row(_profiles({}), "default")["canonical_session"] is None
 
 
-def test_each_profile_reads_its_own_database(home):
-    _add_session(_db(home), "mine", title=BOT_CHAT_TITLE, ts=1000, text="default words")
-    _add_session(_db(home / "profiles" / "ops"), "theirs", title=BOT_CHAT_TITLE, ts=1000,
-                 text="ops words")
-
-    profiles = _profiles({})
-
-    assert _row(profiles, "default")["canonical_session"]["preview"] == "default words"
-    assert _row(profiles, "ops")["canonical_session"]["preview"] == "ops words"
-
-
-def test_include_sessions_false_skips_it_entirely(home):
-    db = _db(home)
-    _add_session(db, "botchat", title=BOT_CHAT_TITLE, ts=1000, text="hi")
-
-    row = _row(_profiles({"include_sessions": False}), "default")
-
-    assert "canonical_session" not in row
-    assert "last_session" not in row
-
-
 def test_the_envelope_discloses_the_capability_and_the_title(home):
+    from tools.bot_mode_probe import BOT_CHAT_TITLE
+
     envelope = _envelope({})
 
     assert envelope["canonical_session_title"] == BOT_CHAT_TITLE
@@ -236,7 +624,8 @@ def test_the_envelope_discloses_the_capability_and_the_title(home):
 def test_the_pin_path_still_works_alongside_it(home):
     """Backward compatibility: both resolve, and agree when the pin is right."""
     db = _db(home)
-    _add_session(db, "botchat", title=BOT_CHAT_TITLE, ts=1000, text="hi", hidden=True)
+    _add_session(db, "botchat", title="Bot Chat", ts=1000, text="hi", hidden=True)
+    db.close()
 
     row = _row(_profiles({"preferred_session_ids": {"default": "botchat"}}), "default")
 

@@ -48,7 +48,6 @@ CONFIG_SCHEMA = ProviderConfigSchema(
             key="agent",
             label="Agent",
             kind=KIND_TEXT,
-            default="hermes",
             description="Hermes' peer ID in OpenViking, used for peer-scoped memories.",
             env_fallbacks=("OPENVIKING_AGENT",),
             inline=True,
