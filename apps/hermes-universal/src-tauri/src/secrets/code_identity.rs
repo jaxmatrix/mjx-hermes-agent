@@ -31,6 +31,8 @@
 
 /// What the OS can make of this build's identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// Only macOS ever constructs `Sealed`/`AdHoc`; every other target answers `Unbundled`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub enum CodeIdentity {
     /// A sealed signature is present. Keychain ACLs can bind to it, so the user
     /// is prompted at most once per item.

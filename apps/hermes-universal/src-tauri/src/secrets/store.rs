@@ -67,6 +67,7 @@ static READY: Mutex<bool> = Mutex::new(false);
 /// assert nothing nameable lands on it: routing a secret onto this account would
 /// hand out the key to all of them, and a sign-out would delete it and orphan the
 /// whole vault.
+#[cfg(any(test, target_os = "macos"))]
 pub const MASTER_KEY_ACCOUNT: &str = "vaultKey";
 
 /// A store an EARLIER build wrote credentials to, still consulted on read.

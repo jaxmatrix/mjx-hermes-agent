@@ -18,6 +18,9 @@ pub mod code_identity;
 pub mod error;
 pub mod gate;
 pub mod store;
+// Only macOS seals secrets into the vault (see `store`); tests exercise the format
+// on every platform.
+#[cfg(any(test, target_os = "macos"))]
 pub mod vault;
 
 use serde::{Deserialize, Serialize};
