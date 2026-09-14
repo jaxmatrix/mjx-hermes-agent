@@ -156,6 +156,19 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "proce
 # "dedupe" them — 0.4 changed its API and 0.2 is what this crate's code targets.
 getrandom = "0.2"
 
+# The sealed credential vault (secrets/vault.rs). Both are already in the tree —
+# russh's `ssh-cipher` pulls aes-gcm 0.11 and zeroize — so naming them directly
+# adds no crate to the lockfile.
+#
+# 0.11 is the post-`hybrid-array` API line: `Nonce<Aes256Gcm>` is an `Array`,
+# `KeyInit::new_from_slice` takes a byte slice, and `Aead::encrypt` takes a
+# `Payload` when there is AAD. default-features would add the crate's own
+# `getrandom` (the 0.3 major); randomness here comes from `getrandom = "0.2"`
+# above, which is what the rest of this crate targets.
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+# Wipes the vault key and every decrypted body on drop.
+zeroize = { version = "1", features = ["alloc"] }
+
 # --- SSH gateway transport (MJX-55) -------------------------------------------
 # A pure-Rust SSH client, NOT a shell-out to the system `ssh` binary the way the
 # Electron desktop app does it. That is deliberate: it makes SSH gateway mode work
@@ -255,9 +268,10 @@ flacenc = "0.4"
 # array, ~4x bloat).
 base64 = "0.22"
 
-# Local shell PTY for the right-pane terminal (pty.rs, desktop-only). Cross-platform
-# PTY: Unix openpty / Windows ConPTY. Gated OFF the mobile targets — a phone has no
-# local shell, the right pane isn't shown there, and this keeps it out of the NDK build.
+[dev-dependencies]
+# Scratch directories for the vault's file-format tests. Already transitive.
+tempfile = "3"
+
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 # Route Rust `log::` output to stderr on desktop — the third of the three logger
 # entries in this file, and the last platform that had none. Its absence hid a
@@ -268,6 +282,9 @@ base64 = "0.22"
 # `default-features = false` drops regex/colour/humantime; the level still comes
 # from RUST_LOG, and `run()` sets a default so a plain launch is not silent.
 env_logger = { version = "0.11", default-features = false }
+# Local shell PTY for the right-pane terminal (pty.rs, desktop-only). Cross-platform
+# PTY: Unix openpty / Windows ConPTY. Gated OFF the mobile targets — a phone has no
+# local shell, the right pane isn't shown there, and this keeps it out of the NDK build.
 portable-pty = "0.9"
 # System-sleep inhibitor behind the keep-awake toggle (keep_awake.rs, desktop-only):
 # macOS IOPMAssertion, Windows SetThreadExecutionState, Linux systemd-inhibit over
