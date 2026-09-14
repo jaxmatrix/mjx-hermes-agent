@@ -64,8 +64,15 @@ export interface BotMeta {
   title?: string
   custom?: boolean
   created?: number
-  /** The PINNED canonical Bot Chat — a STORED session id (rule 17). */
-  chat?: null | string
+  // NO `chat` KEY, AND NOT AGAIN. A bot's canonical chat is identified by the
+  // pair (profile, session titled exactly "Bot Chat") — a registry the unique
+  // title index already enforces. A stored id here is a SECOND identity that
+  // can disagree with the first, and every way it disagreed forked a bot's
+  // memory. Not as a cache, not as a fallback tier, not "for verification".
+  //
+  // Records written by older clients still carry the key; `decodeBotMeta`
+  // simply does not read it, so it falls out of the record on the next
+  // ordinary write and needs no migration.
   pinned?: boolean
   /** Roster visibility. Never written as `null`, because `null` DELETES the key
    *  server-side and a deleted `hidden` reads as "not hidden" — which is the
@@ -171,7 +178,6 @@ export function decodeBotMeta(uiMeta: unknown): BotMeta {
     : undefined
 
   return {
-    ...(str(container.chat) || container.chat === null ? { chat: str(container.chat) ?? null } : {}),
     ...(str(container.color) ? { color: str(container.color) } : {}),
     ...(typeof container.created === 'number' ? { created: container.created } : {}),
     ...(container.custom === true ? { custom: true } : {}),

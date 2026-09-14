@@ -44,8 +44,11 @@ export interface PluginAgentRoster {
   agents: PluginAgent[]
   /** Per-connection outcome. A connection that failed carries its error rather
    *  than vanishing from the roster — a missing row and a broken row are
-   *  different facts. */
-  sources: { connectionId: string; error?: string; ok: boolean }[]
+   *  different facts.
+   *
+   *  So is a THIRD fact: `ok && !observed` means the source was seeded, not
+   *  dialled ("connect to find out"), which `ok` alone cannot express. */
+  sources: { connectionId: string; error?: string; observed: boolean; ok: boolean }[]
 }
 
 export interface PluginProfileRoute {
@@ -95,7 +98,7 @@ const singleConnectionSource: PluginConnectionSource = {
     const connectionId = liveConnectionId()
 
     if (!describeLiveConnection()) {
-      return { agents: [], sources: [{ connectionId, error: AGENT_ROUTING_UNAVAILABLE, ok: false }] }
+      return { agents: [], sources: [{ connectionId, error: AGENT_ROUTING_UNAVAILABLE, observed: false, ok: false }] }
     }
 
     try {
@@ -108,14 +111,17 @@ const singleConnectionSource: PluginConnectionSource = {
           label: profile.display_name || profile.name,
           profile: profile.name
         })),
-        sources: [{ connectionId, ok: true }]
+        // It answered — this is the one branch here that dialled anything.
+        sources: [{ connectionId, observed: true, ok: true }]
       }
     } catch (error) {
       // The connection's own error, carried on its row — the roster still
       // answers, it just answers honestly.
       return {
         agents: [],
-        sources: [{ connectionId, error: error instanceof Error ? error.message : String(error), ok: false }]
+        sources: [
+          { connectionId, error: error instanceof Error ? error.message : String(error), observed: false, ok: false }
+        ]
       }
     }
   },

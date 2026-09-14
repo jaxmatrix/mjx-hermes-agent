@@ -63,7 +63,9 @@ describe('the single-connection source', () => {
       { connectionId: 'https://gw.test', isDefault: true, label: 'Default', profile: 'default' },
       { connectionId: 'https://gw.test', isDefault: false, label: 'Work', profile: 'work' }
     ])
-    expect(roster.sources).toEqual([{ connectionId: 'https://gw.test', ok: true }])
+    // `observed`, because it really was dialled — a seeded source looks the
+    // same on `ok` alone.
+    expect(roster.sources).toEqual([{ connectionId: 'https://gw.test', observed: true, ok: true }])
   })
 
   // A connection that failed carries its error rather than vanishing: a missing
@@ -74,7 +76,9 @@ describe('the single-connection source', () => {
     const roster = await pluginConnectionSource().agents()
 
     expect(roster.agents).toEqual([])
-    expect(roster.sources).toEqual([{ connectionId: 'https://gw.test', error: 'gateway said no', ok: false }])
+    expect(roster.sources).toEqual([
+      { connectionId: 'https://gw.test', error: 'gateway said no', observed: false, ok: false }
+    ])
   })
 
   // The `drive()` rule from MJXHRM-472: an empty answer reads to the caller as

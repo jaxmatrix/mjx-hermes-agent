@@ -11,6 +11,9 @@ const openSession = vi.fn()
 const focusOpenSession = vi.fn()
 const selectProfile = vi.fn()
 const knownSessionProfile = vi.fn<(id: string) => string | undefined>()
+const adoptLiveSession = vi.fn()
+const rememberSessionProfile = vi.fn()
+const markPluginOwnedSession = vi.fn()
 const resolveSessionProfile = vi.fn<() => Promise<string | undefined>>()
 
 vi.mock('./transcript-cache-sync', async importOriginal => {
@@ -20,8 +23,11 @@ vi.mock('./transcript-cache-sync', async importOriginal => {
 })
 
 vi.mock('./session', () => ({
+  adoptLiveSession: (input: unknown) => adoptLiveSession(input),
   knownSessionProfile: (id: string) => knownSessionProfile(id),
+  markPluginOwnedSession: (id: string) => markPluginOwnedSession(id),
   openSession: (id: string) => openSession(id),
+  rememberSessionProfile: (id: string, owner: string) => rememberSessionProfile(id, owner),
   resolveSessionProfile: () => resolveSessionProfile()
 }))
 
@@ -58,7 +64,7 @@ vi.mock('./connection-ready', async () => {
 })
 
 import { $connectionReady } from './connection-ready'
-import { $resumeExhaustedSessionId, openPluginSession } from './plugin-open-session'
+import { $resumeExhaustedSessionId, openCreatedPluginSession, openPluginSession } from './plugin-open-session'
 import { $activeGatewayProfile } from './profile'
 
 // Both are writable ATOMS under the mocks above; the real modules publish them
@@ -72,6 +78,9 @@ beforeEach(() => {
   $resumeExhaustedSessionId.set(null)
   awaitSessionPainted.mockReset().mockResolvedValue(undefined)
   openSession.mockReset()
+  adoptLiveSession.mockReset()
+  rememberSessionProfile.mockReset()
+  markPluginOwnedSession.mockReset()
   focusOpenSession.mockReset()
   selectProfile.mockReset()
   knownSessionProfile.mockReset().mockReturnValue(undefined)
@@ -88,6 +97,16 @@ describe('openPluginSession', () => {
     expect(awaitSessionPainted).toHaveBeenCalledWith('s1', expect.objectContaining({ expectHistory: true }))
     expect(focusOpenSession).toHaveBeenCalledWith('s1')
     expect(result).toMatchObject({ ok: true })
+  })
+
+  it('waits only for the runtime binding when the caller says the session is EMPTY', async () => {
+    // A brand-new chat has no transcript to paint, so `expectHistory: true`
+    // burns both budgets and reports `exhausted` — a 40 s hang where the honest
+    // answer is "it is open and empty". Bot Mode's create path needs this.
+    const result = await openPluginSession('s1', { expectHistory: false })
+
+    expect(result).toMatchObject({ ok: true })
+    expect(awaitSessionPainted).toHaveBeenCalledWith('s1', expect.objectContaining({ expectHistory: false }))
   })
 
   // A compaction can rotate the stored id while the resume is in flight, so the
@@ -180,5 +199,80 @@ describe('openPluginSession', () => {
     await openPluginSession('s1')
 
     expect($resumeExhaustedSessionId.get()).toBeNull()
+  })
+})
+
+describe('openPluginSession — the owner it was handed', () => {
+  it('records the owner BEFORE opening, so the resume is scoped to it', async () => {
+    // A hidden session has no listing row to resolve an owner from, and a probe
+    // that misses sends the resume and the transcript read to whichever
+    // database is live.
+    await openPluginSession('s1', { profile: 'radar' })
+
+    expect(rememberSessionProfile).toHaveBeenCalledWith('s1', 'radar')
+    expect(rememberSessionProfile.mock.invocationCallOrder[0]).toBeLessThan(openSession.mock.invocationCallOrder[0])
+  })
+
+  it('records nothing when it was handed no owner', async () => {
+    await openPluginSession('s1')
+
+    expect(rememberSessionProfile).not.toHaveBeenCalled()
+  })
+})
+
+describe('openPluginSession — a hidden session', () => {
+  it('marks it plugin-owned BEFORE opening, so it is never remembered as the place to land', async () => {
+    // The open's active-id write is what the last-session subscriber reacts to;
+    // marked after it, the hidden chat is already remembered.
+    await openPluginSession('s1', { hidden: true, profile: 'radar' })
+
+    expect(markPluginOwnedSession).toHaveBeenCalledWith('s1')
+    expect(markPluginOwnedSession.mock.invocationCallOrder[0]).toBeLessThan(openSession.mock.invocationCallOrder[0])
+  })
+
+  it('marks nothing for an ordinary session', async () => {
+    await openPluginSession('s1', { profile: 'radar' })
+
+    expect(markPluginOwnedSession).not.toHaveBeenCalled()
+  })
+})
+
+describe('openCreatedPluginSession', () => {
+  const created = { profile: 'radar', runtimeSessionId: 'run-1', storedSessionId: 'stored-1' }
+
+  it('binds a just-created session to its LIVE runtime id, and never resumes it', async () => {
+    // A session created a moment ago has nothing to resume. Routing it through a
+    // cold hydrate is what left a hidden session looking open with nothing live
+    // behind it, so the first keystroke came back "session not found".
+    const result = openCreatedPluginSession(created)
+
+    expect(result).toEqual({ ok: true, storedSessionId: 'stored-1' })
+    expect(adoptLiveSession).toHaveBeenCalledWith(created)
+    expect(openSession).not.toHaveBeenCalled()
+    expect(awaitSessionPainted).not.toHaveBeenCalled()
+  })
+
+  it('does not switch the app to the session owner', async () => {
+    // A profile switch repoints every profile-scoped call in the app; the live
+    // session already carries its own profile on the gateway.
+    openCreatedPluginSession(created)
+
+    expect(selectProfile).not.toHaveBeenCalled()
+  })
+
+  it('brings it to the front, unless told not to', async () => {
+    openCreatedPluginSession(created)
+    expect(focusOpenSession).toHaveBeenCalledWith('stored-1')
+
+    focusOpenSession.mockReset()
+    openCreatedPluginSession(created, { focus: false })
+    expect(focusOpenSession).not.toHaveBeenCalled()
+  })
+
+  it('refuses without a gateway, and adopts nothing', async () => {
+    READY.set(false)
+
+    expect(openCreatedPluginSession(created)).toEqual({ error: 'no-gateway', ok: false })
+    expect(adoptLiveSession).not.toHaveBeenCalled()
   })
 })

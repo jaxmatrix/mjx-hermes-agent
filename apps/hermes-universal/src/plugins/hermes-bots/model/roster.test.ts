@@ -49,6 +49,73 @@ describe('the merged roster', () => {
     expect(bot.lastActive).toBe(99)
   })
 
+  it('marks a row as meta-known only when its source actually read ui_meta', () => {
+    // A names-only source yields `meta: {}`, which is indistinguishable from a
+    // bot with no record — and writing that back deletes the real one.
+    const roster = mergeMultiSourceRoster([
+      { metaKnown: true, rows: [row('radar')] },
+      { connectionId: 'c1', label: 'Laptop', rows: [row('owl')] }
+    ])
+
+    expect(roster.map(r => [r.profile, r.metaKnown])).toEqual([
+      ['radar', true],
+      ['owl', false]
+    ])
+  })
+
+  it("shows the bot's OWN chat, never the profile's most recent one", () => {
+    // A bot's chat and an ordinary conversation are different modes of
+    // conversation. `last_session` is the profile's latest ORDINARY chat, so
+    // showing it under a bot's name puts someone else's words there. The field
+    // is gone from the input type; this is the runtime witness.
+    const [bot] = mergeMultiSourceRoster([
+      {
+        metaKnown: true,
+        rows: [
+          row('radar', {
+            canonical_session: { id: 'c', last_active: 4242, preview: 'bot words', resolved_id: 'c' },
+            last_session: { id: 'a', last_active: 9999, preview: 'someone else', title: 'Refactor' }
+          })
+        ]
+      }
+    ])
+
+    expect(bot.preview).toBe('bot words')
+    expect(bot.lastActive).toBe(4242)
+    expect(bot.canonical).toBe('present')
+  })
+
+  it('leaves the preview EMPTY when the bot has no chat, however chatty the profile', () => {
+    // The fence. With no canonical chat, a bot row must say nothing rather than
+    // borrow the profile's latest ordinary conversation — that is someone
+    // else's words appearing under the bot's name.
+    const [bot] = mergeMultiSourceRoster([
+      {
+        metaKnown: true,
+        rows: [
+          row('radar', {
+            canonical_session: null,
+            last_session: { id: 'a', last_active: 9999, preview: 'someone else entirely', title: 'Refactor' }
+          })
+        ]
+      }
+    ])
+
+    expect(bot.preview).toBe('')
+    expect(bot.lastActive).toBe(0)
+  })
+
+  it('keeps "no chat yet" apart from "we have not asked"', () => {
+    const [asked] = mergeMultiSourceRoster([
+      { metaKnown: true, rows: [row('radar', { canonical_session: null })] }
+    ])
+
+    const [unasked] = mergeMultiSourceRoster([{ metaKnown: true, rows: [row('radar')] }])
+
+    expect(asked.canonical).toBe('none')
+    expect(unasked.canonical).toBe('unknown')
+  })
+
   it('strips the agent-to-agent wire prefix from a preview', () => {
     expect(stripA2APrefix('Message from 🤖 radar (@radar): ship it')).toBe('ship it')
     expect(stripA2APrefix('a normal message')).toBe('a normal message')
@@ -83,8 +150,8 @@ describe('roster ordering and visibility', () => {
     const roster = mergeMultiSourceRoster([
       {
         rows: [
-          row('idle', { last_session: { id: 'a', last_active: 10, preview: '', title: '' } }),
-          row('recent', { last_session: { id: 'b', last_active: 900, preview: '', title: '' } }),
+          row('idle', { canonical_session: { id: 'a', last_active: 10, preview: '', resolved_id: 'a' } }),
+          row('recent', { canonical_session: { id: 'b', last_active: 900, preview: '', resolved_id: 'b' } }),
           row('busy', { worker_session: { id: 'c', last_active: 1, source: 'tool', title: '' } })
         ]
       }

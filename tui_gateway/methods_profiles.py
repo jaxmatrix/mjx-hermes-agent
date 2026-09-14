@@ -201,8 +201,74 @@ def _(rid, params: dict) -> dict:
         except Exception:
             return None, None
 
+    def _canonical_session_row(profile_path, title):
+        """``(summary, looked)`` for this profile's canonical Bot Chat.
+
+        The registry answer, resolved SERVER-SIDE by exact title, so a roster
+        row's preview and the session that row's click opens are the same
+        session by construction — no client-supplied pin, and no recency.
+
+        The two-tuple is the point. ``(None, True)`` means "looked, and this
+        profile has no Bot Chat"; ``(None, False)`` means "could not look".
+        Collapsing the second into the first would tell a client the chat is
+        gone when we simply failed to read the database, and a client that
+        believes that mints a replacement — forking the bot's memory. So a
+        failure degrades to SILENCE (the key is omitted), never to a false
+        negative.
+
+        Opened READ-ONLY: this runs per profile on every roster poll, and a
+        writable open takes a write lock on a live bot's database.
+        """
+        try:
+            from pathlib import Path
+
+            db_path = Path(profile_path) / "state.db"
+            if not db_path.exists():
+                return None, False
+            from hermes_state import SessionDB
+
+            from .titled_session import resolve_titled_session
+
+            db = SessionDB(db_path=db_path, read_only=True)
+            try:
+                resolved = resolve_titled_session(db, title)
+                if resolved is None:
+                    return None, True
+                row, tip, tip_row = resolved
+                preview = ""
+                try:
+                    preview = _latest_message_preview(db, tip)
+                except Exception:
+                    pass
+                return (
+                    {
+                        "id": row["id"],
+                        "resolved_id": tip,
+                        "root_title": row.get("title") or "",
+                        "title": tip_row.get("title") or row.get("title") or "",
+                        "preview": preview,
+                        "started_at": tip_row.get("started_at") or row.get("started_at") or 0,
+                        "last_active": (
+                            tip_row.get("last_activity_at")
+                            or tip_row.get("started_at")
+                            or row.get("started_at")
+                            or 0
+                        ),
+                        "message_count": tip_row.get("message_count") or 0,
+                    },
+                    True,
+                )
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+        except Exception:
+            return None, False
+
     try:
         from hermes_cli.profiles import list_profiles
+        from tools.bot_mode_probe import BOT_CHAT_TITLE
 
         include_sessions = is_truthy_value(params.get("include_sessions", True))
         # Optional precise lookups: {profile_name: session_id} from callers
@@ -234,6 +300,12 @@ def _(rid, params: dict) -> dict:
                 pin = preferred_ids.get(p.name)
                 if isinstance(pin, str) and pin.strip():
                     row["preferred_session"] = _preferred_session_row(p.path, pin.strip())
+                # The canonical Bot Chat, by title. Emitted only when the
+                # lookup actually ran: an ABSENT key means "could not look",
+                # a null means "looked, there is none". See the resolver.
+                canonical, looked = _canonical_session_row(p.path, BOT_CHAT_TITLE)
+                if looked:
+                    row["canonical_session"] = canonical
 
             # Client-agnostic UI metadata (avatars, accent colors, pinned
             # order, …) — stored server-side in profile.yaml so every
@@ -269,7 +341,18 @@ def _(rid, params: dict) -> dict:
         # session of Bot-Mode-managed installs. Clients that would otherwise
         # append the protocol to SOUL.md (the desktop's hermes-bots plugin)
         # must skip their SOUL writes when this is present.
-        return _ok(rid, {"profiles": out, "bot_mode_protocol": True})
+        # Capability disclosure: with this key present, an absent per-profile
+        # ``canonical_session`` means THAT profile's lookup failed — not that
+        # the gateway is too old to resolve one. It also states which title
+        # was resolved by, so a client never has to assume.
+        return _ok(
+            rid,
+            {
+                "profiles": out,
+                "bot_mode_protocol": True,
+                "canonical_session_title": BOT_CHAT_TITLE,
+            },
+        )
     except Exception as e:
         return _err(rid, 5061, str(e))
 

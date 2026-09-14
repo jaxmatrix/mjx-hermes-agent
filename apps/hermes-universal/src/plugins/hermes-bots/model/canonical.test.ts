@@ -1,71 +1,72 @@
 import { describe, expect, it } from 'vitest'
 
-import { maySweep, resolveCanonicalChat, rewriteNewCommand } from './canonical'
+import { isCanonicalChatSession, maySweep, resolveCanonicalChat, rewriteNewCommand } from './canonical'
 
-describe('the canonical Bot Chat ladder', () => {
-  it('resumes a live pin', () => {
-    expect(resolveCanonicalChat({ lookup: { id: 'pin', title: 'Bot Chat' }, pin: 'pin' })).toEqual({
-      kind: 'resume',
-      storedId: 'pin'
+const T = 'Bot Chat'
+
+describe('which session is the canonical Bot Chat', () => {
+  it('opens the registry row, and the TIP when a compaction rotated it', () => {
+    expect(resolveCanonicalChat({ row: { id: 'root', messageCount: 4, resolvedId: 'tip', title: T } })).toEqual({
+      expectHistory: true,
+      kind: 'open',
+      storedId: 'tip'
     })
   })
 
-  it('opens the live TIP of a compaction-rotated pin while KEEPING the durable pin', () => {
-    // The pin is a stored id; aliasing is core's job (rule 17). Re-pinning to
-    // the tip here would move the anchor on every compaction.
-    expect(
-      resolveCanonicalChat({ lookup: { id: 'pin', resolvedId: 'tip', title: 'Bot Chat' }, pin: 'pin' })
-    ).toEqual({ kind: 'resume-tip', pin: 'pin', storedId: 'tip' })
-  })
-
-  it('keeps the pin and offers Retry when a precise hit will not hydrate — never forks', () => {
-    expect(
-      resolveCanonicalChat({ lookup: { id: 'pin', title: 'Bot Chat' }, pin: 'pin', pinHydrationFailed: true })
-    ).toEqual({ kind: 'retry', storedId: 'pin' })
-  })
-
-  it('re-pins a definitively dead pin onto the surviving Bot Chat, not onto rows[0]', () => {
-    expect(resolveCanonicalChat({ lookup: { id: 'other', title: 'Bot Chat' }, pin: 'gone' })).toEqual({
-      kind: 'adopt',
-      storedId: 'other'
+  it('opens the root when there is no lineage to follow', () => {
+    expect(resolveCanonicalChat({ row: { id: 'root', messageCount: 2, title: T } })).toMatchObject({
+      kind: 'open',
+      storedId: 'root'
     })
   })
 
-  it('creates when the pin is gone and there is no history', () => {
-    expect(resolveCanonicalChat({ lookup: null, pin: 'gone' })).toEqual({ kind: 'create' })
+  it('creates when the registry says this bot has no chat', () => {
+    expect(resolveCanonicalChat({ row: null })).toEqual({ kind: 'create' })
   })
 
-  it('ADOPTS an existing hidden Bot Chat before minting a second one', () => {
-    // Two machines opening the same bot for the first time must not create two
-    // canonical chats. The exact-title lookup is what makes it idempotent.
-    expect(resolveCanonicalChat({ lookup: { id: 'existing', title: 'Bot Chat' } })).toEqual({
-      kind: 'adopt',
-      storedId: 'existing'
-    })
-  })
-
-  it('never claims an ORDINARY session, whatever the lookup answered', () => {
-    // An older gateway ignores the `title` param and answers a normal listing,
-    // so a one-element result is not proof of a match.
-    expect(resolveCanonicalChat({ lookup: { id: 'someones-work', title: 'Refactor the parser' } })).toEqual({
+  it('NEVER claims an ordinary session, whatever the lookup answered', () => {
+    // An older gateway ignores the `title` param and answers a plain listing,
+    // whose first row is real work of the user's. A bot's chat and an ordinary
+    // session are different modes of conversation; this is the line between
+    // them, and it is checked here rather than trusted from the caller.
+    expect(resolveCanonicalChat({ row: { id: 'theirs', title: 'Refactor the parser' } })).toEqual({
       kind: 'create'
     })
   })
 
-  it('refuses to mint on a FAILED lookup with no pin — that is how a duplicate is born', () => {
-    expect(resolveCanonicalChat({ lookupFailed: true })).toEqual({ kind: 'retry', storedId: '' })
+  it('refuses to mint when the registry did not ANSWER — that is how a duplicate is born', () => {
+    // "We did not get an answer" and "there is no Bot Chat" are different facts.
+    expect(resolveCanonicalChat({ failed: true })).toEqual({ kind: 'unavailable' })
   })
 
-  it('keeps the pin through a transient lookup failure', () => {
-    expect(resolveCanonicalChat({ lookupFailed: true, pin: 'pin' })).toEqual({ kind: 'resume', storedId: 'pin' })
+  it('refuses to mint a SECOND time after a title collision', () => {
+    // The re-entry after another writer took the title: a second miss means the
+    // registry contradicted the database, and minting on that forks the memory.
+    expect(resolveCanonicalChat({ row: null }, { mayMint: false })).toEqual({ kind: 'unavailable' })
   })
 
-  it('resumes on the pin alone when nothing was looked up', () => {
-    expect(resolveCanonicalChat({ pin: 'pin' })).toEqual({ kind: 'resume', storedId: 'pin' })
+  it('waits for a transcript only when there is one to wait for', () => {
+    // `expectHistory: true` on an empty chat is a 40-second hang that then
+    // reports failure; an absent count is treated as empty for that reason.
+    expect(resolveCanonicalChat({ row: { id: 'a', messageCount: 0, title: T } })).toMatchObject({
+      expectHistory: false
+    })
+    expect(resolveCanonicalChat({ row: { id: 'a', title: T } })).toMatchObject({ expectHistory: false })
+    expect(resolveCanonicalChat({ row: { id: 'a', messageCount: 1, title: T } })).toMatchObject({
+      expectHistory: true
+    })
+  })
+})
+
+describe('telling a bot chat apart from an ordinary session', () => {
+  it('recognises one this window opened, and one the roster named', () => {
+    expect(isCanonicalChatSession('s1', new Set(['s1']), new Set())).toBe(true)
+    expect(isCanonicalChatSession('s1', new Set(), new Set(['s1']))).toBe(true)
   })
 
-  it('creates for a bot with no pin and no history', () => {
-    expect(resolveCanonicalChat({ lookup: null })).toEqual({ kind: 'create' })
+  it('does not claim an ordinary session, or nothing at all', () => {
+    expect(isCanonicalChatSession('s1', new Set(['other']), new Set(['another']))).toBe(false)
+    expect(isCanonicalChatSession(null, new Set(['s1']), new Set(['s1']))).toBe(false)
   })
 })
 

@@ -94,10 +94,30 @@ export const setAvatar = (name: string, data: string): Promise<{ ok?: boolean; s
 export interface SessionRow {
   id: string
   title: string
+  /** Always `''` on the exact-title lookup — the gateway reads a `preview`
+   *  column that does not exist, and only `list_sessions_rich` synthesises one.
+   *  A row's preview comes from `profiles.list`, never from here. */
   preview?: string
   message_count?: number
+  started_at?: number
   /** Only on the exact-title lookup: the live tip a resume should target. */
   resolved_id?: string
+}
+
+/**
+ * What `session.create` actually answers — THREE ID SPACES, two of them here.
+ *
+ * `session_id` is the RUNTIME handle: an 8-hex key into the gateway's in-memory
+ * `_sessions` map, valid only while this process holds the session.
+ * `stored_session_id` is the DURABLE row key, and the only one `session.resume`,
+ * `session.set_hidden` or any later client can resolve.
+ *
+ * Reading the first as if it were the second is what made every bot answer
+ * `session not found` forever: a runtime id is never a row id in any database.
+ */
+export interface CreatedSession {
+  session_id?: string
+  stored_session_id?: string
 }
 
 /**
@@ -112,12 +132,29 @@ export interface SessionRow {
  * param and answers a normal listing, so a one-element result is not a match.
  */
 export const findSessionByTitle = (title: string, route?: AgentRoute): Promise<{ sessions?: SessionRow[] }> =>
-  call('session.list', { title }, route)
+  call('session.list', { include_hidden: true, title }, route)
 
 /** Mint a session. NOT `startNewSession()` — a Bot Mode session is born hidden,
  *  titled and owned by a named profile. */
-export const createSession = (params: { cwd?: string; title: string }, route?: AgentRoute): Promise<{ session_id?: string }> =>
+export const createSession = (params: { cwd?: string; title: string }, route?: AgentRoute): Promise<CreatedSession> =>
   call('session.create', { cols: 96, hidden: true, title: params.title, ...(params.cwd ? { cwd: params.cwd } : {}) }, route)
+
+/**
+ * Write the title, and by doing so MATERIALISE the row.
+ *
+ * `session.create` deliberately persists nothing — "the row is now created
+ * lazily on the first prompt", because every launch and every draft opens a
+ * session just to paint a composer. A Bot Mode session has no first prompt to
+ * wait for, so without this call it never becomes a row and its stored id
+ * addresses nothing.
+ *
+ * Takes the RUNTIME id: the gateway resolves the live session, then persists
+ * it — and applies the `hidden` flag `session.create` was holding, so the chat
+ * is born hidden in the same step. Throws 4022 when another writer already
+ * holds the title; the caller adopts the winner rather than minting again.
+ */
+export const setSessionTitle = (runtimeSessionId: string, title: string, route?: AgentRoute): Promise<unknown> =>
+  call('session.title', { session_id: runtimeSessionId, title }, route)
 
 export const setSessionHidden = (sessionId: string, hidden: boolean, route?: AgentRoute): Promise<unknown> =>
   call('session.set_hidden', { hidden, session_id: sessionId }, route)

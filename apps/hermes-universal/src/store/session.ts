@@ -95,9 +95,18 @@ const LAST_SESSION_KEY = 'hermes.lastSessionId.byProfile'
 
 const $lastSessionByProfile = persistentAtom<Record<string, string>>(LAST_SESSION_KEY, {}, Codecs.stringRecord)
 
+/**
+ * Sessions a plugin owns and keeps HIDDEN — a bot's forever-chat.
+ *
+ * Never remembered as a profile's place. Boot lands on the remembered id as an
+ * ordinary chat in the main pane, and a hidden session there is exactly the
+ * overlap between two modes of conversation that hiding exists to prevent.
+ */
+const pluginOwnedSessionIds = new Set<string>()
+
 if (ownsPersistedAppState()) {
   $activeStoredSessionId.subscribe(id => {
-    if (!id) {
+    if (!id || pluginOwnedSessionIds.has(id)) {
       return
     }
 
@@ -113,6 +122,34 @@ if (ownsPersistedAppState()) {
 /** The session to land on at boot, if any — the one last open on THIS profile. */
 export function lastOpenedSessionId(): null | string {
   return $lastSessionByProfile.get()[$activeGatewayProfile.get()] ?? null
+}
+
+/**
+ * Mark a session as a plugin's HIDDEN session, so it is never remembered as the
+ * place to land at boot.
+ *
+ * Also forgets it if it was ALREADY remembered: an install that opened a bot's
+ * chat before this guard existed has that id sitting in the persisted memory, and
+ * would otherwise keep restoring it into the main pane on every launch. The purge
+ * is a write to persisted app state, so only the window that owns it makes it.
+ */
+export function markPluginOwnedSession(storedSessionId: string): void {
+  if (!storedSessionId) {
+    return
+  }
+
+  pluginOwnedSessionIds.add(storedSessionId)
+
+  if (!ownsPersistedAppState()) {
+    return
+  }
+
+  const remembered = $lastSessionByProfile.get()
+  const kept = Object.fromEntries(Object.entries(remembered).filter(([, id]) => id !== storedSessionId))
+
+  if (Object.keys(kept).length !== Object.keys(remembered).length) {
+    $lastSessionByProfile.set(kept)
+  }
 }
 
 /**
@@ -154,6 +191,23 @@ export function clearSessionProfileCache(): void {
 }
 
 $profiles.listen(clearSessionProfileCache)
+
+/**
+ * Record a session's owner that the caller already knows for certain.
+ *
+ * For a session no listing will ever contain — a plugin's hidden session, minted
+ * a moment ago — `knownSessionProfile` has no row to read and
+ * `resolveSessionProfile` would have to probe every backend for an answer the
+ * caller is already holding. Probing is also where it goes wrong: a miss routes
+ * the resume and the transcript read to whichever database is live.
+ */
+export function rememberSessionProfile(storedSessionId: string, profile: string): void {
+  const owner = profile.trim()
+
+  if (storedSessionId && owner) {
+    profileByStoredId.set(storedSessionId, owner)
+  }
+}
 
 /** The owning profile we ALREADY know, with no network round-trip: the row's own
  *  stamp, or a previous resolution. Used where an await would be wrong (the
@@ -208,9 +262,12 @@ export async function resolveSessionProfile(storedSessionId: null | string): Pro
     .map(profile => normalizeProfileKey(profile.name))
     .filter(key => key !== activeKey)
 
-  // The active profile first, unscoped — one row lookup that covers every
-  // single-profile install and any id on the live backend.
-  const candidates: (string | undefined)[] = [undefined, ...others]
+  // The ACTIVE profile first, BY NAME. An unscoped lookup reads the backend's
+  // LAUNCH database, which is the active profile only when the two happen to
+  // coincide — and the active profile is excluded from `others` above, so an
+  // unscoped first probe meant the one profile most likely to own the id was
+  // never actually asked.
+  const candidates: (string | undefined)[] = [activeKey, ...others]
 
   for (const candidate of candidates) {
     try {
@@ -1092,6 +1149,18 @@ export function openSession(storedId: string, options?: OpenSessionOptions): Pro
       return undefined
     }
 
+    // A warm slice with NO runtime binding is not a live session. It is what a
+    // failed resume leaves behind: the history on screen and nothing live behind
+    // it. Promoting it gives a chat that can neither stream nor submit, and a
+    // caller waiting on its binding runs out the clock. Hydrate again instead —
+    // the only way to get a bound session — after dropping the husk, so the
+    // stored id is indexed to exactly one slice.
+    if (!$sessionStates.get()[warm]?.runtimeSessionId) {
+      dropSessionState(warm)
+
+      return hydrateColdSession(storedId)
+    }
+
     openGeneration++ // cancel any hydrate still in flight
     resetUnscopedStreamPin()
     $activeStoredSessionId.set(storedId)
@@ -1101,6 +1170,60 @@ export function openSession(storedId: string, options?: OpenSessionOptions): Pro
   }
 
   return hydrateColdSession(storedId)
+}
+
+/**
+ * Put a session the caller JUST CREATED on screen, bound to its live runtime id.
+ *
+ * NOT a resume, and that is the whole point. `session.create` answers with a
+ * runtime id the gateway is already holding live, so there is nothing to wake:
+ * this is the same binding `ensureSession` and `forkBranchSession` make, and the
+ * same promotion `openSession`'s warm path makes, with no database row, no REST
+ * read and no route resolution in between.
+ *
+ * Going through `openSession` instead is what broke a plugin's hidden session. A
+ * cold hydrate assumes a session some listing contains: it cannot find the owner
+ * of a hidden row, it resumes against whichever database is live, and when that
+ * fails it rekeys the slice with a stored id posing as a runtime id — so the open
+ * reports success and the first keystroke is refused as `session not found`.
+ *
+ * Deliberately writes NO sidebar row. `registerNewSession` would; a session a
+ * plugin keeps hidden must not appear in the shared list, which is exactly the
+ * overlap between two modes of conversation that hiding exists to prevent.
+ */
+export function adoptLiveSession(input: {
+  cwd?: null | string
+  /** A plugin's hidden session: never remembered as the profile's place. */
+  hidden?: boolean
+  profile?: null | string
+  runtimeSessionId: string
+  storedSessionId: string
+}): void {
+  const { runtimeSessionId, storedSessionId } = input
+
+  if (input.profile) {
+    rememberSessionProfile(storedSessionId, input.profile)
+  }
+
+  // BEFORE the active id is set below: that write is what the last-session
+  // subscriber reacts to.
+  if (input.hidden) {
+    markPluginOwnedSession(storedSessionId)
+  }
+
+  ensureSessionSlice(runtimeSessionId, {
+    busy: false,
+    cwd: (input.cwd ?? '').trim(),
+    messages: [],
+    runtimeSessionId,
+    sessionStartedAt: Date.now(),
+    storedSessionId
+  })
+
+  openGeneration++ // cancel any hydrate still in flight
+  resetUnscopedStreamPin()
+  $activeStoredSessionId.set(storedSessionId)
+  $activeSessionKey.set(runtimeSessionId)
 }
 
 /**
@@ -1422,13 +1545,18 @@ async function hydrateColdSession(storedId: string): Promise<void> {
     }
 
     // The resume RPC failed. Fall back to the REST transcript alone (already
-    // painted above when it resolved) so the chat at least shows its history,
-    // with no live runtime binding.
+    // painted above when it resolved) so the chat at least shows its history —
+    // with NO live runtime binding, and that is load-bearing. This used to write
+    // `runtimeSessionId: storedId`: a stored id posing as a runtime id. The wake
+    // took it for a binding, the open reported success, and the first keystroke
+    // went out as `prompt.submit` with an id the gateway's runtime map had never
+    // held — "session not found". Left unbound, a send takes `ensureSession`'s
+    // resume-or-throw branch, and a re-open hydrates again (see `openSession`).
     const transcript = await transcriptPromise
 
     if (transcript) {
       rekeySession(key, storedId, {
-        runtimeSessionId: storedId,
+        runtimeSessionId: null,
         storedSessionId: storedId,
         messages: toChatMessages(transcript.messages ?? [])
       })

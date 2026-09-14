@@ -1,115 +1,108 @@
 /**
- * The canonical "Bot Chat" ladder — as a PURE decision function.
+ * Which session IS a bot's canonical chat — as a PURE decision function.
  *
- * Every bot has exactly one private chat, pinned by stored id in
- * `ui_meta['hermes-bots'].chat`. Six things can be true about that pin, and
- * desktop learned each of them the hard way: a pin can be live, rotated by a
- * context compaction, dead, absent with history behind it, absent with nothing
- * behind it, or briefly unreadable because the roster call failed. Getting one
- * of those wrong FORKS a bot's memory in two, silently.
+ * A bot has exactly one private chat, and its one and only identity is the
+ * pair (profile, session titled exactly "Bot Chat"). The core schema's UNIQUE
+ * title index makes that pair a registry holding at most one row, so the
+ * question "which session is it" has a server-side answer that every client
+ * and every machine agrees on, and there is nothing durable to keep in sync.
  *
- * So the ladder is a function from what we know to what to do, and the store
- * only executes the verdict. That is what makes all six rungs testable without
- * a gateway.
+ * THERE IS NO SESSION-ID PIN, and re-adding one is not an option — not as a
+ * cache, not as a fallback tier, not "for verification". A pin is a second
+ * identity that can disagree with the first, and every way it disagreed forked
+ * a bot's memory in two: pinning an id that was never a row, pinning a session
+ * a compaction had rotated, pinning one a peer had already replaced.
+ *
+ * What is left is one question with three answers, and the store only executes
+ * the verdict — which is what makes this testable without a gateway.
  */
 
 import { BOT_CHAT_TITLE } from '../ids'
 
-/** What the exact-title lookup (`session.list {title}`) came back with. */
-export interface TitleLookup {
-  /** The durable ROOT id. */
+/** One row from the exact-title registry lookup (`session.list {title}`). */
+export interface RegistryRow {
+  /** The durable ROOT id — the row that carries the title. */
   id: string
   /** The live tip a resume should target after context compression. */
   resolvedId?: string
-  /** Checked, because an older gateway ignores the `title` param and answers a
-   *  normal listing — a one-element result is not proof of a match. */
+  /** Checked here, never trusted from the caller: an older gateway ignores the
+   *  `title` param and answers an ordinary listing, whose first row is some
+   *  real conversation of the user's. */
   title: string
+  /** Drives `expectHistory` on the open. Absent on an older gateway. */
+  messageCount?: number
 }
 
-export interface CanonicalInput {
-  /** `ui_meta.chat` — the durable pin, or null/absent. */
-  pin?: null | string
-  /** The exact-title lookup's answer. `null` means we looked and there is no
-   *  Bot Chat; ABSENT means we did not look — those lead to different rungs. */
-  lookup?: null | TitleLookup
-  /** True when the pin was resumed and the gateway could not hydrate it. */
-  pinHydrationFailed?: boolean
-  /** True when the roster/lookup call itself failed (transport, not a miss). */
-  lookupFailed?: boolean
-}
+/**
+ * What the registry said.
+ *
+ * `failed` and `row: null` are DIFFERENT facts and collapsing them is how a
+ * duplicate is born: one means "we did not get an answer", the other means
+ * "there is no Bot Chat".
+ */
+export type RegistryAnswer = { failed: true } | { failed?: false; row: null | RegistryRow }
 
-export type CanonicalAction =
-  /** Resume `storedId`; keep `pin` exactly as it is. */
-  | { kind: 'resume'; storedId: string }
-  /** Resume the live tip, but the DURABLE pin stays the root (rule 17). */
-  | { kind: 'resume-tip'; pin: string; storedId: string }
-  /** Adopt an existing hidden Bot Chat and pin it. */
-  | { kind: 'adopt'; storedId: string }
-  /** The pin is definitively gone; clear it and mint a new chat. */
+export type CanonicalVerdict =
+  /** Open this session. `expectHistory` tells the wake what to wait for. */
+  | { kind: 'open'; storedId: string; expectHistory: boolean }
+  /** No Bot Chat exists. Mint one. */
   | { kind: 'create' }
-  /** The pin looks right but would not open. Never fork — offer Retry. */
-  | { kind: 'retry'; storedId: string }
+  /** We could not find out. Report it — never mint on an unanswered question. */
+  | { kind: 'unavailable' }
 
 /**
  * Decide what to do about a bot's canonical chat.
  *
- * Rung order matters and each rung exists because of a specific failure:
- *
- *  1. A live pin resumes. Nothing else.
- *  2. A pin that WOULD not hydrate keeps the pin and offers Retry — forking
- *     here is how a bot loses its history to a transient gateway hiccup.
- *  3. A rotated pin opens the live TIP while the durable pin stays the root:
- *     the pin is a stored id and aliasing is core's job (rule 17).
- *  4. No pin, but an exact-title hit: ADOPT it. This is what makes the flow
- *     idempotent across clients — two machines never mint two Bot Chats.
- *  5. No pin and no hit: create.
- *  6. A FAILED lookup is not a miss. With a pin in hand we keep it and retry;
- *     without one we refuse to mint, because minting on a transport error is
- *     how a duplicate is born.
- *
- * An ORDINARY session is never claimed: the title must be exactly `Bot Chat`,
- * checked here rather than trusted from the caller, because an older gateway
- * answers a title query with a plain listing.
+ * `mayMint: false` is the re-entry after a title collision: another writer took
+ * the canonical title between our miss and our write, so we re-ask. A SECOND
+ * miss there means the registry contradicted the database, and minting again
+ * on that is precisely the duplicate this design exists to prevent.
  */
-export function resolveCanonicalChat(input: CanonicalInput): CanonicalAction {
-  const hit = input.lookup && input.lookup.title === BOT_CHAT_TITLE ? input.lookup : null
-
-  if (input.pin) {
-    if (input.pinHydrationFailed) {
-      return { kind: 'retry', storedId: input.pin }
-    }
-
-    if (input.lookupFailed) {
-      // A transient failure must not cost the pin.
-      return { kind: 'resume', storedId: input.pin }
-    }
-
-    if (hit && hit.id === input.pin && hit.resolvedId && hit.resolvedId !== input.pin) {
-      return { kind: 'resume-tip', pin: input.pin, storedId: hit.resolvedId }
-    }
-
-    if (hit && hit.id === input.pin) {
-      return { kind: 'resume', storedId: input.pin }
-    }
-
-    if (input.lookup === undefined) {
-      // Nothing was LOOKED UP — distinct from `null`, which means we looked and
-      // the chat is gone. The pin is all we have and it is enough.
-      return { kind: 'resume', storedId: input.pin }
-    }
-
-    // The pin is definitively gone. Re-pin onto the surviving Bot Chat if there
-    // is one; never onto an arbitrary recent session.
-    return hit ? { kind: 'adopt', storedId: hit.resolvedId ?? hit.id } : { kind: 'create' }
+export function resolveCanonicalChat(
+  answer: RegistryAnswer,
+  options: { mayMint?: boolean } = {}
+): CanonicalVerdict {
+  if (answer.failed) {
+    // Minting on a transport error is how a second Bot Chat appears on a flaky
+    // connection. The caller surfaces the failure instead.
+    return { kind: 'unavailable' }
   }
 
-  if (input.lookupFailed) {
-    // No pin AND no answer: minting here is how a second Bot Chat appears on a
-    // flaky connection. The caller surfaces the failure instead.
-    return { kind: 'retry', storedId: '' }
+  const row = answer.row && answer.row.title === BOT_CHAT_TITLE ? answer.row : null
+
+  if (row) {
+    return {
+      // The tip, so a compacted lineage resumes where the conversation is.
+      // There is no pin to keep pointing at the root, which is the whole
+      // simplification: identity is the title, and the title is on the root.
+      expectHistory: (row.messageCount ?? 0) > 0,
+      kind: 'open',
+      storedId: row.resolvedId ?? row.id
+    }
   }
 
-  return hit ? { kind: 'adopt', storedId: hit.resolvedId ?? hit.id } : { kind: 'create' }
+  return options.mayMint === false ? { kind: 'unavailable' } : { kind: 'create' }
+}
+
+/**
+ * Is the focused session a bot's canonical chat?
+ *
+ * The basis for the `/new` rewrite below, and deliberately two independent
+ * sources OR-ed together, neither of which costs an RPC on a keystroke path:
+ * the ids this session actually opened (exact, but does not survive a reload)
+ * and the ids the roster's registry lookup named (survives a reload, but only
+ * as fresh as the last poll).
+ */
+export function isCanonicalChatSession(
+  focusedStoredId: null | string,
+  openedHere: ReadonlySet<string>,
+  knownCanonicalIds: ReadonlySet<string>
+): boolean {
+  if (!focusedStoredId) {
+    return false
+  }
+
+  return openedHere.has(focusedStoredId) || knownCanonicalIds.has(focusedStoredId)
 }
 
 /**
@@ -118,11 +111,17 @@ export function resolveCanonicalChat(input: CanonicalInput): CanonicalAction {
  * TWO guards, because `session.set_hidden` flips a session's WHOLE compression
  * lineage: a wrong call buries a real conversation and every ancestor of it.
  *
- *  - the id must be one this plugin OWNS (a pin, or a room member session);
- *  - the row's title must be one this plugin MINTS.
+ *  - PROVENANCE: the id must have reached us from an exact-title registry
+ *    lookup this plugin issued, on a profile in our own roster. There is no
+ *    other door — no listing, no recency window, no `last_session`, and since
+ *    the pin is gone, no stored pointer that could have gone stale.
+ *  - IDENTITY: the title the gateway REPORTED for that row must be one this
+ *    plugin mints. Checked separately, because an older gateway answers a title
+ *    query with an ordinary listing, and its first row is someone's real work.
  *
- * A stale pin pointing at an ordinary session fails the second guard, and the
- * right repair is to fix the pin, not to hide someone's chat.
+ * Two guards rather than one, because either alone still hides a conversation:
+ * provenance without identity trusts a stale answer, identity without
+ * provenance trusts a row we never asked for.
  */
 export function maySweep(input: { owned: boolean; title?: null | string }): boolean {
   if (!input.owned || !input.title) {

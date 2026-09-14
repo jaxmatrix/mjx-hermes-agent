@@ -291,7 +291,10 @@ export async function testConnection(connectionId: string): Promise<ProbeResult 
 
 export function connectionsRoster(force = false): Promise<{
   agents: { connectionId: string; profile: string; handle: string; label: string; isDefault: boolean }[]
-  sources: { connectionId: string; ok: boolean; error?: string }[]
+  /** `observed` distinguishes a source that ANSWERED from one that was merely
+   *  seeded by the connect-on-demand carve-out. `ok` cannot: a seeded list is
+   *  still a list. Anything asking "is a backend really there" reads this. */
+  sources: { connectionId: string; ok: boolean; observed: boolean; error?: string }[]
 }> {
   return call('connections_roster', {
     activeConnectionId: $activeConnection.get()?.connectionId ?? null,
