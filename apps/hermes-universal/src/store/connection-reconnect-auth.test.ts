@@ -24,6 +24,7 @@ vi.mock('@/store/gateway', async () => {
     addGatewayEventListener: () => () => {},
     connectGateway: vi.fn().mockResolvedValue(undefined),
     closeGateway: vi.fn(),
+    lastGatewayCloseCode: vi.fn(() => undefined),
     $gatewayState: atom('idle')
   }
 })
@@ -143,12 +144,18 @@ describe('auto-reconnect — who may drive an interactive sign-in', () => {
     expect(conn.$connectionError.get()).toContain('Session expired')
   })
 
-  it('still re-auths silently on desktop, where the sign-in returns', async () => {
-    const { auth, gateway } = await arrange(false, remote)
+  // Desktop used to be carved out here on the grounds that a separate sign-in
+  // window cannot strand anyone. True — but it still means a login window appears
+  // on its own while the user is doing something else, and the rule is that an
+  // interactive sign-in only ever happens because a person asked for one. So
+  // desktop stands down exactly like mobile and surfaces the same CTA.
+  it('stands down on desktop too, rather than opening a window nobody asked for', async () => {
+    const { auth, conn, gateway } = await arrange(false, remote)
 
     await dropSocket(gateway)
 
-    expect(auth.oauthLogin).toHaveBeenCalled()
+    expect(auth.oauthLogin).not.toHaveBeenCalled()
+    expect(conn.$connectionError.get()).toContain('Session expired')
   })
 
   // Cloud re-auths through `portalAgentSignIn`, which on mobile is the silent reqwest
@@ -239,6 +246,33 @@ describe('auto-reconnect — who may drive an interactive sign-in', () => {
     await runLadder()
 
     expect(vi.mocked(gateway.connectGateway).mock.calls.length).toBe(settled)
+  })
+
+  // Per-connection (MJXHRM-446): the escalation clock that survives a flap must not
+  // survive a SOURCE switch, or a gateway that failed for a minute makes the next
+  // source publish its error on its very first transient failure.
+  it('starts a fresh escalation clock after a gateway switch', async () => {
+    const { conn, gateway } = await arrange(false, remote)
+
+    vi.mocked(gateway.connectGateway).mockRejectedValue(new Error('Network request failed'))
+
+    await dropSocket(gateway)
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(conn.$connectionError.get()).toContain('Network request failed')
+
+    // Stand the old loop down and switch sources, as softSwitchGateway does.
+    conn.beginGatewaySwitch()
+    await vi.advanceTimersByTimeAsync(20_000)
+    conn.endGatewaySwitch()
+    conn.$connectionError.set(null)
+    gateway.$gatewayState.set('idle')
+    await vi.advanceTimersByTimeAsync(0)
+
+    await dropSocket(gateway)
+
+    // One quick failure on the new source is not yet an error worth publishing.
+    expect(conn.$connectionError.get()).toBeNull()
   })
 
   it('refunds the budget when the user brings the app back', async () => {
