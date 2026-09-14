@@ -20,7 +20,14 @@ import { $pinnedSessionIds } from './layout'
 import { $projectTree } from './projects'
 import { $activeStoredSessionId, $sessions } from './session'
 import { $sessionColorOverrides, sessionColorFor, setSessionColorOverride } from './session-color'
-import { chatTabTitle, liveSessionIdFor, sessionRowFor, toggleSelectedPin, useSessionRowScalars } from './session-lookup'
+import {
+  chatTabTitle,
+  liveSessionIdFor,
+  sessionRowFor,
+  toggleSelectedPin,
+  useSessionRowScalars
+} from './session-lookup'
+import { $sessionOwnerLabels, setSessionOwnerLabels } from './session-owner-label'
 
 const row = (id: string, title: string, lineageRoot?: string): SessionInfo =>
   ({ id, title, ...(lineageRoot ? { _lineage_root_id: lineageRoot } : {}) }) as unknown as SessionInfo
@@ -254,5 +261,22 @@ describe('chatTabTitle', () => {
     expect(
       chatTabTitle({ draftTitle: 'typing', page: 'Capabilities', selected: 'a', stored: row('a', 'Real chat') })
     ).toBe('Capabilities')
+  })
+})
+
+describe('chatTabTitle — under the session’s owner', () => {
+  it('names a bot’s session under the bot, and leaves everyone else’s bare', () => {
+    setSessionOwnerLabels({ radar: 'Sentinel' })
+
+    try {
+      expect(chatTabTitle({ selected: 's1', stored: { id: 's1', profile: 'radar', title: 'Bot Chat' } as never })).toBe(
+        'Sentinel: Bot Chat'
+      )
+      expect(chatTabTitle({ selected: 's2', stored: { id: 's2', profile: 'scout', title: 'Refactor' } as never })).toBe(
+        'Refactor'
+      )
+    } finally {
+      $sessionOwnerLabels.set({})
+    }
   })
 })

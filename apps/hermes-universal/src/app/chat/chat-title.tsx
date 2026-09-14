@@ -11,6 +11,7 @@ import { $liveSessionTitle, $sessionId } from '@/store/chat'
 import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
 import { $activeStoredSessionId, archiveSessionLocal, deleteSessionLocal, sessionPinId } from '@/store/session'
 import { useSessionRow } from '@/store/session-lookup'
+import { $sessionOwnerLabels, withSessionOwner } from '@/store/session-owner-label'
 
 // A plain (non-interactive) title span, shared by the "New session" and page-view
 // (Capabilities/Messaging/Artifacts) cases.
@@ -40,6 +41,7 @@ export function ChatTitle({ className }: { className?: string }) {
   const runtimeSessionId = useStore($sessionId)
   const pinnedIds = useStore($pinnedSessionIds)
   const liveTitle = useStore($liveSessionTitle)
+  const ownerLabels = useStore($sessionOwnerLabels)
 
   // Resolve by STORED id (resumed) or live RUNTIME id (a new session that has
   // since landed in the list), so the title updates once the auto-title arrives.
@@ -115,7 +117,11 @@ export function ChatTitle({ className }: { className?: string }) {
           fragment). The pill inside is the click/dropdown trigger. */}
       <span className={cn('inline-flex min-w-0 max-w-full', className)}>
         <SessionActionsMenu {...actions}>
-          <TitleMenuTrigger className={className}>{title}</TitleMenuTrigger>
+          {/* The owner's name rides the DISPLAY only: `actions.title` seeds the
+              rename field, and a prefix there would be saved into the row. */}
+          <TitleMenuTrigger className={className}>
+            {withSessionOwner(title, session.profile, ownerLabels)}
+          </TitleMenuTrigger>
         </SessionActionsMenu>
       </span>
     </SessionContextMenu>

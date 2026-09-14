@@ -1,4 +1,5 @@
 import { renderMediaTags } from '@/lib/chat-media'
+import { dedupeRepeatedTextInParts } from '@/lib/chat-messages'
 import { dedupeGeneratedImageEchoesInParts } from '@/lib/generated-images'
 import { shouldProjectInflightDump, userTurnAlreadyPersisted } from '@/lib/live-tail'
 import type { ChatMessage, ChatPart, ToolCallPart } from '@/store/chat'
@@ -515,8 +516,13 @@ export function toChatMessages(messages: SessionMessage[]): ChatMessage[] {
   // belongs in the tool slot; a second copy inline is the same picture twice.
   // (Desktop does this in `lib/chat-messages.ts`; universal's history converter
   // is this function.)
+  // Same pass drops a paragraph a provider echoed: some providers re-send the
+  // previous assistant text verbatim when a turn continues past a tool call,
+  // and the turn merge folds both rows into one bubble.
   const withoutGeneratedImageEchoes = result.map(message =>
-    message.role === 'assistant' ? { ...message, parts: dedupeGeneratedImageEchoesInParts(message.parts) } : message
+    message.role === 'assistant'
+      ? { ...message, parts: dedupeRepeatedTextInParts(dedupeGeneratedImageEchoesInParts(message.parts)) }
+      : message
   )
 
   return withUniqueToolCallIds(

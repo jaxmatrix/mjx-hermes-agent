@@ -88,6 +88,51 @@ mod tests {
         );
     }
 
+    /// THE upgrade-safety pin (MJXHRM-446 §8.6).
+    ///
+    /// The registry re-keys the ssh scope. If the connection that inherited the
+    /// pre-registry world stopped hashing the BARE profile, its ownership id
+    /// would change, the remote lockfile would stop matching, and every running
+    /// remote backend on every existing install would be orphaned — replaced by
+    /// a second one beside it on the next launch. The hash is fixed by hand
+    /// below so that a change to `registry_scope_of` OR to this function turns
+    /// this red rather than silently shipping.
+    #[test]
+    fn the_legacy_scope_hashes_exactly_as_it_did_before_the_registry() {
+        use crate::ssh::registry_scope_of;
+
+        // `sha256("0123…ef" \0 "default")[..32]`, recorded from the
+        // pre-registry `scope_of(Some("default"))` path.
+        let pre_registry = ssh_ownership_id(ID, "default").expect("bare scope");
+
+        assert_eq!(
+            ssh_ownership_id(ID, &registry_scope_of(None, Some("default"))).expect("legacy"),
+            pre_registry
+        );
+        assert_eq!(
+            ssh_ownership_id(ID, &registry_scope_of(Some(""), Some("default"))).expect("empty id"),
+            pre_registry
+        );
+        // …and the DEFAULT profile, which the frontend sends as `None`.
+        assert_eq!(
+            ssh_ownership_id(ID, &registry_scope_of(None, None)).expect("no profile"),
+            ssh_ownership_id(ID, "").expect("bare empty")
+        );
+
+        // A registered connection is a different backend and must hash apart.
+        assert_ne!(
+            ssh_ownership_id(ID, &registry_scope_of(Some("box-2"), Some("default")))
+                .expect("box-2"),
+            pre_registry
+        );
+        assert_ne!(
+            ssh_ownership_id(ID, &registry_scope_of(Some("box-2"), Some("default")))
+                .expect("box-2"),
+            ssh_ownership_id(ID, &registry_scope_of(Some("box-3"), Some("default")))
+                .expect("box-3")
+        );
+    }
+
     #[test]
     fn ownership_id_varies_by_scope_and_installation() {
         let a = ssh_ownership_id(ID, "default").unwrap();

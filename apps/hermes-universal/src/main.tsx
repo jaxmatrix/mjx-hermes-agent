@@ -20,6 +20,11 @@ import './store/gateway-switch-sync'
 // agent tool until the client answers, so the responder has to be listening
 // before the first turn — see store/agent-read-requests.ts.
 import './store/agent-read-requests'
+// And its non-blocking sibling: `agent.terminal.output` arrives for every
+// `terminal(background=true)` run whether or not any pane is mounted, and it is
+// only ever sent once — nothing replays it — so the buffer has to exist before
+// the first turn, not when the terminal pane happens to open.
+import './store/agent-terminal-bridge'
 // And the same for appearance: a skin or light/dark switch is global, but each
 // WebView holds its own copy, so without this one every OTHER surface — a
 // detached tile, the HUD, Quick Entry — keeps painting the appearance it booted
@@ -32,13 +37,64 @@ import './themes/appearance-sync'
 // Without this, changing the font only repainted whichever WebView the picker
 // happened to be in.
 import './app/right-pane/terminal/terminal-font-sync'
+// And the transcript tail cache's lifecycle (MJXHRM-480): it hangs off the
+// cold-open rekey and the turn-settle edge, both of which can fire before any
+// chat surface has mounted — a tile restored into a layout, a session resumed by
+// the HUD. This import IS the wiring.
+import './store/transcript-cache-sync'
+// And the core `hermes://` route table (MJXHRM-455). The registrations have to
+// exist before `startDeepLinkRouter` drains Rust's cold-start buffer, and a
+// link that cold-started the app is delivered within milliseconds of the first
+// paint — so this import IS the wiring, exactly like the event router above.
+import './store/deep-link-builtins'
+// And the multi-connection registry's two hook fills (MJXHRM-446). Both are
+// LAST-WRITER-WINS module side effects — MJXHRM-480 registers the
+// single-gateway `SessionRequestRouter` and MJXHRM-455 the single-connection
+// `PluginConnectionSource` at THEIR module load — so these two imports must be
+// ordered AFTER them or the registry's implementations lose the race and every
+// cross-source dispatch silently falls back to the ambient socket. The ordering
+// is pinned by `main-boot-order.test.ts`.
+import './store/connection-session-router'
+import './store/connection-plugin-source'
 
+import { registerBrowserContributions } from './app/browser/context-target'
+import { installContextMenuBridge } from './app/context-menu/bridge'
+import { installBrowserBridge } from './store/browser-bridge'
+import { initializeConnectionsRegistry, startConnectionsWatcher } from './store/connections'
+import { installNotificationActivation } from './store/plugin-notify-handlers'
+import { installTourDriver } from './store/tour-bridge'
 import { installWindowBelowReader } from './store/window-below'
 
 // And the reader that gives `window.read.request` something to say. Installed at
 // boot, next to the responder it feeds, because the first turn can ask before
 // any component has mounted (MJXHRM-213).
 installWindowBelowReader()
+// Same contract for `tour.request` (MJXHRM-473): the frame parks a blocked tool,
+// so the driver has to be registered before the first turn rather than when some
+// component happens to mount. driver.js itself stays off this path — the driver
+// dynamic-imports `@/lib/tour` on the first request.
+installTourDriver()
+// And the notification tap listeners (MJXHRM-455). A tap can arrive while the
+// app is cold — the notification outlives the process that sent it — so the
+// listener has to exist before any surface mounts. A no-op on desktop, where the
+// notification plugin registers no click hook at all.
+installNotificationActivation()
+// And the context menu's platform bridge (MJXHRM-478). Idempotent, and armed at
+// boot rather than from the coordinator because Rust keys its per-engine
+// handlers by WINDOW LABEL — a component that mounts, unmounts and remounts must
+// not re-wire them. In v1 every platform answers "nothing suppressed, nothing
+// promised", which is a true answer rather than a stub that lies.
+installContextMenuBridge()
+// And the in-app browser's agent half (MJXHRM-447): `preview.open`/`close`, the
+// page reader behind `read_preview`, and the actor behind `drive_preview`. Same
+// reason as the tour driver — the frame parks a BLOCKED tool, so a registration
+// that waited for a component to mount would burn the gateway's 45 s budget on
+// every early call. The act engine itself stays off this path (the actor
+// dynamic-imports it), which `entry-graph.test.ts` pins.
+installBrowserBridge()
+// Its contributions: the `webview` context-menu target kind, the "Open in
+// in-app browser" row on every web link, and the ⌘K palette row.
+registerBrowserContributions()
 
 import { QueryClientProvider } from '@tanstack/react-query'
 import { createRoot } from 'react-dom/client'
@@ -58,8 +114,10 @@ import { restoreSessionCookies } from './lib/session-persist'
 import { installObservability } from './observability/install'
 import { initBackgroundMode } from './store/background-mode'
 import { resumePortalSignIn } from './store/cloud'
+import { initDataUrlReadMax } from './store/data-url-read-max'
 import { autoRestoreConnection } from './store/gateway-restore'
 import { initKeepAwake } from './store/keep-awake'
+import { initTranslucency } from './store/translucency'
 import { initTray } from './store/tray'
 import { installWindowCloseGuard, ownsPersistedAppState, sweepStaleSurfaceGrants } from './store/windows'
 import { ThemeProvider } from './themes'
@@ -89,6 +147,17 @@ void resumePortalSignIn()
 // toggle reads "on" while the machine is free to sleep. No-op off desktop.
 initKeepAwake()
 
+// Same shape, same reason: the attachment size cap is persisted in the webview
+// but ENFORCED in Rust, whose copy is a plain atomic that boots at the default.
+// Without this a device configured down to 2 MB would spend the whole session
+// letting 16 MB through — the one number the guard exists to get right.
+initDataUrlReadMax()
+
+// The window's own translucency. The native lever dies with the process, so a
+// persisted preference has to be re-asserted or a tuned window comes back
+// opaque on every relaunch.
+initTranslucency()
+
 // Background mode (MJXHRM-436). Three pieces, all at boot:
 //
 //  • the close guard, which is the ONLY `tauri://close-requested` listener this
@@ -114,10 +183,23 @@ initKeepAwake()
 // `openSatelliteWindow`, because a window that claims a satellite has to be able
 // to close it; a satellite never gets that far (`canOpenSatelliteWindow` is false
 // inside one).
+// Every window follows the registry: a rename made in a settings Activity has to
+// reach the shell painting the source chip. Outside the `ownsPersistedAppState`
+// block on purpose — following is not restoring.
+startConnectionsWatcher()
+
 if (ownsPersistedAppState()) {
   void installWindowCloseGuard()
   initBackgroundMode()
   initTray()
+
+  // The gateway registry (MJXHRM-446). Deliberately AFTER the restore above and
+  // deliberately not awaited: `autoRestoreConnection()` has already dialled the
+  // saved target, and this only re-points it when the launch mode disagrees.
+  // Firing its own dial here is how desktop ends up with two sockets and a
+  // flickering picker at launch. Satellites and activity screens skip it — they
+  // follow the switch broadcast instead of replaying a restore.
+  void initializeConnectionsRegistry()
 
   // `hermes:surface-grant:<surface>` is localStorage and outlives the PROCESS,
   // so an explicit Quit (or a crash) leaves one behind with nothing alive to

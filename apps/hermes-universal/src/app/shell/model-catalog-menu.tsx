@@ -345,6 +345,7 @@ export function ModelCatalogMenu({
                           ) : null}
                         </DropdownMenuSubTrigger>
                         <ModelEditSubmenu
+                          canDisableReasoning={caps?.can_disable_reasoning}
                           effort={effEffort}
                           fastControl={fastControl}
                           isActive={isCurrent}

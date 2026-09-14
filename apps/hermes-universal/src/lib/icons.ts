@@ -117,6 +117,7 @@ export {
   IconPlayerPlay as Play,
   IconPlug as Plug,
   IconPlus as Plus,
+  IconPower as Power,
   IconRefresh as Refresh,
   IconRefresh as RefreshCw,
   IconDeviceFloppy as Save,

@@ -44,6 +44,10 @@ function viewOf(key: string): SessionView {
     $busy: computed(state, (s: ClientSessionState) => s.busy),
     $awaitingResponse: atom(false),
     $messagesEmpty: computed(state, (s: ClientSessionState) => s.messages.length === 0),
+    // These rows never paint a cached tail; mirroring `$messages` is what
+    // `buildTileView` does when the paint lane is empty.
+    $paintedMessages: computed(state, (s: ClientSessionState) => s.messages),
+    $paintedMessagesEmpty: computed(state, (s: ClientSessionState) => s.messages.length === 0),
     $lastVisibleIsUser: atom(false),
     $statusLine: computed(state, (s: ClientSessionState) => s.statusLine),
     $cwd: atom(''),

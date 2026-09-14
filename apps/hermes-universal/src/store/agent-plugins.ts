@@ -20,6 +20,17 @@ import { notifyError } from '@/store/notifications'
  * satisfied by importing it directly instead of pulling it out of a hook.
  */
 
+/** One env var a plugin's manifest declares (`requires_env` / `optional_env`). */
+export interface AgentPluginEnvField {
+  name: string
+  description: string
+  url: null | string
+  password: boolean
+  required: boolean
+  /** Whether the backend's .env already holds a value — the value itself never travels. */
+  is_set: boolean
+}
+
 export interface AgentPluginRow {
   name: string
   /**
@@ -39,6 +50,8 @@ export interface AgentPluginRow {
   status: 'disabled' | 'enabled' | 'not enabled'
   /** Agent Plugins v1 package (portable skills/MCP format) vs native Hermes. */
   portable?: boolean
+  /** Declared env vars (API keys). Absent on backends older than this contract. */
+  env?: AgentPluginEnvField[]
 }
 
 export type AgentPluginsStatus = 'error' | 'idle' | 'loading' | 'ready'

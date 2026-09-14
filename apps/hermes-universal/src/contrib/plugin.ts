@@ -22,16 +22,25 @@ import { pluginRest, type PluginRestOptions } from '@/hermes'
 import { createPluginI18n, type PluginI18n } from '@/i18n'
 import { writeClipboardText } from '@/lib/clipboard'
 import { tryOpenExternalLink } from '@/lib/external-link'
+import { nativeNotificationCapabilities, type NativeNotificationCapabilities } from '@/lib/native-notification-capabilities'
 import { pluginSocket } from '@/lib/plugin-transport'
 import { tryRevealPathInFileManager } from '@/lib/reveal-path'
 import { readKey, writeKey } from '@/lib/storage'
-import { dispatchPluginNativeNotification, type PluginNativeNotificationInput } from '@/store/native-notifications'
+import {
+  dispatchPluginNativeNotification,
+  type NativeNotifyOutcome,
+  type PluginNativeNotificationInput
+} from '@/store/native-notifications'
 
 import { registry } from './registry'
 import type { Contribution } from './types'
 
 export type { PluginRestOptions } from '@/hermes'
-export type { PluginNativeNotificationInput } from '@/store/native-notifications'
+export type {
+  NativeNotifyOutcome,
+  PluginNativeNotificationInput,
+  PluginNotificationAction
+} from '@/store/native-notifications'
 
 /** A contribution as a plugin author writes it — provenance + id scoping are
  *  the host's job, so those fields are off-limits here. */
@@ -59,8 +68,19 @@ export interface PluginOs {
   /** Native OS notification, attributed to this plugin. Gated by Settings ▸
    *  Notifications ▸ "Plugin notifications" and fires only while the user is
    *  away from Hermes — use `host.notify` for the in-app toast. Throttled per
-   *  plugin; reserve it for genuinely notable events. */
-  notify: (input: PluginNativeNotificationInput) => void
+   *  plugin; reserve it for genuinely notable events.
+   *
+   *  Resolves an OUTCOME rather than nothing: `delivered` says whether it
+   *  reached the OS bridge and `refusal` names which guard stopped it, so a
+   *  plugin can fall back instead of assuming silence meant success. Widening
+   *  the return from `void` is source-compatible — every existing caller ignores
+   *  it. Ask `notificationCapabilities()` BEFORE offering buttons. */
+  notify: (input: PluginNativeNotificationInput) => Promise<NativeNotifyOutcome>
+  /** What OS notifications can do on THIS platform. Action buttons and tap
+   *  activation are mobile-only — the desktop notification plugin registers no
+   *  action commands and no click hook at all — so a plugin that offers them
+   *  must ask rather than infer (rule 10). */
+  notificationCapabilities: () => NativeNotificationCapabilities
   /** Open a URL with the OS default handler (browser, mail client, custom
    *  schemes like `spotify:`). Resolves false when the shell can't. */
   openExternal: (url: string) => Promise<boolean>
@@ -169,13 +189,16 @@ function createPluginOs(pluginId: string): PluginOs {
   }
 
   return {
-    notify: input => {
+    notify: async input => {
       try {
-        dispatchPluginNativeNotification(pluginId, input)
+        return await dispatchPluginNativeNotification(pluginId, input)
       } catch {
-        // A notification the OS won't take must not break the plugin's caller.
+        // A notification the OS won't take must not break the plugin's caller —
+        // and it must not look like a success either.
+        return { actionsDelivered: false, delivered: false, refusal: 'send-failed' }
       }
     },
+    notificationCapabilities: nativeNotificationCapabilities,
     // The app's own native door (`open_external`), in its result-shaped form.
     //
     // NOT the opener plugin's JS `openUrl`: `opener:allow-open-url` enables that

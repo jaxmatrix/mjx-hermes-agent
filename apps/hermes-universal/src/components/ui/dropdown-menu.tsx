@@ -3,6 +3,7 @@ import * as React from 'react'
 
 import { Codicon } from '@/components/ui/codicon'
 import { cn } from '@/lib/utils'
+import { useGuestOcclusion } from '@/store/browser-occlusion'
 
 // Shared class tokens for edge-to-edge menus (use with `p-0` content): rows go
 // full-width, square, and compact so the highlight spans the whole surface.
@@ -73,6 +74,11 @@ function DropdownMenuContent({
   sideOffset = 4,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+  // The in-app browser's guest is a NATIVE view the compositor paints above the
+  // whole DOM, so a portalled surface renders BEHIND it unless the guest is
+  // hidden first (MJXHRM-447). One line per primitive; the arbiter counts.
+  useGuestOcclusion('dropdown-menu')
+
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content

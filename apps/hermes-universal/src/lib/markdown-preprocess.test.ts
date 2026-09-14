@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { escapeCurrencyDollars, preprocessMarkdown, promoteStandaloneDisplayMath } from './markdown-preprocess'
+import {
+  escapeCurrencyDollars,
+  preprocessMarkdown,
+  promoteStandaloneDisplayMath,
+  splitHuggingDisplayMath
+} from './markdown-preprocess'
 
 // remark-math only classes `$$…$$` as display math when the delimiters sit on
 // their own lines. Models emit the single-line form constantly, so without this
@@ -110,5 +115,79 @@ describe('preprocessMarkdown', () => {
     const fence = '```bash\necho $5\n```'
 
     expect(preprocessMarkdown(fence)).toContain('echo $5')
+  })
+})
+
+// CITATION_MARKER_RE's lookbehind accepts any letter, so the `t` of `\sqrt`
+// qualifies and `[3]` is stripped as a citation marker — before KaTeX ever sees
+// it. Numeric-only, which is why `\sqrt[n]{8}` survived and made this look like
+// a KaTeX layout edge case rather than a preprocessing one.
+describe('math spans shielded from the prose rewrites', () => {
+  it('keeps a numeric radical index inside inline math', () => {
+    expect(preprocessMarkdown('The value $\\sqrt[3]{8}$ is two.')).toContain('\\sqrt[3]{8}')
+  })
+
+  it('keeps a numeric radical index inside display math', () => {
+    expect(preprocessMarkdown('$$\n\\sqrt[3]{8}\n$$')).toContain('\\sqrt[3]{8}')
+  })
+
+  it('keeps the index when an escaped dollar sits inside the same span', () => {
+    // The inline body has to step OVER `\$` rather than treat it as the closing
+    // delimiter, or the span never matches and the shield silently lapses.
+    expect(preprocessMarkdown('$\\sqrt[3]{8} + \\$5$')).toContain('\\sqrt[3]{8}')
+  })
+
+  it('still strips a real citation marker in prose next to math', () => {
+    // The shield must not become a blanket amnesty: prose either side of the
+    // span keeps its rewrites.
+    const out = preprocessMarkdown('As shown[3], $\\sqrt[3]{8}$ is two[4].')
+
+    expect(out).toContain('\\sqrt[3]{8}')
+    expect(out).not.toContain('shown[3]')
+    expect(out).not.toContain('two[4]')
+  })
+
+  it('does not mistake a prose run opening with a stray dollar for math', () => {
+    // Odd-index-is-a-delimiter, not startsWith('$'): a lone dollar leaves the
+    // whole remainder as prose, so the citation marker after it still strips.
+    expect(preprocessMarkdown('Costs \\$5 and cited[3] here.')).not.toContain('cited[3]')
+  })
+})
+
+// remark-math's flow-math construct is fence-shaped: text after the opening `$$`
+// on the same line is read as an info string and DISCARDED, and the closing `$$`
+// is only recognised alone on its own line. So the hugging form never closes and
+// KaTeX paints the remains as raw error text.
+describe('splitHuggingDisplayMath', () => {
+  it('moves hugging delimiters onto their own lines', () => {
+    expect(splitHuggingDisplayMath('$$\\begin{aligned}\na &= b\n\\end{aligned}$$')).toBe(
+      '$$\n\\begin{aligned}\na &= b\n\\end{aligned}\n$$'
+    )
+  })
+
+  it('leaves a single-line $$…$$ alone', () => {
+    // That form routes through the inline math-text construct and already
+    // renders; promoteStandaloneDisplayMath owns it.
+    expect(splitHuggingDisplayMath('$$x^2$$')).toBe('$$x^2$$')
+  })
+
+  it('replays the container prefix onto both delimiter lines', () => {
+    expect(splitHuggingDisplayMath('> $$\\begin{aligned}\n> a &= b\n> \\end{aligned}$$')).toBe(
+      '> $$\n> \\begin{aligned}\n> a &= b\n> \\end{aligned}\n> $$'
+    )
+  })
+
+  it('leaves an unclosed opener untouched', () => {
+    expect(splitHuggingDisplayMath('$$\\begin{aligned}\na &= b')).toBe('$$\\begin{aligned}\na &= b')
+  })
+
+  it('reaches the hugging form normalizeMathDelimiters itself produces', () => {
+    // A multi-line `\[…\]` comes out of that rewrite as
+    // `$$\begin{aligned}…\end{aligned}$$` — users who never typed a `$$` hit
+    // the same bug, which is why the split runs after it in the pipeline.
+    const out = preprocessMarkdown('\\[\n\\begin{aligned}\na &= b\n\\end{aligned}\n\\]')
+
+    expect(out).toContain('$$\n\\begin{aligned}')
+    expect(out).toContain('\\end{aligned}\n$$')
   })
 })

@@ -9,9 +9,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/store/notifications', () => ({ notify: vi.fn(), notifyError: vi.fn() }))
 
 import type { DiskEntry, PluginDisk } from './plugin-disk'
-import { $pluginDecisions, $pluginRecords } from './plugins-store'
+import { $pluginDecisions, $pluginRecords, publishPlugin } from './plugins-store'
 import { registry } from './registry'
-import { __resetRuntimeLoaderForTests, loadRuntimePlugin, scanDiskPlugins, unloadRuntimePlugin } from './runtime-loader'
+import {
+  __diskRecordFiles,
+  __resetRuntimeLoaderForTests,
+  loadRuntimePlugin,
+  rootCappedDefault,
+  scanDiskPlugins,
+  shadowsBundledPlugin,
+  unloadRuntimePlugin
+} from './runtime-loader'
 
 // jsdom can't `import()` a blob URL, so route the loader's blob back to a module
 // this test controls. Keyed by the generated URL so parallel loads don't collide.
@@ -130,10 +138,35 @@ describe('failure handling', () => {
     expect($pluginRecords.get().contained).toMatchObject({ kind: 'disk', status: 'error' })
   })
 
-  it('keys the error row on the origin, so the settings page can name the folder', async () => {
+  // Keyed on the FILE, not the folder name: inventory rows are keyed by
+  // `plugin.id`, and with two roots a folder name can equal a healthy plugin's
+  // id in the other one. `name` still carries the folder so the settings page
+  // reads the same.
+  it('keys the error row on the entry file and still names the folder', async () => {
     await loadRuntimePlugin(`import x from 'lodash'`, 'my-folder', { file: '/root/my-folder/plugin.js' })
 
-    expect($pluginRecords.get()['my-folder'].file).toBe('/root/my-folder/plugin.js')
+    const row = $pluginRecords.get()['/root/my-folder/plugin.js']
+
+    expect(row.file).toBe('/root/my-folder/plugin.js')
+    expect(row.name).toBe('my-folder')
+  })
+
+  // MJXHRM-455 D3. `loaded` is keyed by id and a second registration disposes
+  // the first, so without this an installed agent package could take over a
+  // first-party feature (445's Bot Mode) just by picking its slug.
+  //
+  // Asserted on the predicate rather than through `loadRuntimePlugin`: jsdom
+  // cannot `import()` a blob, so every load in this file fails before reaching
+  // the check (see the header).
+  it('refuses a disk plugin that claims an in-tree plugin\u2019s id', () => {
+    publishPlugin({ id: 'hermes-bots', kind: 'bundled', name: 'Bot Mode', status: 'loaded' })
+
+    expect(shadowsBundledPlugin('hermes-bots', 'disk')).toBe(true)
+    expect(shadowsBundledPlugin('hermes-bots', 'runtime')).toBe(true)
+    // A bundled plugin re-registering itself is a reload, not a takeover.
+    expect(shadowsBundledPlugin('hermes-bots', 'bundled')).toBe(false)
+    // ...and a disk plugin with its own id is untouched.
+    expect(shadowsBundledPlugin('kanban', 'disk')).toBe(false)
   })
 })
 
@@ -152,20 +185,44 @@ interface FakeFile {
   stamp: string
 }
 
+const PACKAGE_PREFIX = 'agent-packages:'
+
+/**
+ * Map key → the entry the door lists.
+ *
+ * A bare `demo` is `desktop-plugins/demo/plugin.js` (on by default);
+ * `agent-packages:demo` is `plugins/demo/desktop/plugin.js` (opt-in). Two roots
+ * can carry the SAME folder name, which is why the loader keys its records on
+ * the file rather than on the name — so the fixture has to be able to express
+ * that collision.
+ */
+function fakeEntry(key: string, stamp: string): DiskEntry {
+  const packaged = key.startsWith(PACKAGE_PREFIX)
+  const name = packaged ? key.slice(PACKAGE_PREFIX.length) : key
+
+  return packaged
+    ? {
+        defaultEnabled: false,
+        file: `/root/plugins/${name}/desktop/plugin.js`,
+        name,
+        root: 'agent-packages',
+        stamp
+      }
+    : { defaultEnabled: true, file: `/root/desktop-plugins/${name}/plugin.js`, name, root: 'desktop-plugins', stamp }
+}
+
+const entryKey = (entry: DiskEntry) =>
+  entry.root === 'agent-packages' ? `${PACKAGE_PREFIX}${entry.name}` : entry.name
+
 function fakeDoor(files: Map<string, FakeFile>, over: Partial<PluginDisk> = {}): PluginDisk {
   return {
     kind: 'local',
     hashToDetectChange: false,
     pollMs: 1_000,
-    root: async () => '/root',
-    list: async () =>
-      [...files.entries()].map(([name, file]) => ({
-        file: `/root/${name}/plugin.js`,
-        name,
-        stamp: file.stamp
-      })),
+    root: async () => '/root/desktop-plugins',
+    list: async () => [...files.entries()].map(([key, file]) => fakeEntry(key, file.stamp)),
     read: async (entry: DiskEntry) => {
-      const file = files.get(entry.name)
+      const file = files.get(entryKey(entry))
 
       if (!file) {
         throw new Error('ENOENT')
@@ -225,13 +282,15 @@ describe('disk reconciliation', () => {
     const files = new Map([['gone', { source: `import x from 'lodash'`, stamp: '1:1' }]])
     const door = fakeDoor(files)
 
+    const key = '/root/desktop-plugins/gone/plugin.js'
+
     await scanDiskPlugins(door)
-    expect($pluginRecords.get().gone).toBeTruthy()
+    expect($pluginRecords.get()[key]).toBeTruthy()
 
     files.delete('gone')
     await scanDiskPlugins(door)
 
-    expect($pluginRecords.get().gone).toBeUndefined()
+    expect($pluginRecords.get()[key]).toBeUndefined()
   })
 
   it('re-reads a folder that reappears after being deleted', async () => {
@@ -271,14 +330,113 @@ describe('disk reconciliation', () => {
           throw new Error('EACCES')
         }
 
-        return files.get(entry.name)!.source
+        return files.get(entryKey(entry))!.source
       }
     })
 
     await scanDiskPlugins(door)
 
-    expect($pluginRecords.get().ok).toBeTruthy()
-    expect($pluginRecords.get().unreadable).toBeUndefined()
+    expect($pluginRecords.get()['/root/desktop-plugins/ok/plugin.js']).toBeTruthy()
+    expect($pluginRecords.get()['/root/desktop-plugins/unreadable/plugin.js']).toBeUndefined()
+  })
+
+  // ── the two roots (MJXHRM-455) ────────────────────────────────────────────
+  // `desktop-plugins/` is the user's own drop folder; `plugins/<n>/desktop/` is
+  // the desktop half of whatever the gateway installed. Same door, same scan,
+  // different posture — and folder names collide across them.
+
+  describe('the unified agent-package root', () => {
+    it('scans both roots in one pass', async () => {
+      const files = new Map([
+        ['local', { source: `import x from 'lodash'`, stamp: '1:1' }],
+        [`${PACKAGE_PREFIX}installed`, { source: `import x from 'lodash'`, stamp: '1:1' }]
+      ])
+
+      await scanDiskPlugins(fakeDoor(files))
+
+      expect(__diskRecordFiles()).toEqual([
+        '/root/desktop-plugins/local/plugin.js',
+        '/root/plugins/installed/desktop/plugin.js'
+      ])
+    })
+
+    it('keeps the same folder name in both roots as TWO records', async () => {
+      const files = new Map([
+        ['demo', { source: `import x from 'lodash'`, stamp: '1:1' }],
+        [`${PACKAGE_PREFIX}demo`, { source: `import x from 'lodash'`, stamp: '1:1' }]
+      ])
+
+      await scanDiskPlugins(fakeDoor(files))
+
+      // Keyed by NAME, the second entry overwrote the first's record — so one of
+      // them silently stopped being reconciled and never unloaded.
+      expect(__diskRecordFiles()).toHaveLength(2)
+    })
+
+    it('unloads only the vanished root when the other still carries that name', async () => {
+      const files = new Map([
+        ['demo', { source: `import x from 'lodash'`, stamp: '1:1' }],
+        [`${PACKAGE_PREFIX}demo`, { source: `import x from 'lodash'`, stamp: '1:1' }]
+      ])
+
+      const door = fakeDoor(files)
+
+      await scanDiskPlugins(door)
+      files.delete(`${PACKAGE_PREFIX}demo`)
+      await scanDiskPlugins(door)
+
+      expect(__diskRecordFiles()).toEqual(['/root/desktop-plugins/demo/plugin.js'])
+    })
+
+    it('does not clobber a HEALTHY plugin whose id is the other root\u2019s folder name', async () => {
+      // The row a loaded plugin owns. Error rows used to be keyed by FOLDER
+      // NAME, so a broken `plugins/demo/` overwrote this row and then took it
+      // away again: still registered, invisible in Settings, no way to turn off.
+      publishPlugin({ id: 'demo', kind: 'disk', name: 'Demo', status: 'loaded' })
+
+      const files = new Map([[`${PACKAGE_PREFIX}demo`, { source: `import x from 'lodash'`, stamp: '1:1' }]])
+      const door = fakeDoor(files)
+
+      await scanDiskPlugins(door)
+      expect($pluginRecords.get().demo).toMatchObject({ status: 'loaded' })
+
+      files.delete(`${PACKAGE_PREFIX}demo`)
+      await scanDiskPlugins(door)
+
+      expect($pluginRecords.get().demo).toMatchObject({ status: 'loaded' })
+    })
+
+    it('still drops the error row when its folder goes away', async () => {
+      const files = new Map([[`${PACKAGE_PREFIX}broken`, { source: `import x from 'lodash'`, stamp: '1:1' }]])
+      const door = fakeDoor(files)
+      const key = '/root/plugins/broken/desktop/plugin.js'
+
+      await scanDiskPlugins(door)
+      expect($pluginRecords.get()[key]).toMatchObject({ name: 'broken', status: 'error' })
+
+      files.delete(`${PACKAGE_PREFIX}broken`)
+      await scanDiskPlugins(door)
+
+      expect($pluginRecords.get()[key]).toBeUndefined()
+    })
+  })
+
+  describe('rootCappedDefault', () => {
+    it('only ever LOWERS a plugin\u2019s own default', () => {
+      // A package half cannot self-enable past its root's opt-in posture...
+      expect(rootCappedDefault(true, false)).toBe(false)
+      // ...and a permissive root cannot raise a plugin that declared itself off.
+      expect(rootCappedDefault(false, true)).toBe(false)
+      expect(rootCappedDefault(true, true)).toBe(true)
+      expect(rootCappedDefault(false, false)).toBe(false)
+    })
+
+    it('reads absence on either side as "no opinion", not as off', () => {
+      expect(rootCappedDefault(undefined, undefined)).toBe(true)
+      expect(rootCappedDefault(undefined, true)).toBe(true)
+      expect(rootCappedDefault(true, undefined)).toBe(true)
+      expect(rootCappedDefault(undefined, false)).toBe(false)
+    })
   })
 
   describe('a door with no stamp (the gateway door)', () => {
@@ -294,7 +452,7 @@ describe('disk reconciliation', () => {
       files.set('kanban', { source: `import b from 'dayjs'`, stamp: '' })
       await scanDiskPlugins(door)
 
-      expect($pluginRecords.get().kanban.error).toContain('dayjs')
+      expect($pluginRecords.get()['/root/desktop-plugins/kanban/plugin.js'].error).toContain('dayjs')
     })
 
     it('does not reload when the source is byte-identical', async () => {
@@ -311,10 +469,20 @@ describe('disk reconciliation', () => {
       expect(read).toHaveBeenCalledOnce()
     })
 
-    it('reconciles membership only past the folder cap', async () => {
-      const files = new Map<string, FakeFile>(
-        Array.from({ length: 30 }, (_, i) => [`p${i}`, { source: `import x from 'lodash'`, stamp: '' }])
-      )
+    // The cap counts the COMBINED entry list, not one root's: two roots of 20
+    // folders each is 40 HTTP reads every 10 s, which is exactly what the cap
+    // exists to stop.
+    it('reconciles membership only past the folder cap, counting BOTH roots', async () => {
+      const files = new Map<string, FakeFile>([
+        ...Array.from({ length: 15 }, (_, i): [string, FakeFile] => [
+          `p${i}`,
+          { source: `import x from 'lodash'`, stamp: '' }
+        ]),
+        ...Array.from({ length: 15 }, (_, i): [string, FakeFile] => [
+          `${PACKAGE_PREFIX}q${i}`,
+          { source: `import x from 'lodash'`, stamp: '' }
+        ])
+      ])
 
       const door = hashingDoor(files)
 
@@ -329,7 +497,7 @@ describe('disk reconciliation', () => {
       // But a NEW folder still lands.
       files.set('late', { source: `import x from 'lodash'`, stamp: '' })
       await scanDiskPlugins(door)
-      expect($pluginRecords.get().late).toBeTruthy()
+      expect($pluginRecords.get()['/root/desktop-plugins/late/plugin.js']).toBeTruthy()
     })
   })
 

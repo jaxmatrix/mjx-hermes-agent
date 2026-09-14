@@ -106,6 +106,10 @@ export const KEYBIND_ACTIONS: readonly KeybindActionMeta[] = [
   ...SESSION_SLOT_ACTIONS,
   { id: 'session.focusSearch', category: 'session', defaults: ['mod+shift+f'] },
   { id: 'session.togglePin', category: 'session', defaults: [] },
+  // Archive the ACTIVE session. Ships unbound (like `session.togglePin`) so an
+  // irreversible-feeling, mouse-only action doesn't silently claim a chord for
+  // every user — surfaced in the shortcuts panel for opt-in binding.
+  { id: 'session.archive', category: 'session', defaults: [] },
   // ⌘⇧B — "b" for branch: spin up a new git worktree from the active repo.
   { id: 'workspace.newWorktree', category: 'session', defaults: ['mod+shift+b'] },
   // ⌘O — the editor's universal "open" chord. Desktop reaches this from its
@@ -182,7 +186,19 @@ export const KEYBIND_ACTIONS: readonly KeybindActionMeta[] = [
   // shortcuts binds this row, validates the combo and shows conflicts, which is
   // also why this port has no bespoke shortcut field of its own.
   { id: 'view.toggleQuickEntry', category: 'view', defaults: [], global: true },
-  { id: 'keybinds.openPanel', category: 'view', defaults: ['mod+/'] }
+  { id: 'keybinds.openPanel', category: 'view', defaults: ['mod+/'] },
+
+  // The in-app browser (MJXHRM-447). None is `global: true` — nothing here is
+  // worth taking a chord from the whole machine.
+  { id: 'view.toggleBrowser', category: 'view', defaults: ['mod+shift+l'] },
+  // Only fires while focus is INSIDE the pane (`commandFocusedBrowser`), so ⌘R
+  // still reloads the window everywhere else.
+  { id: 'browser.reload', category: 'view', defaults: ['mod+r'] },
+  // Shipped unbound: ⌥←/→ and ⌘[ / ⌘] are handled by the guest's own injected
+  // script (a child webview's key events never reach the host document), so a
+  // default here would only ever fire on the pane CHROME.
+  { id: 'browser.back', category: 'view', defaults: [] },
+  { id: 'browser.forward', category: 'view', defaults: [] }
 ]
 
 export const KEYBIND_ACTION_IDS: readonly string[] = KEYBIND_ACTIONS.map(action => action.id)

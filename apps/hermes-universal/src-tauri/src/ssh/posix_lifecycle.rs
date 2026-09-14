@@ -18,6 +18,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::local_install::detect::SKIP_UPDATE_CHECK_ENV;
+
 use super::error::{SshError, SshErrorKind};
 use super::ownership::fingerprint_token;
 use super::progress::{ProgressReporter, SshStep};
@@ -395,13 +397,22 @@ async fn resolve_launcher(session: &SshSession, candidate: &str) -> Result<Strin
 
 /// The remote `hermes --version`, best-effort. Surfaces *which* install a
 /// connection actually uses, so a stale or unexpected one is visible.
+///
+/// Carries `SKIP_UPDATE_CHECK_ENV` for the same reason the local probe does
+/// (see `local_install::detect`): `--version` now ends in a synchronous
+/// `git ls-remote` against GitHub, and a remote host that cannot reach it
+/// stalls this probe for ~10s. The variable is scoped to this one command, so
+/// the backend the connection goes on to launch keeps its update status.
 pub async fn probe_hermes_version(session: &SshSession, hermes_path: &str) -> String {
     let Ok(path) = expand_remote_path(hermes_path) else {
         return String::new();
     };
 
     let version = session
-        .exec_fenced(&format!("{path} --version 2>&1"), None)
+        .exec_fenced(
+            &format!("{SKIP_UPDATE_CHECK_ENV}=1 {path} --version 2>&1"),
+            None,
+        )
         .await
         .ok()
         .and_then(|o| o.stdout.lines().next().map(|l| l.trim().to_string()))

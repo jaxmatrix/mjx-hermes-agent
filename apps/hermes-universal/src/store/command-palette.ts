@@ -12,13 +12,21 @@ export const $commandPaletteOpen = atom(false)
 /** Optional nested page to open when the palette next opens (e.g. `theme`). */
 export const $commandPalettePage = atom<null | string>(null)
 
+/** Text to pre-fill the palette's filter with on the next open (type-to-search). */
+export const $commandPaletteSeed = atom<null | string>(null)
+
 export function openCommandPalette(): void {
   $commandPaletteOpen.set(true)
 }
 
-/** Open the palette directly on a nested page (`theme`, `color-mode`, …). */
-export function openCommandPalettePage(page: string): void {
+/**
+ * Open the palette directly on a nested page (`theme`, `color-mode`, `settings`),
+ * optionally with the filter already carrying `seed` — which is what lets a
+ * surface hand off the character that opened it (typing on the Settings card).
+ */
+export function openCommandPalettePage(page: string, seed?: string): void {
   $commandPalettePage.set(page)
+  $commandPaletteSeed.set(seed ?? null)
   $commandPaletteOpen.set(true)
 }
 
@@ -33,6 +41,7 @@ function setOpen(open: boolean): void {
 
   if (!open) {
     $commandPalettePage.set(null)
+    $commandPaletteSeed.set(null)
 
     if (wasOpen) {
       releaseTypingFocus()

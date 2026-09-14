@@ -7,6 +7,7 @@ import { useI18n } from '@/i18n'
 import { COMPLETION_SOUND_VARIANTS, previewCompletionSound } from '@/lib/completion-sound'
 import { triggerHaptic } from '@/lib/haptics'
 import { Bell, Play } from '@/lib/icons'
+import { nativeNotificationCapabilities } from '@/lib/native-notification-capabilities'
 import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
@@ -23,6 +24,7 @@ import { notify } from '@/store/notifications'
 
 import { CONTROL_TEXT } from './constants'
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
+import { settingRowElementId } from './settings-search'
 
 const CAPTION = 'text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)'
 
@@ -34,6 +36,8 @@ function ToggleRow(props: {
   checked: boolean
   description: string
   disabled?: boolean
+  /** DOM id for the ⌘K settings-search deep link (`settingRowElementId`). */
+  id?: string
   label: string
   onChange: (on: boolean) => void
 }) {
@@ -51,6 +55,7 @@ function ToggleRow(props: {
         />
       }
       description={props.description}
+      id={props.id}
       title={props.label}
     />
   )
@@ -90,11 +95,19 @@ export function NotificationsSection() {
           checked={prefs.enabled && prefs.kinds[kind]}
           description={copy.kinds[kind].description}
           disabled={!prefs.enabled}
+          id={kind === 'plugin' ? settingRowElementId('notifications.plugin') : undefined}
           key={kind}
           label={copy.kinds[kind].label}
           onChange={on => setNativeNotifyKind(kind, on)}
         />
       ))}
+
+      {/* Rule 9: report what actually happens rather than offering a control
+          that does nothing. Action buttons and tap activation are mobile-only —
+          the desktop notification plugin registers neither — so a plugin's
+          buttons silently do not appear here, and the page says so instead of
+          leaving the user to discover it. */}
+      {!nativeNotificationCapabilities().actions && <Caption>{copy.noActionsNotice}</Caption>}
 
       <ListRow
         action={

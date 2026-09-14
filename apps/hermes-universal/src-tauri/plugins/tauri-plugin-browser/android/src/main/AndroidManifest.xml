@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The in-app browser needs no permission the app does not already hold: INTERNET
+  is declared by the app's own manifest and a WebView needs nothing else.
+
+  This file exists anyway, and is deliberately empty of <uses-permission>, so
+  that the Gradle library module Tauri wires in has the manifest it requires and
+  a future need (a download directory, say) has a COMMITTED place to declare it
+  — src-tauri/gen/android is gitignored and regenerated, so anything added there
+  is lost on the next `tauri android init`.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+</manifest>

@@ -84,10 +84,15 @@ export function terminalTheme(mode: 'light' | 'dark', palette?: DesktopTerminalP
 }
 
 /**
- * Resolve `--ui-editor-surface-background` (a color-mix on the skin seed) to a
+ * Resolve `--ui-terminal-surface-background` (a color-mix on the skin seed) to a
  * concrete rgb for the WebGL renderer + contrast clamp. Custom properties don't
  * resolve via `getComputedStyle`, so probe a real `background-color`. Read AFTER
  * applyTheme repaints (mount / rAF post-change) or it lags a frame behind.
+ *
+ * The terminal has its OWN surface token rather than the editor's because window
+ * glass thins the editor one to transparent, and a WebGL/canvas renderer cannot
+ * composite page alpha — xterm would paint a wrong flat colour instead of glass.
+ * Off glass the two tokens are the same value.
  */
 export function resolveSurfaceColor(fallback: string): string {
   if (typeof document === 'undefined' || !document.body) {
@@ -96,7 +101,7 @@ export function resolveSurfaceColor(fallback: string): string {
 
   const probe = document.createElement('span')
   probe.style.cssText =
-    'position:absolute;visibility:hidden;pointer-events:none;background-color:var(--ui-editor-surface-background)'
+    'position:absolute;visibility:hidden;pointer-events:none;background-color:var(--ui-terminal-surface-background)'
   document.body.appendChild(probe)
   const resolved = getComputedStyle(probe).backgroundColor
   probe.remove()

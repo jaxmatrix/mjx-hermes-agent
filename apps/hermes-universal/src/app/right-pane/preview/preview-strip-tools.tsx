@@ -17,16 +17,18 @@
  * (see preview-tile.tsx) — the same gate desktop applies when it hands console /
  * DevTools glyphs only to a `url` tab.
  *
- * Universal has no in-app browser and so none of those glyphs: the app CSP's
- * `frame-src` names `hermes-artifact:` and nothing else, deliberately, so a
- * frame cannot load a remote page at all. When that lands, its handles register
- * here the same way.
+ * The BROWSER tab gets its own set (`browserStripTools`): the console and
+ * DevTools toggles, exactly the pair desktop hands a `url` tab. It is not a
+ * frame — the app CSP's `frame-src` names `hermes-artifact:` and nothing else,
+ * deliberately — but a native guest webview owned by Rust (MJXHRM-447).
  */
 
 import { invalidateStripTools } from '@/components/pane-shell/tree/store'
 import { Codicon } from '@/components/ui/codicon'
 import type { PaneStripTool } from '@/components/ui/pane-tab'
 import { translateNow } from '@/i18n'
+import { openGuestDevtools } from '@/lib/browser/host'
+import { $browserCapabilities, $browserConsoleOpen } from '@/store/browser'
 import { $previewCaps, $previewModes, previewCaps, previewMode, setPreviewMode } from '@/store/preview-view'
 
 // The glyphs are read during the strip's render, so a mode flip or a finished
@@ -34,6 +36,45 @@ import { $previewCaps, $previewModes, previewCaps, previewMode, setPreviewMode }
 // whole app, not one per open preview.
 $previewModes.listen(() => invalidateStripTools())
 $previewCaps.listen(() => invalidateStripTools())
+// Same reason for the browser tab: its glyphs mirror live state (is the console
+// open, does this platform have DevTools at all), read during the strip's render.
+$browserConsoleOpen.listen(() => invalidateStripTools())
+$browserCapabilities.listen(() => invalidateStripTools())
+
+/**
+ * The browser tab's strip glyphs.
+ *
+ * Takes no path on purpose: there is exactly one browser tab, and passing its
+ * path would imply a second could exist.
+ */
+export function browserStripTools(): readonly PaneStripTool[] {
+  const consoleOpen = $browserConsoleOpen.get()
+  const caps = $browserCapabilities.get()
+
+  const tools: PaneStripTool[] = [
+    {
+      active: consoleOpen,
+      icon: <Codicon name="terminal" size="0.8125rem" />,
+      id: 'browser-console',
+      label: translateNow(consoleOpen ? 'preview.web.hideConsole' : 'preview.web.showConsole'),
+      onSelect: () => $browserConsoleOpen.set(!consoleOpen)
+    }
+  ]
+
+  // Hidden, not disabled, where the platform has none: a release desktop build
+  // has no inspector at all, and Android/iOS use chrome://inspect and Safari's
+  // Web Inspector, both external.
+  if (caps?.devtools) {
+    tools.push({
+      icon: <Codicon name="debug" size="0.8125rem" />,
+      id: 'browser-devtools',
+      label: translateNow('preview.web.openDevTools'),
+      onSelect: () => void openGuestDevtools().catch(() => undefined)
+    })
+  }
+
+  return tools
+}
 
 /** The view-mode switch for one preview, as strip-tool DATA. */
 export function previewStripTools(path: string): readonly PaneStripTool[] {

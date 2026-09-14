@@ -22,6 +22,14 @@ export function normalizeProfileKey(name: string | null | undefined): string {
   return value || 'default'
 }
 
+// Presentation-only label: the display_name from profile.yaml when set (e.g. a
+// renamed default profile), else the canonical name. Never used for comparison
+// or routing — canonical `name` remains the identity everywhere. Verbatim from
+// desktop store/profile.ts (a1682376ca).
+export function profileLabel(profile: Pick<ProfileInfo, 'display_name' | 'name'>): string {
+  return (profile.display_name ?? '').trim() || profile.name
+}
+
 // Desktop's `$activeGatewayProfile` is an atom<string> that names the profile the
 // live backend is scoped to ('default' = root). Universal's `$activeProfile` is a
 // nullable persisted atom (null = primary), so we derive the normalized key.
@@ -122,8 +130,20 @@ export async function refreshProfiles(): Promise<ProfileInfo[]> {
  *  onto the one universal switch. Leaves the all-profiles browse view, like
  *  desktop — see `$showAllProfiles`. */
 export function selectProfile(name: string): void {
+  const target = normalizeProfileKey(name)
+  // Switching profiles (or coming back from the all-profiles browse view) starts
+  // fresh, like desktop; re-tapping the profile you're already in leaves your
+  // chat be. The open chat stays on the profile it was started in — the fresh
+  // draft is what makes the tap visibly take.
+  const switching = $showAllProfiles.get() || target !== normalizeProfileKey($activeProfile.get())
+
   $showAllProfiles.set(false)
-  setUniversalActiveProfile(normalizeProfileKey(name) === 'default' ? null : name)
+  setUniversalActiveProfile(target === 'default' ? null : name)
+
+  if (switching) {
+    // Lazy: `store/new-session` → `store/session` → this module.
+    void import('@/store/new-session').then(m => m.startNewSession())
+  }
 }
 
 export const setActiveProfile = selectProfile

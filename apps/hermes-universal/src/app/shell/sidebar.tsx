@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { Menu } from '@/lib/icons'
-import { normalizeOrLocalPreviewTarget } from '@/lib/local-preview'
 import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
@@ -40,7 +39,8 @@ import {
   TERMINAL_MIN_HEIGHT,
   TERMINAL_PANE_ID
 } from '@/store/layout'
-import { $previewTabs, setCurrentSessionPreviewTarget } from '@/store/preview'
+import { $previewTabs } from '@/store/preview'
+import { previewFile } from '@/store/preview-open'
 import { $reviewOpen, REVIEW_PANE_ID } from '@/store/review'
 
 // The rich chat sidebar (ported from desktop) renders as a resizable/hover-reveal
@@ -104,18 +104,6 @@ export function SidebarTrigger({ className }: { className?: string }) {
 }
 
 /** The responsive frame: docked pane on md+, drawer on phones, one main slot. */
-/** Open a file from the tree in the real preview pipeline. Verbatim from
- *  desktop's app/contrib/panes.tsx. */
-function previewFile(path: string) {
-  void normalizeOrLocalPreviewTarget(path, $currentCwd.get() || undefined)
-    .then(target => {
-      if (target) {
-        setCurrentSessionPreviewTarget(target, 'file-browser', path)
-      }
-    })
-    .catch(() => undefined)
-}
-
 export function AppShell({ children }: { children: ReactNode }) {
   // Desktop always uses the docked shell (resizable/hover-reveal panes + the
   // titlebar-offset content), regardless of window width. Without this a sub-768px

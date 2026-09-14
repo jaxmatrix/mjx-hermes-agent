@@ -5,13 +5,22 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn(async (_cmd: string, args: 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('@/lib/platform', () => ({ IS_DESKTOP: true }))
 
-import { $keepAwake, initKeepAwake, setKeepAwake, toggleKeepAwake } from './keep-awake'
+import {
+  $keepAwake,
+  $keepAwakeHolds,
+  __resetKeepAwakeHolds,
+  holdKeepAwake,
+  initKeepAwake,
+  setKeepAwake,
+  toggleKeepAwake
+} from './keep-awake'
 import { $notifications, clearNotifications } from './notifications'
 
 beforeEach(() => {
   invoke.mockReset()
   invoke.mockImplementation(async (_cmd: string, args: { on: boolean }) => args.on)
   $keepAwake.set(false)
+  __resetKeepAwakeHolds()
   localStorage.clear()
   clearNotifications()
 })
@@ -118,5 +127,114 @@ describe('keep-awake store', () => {
     await Promise.resolve()
 
     expect($keepAwake.get()).toBe(false)
+  })
+})
+
+// ── LEASES (MJXHRM-445) ────────────────────────────────────────────────────
+//
+// A lease exists because the obvious implementation — arm the switch, release
+// it afterwards — turns the USER's preference off, and the run they set it for
+// sleeps. Every test below is about that one hazard.
+describe('keep-awake leases', () => {
+  it('arms the lever with the preference OFF, and releases it on the last drop', async () => {
+    const release = holdKeepAwake('bot-room')
+
+    await vi.waitFor(() => expect(invoke).toHaveBeenLastCalledWith('set_keep_awake', { on: true }))
+    expect($keepAwakeHolds.get()).toEqual(['bot-room'])
+    // Held, and the atom says so — the statusbar sun is honest.
+    expect($keepAwake.get()).toBe(false)
+
+    release()
+    await vi.waitFor(() => expect(invoke).toHaveBeenLastCalledWith('set_keep_awake', { on: false }))
+    expect($keepAwakeHolds.get()).toEqual([])
+  })
+
+  // THE hazard this whole mechanism exists for: the naive implementation
+  // (arm on hold, release on drop) releases the machine the user's own
+  // preference is holding, and their overnight run sleeps.
+  it('does NOT release the lever when the last hold drops with the preference ON', async () => {
+    setKeepAwake(true)
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1))
+
+    const release = holdKeepAwake('bot-room')
+
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(2))
+
+    release()
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(3))
+
+    expect($keepAwake.get()).toBe(true)
+    expect(invoke).toHaveBeenLastCalledWith('set_keep_awake', { on: true })
+    expect(invoke).not.toHaveBeenCalledWith('set_keep_awake', { on: false })
+  })
+
+  // Each step is awaited to its own `invoke`: `applyKeepAwake` resolves the
+  // Tauri module through a dynamic import, and several reconciles fired in ONE
+  // tick collapse to a single call under `vi.mock` (a harness artifact, not a
+  // store behaviour). Waiting per step is what keeps this test about refcounts.
+  it('refcounts holds under one reason', async () => {
+    const first = holdKeepAwake('bot-room')
+
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1))
+
+    const second = holdKeepAwake('bot-room')
+
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(2))
+
+    first()
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(3))
+
+    // Still held: the second drive has not finished.
+    expect($keepAwakeHolds.get()).toEqual(['bot-room'])
+    expect(invoke).not.toHaveBeenCalledWith('set_keep_awake', { on: false })
+
+    second()
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('set_keep_awake', { on: false }))
+  })
+
+  it('is idempotent per disposer — a double release does not drop someone else\'s hold', async () => {
+    const first = holdKeepAwake('bot-room')
+    holdKeepAwake('bot-room')
+
+    first()
+    first()
+
+    // Two holds, two releases from ONE disposer — the second is a no-op, so the
+    // other holder still has the machine.
+    expect($keepAwakeHolds.get()).toEqual(['bot-room'])
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalled())
+    expect(invoke).not.toHaveBeenCalledWith('set_keep_awake', { on: false })
+  })
+
+  it('keeps the lever armed when the user switches the preference off mid-hold', async () => {
+    const release = holdKeepAwake('bot-room')
+
+    await vi.waitFor(() => expect(invoke).toHaveBeenLastCalledWith('set_keep_awake', { on: true }))
+
+    const before = invoke.mock.calls.length
+
+    setKeepAwake(false)
+    await vi.waitFor(() => expect(invoke.mock.calls.length).toBeGreaterThan(before))
+
+    // The preference went off; the lease keeps the lever on.
+    expect(invoke).toHaveBeenLastCalledWith('set_keep_awake', { on: true })
+    expect(invoke).not.toHaveBeenCalledWith('set_keep_awake', { on: false })
+
+    release()
+    await vi.waitFor(() => expect(invoke).toHaveBeenLastCalledWith('set_keep_awake', { on: false }))
+  })
+
+  it('reports a REFUSED hold instead of pretending, and does not flip the preference', async () => {
+    invoke.mockImplementation(async () => {
+      throw new Error('no logind')
+    })
+
+    const release = holdKeepAwake('bot-room')
+
+    await vi.waitFor(() => expect($notifications.get()).toHaveLength(1))
+    // The ask did not take, so the atom must not claim it did.
+    expect($keepAwake.get()).toBe(false)
+
+    release()
   })
 })

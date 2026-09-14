@@ -50,7 +50,12 @@ describe('surface binding', () => {
     // The canvas colour and the CSS around it MUST name one token, or the xterm
     // background and the padding/viewport it sits in drift apart on a re-skin —
     // which is the seam that reads as "the terminal is painted white".
-    expect((appended[0] as HTMLElement).getAttribute('style')).toContain('var(--ui-editor-surface-background)')
+    //
+    // That token is the TERMINAL's, not the editor's (MJXHRM-448): window glass
+    // thins the editor surface to transparent, and a WebGL/canvas renderer
+    // cannot composite page alpha, so probing the editor token under glass would
+    // hand xterm a wrong flat colour. Off glass the two resolve identically.
+    expect((appended[0] as HTMLElement).getAttribute('style')).toContain('var(--ui-terminal-surface-background)')
     expect(document.body.childElementCount).toBe(before)
   })
 

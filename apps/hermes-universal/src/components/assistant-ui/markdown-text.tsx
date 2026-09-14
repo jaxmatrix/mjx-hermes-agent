@@ -6,12 +6,22 @@ import {
   tailBoundedRemend
 } from '@assistant-ui/react-streamdown'
 import type { Element as HastElement } from 'hast'
-import { type ComponentProps, createContext, memo, useContext, useEffect, useMemo, useState } from 'react'
+import {
+  type ComponentProps,
+  createContext,
+  memo,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useMemo,
+  useState
+} from 'react'
 
 import { ArtifactCard } from '@/components/assistant-ui/artifact-card'
 import { ExpandableBlock } from '@/components/chat/expandable-block'
 import { chunkByLines, SyntaxHighlighter } from '@/components/chat/shiki-highlighter'
 import { ZoomableImage } from '@/components/chat/zoomable-image'
+import { ErrorBoundary } from '@/components/error-boundary'
 import { detectArtifact } from '@/lib/artifact-detect'
 import { normalizeExternalUrl, openExternalLink, PrettyLink } from '@/lib/external-link'
 import { createMemoizedMathPlugin, KATEX_HTML_TAG } from '@/lib/katex-memo'
@@ -28,11 +38,14 @@ import {
 } from '@/lib/media'
 import { isMediaStreamUrl } from '@/lib/media-stream'
 import { sessionRefFromMarkdownHref } from '@/lib/session-refs'
+import { parseTranscriptDirective } from '@/lib/transcript-directives'
 import { cn } from '@/lib/utils'
 import { span } from '@/observability'
 
 import { SessionRefLink } from './directive-content'
 import { detectEmbed, extractAlert, MarkdownAlert, RichCodeBlock, UrlEmbed } from './embeds'
+import { ResizableMarkdownTable, ResizableMarkdownTh } from './markdown-table'
+import { paragraphPlainText, TranscriptDirectiveLeaf, useIsClaimedDirective } from './transcript-directive'
 
 // Math rendering plugin (KaTeX). Configured once at module scope — the plugin
 // is stateless beyond its internal cache, so re-creating it per render would
@@ -648,6 +661,54 @@ function MarkdownSyntaxHighlighter(props: SyntaxHighlighterProps) {
 // KatexHtml gets its markup) — hence the separate slot cast below.
 type MarkdownComponentSlot = StreamdownTextComponents[string]
 
+/**
+ * The directive half of the paragraph slot, mounted ONLY for a paragraph whose
+ * text already parses as `::name{...}`.
+ *
+ * It lives behind its own component boundary rather than an `if` inside
+ * `MarkdownParagraph` because the two hooks here — the contribution registry
+ * subscription and the streaming read — cannot be called conditionally, and
+ * making every paragraph in every transcript pay for them is exactly the kind
+ * of per-block cost `MARKDOWN_COMPONENTS` is a module constant to avoid.
+ *
+ * An unclaimed directive falls back to the `<p>` the caller already built: a
+ * paragraph that merely looks like a directive is prose, and stays prose when
+ * the plugin that would claim it is disabled or not installed.
+ */
+function DirectiveParagraph({ fallback, text }: { fallback: ReactNode; text: string }) {
+  // Same primitive-selecting read `MarkdownSyntaxHighlighter` uses — see its
+  // comment for why the boolean and not the part.
+  const streaming = useAuiState(state => state.part.status?.type === 'running')
+  const claimed = useIsClaimedDirective(text, streaming)
+
+  return claimed ? <TranscriptDirectiveLeaf streaming={streaming} text={text} /> : <>{fallback}</>
+}
+
+/**
+ * Paragraph override. Almost always a plain `<p>` — but a paragraph that is
+ * exactly one `::name{...}` directive claimed by a plugin renders as that
+ * plugin's transcript component instead (`transcript.directives` area). The
+ * claim check subscribes to the registry, so hot-loading a plugin upgrades
+ * already-rendered directives in place; unclaimed directives stay prose.
+ */
+function MarkdownParagraph({ children, className, ...props }: ComponentProps<'p'>) {
+  const plain = paragraphPlainText(children)
+
+  const paragraph = (
+    <p className={cn('wrap-anywhere leading-(--dt-line-height)', className)} {...props}>
+      {children}
+    </p>
+  )
+
+  // Cheap, pure, hook-free gate: `parseTranscriptDirective` rejects anything
+  // not starting with `::` before it touches a regex.
+  return plain !== null && parseTranscriptDirective(plain) !== null ? (
+    <DirectiveParagraph fallback={paragraph} text={plain} />
+  ) : (
+    paragraph
+  )
+}
+
 // Module constant — never re-created, so streamdown's per-key comparator always
 // bails out. See MarkdownSyntaxHighlighter above for why this matters.
 const MARKDOWN_COMPONENTS = {
@@ -664,9 +725,7 @@ const MARKDOWN_COMPONENTS = {
     <h4 className={cn('my-1 font-semibold', HEADING_SIZES.h4, className)} {...props} />
   ),
   // Vertical rhythm owned by styles.css (`--paragraph-gap`) — no `my-*` here.
-  p: ({ className, ...props }: ComponentProps<'p'>) => (
-    <p className={cn('wrap-anywhere leading-(--dt-line-height)', className)} {...props} />
-  ),
+  p: MarkdownParagraph,
   a: MarkdownLink,
   inlineCode: ({ className, ...props }: ComponentProps<'code'>) => <code className={className} dir="ltr" {...props} />,
   // `---` as quiet spacing, not a heavy full-width rule.
@@ -699,29 +758,13 @@ const MARKDOWN_COMPONENTS = {
   li: ({ className, ...props }: ComponentProps<'li'>) => (
     <li className={cn('leading-(--dt-line-height)', className)} {...props} />
   ),
-  table: ({ className, ...props }: ComponentProps<'table'>) => (
-    <div className="aui-md-table my-2 max-w-full overflow-x-auto rounded-[0.375rem] border border-(--ui-stroke-tertiary)">
-      <table
-        className={cn(
-          'm-0 w-full min-w-[18rem] border-collapse text-[0.8125rem] [&_tr]:border-b [&_tr]:border-(--ui-stroke-tertiary) last:[&_tr]:border-0',
-          className
-        )}
-        {...props}
-      />
-    </div>
-  ),
+  // Resizable: the colgroup and the seam handles live in `markdown-table.tsx`,
+  // which owns the drag and the shape-keyed width record.
+  table: ResizableMarkdownTable,
   thead: ({ className, ...props }: ComponentProps<'thead'>) => (
     <thead className={cn('m-0 bg-muted/35 text-muted-foreground', className)} {...props} />
   ),
-  th: ({ className, ...props }: ComponentProps<'th'>) => (
-    <th
-      className={cn(
-        'whitespace-nowrap px-2.5 py-1.5 text-start align-middle text-[0.75rem] font-medium text-muted-foreground',
-        className
-      )}
-      {...props}
-    />
-  ),
+  th: ResizableMarkdownTh,
   td: ({ className, ...props }: ComponentProps<'td'>) => (
     <td className={cn('px-2.5 py-1.5 align-top text-[0.8125rem] leading-snug', className)} {...props} />
   ),
@@ -741,18 +784,39 @@ function MarkdownTextSurface({ containerClassName, containerProps, defer }: Mark
   }
 
   return (
-    <StreamdownTextPrimitive
-      components={MARKDOWN_COMPONENTS}
-      containerClassName={cn(MARKDOWN_CONTAINER_CLASS_NAME, containerClassName)}
-      containerProps={containerProps}
-      defer={defer}
-      lineNumbers={false}
-      mode="streaming"
-      parseIncompleteMarkdown={false}
-      parseMarkdownIntoBlocksFn={parseMarkdownIntoBlocksCached}
-      plugins={MARKDOWN_PLUGINS}
-      preprocess={preprocessWithTailRepair}
-    />
+    // Last line of defence for the whole markdown surface — assistant answers,
+    // reasoning, tool output and user bubbles all render through here.
+    //
+    // The pipeline is recursive in several places we do not own (parse5 →
+    // `hast-util-from-parse5` on raw HTML, `mdast-util-to-hast` on nested block
+    // structure), so pathological content can throw `RangeError: Maximum call
+    // stack size exceeded` from inside Streamdown's render. Without a boundary
+    // here that throw unwinds to the app's root boundary and blanks the entire
+    // workspace — on every reload, because the offending message is replayed
+    // from the session each time, so Retry lands on the same content and fails
+    // the same way. The app is bricked, not glitching.
+    //
+    // Degrading to HugeTextFallback keeps the text readable and the rest of the
+    // transcript alive. The error stays latched for this surface: content that
+    // overflowed the stack will overflow again, and remounting per token during
+    // streaming would cost far more than plain rendering saves.
+    <ErrorBoundary
+      fallback={() => <HugeTextFallback containerClassName={containerClassName} text={text} />}
+      label="markdown-render"
+    >
+      <StreamdownTextPrimitive
+        components={MARKDOWN_COMPONENTS}
+        containerClassName={cn(MARKDOWN_CONTAINER_CLASS_NAME, containerClassName)}
+        containerProps={containerProps}
+        defer={defer}
+        lineNumbers={false}
+        mode="streaming"
+        parseIncompleteMarkdown={false}
+        parseMarkdownIntoBlocksFn={parseMarkdownIntoBlocksCached}
+        plugins={MARKDOWN_PLUGINS}
+        preprocess={preprocessWithTailRepair}
+      />
+    </ErrorBoundary>
   )
 }
 

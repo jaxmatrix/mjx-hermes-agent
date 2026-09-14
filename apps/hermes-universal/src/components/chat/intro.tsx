@@ -99,7 +99,11 @@ export function Intro() {
               {
                 fontSize: `${fontPx || MIN_PX}px`,
                 whiteSpace: 'nowrap',
-                visibility: fontPx ? 'visible' : 'hidden'
+                // Hidden only until measured, and otherwise INHERITED. An
+                // explicit `visible` overrides the `invisible` a hidden tab's
+                // layer sets, so an empty main chat's wordmark painted through
+                // whatever tab was stacked on top of it.
+                ...(fontPx ? {} : { visibility: 'hidden' })
               } as CSSProperties
             }
           >

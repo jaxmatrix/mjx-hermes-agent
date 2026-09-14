@@ -1,3 +1,4 @@
+import { BrowserPane } from '@/app/browser/browser-pane'
 import { CONTEXT_KIT } from '@/components/ui/actions-menu'
 import { Codicon } from '@/components/ui/codicon'
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu'
@@ -11,6 +12,7 @@ import {
   $activePreviewTarget,
   $previewTabs,
   isArtifactTab,
+  isBrowserTab,
   previewCloseTargets,
   type PreviewTarget,
   requestCloseAllPreviewTabs,
@@ -50,7 +52,12 @@ export function PreviewRail() {
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {active ? (
-          // An artifact tab names a registry entry, not a file on disk — a
+          // The browser tab renders here too: the phone's Workspace shell and
+          // the narrow drawer have no layout tree, and a browser only reachable
+          // from the tree would be a desktop-only feature by accident.
+          isBrowserTab(active.path) ? (
+            <BrowserPane key={active.path} />
+          ) : // An artifact tab names a registry entry, not a file on disk — a
           // different reader entirely, sharing only the tab strip above.
           isArtifactTab(active.path) ? (
             <ArtifactPreview key={active.path} target={active} />

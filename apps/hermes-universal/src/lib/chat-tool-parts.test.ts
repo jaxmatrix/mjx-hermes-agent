@@ -97,3 +97,38 @@ describe('upsertToolPart', () => {
     expect(first.toolCallId).not.toBe(second.toolCallId)
   })
 })
+
+/**
+ * MJXHRM-458. A clarify has TWO rows racing for one card: `tool.start` under
+ * the model's `tool_call_id`, and the synthetic row the reducer upserts from
+ * `clarify.request` under the gateway's `request_id`. A SINGLE clarify
+ * correlates them on `question` — a BATCH has no `question` at all, so with no
+ * match value of its own the request row is APPENDED, and the transcript grows
+ * a second live batch card with its own staged answers, able to lock the same
+ * qids as the first.
+ */
+describe('batch clarify row correlation', () => {
+  it('merges the clarify.request row onto the tool.start row', () => {
+    // What the gateway actually sends: `tool.start` has no args at all, then
+    // `clarify.request` arrives under a different id carrying the questions.
+    const started = upsertToolPart([], { context: 'Drink?', name: 'clarify', tool_id: 'call_model' }, 'running')
+
+    const merged = upsertToolPart(
+      started,
+      {
+        args: {
+          questions: [
+            { qid: 'q0', question: 'Drink?' },
+            { qid: 'q1', question: 'Time?' }
+          ]
+        },
+        name: 'clarify',
+        tool_id: 'req-gateway'
+      },
+      'running'
+    )
+
+    expect(tools(merged)).toHaveLength(1)
+    expect(tools(merged)[0]?.args).toMatchObject({ questions: [{ qid: 'q0' }, { qid: 'q1' }] })
+  })
+})

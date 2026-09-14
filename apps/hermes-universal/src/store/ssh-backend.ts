@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
+import { registryBackendScopeKey } from '@/lib/backend-scope'
 import { atom } from '@/store/atom'
 
 // SSH gateway bindings (MJX-55). The whole lifecycle — dial, host-key check,
@@ -36,6 +37,17 @@ export interface SshConnectConfig {
   /** The token from the last successful connect. Without it a running remote
    *  backend cannot be reattached to, only replaced. */
   reuseToken?: string
+  /**
+   * Which REGISTERED connection this dial belongs to (MJXHRM-446).
+   *
+   * Absent for the connection that inherited the pre-registry world, and that
+   * absence is load-bearing: it collapses the ssh scope — and therefore
+   * `ssh_ownership_id` — back to the bare profile, so an upgrade reattaches to a
+   * running remote backend instead of spawning a second one beside it. When it
+   * IS present, Rust reads the key/passphrase/password/reattach token from that
+   * connection's own keyring accounts and the fields above are not sent at all.
+   */
+  connectionId?: string
 }
 
 export interface SshConnection {
@@ -159,10 +171,24 @@ export function testSshBackend(attemptId: string, config: SshConnectConfig): Pro
   return invoke<SshTestResult>('ssh_test', { attemptId, config })
 }
 
-/** Drop the tunnel for a profile. Deliberately leaves the REMOTE backend
+/**
+ * The scope key an SSH session, forward and disconnect event live under.
+ *
+ * The TS mirror of `ssh::registry_scope_of`. Before the registry this was the
+ * profile alone, so two ssh SOURCES on one profile name evicted each other's
+ * session and shared one remote backend. The empty-id arm is byte-identical to
+ * what that did.
+ */
+export function sshScopeOf(connectionId?: null | string, profile?: null | string): string {
+  const id = (connectionId ?? '').trim()
+
+  return id ? registryBackendScopeKey(id, profile) : (profile ?? '')
+}
+
+/** Drop the tunnel for a scope. Deliberately leaves the REMOTE backend
  *  running — it is detached on purpose so the next connect reuses it. */
-export function disconnectSsh(profile?: string | null): Promise<void> {
-  return invoke<void>('ssh_disconnect', { profile: profile ?? null })
+export function disconnectSsh(profile?: string | null, connectionId?: null | string): Promise<void> {
+  return invoke<void>('ssh_disconnect', { connectionId: connectionId ?? null, profile: profile ?? null })
 }
 
 /** Abandon an in-flight attempt. */
@@ -302,8 +328,12 @@ export async function decideActiveSshHostKey(accept: boolean): Promise<void> {
  * re-dials `http://127.0.0.1:<ephemeral>`, and if the session is gone that port
  * is dead forever, so the loop just backs off and spins.
  */
-export function onSshDisconnected(profile: null | string | undefined, handler: () => void): Promise<UnlistenFn> {
-  return listen(`ssh://${profile ?? ''}/disconnected`, () => handler())
+export function onSshDisconnected(
+  profile: null | string | undefined,
+  handler: () => void,
+  connectionId?: null | string
+): Promise<UnlistenFn> {
+  return listen(`ssh://${sshScopeOf(connectionId, profile)}/disconnected`, () => handler())
 }
 
 /**

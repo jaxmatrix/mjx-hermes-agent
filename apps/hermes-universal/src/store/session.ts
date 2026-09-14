@@ -11,13 +11,17 @@ import {
 import { translateNow } from '@/i18n'
 import { isNotFoundError } from '@/lib/api'
 import { chatMessageText } from '@/lib/chat-messages'
+import { sessionTitle } from '@/lib/chat-runtime'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { appendLiveSessionProjection, toChatMessages } from '@/lib/session-history'
+import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { stableArray } from '@/lib/stable-array'
 import { readJson, writeJson } from '@/lib/storage'
 import { reuseUnchanged } from '@/lib/structural-share'
+import { dropTranscriptTails } from '@/lib/transcript-tail-cache'
 import { atom, computed } from '@/store/atom'
 import { $busy, $clarify, $currentCwd, $messages, $sessionId, type ChatMessage, resetChat } from '@/store/chat'
+import { confirm } from '@/store/confirm'
 import { resetUnscopedStreamPin } from '@/store/event-router'
 import { requestGateway } from '@/store/gateway'
 import { $pinnedSessionIds } from '@/store/layout'
@@ -27,6 +31,7 @@ import { flashPetActivity } from '@/store/pet'
 // Import direction is `session.ts → profile.ts → profiles.ts`; never the reverse.
 import { $activeGatewayProfile, $profileScope, ALL_PROFILES, normalizeProfileKey } from '@/store/profile'
 import { $profiles } from '@/store/profiles'
+import { requestForSession, SessionRouteError, setSessionOwnerResolver } from '@/store/session-request-router'
 import {
   $activeSessionKey,
   $sessionStates,
@@ -39,6 +44,7 @@ import {
   runtimeKeyForStoredSession,
   updateSession
 } from '@/store/session-state-types'
+import { clearTranscriptPaint, paintCachedTail } from '@/store/transcript-paint'
 import { adoptResumedTurn, resumedTurnIsLive } from '@/store/turn-lifecycle'
 import { openAppRoute, ownsPersistedAppState } from '@/store/windows'
 import type { SessionCreateResponse, SessionInfo, SessionResumeResponse, SessionSearchResult } from '@/types/hermes'
@@ -89,9 +95,18 @@ const LAST_SESSION_KEY = 'hermes.lastSessionId.byProfile'
 
 const $lastSessionByProfile = persistentAtom<Record<string, string>>(LAST_SESSION_KEY, {}, Codecs.stringRecord)
 
+/**
+ * Sessions a plugin owns and keeps HIDDEN — a bot's forever-chat.
+ *
+ * Never remembered as a profile's place. Boot lands on the remembered id as an
+ * ordinary chat in the main pane, and a hidden session there is exactly the
+ * overlap between two modes of conversation that hiding exists to prevent.
+ */
+const pluginOwnedSessionIds = new Set<string>()
+
 if (ownsPersistedAppState()) {
   $activeStoredSessionId.subscribe(id => {
-    if (!id) {
+    if (!id || pluginOwnedSessionIds.has(id)) {
       return
     }
 
@@ -107,6 +122,51 @@ if (ownsPersistedAppState()) {
 /** The session to land on at boot, if any — the one last open on THIS profile. */
 export function lastOpenedSessionId(): null | string {
   return $lastSessionByProfile.get()[$activeGatewayProfile.get()] ?? null
+}
+
+/**
+ * Mark a session as a plugin's HIDDEN session, so it is never remembered as the
+ * place to land at boot.
+ *
+ * Also forgets it if it was ALREADY remembered: an install that opened a bot's
+ * chat before this guard existed has that id sitting in the persisted memory, and
+ * would otherwise keep restoring it into the main pane on every launch. The purge
+ * is a write to persisted app state, so only the window that owns it makes it.
+ */
+export function markPluginOwnedSession(storedSessionId: string): void {
+  if (!storedSessionId) {
+    return
+  }
+
+  pluginOwnedSessionIds.add(storedSessionId)
+
+  if (!ownsPersistedAppState()) {
+    return
+  }
+
+  const remembered = $lastSessionByProfile.get()
+  const kept = Object.fromEntries(Object.entries(remembered).filter(([, id]) => id !== storedSessionId))
+
+  if (Object.keys(kept).length !== Object.keys(remembered).length) {
+    $lastSessionByProfile.set(kept)
+  }
+}
+
+/**
+ * Forget every profile's remembered chat — a gateway RE-HOME, not a reconnect.
+ *
+ * `wipeSessionListsForGatewaySwitch()` sets `$activeStoredSessionId` to null, and
+ * the subscriber above ignores null, so the id remembered from backend A used to
+ * survive a switch to backend B: the next boot then tried to open it there,
+ * against a database that has never heard of it — or worse, against a recycled
+ * id that names somebody else's conversation. Stored ids are unique per backend
+ * database, so the marker is gateway-bound state and belongs in the wipe list
+ * (rule 20).
+ */
+export function forgetLastSessionMarkers(): void {
+  if (Object.keys($lastSessionByProfile.get()).length) {
+    $lastSessionByProfile.set({})
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -131,6 +191,23 @@ export function clearSessionProfileCache(): void {
 }
 
 $profiles.listen(clearSessionProfileCache)
+
+/**
+ * Record a session's owner that the caller already knows for certain.
+ *
+ * For a session no listing will ever contain — a plugin's hidden session, minted
+ * a moment ago — `knownSessionProfile` has no row to read and
+ * `resolveSessionProfile` would have to probe every backend for an answer the
+ * caller is already holding. Probing is also where it goes wrong: a miss routes
+ * the resume and the transcript read to whichever database is live.
+ */
+export function rememberSessionProfile(storedSessionId: string, profile: string): void {
+  const owner = profile.trim()
+
+  if (storedSessionId && owner) {
+    profileByStoredId.set(storedSessionId, owner)
+  }
+}
 
 /** The owning profile we ALREADY know, with no network round-trip: the row's own
  *  stamp, or a previous resolution. Used where an await would be wrong (the
@@ -185,9 +262,12 @@ export async function resolveSessionProfile(storedSessionId: null | string): Pro
     .map(profile => normalizeProfileKey(profile.name))
     .filter(key => key !== activeKey)
 
-  // The active profile first, unscoped — one row lookup that covers every
-  // single-profile install and any id on the live backend.
-  const candidates: (string | undefined)[] = [undefined, ...others]
+  // The ACTIVE profile first, BY NAME. An unscoped lookup reads the backend's
+  // LAUNCH database, which is the active profile only when the two happen to
+  // coincide — and the active profile is excluded from `others` above, so an
+  // unscoped first probe meant the one profile most likely to own the id was
+  // never actually asked.
+  const candidates: (string | undefined)[] = [activeKey, ...others]
 
   for (const candidate of candidates) {
     try {
@@ -205,6 +285,21 @@ export async function resolveSessionProfile(storedSessionId: null | string): Pro
 
   return undefined
 }
+
+// The router asks THIS module which profile owns a session — a hook, because
+// `session-request-router.ts` is imported from here and the edge has to point
+// one way (recipe 6.4). Registered at module init, so every `requestForSession`
+// in the app routes even when the caller never touched `store/session`: that is
+// what makes `reconcileSessionTurn`'s resume — the one site that used to send no
+// profile at all — resolve its owner like the other four.
+//
+// Both fast paths stay SYNCHRONOUS (a stamped row, a single-profile install);
+// only a genuine miss returns a promise.
+setSessionOwnerResolver(storedSessionId => {
+  const known = knownSessionProfile(storedSessionId)
+
+  return known ?? (sessionProfileIsAmbiguous() ? resolveSessionProfile(storedSessionId) : undefined)
+})
 
 /** What the backends say about an id. `unknown` is NOT `gone`: see below. */
 export type SessionExistence = 'gone' | 'present' | 'unknown'
@@ -363,11 +458,48 @@ export const $searchLoading = atom(false)
 // `store/session-states.ts#handleTransition`; a view clears its id when seen.
 export const $unreadFinishedSessionIds = atom<string[]>([])
 
+/** Retire the unread marker for a conversation, under EVERY id it answers to.
+ *
+ *  Auto-compression rotates the stored id, and the two halves routinely hold
+ *  different tips: the marker is written from the live transition (the fresh
+ *  id), while the surface that clears it — a tile keyed at open time, a sidebar
+ *  row from a page fetched before the rotation — can be holding the lineage
+ *  root. Comparing on identity left those markers unclearable. */
+/**
+ * The persisted unread layer (`store/session-unread`), injected rather than
+ * imported.
+ *
+ * That module needs `$focusedStoredSessionId` from `store/session-states`, and
+ * session-states imports THIS module — so a static edge from here would close a
+ * cycle that makes `@/store/session` unusable as a module-graph entry
+ * (session-entry.test.ts). Same shape as session-states' own
+ * `setSessionTransitionHook`: the durable layer registers itself at boot, and
+ * everything here degrades to the transient-only behaviour when it has not.
+ */
+export interface UnreadPersistence {
+  /** Sidebar "Mark all as read": watermark every loaded row, retire its markers. */
+  ackAll(): void
+  /** A session left the user's world — drop its watermark and marker. */
+  forget(ids: readonly (null | string | undefined)[], profile?: null | string): void
+  /** A background turn finished: persist the marker so it survives a restart. */
+  markFinished(storedSessionId: string): void
+}
+
+let unreadPersistence: null | UnreadPersistence = null
+
+export function setUnreadPersistence(hooks: null | UnreadPersistence): void {
+  unreadPersistence = hooks
+}
+
+/** The registered durable layer, or null before boot / in a secondary window. */
+export const unreadPersistenceHooks = (): null | UnreadPersistence => unreadPersistence
+
 export function clearUnreadFinishedSession(storedSessionId: string): void {
   const cur = $unreadFinishedSessionIds.get()
+  const next = cur.filter(id => id !== storedSessionId && !sameStoredSession(id, storedSessionId))
 
-  if (cur.includes(storedSessionId)) {
-    $unreadFinishedSessionIds.set(cur.filter(id => id !== storedSessionId))
+  if (next.length !== cur.length) {
+    $unreadFinishedSessionIds.set(next)
   }
 }
 
@@ -375,6 +507,10 @@ export function clearUnreadFinishedSession(storedSessionId: string): void {
  *  filter menu's "Mark all as read". Skips the write when there is nothing to
  *  clear, so it can't churn subscribers on a repeated press. */
 export function markAllSessionsRead(): void {
+  // FLUSH the persisted layer too, or the next list refresh recomputes every dot
+  // the user just dismissed straight back out of the watermarks and markers.
+  unreadPersistence?.ackAll()
+
   if ($unreadFinishedSessionIds.get().length) {
     $unreadFinishedSessionIds.set([])
   }
@@ -618,6 +754,34 @@ $pinnedSessionIds.subscribe(() => syncPinnedSessionCache())
 /** Durable pin key: the lineage-root id survives auto-compression's id rotation. */
 export function sessionPinId(session: SessionInfo): string {
   return session._lineage_root_id ?? session.id
+}
+
+/**
+ * Is this row carrying the durable "keep" flag?
+ *
+ * Asked before a DESTRUCTIVE action, which is why it is not the same question
+ * the pin toggles ask (`$pinnedSessionIds.includes(sessionPinId(row))`, five
+ * sites). Those render a toggle out of the local set alone; this one has to be
+ * right about a row the local set may never have seen, so it unions both
+ * channels:
+ *
+ *  - `session.pinned` is the backend's `sessions.pinned` column, flipped for
+ *    the WHOLE compression lineage by `set_session_pinned`, so any row of a
+ *    chain reports it. It is the only channel that survives a surface which
+ *    fetches its own rows instead of reading `$sessions` — Settings → Archived
+ *    is exactly that, and archived rows never enter `$sessions` at all, so its
+ *    ids are absent from the pinned cache `session-pin-sync` reconciles.
+ *  - `$pinnedSessionIds` covers the reverse hole: a pin this app holds that the
+ *    backend has not been told about yet (mirror in flight, or a gateway
+ *    predating the column, where `pinned` is `undefined`). It is keyed on the
+ *    LINEAGE ROOT, so it must be looked up through `sessionPinId` and not the
+ *    row id — a row surfaced after a compaction carries the live tip.
+ *
+ * Either channel saying "pinned" means a delete would destroy something the
+ * user asked to keep, which is what the caller needs to warn about.
+ */
+export function isSessionPinned(session: SessionInfo): boolean {
+  return session.pinned === true || $pinnedSessionIds.get().includes(sessionPinId(session))
 }
 
 /** True when a stored/lineage id resolves to this session — it matches either
@@ -985,6 +1149,18 @@ export function openSession(storedId: string, options?: OpenSessionOptions): Pro
       return undefined
     }
 
+    // A warm slice with NO runtime binding is not a live session. It is what a
+    // failed resume leaves behind: the history on screen and nothing live behind
+    // it. Promoting it gives a chat that can neither stream nor submit, and a
+    // caller waiting on its binding runs out the clock. Hydrate again instead —
+    // the only way to get a bound session — after dropping the husk, so the
+    // stored id is indexed to exactly one slice.
+    if (!$sessionStates.get()[warm]?.runtimeSessionId) {
+      dropSessionState(warm)
+
+      return hydrateColdSession(storedId)
+    }
+
     openGeneration++ // cancel any hydrate still in flight
     resetUnscopedStreamPin()
     $activeStoredSessionId.set(storedId)
@@ -994,6 +1170,72 @@ export function openSession(storedId: string, options?: OpenSessionOptions): Pro
   }
 
   return hydrateColdSession(storedId)
+}
+
+/**
+ * Put a session the caller JUST CREATED on screen, bound to its live runtime id.
+ *
+ * NOT a resume, and that is the whole point. `session.create` answers with a
+ * runtime id the gateway is already holding live, so there is nothing to wake:
+ * this is the same binding `ensureSession` and `forkBranchSession` make, and the
+ * same promotion `openSession`'s warm path makes, with no database row, no REST
+ * read and no route resolution in between.
+ *
+ * Going through `openSession` instead is what broke a plugin's hidden session. A
+ * cold hydrate assumes a session some listing contains: it cannot find the owner
+ * of a hidden row, it resumes against whichever database is live, and when that
+ * fails it rekeys the slice with a stored id posing as a runtime id — so the open
+ * reports success and the first keystroke is refused as `session not found`.
+ *
+ * Deliberately writes NO sidebar row. `registerNewSession` would; a session a
+ * plugin keeps hidden must not appear in the shared list, which is exactly the
+ * overlap between two modes of conversation that hiding exists to prevent.
+ */
+export function adoptLiveSession(input: {
+  /**
+   * Make it the MAIN chat — the default. `false` binds the live slice and
+   * nothing else, for a caller showing the session in its own tab: a tile finds
+   * its slice by stored id, and an active-id write would also load the same
+   * conversation into the main pane behind it — and make `openSessionTile`
+   * refuse the tab, since the session loaded in main never opens as a tile.
+   */
+  activate?: boolean
+  cwd?: null | string
+  /** A plugin's hidden session: never remembered as the profile's place. */
+  hidden?: boolean
+  profile?: null | string
+  runtimeSessionId: string
+  storedSessionId: string
+}): void {
+  const { runtimeSessionId, storedSessionId } = input
+
+  if (input.profile) {
+    rememberSessionProfile(storedSessionId, input.profile)
+  }
+
+  // BEFORE the active id is set below: that write is what the last-session
+  // subscriber reacts to.
+  if (input.hidden) {
+    markPluginOwnedSession(storedSessionId)
+  }
+
+  ensureSessionSlice(runtimeSessionId, {
+    busy: false,
+    cwd: (input.cwd ?? '').trim(),
+    messages: [],
+    runtimeSessionId,
+    sessionStartedAt: Date.now(),
+    storedSessionId
+  })
+
+  if (input.activate === false) {
+    return
+  }
+
+  openGeneration++ // cancel any hydrate still in flight
+  resetUnscopedStreamPin()
+  $activeStoredSessionId.set(storedSessionId)
+  $activeSessionKey.set(runtimeSessionId)
 }
 
 /**
@@ -1024,18 +1266,26 @@ async function reclaimWarmSession(
   const generation = openGeneration
   const stillWanted = () => !activate || isCurrentOpen(generation)
 
-  const known = knownSessionProfile(storedId)
-  const profile = known ?? (sessionProfileIsAmbiguous() ? await resolveSessionProfile(storedId) : undefined)
+  // Resolved here (not only inside the dispatch) so the cancel check below still
+  // runs on the far side of the probe's await, exactly as it did before routing.
+  // `resolveSessionProfile` memoizes, so the router's own lookup is a synchronous
+  // hit on this answer.
+  if (!knownSessionProfile(storedId) && sessionProfileIsAmbiguous()) {
+    await resolveSessionProfile(storedId)
+  }
 
   if (!stillWanted()) {
     return
   }
 
   try {
-    const resumed = await requestGateway<SessionResumeResponse>('session.resume', {
+    // ROUTED: the profile resolved a moment ago can be stale by the time this
+    // sends — `softSwitchGateway` re-homes the app with no coordination — so the
+    // route is re-read inside the dispatch.
+    const resumed = await requestForSession<SessionResumeResponse>(storedId, 'session.resume', {
       session_id: storedId,
       cols: 96,
-      ...(profile ? { profile } : {})
+      ...SESSION_SOURCE_PARAMS
     })
 
     if (!stillWanted() || (resumed.session_id ?? storedId) === warmKey) {
@@ -1144,6 +1394,18 @@ async function hydrateColdSession(storedId: string): Promise<void> {
   $activeStoredSessionId.set(storedId)
   $activeSessionKey.set(key)
 
+  // The KEY the paint lane is addressed by. `key` is reassigned to the runtime id
+  // after the rekey below; the paint stays filed under the placeholder, so the
+  // clears must not follow the reassignment.
+  const paintKey = key
+
+  // BEFORE ANY I/O — this is the whole "~0 ms" claim. The cached tail goes on
+  // screen through `$paintedMessages` while the REST transcript and the resume
+  // are still in flight, and is replaced the moment either lands. It is pixels,
+  // never knowledge: `store/transcript-paint.ts` holds it outside
+  // `$sessionStates` so nothing can reconcile, journal or narrate it.
+  paintCachedTail(paintKey, storedId)
+
   // A session resumed MID-TURN stays busy: the committed transcript ends before
   // the running turn, and `inflight` carries its tail. Settle to idle otherwise.
   let stillRunning = false
@@ -1159,6 +1421,11 @@ async function hydrateColdSession(storedId: string): Promise<void> {
    * real session that happens to have lost the race for the foreground.
    */
   const abandonPlaceholder = () => {
+    // FIRST, always. A paint left behind on a session with no runtime binding is
+    // a transcript that looks healthy and cannot receive a message — and typing
+    // into it would create a brand-new chat.
+    clearTranscriptPaint(paintKey)
+
     if (!isPlaceholderKey(key)) {
       return
     }
@@ -1205,10 +1472,15 @@ async function hydrateColdSession(storedId: string): Promise<void> {
     .then(() => getSessionMessages(storedId, profile))
     .catch(() => null)
 
-  const resumePromise = requestGateway<SessionResumeResponse>('session.resume', {
+  // ROUTED (not `requestGateway`): `profile` above was resolved BEFORE a possible
+  // await, and a soft switch landing in that window would send this resume to a
+  // backend that never heard of the session. `requestForSession` re-reads the
+  // route inside the dispatch and rejects with a typed `SessionRouteError`
+  // instead. The owner lookup it does is a memo hit on the resolution above.
+  const resumePromise = requestForSession<SessionResumeResponse>(storedId, 'session.resume', {
     session_id: storedId,
     cols: 96,
-    ...(profile ? { profile } : {})
+    ...SESSION_SOURCE_PARAMS
   })
 
   // The rejection is consumed by the `await` below; this only keeps it from
@@ -1225,6 +1497,9 @@ async function hydrateColdSession(storedId: string): Promise<void> {
 
     if (restMessages && isCurrentOpen(own.generation)) {
       updateSession(key, state => ({ ...state, messages: restMessages }))
+      // The authority has landed; the picture of it is spent. Same tick as the
+      // publish, so no frame can show both.
+      clearTranscriptPaint(paintKey)
     }
 
     const resumed = await resumePromise
@@ -1269,6 +1544,12 @@ async function hydrateColdSession(storedId: string): Promise<void> {
     // router addresses.
     adoptResumedTurn(runtimeId, resumed)
   } catch (err) {
+    // CLEAR FIRST — before the fallback and before any toast. This is the whole
+    // "a cached paint can never mask a stranded resume" rule: if the resume
+    // rejected and REST returned nothing, the honest screen is the empty chat
+    // plus the error, not a transcript that cannot receive a message.
+    clearTranscriptPaint(paintKey)
+
     if (!isCurrentOpen(own.generation)) {
       abandonPlaceholder()
 
@@ -1276,17 +1557,28 @@ async function hydrateColdSession(storedId: string): Promise<void> {
     }
 
     // The resume RPC failed. Fall back to the REST transcript alone (already
-    // painted above when it resolved) so the chat at least shows its history,
-    // with no live runtime binding.
+    // painted above when it resolved) so the chat at least shows its history —
+    // with NO live runtime binding, and that is load-bearing. This used to write
+    // `runtimeSessionId: storedId`: a stored id posing as a runtime id. The wake
+    // took it for a binding, the open reported success, and the first keystroke
+    // went out as `prompt.submit` with an id the gateway's runtime map had never
+    // held — "session not found". Left unbound, a send takes `ensureSession`'s
+    // resume-or-throw branch, and a re-open hydrates again (see `openSession`).
     const transcript = await transcriptPromise
 
     if (transcript) {
       rekeySession(key, storedId, {
-        runtimeSessionId: storedId,
+        runtimeSessionId: null,
         storedSessionId: storedId,
         messages: toChatMessages(transcript.messages ?? [])
       })
       key = storedId
+    } else if (err instanceof SessionRouteError) {
+      // The route could not be honoured — a switch in flight, a socket that is
+      // down. That is not this session's fault and not something the user can
+      // act on here: the reconnect path owns it, and it will re-open. Drop the
+      // placeholder rather than wedging a toast onto a chat that is fine.
+      abandonPlaceholder()
     } else {
       // Not the session's own status: surface it as a notification rather than
       // wedging a load error into this chat's status line, where it would stick.
@@ -1294,6 +1586,9 @@ async function hydrateColdSession(storedId: string): Promise<void> {
     }
   } finally {
     releaseHydration(storedId, own)
+    // Belt and braces: idempotent, and the one place every exit path passes
+    // through.
+    clearTranscriptPaint(paintKey)
 
     if (isCurrentOpen(own.generation)) {
       updateSession(key, state => ({ ...state, busy: stillRunning }))
@@ -1624,6 +1919,7 @@ async function forkBranchSession({
     // then (desktop's `branchStoredSession` behaves identically).
     const branched = await requestGateway<SessionCreateResponse>('session.create', {
       cols: 96,
+      ...SESSION_SOURCE_PARAMS,
       ...(cwd && { cwd }),
       ...(profile ? { profile } : {}),
       messages: branchMessages.map(({ content, role }) => ({ content, role })),
@@ -1819,10 +2115,43 @@ function idNamesSession(ids: readonly string[], candidate: null | string): boole
 export async function deleteSessionLocal(id: string): Promise<void> {
   const prev = $sessions.get()
   const removed = prev.find(s => sessionMatchesStoredId(s, id))
+
+  // A PINNED session is the one delete that asks (MJXHRM-479). Deleting a chat
+  // is otherwise unconfirmed here on purpose — desktop's `removeSession` is too,
+  // and the sidebar row, the tab menu, the chat title and the mobile bubble all
+  // funnel through this one function, so a blanket prompt would put a modal in
+  // front of six routine verbs. A pin is different: it is the user's own durable
+  // "keep this" flag, the flag the backend's bulk prune and archive sweeps
+  // deliberately honour. Deleting straight through it with no word is the app
+  // contradicting an instruction the user gave it, so this is the one case worth
+  // a question. Asked HERE rather than at the six call sites because five of
+  // them are menu rows with no dialog of their own — which is precisely what the
+  // imperative `confirm()` front door exists for.
+  if (removed && isSessionPinned(removed)) {
+    const ok = await confirm({
+      confirmLabel: translateNow('settings.sessions.deletePermanently'),
+      description: translateNow('settings.sessions.deletePinnedWarning'),
+      destructive: true,
+      title: translateNow('settings.sessions.deleteConfirm', sessionTitle(removed))
+    })
+
+    if (!ok) {
+      return
+    }
+  }
+
   const ids = removalIds(removed, id)
   // Read the owner BEFORE the optimistic removal — afterwards the row that
   // carries the stamp is gone and the mutation would go out unscoped.
   const owner = knownSessionProfile(id)
+
+  // The session is gone from the user's world, so its persisted watermark and
+  // marker are dead weight — and an id that comes back (an unarchive) should
+  // come back read, not carrying a marker from before it left.
+  unreadPersistence?.forget(ids, owner)
+  // …and its cached transcript tail, under EVERY alias: a deleted conversation
+  // must not be able to paint itself back onto the next launch.
+  dropTranscriptTails(ids)
 
   // DELETING UNPINS (MJXHRM-414). Nothing else ever dropped the pin, and the
   // Pinned section falls back to `$pinnedSessionCache` once the row leaves
@@ -1876,6 +2205,8 @@ export async function archiveSessionLocal(id: string): Promise<void> {
   const archived = prev.find(s => sessionMatchesStoredId(s, id))
   const ids = removalIds(archived, id)
   const owner = knownSessionProfile(id)
+
+  unreadPersistence?.forget(ids, owner)
 
   // By ALIAS — see the same edit in `deleteSessionLocal`. `set_session_archived`
   // flips the whole compression chain on the backend, so the row is gone there

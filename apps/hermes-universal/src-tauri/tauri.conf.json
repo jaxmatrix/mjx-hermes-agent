@@ -29,9 +29,25 @@
     },
     "withGlobalTauri": false
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "hermes"
+        ]
+      }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERCMDA5N0Q2RkE2QkYyNwpSV1FudjZadmZRbXdEV1M1dk9NeGFrSVlzajdWY1NwQ2xoaTNGREZGMFVrTVAzNTdNZUYyRFM3Uwo=",
+      "endpoints": [
+        "https://github.com/jaxmatrix/mjx-hermes-agent/releases/download/universal-latest/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "iOS": {
       "developmentTeam": "6M43WS4436"
     },

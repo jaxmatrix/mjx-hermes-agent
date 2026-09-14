@@ -7,6 +7,8 @@ import {
   type ChatMessage,
   type ChatPart,
   collectUnspokenTurnSpeech,
+  dedupeRepeatedTextInParts,
+  sealOpenToolParts,
   userTurnOrdinal
 } from './chat-messages'
 
@@ -204,5 +206,108 @@ describe('sealed reasoning blocks', () => {
         sealed('◇ MoA aggregating…\n')
       ])
     })
+  })
+})
+
+// Some providers re-send the previous assistant text verbatim when a turn
+// continues past a tool call (a tool_calls row, then a stop row with identical
+// prose — both persisted). The turn merge folds both into one bubble, so every
+// paragraph rendered twice.
+describe('dedupeRepeatedTextInParts', () => {
+  const text = (value: string): ChatPart => ({ text: value, type: 'text' })
+
+  it('keeps the LAST of two identical text parts', () => {
+    const parts: ChatPart[] = [
+      text('Here is the plan.'),
+      { toolCallId: 't1', toolName: 'read', type: 'tool-call' } as ChatPart,
+      text('Here is the plan.')
+    ]
+
+    expect(dedupeRepeatedTextInParts(parts)).toEqual([parts[1], parts[2]])
+  })
+
+  it('treats whitespace-only differences as the same text', () => {
+    // The seed disagrees with the assertion on purpose: the two strings are not
+    // equal, so only normalisation can collapse them.
+    const parts: ChatPart[] = [text('Here is\n  the plan.'), text('Here is the plan.')]
+
+    expect(dedupeRepeatedTextInParts(parts)).toHaveLength(1)
+  })
+
+  it('leaves genuinely different paragraphs alone', () => {
+    const parts: ChatPart[] = [text('First.'), text('Second.')]
+
+    expect(dedupeRepeatedTextInParts(parts)).toEqual(parts)
+  })
+
+  it('never drops a non-text part', () => {
+    const tool = { toolCallId: 't1', toolName: 'read', type: 'tool-call' } as ChatPart
+    const parts: ChatPart[] = [tool, tool]
+
+    expect(dedupeRepeatedTextInParts(parts)).toEqual(parts)
+  })
+
+  it('returns the same array reference when nothing is dropped', () => {
+    const parts: ChatPart[] = [text('One.')]
+
+    expect(dedupeRepeatedTextInParts(parts)).toBe(parts)
+  })
+
+  it('keeps every empty text part rather than collapsing them into one', () => {
+    const parts: ChatPart[] = [text('   '), text('\n')]
+
+    expect(dedupeRepeatedTextInParts(parts)).toEqual(parts)
+  })
+})
+
+// A `tool.complete` lost to a degraded websocket (reconnect, profile swap,
+// hidden window) leaves its part without a `result`, which renders as a
+// permanently spinning tool row in a session the UI already shows as idle.
+describe('sealOpenToolParts', () => {
+  const toolPart = (over: Partial<ChatPart> = {}): ChatPart =>
+    ({ args: {}, toolCallId: 'call-1', toolName: 'terminal', type: 'tool-call', ...over }) as ChatPart
+
+  const assistantWithParts = (parts: ChatPart[], over: Partial<ChatMessage> = {}): ChatMessage =>
+    ({ id: 'a1', parts, role: 'assistant', ...over }) as ChatMessage
+
+  it('seals open tool-call parts in settled assistant messages', () => {
+    const messages = [assistantWithParts([toolPart()])]
+
+    expect(sealOpenToolParts(messages)[0].parts[0]).toHaveProperty('result')
+  })
+
+  it('leaves already-completed tool parts untouched', () => {
+    const done = toolPart({ result: { code: 0 } } as Partial<ChatPart>)
+    const messages = [assistantWithParts([done])]
+
+    expect(sealOpenToolParts(messages)[0].parts[0]).toBe(done)
+  })
+
+  it('leaves pending messages alone', () => {
+    // Still streaming — an open tool part there is live work, not a lost event.
+    const messages = [assistantWithParts([toolPart()], { pending: true })]
+
+    expect(sealOpenToolParts(messages)[0].parts[0]).not.toHaveProperty('result')
+  })
+
+  it('leaves non-tool parts untouched', () => {
+    const text = { text: 'hello', type: 'text' } as ChatPart
+    const messages = [assistantWithParts([text, toolPart()])]
+    const next = sealOpenToolParts(messages)
+
+    expect(next[0].parts[0]).toBe(text)
+    expect(next[0].parts[1]).toHaveProperty('result')
+  })
+
+  it('returns the same array reference when nothing needs sealing', () => {
+    const messages = [assistantWithParts([toolPart({ result: { code: 0 } } as Partial<ChatPart>)])]
+
+    expect(sealOpenToolParts(messages)).toBe(messages)
+  })
+
+  it('leaves a user message alone even with an open tool part', () => {
+    const messages = [assistantWithParts([toolPart()], { role: 'user' })]
+
+    expect(sealOpenToolParts(messages)[0].parts[0]).not.toHaveProperty('result')
   })
 })

@@ -19,6 +19,7 @@
 
 import { atom, computed } from 'nanostores'
 
+import { isTileDetached } from '@/components/pane-shell/tile/detach'
 import { findGroup, findGroupOfPane, type LayoutNode } from '@/components/pane-shell/tree/model'
 import {
   $activeTreeGroup,
@@ -47,9 +48,11 @@ import { clearAllPrompts } from '@/store/prompts'
 import {
   $activeStoredSessionId,
   $unreadFinishedSessionIds,
+  clearUnreadFinishedSession,
   newSession,
   sameStoredSession,
-  setActiveSessionStoredIdRotation
+  setActiveSessionStoredIdRotation,
+  unreadPersistenceHooks
 } from '@/store/session'
 import {
   $activeSessionKey,
@@ -176,12 +179,20 @@ function handleTransition(previous: ClientSessionState | null, next: ClientSessi
   }
 
   // The busy→idle EDGE is what marks a background session unread ("your turn").
-  if (!next.busy && (previous?.busy ?? false) && storedId !== $activeStoredSessionId.get()) {
+  // Gated on the FOCUSED session, not the selected one: a tile is never
+  // `$activeStoredSessionId`, so keying this on the selection marked every tiled
+  // chat unread the moment it finished a turn the user was watching — and
+  // nothing on the tile-fronting path could clear it again.
+  if (!next.busy && (previous?.busy ?? false) && !sameStoredSession(storedId, $focusedStoredSessionId.get())) {
     const cur = $unreadFinishedSessionIds.get()
 
     if (!cur.includes(storedId)) {
       $unreadFinishedSessionIds.set([...cur, storedId])
     }
+
+    // And durably: the transient atom dies with the window, so without this a
+    // turn that finished while you were elsewhere is forgotten by a restart.
+    unreadPersistenceHooks()?.markFinished(storedId)
   }
 }
 
@@ -572,7 +583,7 @@ export interface SessionTileDelegate {
   deleteSession(storedSessionId: string): Promise<void>
   interruptSession(runtimeId: string): Promise<void>
   resumeTile(storedSessionId: string): Promise<string>
-  submitToSession(runtimeId: string, text: string): Promise<void>
+  submitToSession(runtimeId: string, text: string, displayText?: string): Promise<void>
   updateSession(runtimeId: string, updater: (state: ClientSessionState) => ClientSessionState): ClientSessionState
 }
 
@@ -774,6 +785,31 @@ export function openBranchTile(branchStoredId: string, parentStoredId: null | st
 
   openSessionTile(branchStoredId, 'center', anchor)
   focusOpenSession(branchStoredId)
+}
+
+/**
+ * Open a session as its OWN tab in the main strip, beside whatever is there —
+ * never by taking over the main chat.
+ *
+ * Already on screen (a tile, or the chat loaded in main) → it is only fronted:
+ * `openSessionTile` would MOVE an existing tile out of the zone the user put it
+ * in. Otherwise the tab is added and, unless `focus` is false, fronted —
+ * registering a tile only contributes a pane (see `openBranchTile`), so without
+ * the explicit reveal it would stack behind the chat the user was reading. The
+ * tile resumes itself on mount, and binds straight to a slice already warm.
+ */
+export function openSessionTab(storedSessionId: string, focus = true): void {
+  const onScreen =
+    sameStoredSession(storedSessionId, $activeStoredSessionId.get()) ||
+    $sessionTiles.get().some(tile => sameStoredSession(tile.storedSessionId, storedSessionId))
+
+  if (!onScreen) {
+    openSessionTile(storedSessionId, 'center', WORKSPACE_PANE_ID)
+  }
+
+  if (focus) {
+    focusOpenSession(storedSessionId)
+  }
 }
 
 /**
@@ -1045,6 +1081,13 @@ export function reuseBlankDraftTile(storedSessionId: string): boolean {
  * the nearest chat tab in main's own strip, scanning right first and then left
  * (the tab that fills the slot, then its neighbour). Null when main is the only
  * chat in its zone — the caller then drops main to a fresh draft.
+ *
+ * Scoped to main's OWN group, which is what keeps floating placements out of it:
+ * a floating pane is rendered outside the tree's tab strips and is never in this
+ * group. DETACHED tiles need an explicit skip instead — detach deliberately KEEPS
+ * the tile's slot in the tree (that is what makes reattach well-defined), so a
+ * detached chat is a tab here while another native window is the thing actually
+ * showing it. Promoting one would close it out from under that window.
  */
 export function nextSessionTileForWorkspace(): null | string {
   const tree = $layoutTree.get()
@@ -1061,6 +1104,10 @@ export function nextSessionTileForWorkspace(): null | string {
 
   for (const paneId of ordered) {
     const storedSessionId = storedIdFromTilePane(paneId)
+
+    if (isTileDetached(paneId)) {
+      continue
+    }
 
     if (storedSessionId && tiles.some(t => t.storedSessionId === storedSessionId)) {
       return storedSessionId
@@ -1116,6 +1163,17 @@ export const $focusedStoredSessionId = computed(
   [$focusedChatPane, $activeStoredSessionId],
   (pane, selected) => storedIdFromTilePane(pane) ?? selected
 )
+
+// Looking at a session is what makes it read — and on a multi-tile shell that
+// is the FOCUSED chat, not the selected one. `$activeStoredSessionId` has its
+// own listener in store/session (a primary navigation), which covers the case
+// where a tile keeps focus while the workspace switches sessions; this covers
+// the one that listener cannot see: fronting an already-open tile.
+$focusedStoredSessionId.listen(storedId => {
+  if (storedId) {
+    clearUnreadFinishedSession(storedId)
+  }
+})
 
 /** Session key of the focused session (a tile's bound key, else the active one). */
 export const $focusedRuntimeId = computed(

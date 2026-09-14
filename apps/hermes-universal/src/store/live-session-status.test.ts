@@ -197,6 +197,53 @@ describe('reaping runtimes that vanish between snapshots', () => {
     expect($workingSessionIds.get().has('stored-5b')).toBe(false)
   })
 
+  it('reaps a turn that was acknowledged but never started streaming', () => {
+    // `awaitingResponse: true, busy: false` is a submit the gateway acked whose
+    // stream then died. A gate that only asks about busy/needsInput never reaps
+    // it, so the session sits "waiting" forever after its runtime is gone.
+    //
+    // The fixture has to survive the FIRST pass without being made busy:
+    // `sawAssistantPayload: true` disarms the submit-window rescue at the top
+    // of rehydrate (`awaitingResponse && !sawAssistantPayload`), and the first
+    // snapshot reports the runtime `idle`, which still records it as previously
+    // live without lighting the slice. So at reap time the slice really is
+    // `busy: false, needsInput: false, awaitingResponse: true` — the state the
+    // old gate skipped.
+    seed('rt-5c', {
+      awaitingResponse: true,
+      busy: false,
+      runtimeSessionId: 'rt-5c',
+      sawAssistantPayload: true,
+      storedSessionId: 'stored-5c'
+    })
+    rehydrateLiveSessionStatuses(snapshot({ id: 'rt-5c', session_key: 'stored-5c', status: 'idle' }))
+
+    expect($sessionStates.get()['rt-5c']).toMatchObject({ awaitingResponse: true, busy: false })
+
+    rehydrateLiveSessionStatuses(snapshot())
+
+    expect($sessionStates.get()['rt-5c'].awaitingResponse).toBe(false)
+  })
+
+  it('seals a tool row left spinning by the events that never arrived', () => {
+    seed('rt-5d', {
+      busy: true,
+      messages: [
+        {
+          id: 'a1',
+          parts: [{ toolCallId: 'call-1', toolName: 'terminal', type: 'tool-call' }],
+          role: 'assistant'
+        }
+      ],
+      runtimeSessionId: 'rt-5d',
+      storedSessionId: 'stored-5d'
+    })
+    rehydrateLiveSessionStatuses(snapshot({ id: 'rt-5d', session_key: 'stored-5d', status: 'working' }))
+    rehydrateLiveSessionStatuses(snapshot())
+
+    expect($sessionStates.get()['rt-5d'].messages[0].parts[0]).toHaveProperty('result')
+  })
+
   it('reaps a session whose slice was rekeyed onto its runtime id in the meantime', () => {
     seed('hydrating:stored-6', { runtimeSessionId: null, storedSessionId: 'stored-6' })
     rehydrateLiveSessionStatuses(snapshot({ id: 'rt-6', session_key: 'stored-6', status: 'working' }))

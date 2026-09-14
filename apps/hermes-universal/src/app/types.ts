@@ -57,12 +57,19 @@ export interface SkillCommandDispatchResponse {
   type: 'skill'
   name: string
   message?: string
+  /** What the TRANSCRIPT should show, when it is not the message being sent.
+   *  `/goal resume` answers `{type: 'send', message: <the continuation prompt
+   *  the model is fed>, display: '/goal resume'}` — without this the scaffolding
+   *  prompt is what the user reads back as their own turn. */
+  display?: string
 }
 
 export interface SendCommandDispatchResponse {
   type: 'send'
   message: string
   notice?: string
+  /** See `SkillCommandDispatchResponse.display`. */
+  display?: string
 }
 
 export interface PrefillCommandDispatchResponse {

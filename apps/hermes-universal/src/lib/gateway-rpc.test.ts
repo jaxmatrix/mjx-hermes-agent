@@ -12,13 +12,38 @@ import { GatewayRpcError } from '@/gateway/rpc-error'
 import { requestGateway } from '@/store/gateway'
 
 import {
+  addMcpServer,
+  clearProfileAsset,
+  configureProfile,
+  createCronJobRpc,
+  createProfileRpc,
+  describeProfile,
+  discoverRepos,
   feedWakeAudio,
+  findSessionByTitle,
+  getProfileAsset,
+  installAgentPlugin,
   isMissingRpcMethod,
+  listCronJobsRpc,
+  listMcpCatalog,
+  listMcpServersForProfile,
+  listProfilesRich,
   moveSessionWorkspace,
+  pollMcpServerOAuth,
   reactToMessage,
+  removeMcpServer,
+  respondMcpSetup,
+  respondPreviewAct,
   respondPreviewRead,
+  respondTour,
   respondWindowRead,
+  setMcpServerApiKey,
+  setProfileAsset,
+  setSessionHidden,
+  startMcpServerOAuth,
   steerSubagent,
+  testMcpServerForProfile,
+  updateCronJobStateRpc,
   WAKE_FEED_SAMPLE_RATE
 } from './gateway-rpc'
 
@@ -195,5 +220,287 @@ describe('isMissingRpcMethod', () => {
     // frame with no `code` at all.
     expect(isMissingRpcMethod(new GatewayRpcError('unknown method: pet.gallery', null))).toBe(true)
     expect(isMissingRpcMethod(new GatewayRpcError('session busy', null))).toBe(false)
+  })
+})
+
+// --- The 2026-08-18 / 2026-08-20 sync (MJXHRM-444) -------------------------
+//
+// Every handler in this wave takes an OPTIONAL `profile` that scopes
+// HERMES_HOME around it. Omitting the key is "the launch profile"; sending
+// `profile: null` or `profile: ''` is a different frame, and the point of these
+// tests is that a helper called without one is byte-identical to the pre-wave
+// call an existing surface already makes.
+
+describe('optional profile scoping', () => {
+  it.each([
+    ['mcp.catalog', () => listMcpCatalog()],
+    ['mcp.servers.list', () => listMcpServersForProfile()],
+    ['projects.discover_repos', () => discoverRepos()],
+    ['cron.manage', () => listCronJobsRpc()]
+  ])('omits the profile key entirely for %s when none is given', async (method, call) => {
+    await call()
+
+    expect(rpc.mock.calls[0][0]).toBe(method)
+    expect(Object.keys(sentParams() as object)).not.toContain('profile')
+  })
+
+  it.each([
+    ['an empty string', ''],
+    ['null', null],
+    ['whitespace', '   ']
+  ])('omits it for %s too, rather than sending a value the backend reads as a lookup', async (_label, profile) => {
+    await listMcpServersForProfile(profile)
+
+    expect(Object.keys(sentParams() as object)).not.toContain('profile')
+  })
+
+  it('sends a real profile through, trimmed', async () => {
+    await listMcpServersForProfile('  research  ')
+
+    expect(sentParams()).toEqual({ profile: 'research' })
+  })
+})
+
+describe('mcp.servers.*', () => {
+  it('adds a preset-backed server, keeping the bearer token out of the config entry', async () => {
+    await addMcpServer({ name: 'linear', preset: 'linear', bearerToken: 'sk-live', profile: 'work' })
+
+    expect(rpc).toHaveBeenCalledWith('mcp.servers.add', {
+      name: 'linear',
+      profile: 'work',
+      preset: 'linear',
+      // The secret rides its OWN key so the backend can write it to .env and
+      // persist only the Authorization template. Folding it into `config`
+      // would put the live token in config.yaml.
+      bearer_token: 'sk-live'
+    })
+    expect(sentParams()).not.toHaveProperty('config')
+  })
+
+  it('adds a config-backed server', async () => {
+    await addMcpServer({ name: 'fs', config: { command: 'npx', args: ['-y', 'server-fs'] } })
+
+    expect(sentParams()).toEqual({ name: 'fs', config: { command: 'npx', args: ['-y', 'server-fs'] } })
+  })
+
+  it('sends the secret and lets the backend pick the env key when none is named', async () => {
+    await setMcpServerApiKey({ name: 'brave', value: 'secret' })
+
+    expect(sentParams()).toEqual({ name: 'brave', value: 'secret' })
+  })
+
+  it('names the env key when the caller pinned one', async () => {
+    await setMcpServerApiKey({ name: 'brave', value: 'secret', envVar: 'BRAVE_KEY' })
+
+    expect(sentParams()).toMatchObject({ env_var: 'BRAVE_KEY' })
+  })
+
+  it('surfaces a FAILED probe as a resolved value, not a rejection', async () => {
+    rpc.mockResolvedValue({ ok: false, error: 'ECONNREFUSED', tools: [], oauth_needed: false })
+
+    await expect(testMcpServerForProfile('fs')).resolves.toMatchObject({ ok: false, error: 'ECONNREFUSED' })
+  })
+
+  it('removes by name', async () => {
+    await removeMcpServer('fs', 'work')
+
+    expect(rpc).toHaveBeenCalledWith('mcp.servers.remove', { name: 'fs', profile: 'work' })
+  })
+
+  it('polls a flow by BOTH the server name and the session id — the id alone carries no profile scope', async () => {
+    await startMcpServerOAuth('notion')
+    await pollMcpServerOAuth({ name: 'notion', sessionId: 'flow-1', profile: 'work' })
+
+    expect(rpc.mock.calls[0]).toEqual(['mcp.servers.oauth.start', { name: 'notion' }])
+    expect(rpc.mock.calls[1]).toEqual([
+      'mcp.servers.oauth.poll',
+      { name: 'notion', session_id: 'flow-1', profile: 'work' }
+    ])
+  })
+})
+
+describe('the responder family', () => {
+  // `_respond(rid, params, "result", ...)` — every sibling responder reads
+  // `text`, and this one does not. Sending `text` here is a silent no-answer
+  // that leaves the setup tool blocked for its full ten minutes.
+  it('answers mcp.setup.respond under `result`, not `text`', async () => {
+    await respondMcpSetup('req-1', { status: 'installed', server: 'notion' })
+
+    expect(rpc).toHaveBeenCalledWith('mcp.setup.respond', {
+      request_id: 'req-1',
+      result: JSON.stringify({ status: 'installed', server: 'notion' })
+    })
+    expect(sentParams()).not.toHaveProperty('text')
+  })
+
+  it('answers preview.act.respond and tour.respond under `text`', async () => {
+    await respondPreviewAct('req-2', '{"url":"about:blank"}')
+    await respondTour('req-3', '{"matched":0}')
+
+    expect(rpc.mock.calls[0]).toEqual(['preview.act.respond', { request_id: 'req-2', text: '{"url":"about:blank"}' }])
+    expect(rpc.mock.calls[1]).toEqual(['tour.respond', { request_id: 'req-3', text: '{"matched":0}' }])
+  })
+})
+
+describe('profiles.*', () => {
+  it('asks for the cheap roster without the per-profile state.db reads', async () => {
+    await listProfilesRich({ includeSessions: false })
+
+    expect(rpc).toHaveBeenCalledWith('profiles.list', { include_sessions: false })
+  })
+
+  it('sends no flags at all by default, so the backend defaults stand', async () => {
+    await listProfilesRich()
+
+    expect(sentParams()).toEqual({})
+  })
+
+  it('carries pinned session ids so the preview and the click target agree', async () => {
+    await listProfilesRich({ preferredSessionIds: { scout: 'sess-9' } })
+
+    expect(sentParams()).toEqual({ preferred_session_ids: { scout: 'sess-9' } })
+  })
+
+  it('creates without pinning mirror_credentials, whose backend default keeps the profile usable', async () => {
+    await createProfileRpc({ name: 'scout', description: 'recon' })
+
+    expect(sentParams()).toEqual({ name: 'scout', description: 'recon' })
+  })
+
+  it('sends an explicit mirror_credentials: false through — it is not the same as omitting it', async () => {
+    await createProfileRpc({ name: 'scout', mirrorCredentials: false })
+
+    expect(sentParams()).toEqual({ name: 'scout', mirror_credentials: false })
+  })
+
+  it('describes by name', async () => {
+    await describeProfile('scout')
+
+    expect(rpc).toHaveBeenCalledWith('profiles.describe', { name: 'scout' })
+  })
+
+  // Every list field is REPLACE semantics, so an EMPTY list is a real
+  // instruction ("clear the toolset pin"), not an absent one. A helper that
+  // dropped falsy values would make that unsendable.
+  it('sends an empty list rather than dropping it — an empty enabled_toolsets clears the pin', async () => {
+    await configureProfile({ name: 'scout', enabledToolsets: [] })
+
+    expect(sentParams()).toEqual({ name: 'scout', enabled_toolsets: [] })
+  })
+
+  it('sends an empty soul/description string too, which is how a field is cleared', async () => {
+    await configureProfile({ name: 'scout', soul: '', description: '' })
+
+    expect(sentParams()).toEqual({ name: 'scout', soul: '', description: '' })
+  })
+
+  it('omits every section the caller did not touch, so a partial Save cannot blank the rest', async () => {
+    await configureProfile({ name: 'scout', model: 'gpt-5', provider: 'openai' })
+
+    expect(sentParams()).toEqual({ name: 'scout', model: 'gpt-5', provider: 'openai' })
+  })
+
+  it('defaults the asset kind to avatar on both halves', async () => {
+    await setProfileAsset({ name: 'scout', data: 'data:image/png;base64,AAA' })
+    await getProfileAsset('scout')
+
+    expect(rpc.mock.calls[0][1]).toMatchObject({ asset: 'avatar' })
+    expect(rpc.mock.calls[1][1]).toEqual({ name: 'scout', asset: 'avatar' })
+  })
+
+  // The backend keys on `clear` and ignores `data` entirely when it is set, so
+  // a clear must never ride the same call as a write.
+  it('clears with the flag and no data', async () => {
+    await clearProfileAsset('scout')
+
+    expect(rpc).toHaveBeenCalledWith('profiles.set_asset', { name: 'scout', asset: 'avatar', clear: true })
+    expect(sentParams()).not.toHaveProperty('data')
+  })
+})
+
+describe('session.set_hidden / session.list', () => {
+  it('sends the hidden flag explicitly in both directions', async () => {
+    await setSessionHidden({ sessionId: 's1', hidden: false })
+
+    expect(rpc).toHaveBeenCalledWith('session.set_hidden', { session_id: 's1', hidden: false })
+    // Omitting it would let the backend default to TRUE and hide a session the
+    // caller was trying to reveal.
+    expect(Object.keys(sentParams() as object)).toContain('hidden')
+  })
+
+  it('looks a session up by exact title', async () => {
+    await findSessionByTitle({ title: 'Bot Chat', profile: 'scout' })
+
+    expect(rpc).toHaveBeenCalledWith('session.list', { title: 'Bot Chat', profile: 'scout' })
+  })
+
+  it('answers an empty list for no match — not an error a caller has to catch', async () => {
+    rpc.mockResolvedValue({ sessions: [] })
+
+    await expect(findSessionByTitle({ title: 'nope' })).resolves.toEqual({ sessions: [] })
+  })
+})
+
+describe('projects.discover_repos', () => {
+  it('omits `scan` unless asked — a client-side scan is the default and this one walks the backend disk', async () => {
+    await discoverRepos({ profile: 'work' })
+
+    expect(sentParams()).toEqual({ profile: 'work' })
+  })
+
+  it('sends scan: true when the backend must walk its own roots', async () => {
+    await discoverRepos({ profile: 'work', scan: true })
+
+    expect(sentParams()).toEqual({ profile: 'work', scan: true })
+  })
+})
+
+describe('plugins.manage install', () => {
+  it('installs by identifier, leaving force and enable to their backend defaults', async () => {
+    await installAgentPlugin({ identifier: 'owner/repo' })
+
+    expect(rpc).toHaveBeenCalledWith('plugins.manage', { action: 'install', identifier: 'owner/repo' })
+  })
+
+  it('sends an explicit enable: false — the backend default is true', async () => {
+    await installAgentPlugin({ identifier: 'owner/repo', enable: false, force: true, profile: 'work' })
+
+    expect(sentParams()).toEqual({
+      action: 'install',
+      identifier: 'owner/repo',
+      profile: 'work',
+      force: true,
+      enable: false
+    })
+  })
+})
+
+describe('cron.manage', () => {
+  it('omits include_disabled by default and sends it when a management surface needs paused jobs', async () => {
+    await listCronJobsRpc()
+    await listCronJobsRpc({ includeDisabled: true })
+
+    expect(rpc.mock.calls[0][1]).toEqual({ action: 'list' })
+    expect(rpc.mock.calls[1][1]).toEqual({ action: 'list', include_disabled: true })
+  })
+
+  it('omits repeat and continuity so the schedule kind keeps its own defaults', async () => {
+    await createCronJobRpc({ name: 'digest', schedule: '0 9 * * *', prompt: 'summarize' })
+
+    expect(sentParams()).toEqual({ action: 'add', name: 'digest', schedule: '0 9 * * *', prompt: 'summarize' })
+  })
+
+  it('sends a repeat cap and continuity when the caller set them', async () => {
+    await createCronJobRpc({ name: 'digest', schedule: '@daily', prompt: 'go', repeat: 3, continuity: true })
+
+    expect(sentParams()).toMatchObject({ repeat: 3, continuity: true })
+  })
+
+  // The handler reads the job id off `name` for remove/pause/resume, not off an
+  // `id` key — a helper spelling it `id` gets a silent no-op.
+  it('addresses remove/pause/resume by `name`', async () => {
+    await updateCronJobStateRpc({ action: 'pause', jobId: 'job-7' })
+
+    expect(rpc).toHaveBeenCalledWith('cron.manage', { action: 'pause', name: 'job-7' })
   })
 })

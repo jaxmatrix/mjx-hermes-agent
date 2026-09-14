@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException  # noqa: F401
 
 from hermes_cli.web_deps import late, LateState
 from hermes_cli.web_models import (
+    ProjectSkillTrust,
     SkillContentUpdate,
     SkillCreate,
     SkillInstallRequest,
@@ -42,6 +43,7 @@ _hub_action_name = late("_hub_action_name")
 _installed_hub_identifiers = late("_installed_hub_identifiers")
 _profile_cli_args = late("_profile_cli_args")
 _profile_scope = late("_profile_scope")
+save_config = late("save_config")
 _skill_meta_to_payload = late("_skill_meta_to_payload")
 _spawn_hermes_action = late("_spawn_hermes_action")
 load_config = late("load_config")
@@ -340,9 +342,38 @@ async def scan_skill_hub(identifier: str = "", profile: Optional[str] = None):
             )
 
         q_path = None
+        tier1 = None
         try:
             q_path = quarantine_bundle(bundle)
             result = scan_skill(q_path, source=scan_source)
+            # Advisory SkillEvaluator Tier 1 second opinion (same contract
+            # as the CLI installer: optional binary, never blocks, errors
+            # degrade to no data).
+            try:
+                from tools.skillevaluator_scan import (
+                    run_tier1_scan, tier1_advisory_enabled,
+                )
+                if tier1_advisory_enabled():
+                    t1 = run_tier1_scan(q_path)
+                    if t1.available:
+                        tier1 = {
+                            "passed": t1.passed,
+                            "incomplete_checks": t1.incomplete_checks,
+                            "findings": [
+                                {
+                                    "check": f.check,
+                                    "validator": f.validator,
+                                    "severity": f.severity,
+                                    "message": f.message,
+                                    "file": f.file,
+                                    "line": f.line,
+                                    "secrets_class": f.is_secrets_class,
+                                }
+                                for f in t1.findings
+                            ],
+                        }
+            except Exception:
+                _log.debug("Tier 1 advisory scan skipped", exc_info=True)
         finally:
             if q_path is not None:
                 _shutil.rmtree(q_path, ignore_errors=True)
@@ -383,6 +414,9 @@ async def scan_skill_hub(identifier: str = "", profile: Optional[str] = None):
             "policy_reason": reason,
             "findings": findings,
             "severity_counts": counts,
+            # Advisory SkillEvaluator Tier 1 block, or None when the
+            # optional scanner isn't installed/enabled.
+            "tier1": tier1,
         }
 
     try:
@@ -469,6 +503,161 @@ async def get_skill_content(name: str, profile: Optional[str] = None):
             return {"name": name, "content": content, "path": str(skill_md)}
 
     return await asyncio.to_thread(_run)
+
+
+# --- Project-local skills: the trust gate, over the wire -------------------
+#
+# Project skills (``<repo>/.hermes/skills``, ``<repo>/.agents/skills``) load
+# only from a repo the user has explicitly trusted, and a scan quarantines the
+# dangerous ones. Until now that decision was reachable ONLY from a terminal
+# (``hermes skills trust``), which makes the whole feature unusable from any
+# GUI client — and unreachable entirely on mobile, where there is no shell.
+# These two routes are the same decision, over the same profile-scoped config
+# key the CLI writes (``skills.trusted_project_dirs``), so the two stay
+# interchangeable: trusting from the app is trusting from the CLI.
+
+
+def _resolve_project_root(cwd: Optional[str]):
+    """The git root enclosing *cwd* (or the surface's own workdir)."""
+    from pathlib import Path
+
+    from agent.skill_utils import find_project_root
+
+    start = None
+    raw = (cwd or "").strip()
+    if raw:
+        try:
+            start = Path(raw).expanduser()
+        except (OSError, ValueError):
+            return None
+    return find_project_root(start)
+
+
+@router.get("/api/skills/project")
+async def get_project_skills(cwd: Optional[str] = None, profile: Optional[str] = None):
+    """What the project tier holds for *cwd*: root, trust state, skills.
+
+    ``trusted`` false means the skills exist but nothing loads — the client
+    renders the gate. When trusted, each entry carries ``quarantined``, which
+    is the scanner's fail-closed verdict, not a user setting: it cannot be
+    toggled off, only fixed in the repo.
+    """
+
+    def _run():
+        from agent.skill_utils import (
+            _candidate_project_skills_dirs,
+            is_project_root_trusted,
+            is_quarantined_project_skill,
+            iter_skill_index_files,
+        )
+
+        with _profile_scope(profile):
+            config = load_config()
+            skills_cfg = config.get("skills") if isinstance(config, dict) else None
+            discovery = not (
+                isinstance(skills_cfg, dict) and skills_cfg.get("project_discovery") is False
+            )
+            root = _resolve_project_root(cwd)
+            if root is None:
+                return {
+                    "root": None,
+                    "trusted": False,
+                    "discovery_enabled": discovery,
+                    "skills": [],
+                }
+
+            trusted = is_project_root_trusted(root)
+            skills = []
+            for skill_dir in _candidate_project_skills_dirs(root):
+                try:
+                    files = list(iter_skill_index_files(skill_dir, "SKILL.md"))
+                except OSError:
+                    continue
+                for skill_md in files:
+                    # Scanning is only meaningful once the repo is trusted —
+                    # for an untrusted repo nothing loads either way, and
+                    # scanning it would be work the answer does not depend on.
+                    skills.append(
+                        {
+                            "name": skill_md.parent.name,
+                            "path": str(skill_md),
+                            "quarantined": bool(trusted and is_quarantined_project_skill(skill_md)),
+                        }
+                    )
+
+            return {
+                "root": str(root),
+                "trusted": trusted,
+                "discovery_enabled": discovery,
+                "skills": sorted(skills, key=lambda entry: entry["name"]),
+            }
+
+    return await asyncio.to_thread(_run)
+
+
+@router.put("/api/skills/project/trust")
+async def set_project_skills_trust(body: ProjectSkillTrust):
+    """Add/remove a project root in ``skills.trusted_project_dirs``.
+
+    Same read-modify-write (and same resolved-path comparison) as
+    ``hermes skills trust`` / ``untrust``, under the shared config mutation
+    lock so a concurrent dashboard write cannot drop the entry.
+
+    ``path`` is trusted AS GIVEN — it is not walked up to a git root, exactly
+    like the CLI's positional form. Trust is by resolved path, so trusting a
+    subdirectory of a repo would silently load nothing; clients send back the
+    ``root`` that ``GET /api/skills/project`` resolved for them.
+    """
+
+    def _run():
+        from pathlib import Path
+
+        with _profile_scope(body.profile):
+            raw = (body.path or "").strip()
+            root = None
+            if raw:
+                candidate = Path(raw).expanduser()
+                try:
+                    root = candidate.resolve() if candidate.is_dir() else None
+                except OSError:
+                    root = None
+            else:
+                root = _resolve_project_root(None)
+            if root is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No project root: not a directory, or not inside a git checkout.",
+                )
+
+            root_str = str(root)
+            with _CONFIG_MUTATION_LOCK:
+                config = load_config()
+                skills_cfg = config.setdefault("skills", {})
+                trusted = skills_cfg.get("trusted_project_dirs") or []
+                if not isinstance(trusted, list):
+                    trusted = [trusted]
+                trusted = [str(entry) for entry in trusted]
+
+                def _same(entry: str) -> bool:
+                    try:
+                        return str(Path(entry).expanduser().resolve()) == root_str
+                    except OSError:
+                        return False
+
+                if body.trusted:
+                    if not any(_same(entry) for entry in trusted):
+                        trusted.append(root_str)
+                else:
+                    trusted = [entry for entry in trusted if not _same(entry)]
+
+                skills_cfg["trusted_project_dirs"] = trusted
+                save_config(config)
+
+            return {"ok": True, "root": root_str, "trusted": bool(body.trusted)}
+
+    result = await asyncio.to_thread(_run)
+    _clear_skills_prompt_cache()
+    return result
 
 
 @router.post("/api/skills")

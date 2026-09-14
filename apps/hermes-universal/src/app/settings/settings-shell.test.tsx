@@ -1,11 +1,17 @@
 import { QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { SidebarProvider } from '@/app/shell/sidebar'
 import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
+import {
+  $commandPaletteOpen,
+  $commandPalettePage,
+  $commandPaletteSeed,
+  closeCommandPalette
+} from '@/store/command-palette'
 
 import { SettingsView } from './settings-view'
 
@@ -48,5 +54,48 @@ describe('settings portal', () => {
     // …and desktop's `keybinds` id resolves to the panel rather than falling
     // through to the default branch's empty state.
     expect(screen.getByRole('button', { name: 'Reset all' })).toBeInTheDocument()
+  })
+})
+
+// The scoped entry point (MJXHRM-449): Settings hands ⌘K off already narrowed to
+// its own catalog, by click or by just typing.
+describe('settings search pill', () => {
+  afterEach(() => {
+    cleanup()
+    closeCommandPalette()
+  })
+
+  it('opens the palette on its settings page', () => {
+    renderAt('/settings')
+
+    // Seeded closed and page-less, so a no-op click cannot pass by coincidence.
+    expect($commandPaletteOpen.get()).toBe(false)
+
+    fireEvent.click(screen.getByRole('button', { name: /Search settings/ }))
+
+    expect($commandPaletteOpen.get()).toBe(true)
+    expect($commandPalettePage.get()).toBe('settings')
+  })
+
+  it('hands the first typed character to the palette instead of swallowing it', () => {
+    renderAt('/settings')
+
+    fireEvent.keyDown(document.body, { key: 'v' })
+
+    expect($commandPalettePage.get()).toBe('settings')
+    expect($commandPaletteSeed.get()).toBe('v')
+  })
+
+  it('leaves typing inside a field, and a chord, alone', () => {
+    renderAt('/settings/about')
+
+    const input = document.createElement('input')
+    document.body.append(input)
+    fireEvent.keyDown(input, { key: 'v' })
+    input.remove()
+
+    fireEvent.keyDown(document.body, { key: 'v', metaKey: true })
+
+    expect($commandPaletteOpen.get()).toBe(false)
   })
 })

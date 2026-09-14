@@ -13,6 +13,7 @@
  * doesn't drift.
  */
 
+import type { PluginRoot } from '@/contrib/plugin-disk'
 import { atom } from '@/store/atom'
 
 export type PluginKind = 'bundled' | 'disk' | 'runtime'
@@ -30,6 +31,9 @@ export interface PluginRecord {
   error?: string
   /** Absolute plugin.js path (disk plugins) — powers "Reveal in file manager". */
   file?: string
+  /** Which disk ROOT it came from (disk plugins). Shown as a badge, because
+   *  "why is this one off by default" has to be answerable from the row. */
+  root?: PluginRoot
 }
 
 // Explicit user enable/disable choices, id -> boolean. ABSENCE means "no

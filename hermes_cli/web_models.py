@@ -333,6 +333,10 @@ class SessionRename(BaseModel):
     # Durable "keep" flag mirrored from the Desktop sidebar's pins; pinned
     # sessions are exempt from the sessions.auto_archive stale sweep.
     pinned: Optional[bool] = None
+    # Read-state watermark toggle (sessions.last_read_at): True marks the
+    # session explicitly unread, False marks it read up to now. Mirrored from
+    # the Desktop sidebar's "Mark as unread"/"Mark as read". None = leave alone.
+    unread: Optional[bool] = None
     # Mutate a session belonging to another profile (opens its state.db). Omit
     # for the current/default profile.
     profile: Optional[str] = None
@@ -365,6 +369,11 @@ class SessionPrune(BaseModel):
     min_tool_calls: Optional[int] = None
     max_tool_calls: Optional[int] = None
     include_archived: bool = False
+    # Pin is a durable "keep" flag: bulk prune spares pinned rows unless the
+    # caller opts in, exactly like `hermes sessions prune --include-pinned`.
+    # Defaults False so a client that predates the flag keeps the safe
+    # behaviour (round-3 QA SES-01 was data loss).
+    include_pinned: bool = False
     dry_run: bool = False
 
 
@@ -632,6 +641,14 @@ class ProfileDescribeAuto(BaseModel):
 class SkillToggle(BaseModel):
     name: str
     enabled: bool
+    profile: Optional[str] = None
+
+
+class ProjectSkillTrust(BaseModel):
+    """Trust (or untrust) a project root for project-local skill discovery."""
+
+    path: str
+    trusted: bool = True
     profile: Optional[str] = None
 
 

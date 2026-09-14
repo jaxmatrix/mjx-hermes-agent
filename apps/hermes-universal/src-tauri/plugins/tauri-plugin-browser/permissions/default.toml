@@ -1,0 +1,8 @@
+[default]
+# Deliberately EMPTY. Every command in this plugin is called from Rust
+# (src/browser/mobile.rs), never from the webview: the app's own
+# `browser_*` commands are the only door, and they are what the frontend is
+# scoped to. Granting the plugin's commands to the webview would add a second,
+# unscoped way to point a native WebView at a URL.
+description = "Grants nothing to the webview: the in-app browser is driven from Rust."
+permissions = []

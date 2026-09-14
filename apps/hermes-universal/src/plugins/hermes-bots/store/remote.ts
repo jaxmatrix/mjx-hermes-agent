@@ -1,0 +1,179 @@
+/**
+ * Cross-machine bot DMs.
+ *
+ * Three transports deliver the same wire text; only ONE of them is client work:
+ *
+ *  - a LOCAL DM is the gateway's own teammate protocol — the bot runs
+ *    `hermes … chat` on its terminal tool. Zero client code.
+ *  - `hermes peer dm` is gateway→gateway REST run by the agent itself. Zero
+ *    client code.
+ *  - a CROSS-CONNECTION @mention is this file: find the remote bot's canonical
+ *    chat on ITS machine, submit into it, and wait for the reply — all over
+ *    MJXHRM-446's per-connection socket, so the window's own gateway never
+ *    switches and the statusbar profile never moves.
+ *
+ * Deliberately NOT ported: desktop's SOUL.md protocol backfill. It wrote prose
+ * into a user's SOUL, raced across clients, and its reverse transition was never
+ * traced even on desktop. When `profiles.list` does not report
+ * `bot_mode_protocol`, the UI says agent-to-agent messages are unsupported on
+ * that gateway — which is the honest answer (rule 9).
+ */
+
+import { host } from '@hermes/plugin-sdk'
+
+import { REMOTE_DM_TIMEOUT_MS } from '../driver/types'
+import { BOT_CHAT_TITLE, botDisplayName, botHandle } from '../ids'
+import { type RegistryAnswer, resolveCanonicalChat } from '../model/canonical'
+import type { RosterRow } from '../model/roster'
+
+import { type AgentRoute, createSession, findBotChat, setSessionTitle, submitPrompt } from './rpc'
+
+/** The one wire format all three transports share. Agent-facing, never i18n'd. */
+export const dmWireText = (from: string, text: string): string =>
+  `Message from 🤖 ${botDisplayName(from)} (@${botHandle(from)}): ${text}`
+
+/** The transcript directive a DM renders as in an ordinary chat. Falls back to
+ *  plain text when the plugin is disabled, which is the point of using the
+ *  directive area rather than a new transcript message type. */
+export const dmDirective = (from: string, room?: string): string =>
+  `::bot-dm{from=${botHandle(from)}${room ? ` room=${room}` : ''}}`
+
+export type DmResult =
+  | { error: string; ok: false; reason: 'no-chat' | 'refused' | 'timeout' | 'unreachable' }
+  | { ok: true; storedId: string }
+
+/**
+ * Deliver a message to a bot on ANOTHER connection.
+ *
+ * The canonical-chat ladder runs on the REMOTE machine's record, through the
+ * same pure decision function the local path uses — one definition of what a
+ * bot's chat is, wherever it lives.
+ */
+async function askRemoteRegistry(route: AgentRoute): Promise<RegistryAnswer> {
+  const found = (await findBotChat(route)).sessions?.[0]
+
+  return {
+    row: found
+      ? { id: found.id, messageCount: found.message_count, resolvedId: found.resolved_id, title: found.title }
+      : null
+  }
+}
+
+export async function sendRemoteDm(
+  target: { connectionId: string; profile: string },
+  from: string,
+  text: string
+): Promise<DmResult> {
+  const route: AgentRoute = { connectionId: target.connectionId, profile: target.profile }
+
+  let storedId: null | string = null
+
+  try {
+    // The registry, on the REMOTE machine. No `profiles.list` read first: that
+    // call existed only to fetch a pin, and there is no pin any more — the
+    // chat is whichever session is titled exactly `Bot Chat` over there.
+    let answer: Awaited<ReturnType<typeof askRemoteRegistry>>
+
+    try {
+      answer = await askRemoteRegistry(route)
+    } catch {
+      answer = { failed: true }
+    }
+
+    const verdict = resolveCanonicalChat(answer)
+
+    if (verdict.kind === 'unavailable') {
+      return { error: 'that machine did not answer', ok: false, reason: 'no-chat' }
+    }
+
+    if (verdict.kind === 'open') {
+      storedId = verdict.storedId
+    } else {
+      const created = await createSession({ hidden: false, title: BOT_CHAT_TITLE }, route)
+
+      // The title write is what makes it a row; the durable id is what we keep.
+      if (created.session_id && created.stored_session_id) {
+        await setSessionTitle(created.session_id, BOT_CHAT_TITLE, route)
+      }
+
+      storedId = created.stored_session_id ?? null
+    }
+
+    if (!storedId) {
+      return { error: 'no canonical chat on that machine', ok: false, reason: 'no-chat' }
+    }
+
+    // BIND FIRST. `prompt.submit` resolves through the gateway's live runtime
+    // map, keyed by RUNTIME id — `submitPrompt`'s own parameter says so — and a
+    // stored id only happens to work while that session is already running. A
+    // canonical Bot Chat almost never is, so this was `session not found`
+    // (4001) most of the time. `store/rooms.ts` has always done it this way.
+    const bound = await host.bindSession(storedId, { profile: target.profile })
+
+    if (!bound.ok) {
+      return { error: bound.error ?? 'could not wake that chat', ok: false, reason: 'no-chat' }
+    }
+
+    await submitPrompt(bound.sessionKey, dmWireText(from, text), route)
+
+    return { ok: true, storedId }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+
+    // MJXHRM-446 answers a SHAPED refusal rather than an empty success, so an
+    // unreachable machine is reported as unreachable — not as a message that
+    // silently went nowhere.
+    return {
+      error: message,
+      ok: false,
+      reason: message.includes('AGENT_ROUTING_UNAVAILABLE') ? 'unreachable' : 'refused'
+    }
+  }
+}
+
+/**
+ * Wait for a remote bot's reply.
+ *
+ * This is the ONE place a poll survives, and it survives for a reason worth
+ * stating: a remote connection has no event stream this window subscribes to,
+ * so there is nothing to wait ON. The interval is capability-gated all the same,
+ * and the ceiling is the same 180 s a local member turn gets.
+ */
+export async function awaitRemoteReply(
+  target: { connectionId: string; profile: string },
+  storedId: string,
+  before: number,
+  signal: AbortSignal
+): Promise<null | string> {
+  const deadline = Date.now() + REMOTE_DM_TIMEOUT_MS
+
+  while (Date.now() < deadline && !signal.aborted) {
+    await new Promise(resolve => setTimeout(resolve, 2_000))
+
+    if (signal.aborted) {
+      return null
+    }
+
+    const bound = await host.bindSession(storedId, { profile: target.profile, withHistory: true })
+
+    if (!bound.ok) {
+      continue
+    }
+
+    const messages = bound.messages ?? []
+
+    const reply = messages
+      .slice(before)
+      .reverse()
+      .find(message => message.role === 'assistant')
+
+    if (reply) {
+      return reply.text
+    }
+  }
+
+  return null
+}
+
+/** Rows the roster shows as reachable-but-remote. */
+export const remoteRows = (roster: readonly RosterRow[]): RosterRow[] => roster.filter(row => Boolean(row.connectionId))

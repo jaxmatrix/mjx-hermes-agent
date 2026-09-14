@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { useI18n } from '@/i18n'
+import { useStore } from '@/store/atom'
+import { $settingsScopeOverride } from '@/store/settings-scope'
 
 import { CredentialKeyCard, credentialPlaceholder, credentialRowLabel } from './credential-key-ui'
 import { useEnvCredentials } from './env-credentials'
 import { SettingsContent, SettingsSkeleton } from './primitives'
+import { SettingsProfileScope } from './profile-scope'
+import { credentialRowElementId } from './settings-search'
+import { useDeepLinkHighlight } from './use-deep-link-highlight'
 
 // Settings → Tools & Keys. Ported to desktop parity (apps/desktop/src/app/settings/
 // keys-settings.tsx): the Tools (tool API keys) and Settings (server / webhook /
@@ -27,11 +32,15 @@ const VIEW_CATEGORIES: Record<KeysView, readonly string[]> = {
 
 export function KeysSection({ view }: { view: KeysView }) {
   const { t } = useI18n()
-  const { rowProps, vars } = useEnvCredentials()
+  // Keys are per-profile .env entries, so this page edits whichever profile the
+  // shared "Applies to" scope names (desktop keys-settings does the same).
+  const scopeProfile = useStore($settingsScopeOverride)
+  const { rowProps, vars } = useEnvCredentials(scopeProfile)
   const [openKey, setOpenKey] = useState<null | string>(null)
 
-  // Collapse any expanded card when the nav switches sub-tab (Tools ↔ Settings).
-  useEffect(() => setOpenKey(null), [view])
+  // Collapse any expanded card when the nav switches sub-tab (Tools ↔ Settings)
+  // or the scope moves to another profile.
+  useEffect(() => setOpenKey(null), [scopeProfile, view])
 
   const entries = useMemo(() => {
     if (!vars) {
@@ -45,12 +54,28 @@ export function KeysSection({ view }: { view: KeysView }) {
       .sort(([a], [b]) => a.localeCompare(b))
   }, [vars, view])
 
+  // `?key=<VAR>` — a ⌘K credential result. `ready` gates on the var being in
+  // THIS sub-tab's list (a Tools key deep-linked while Settings is open must
+  // wait, not resolve against a card that isn't there), and `onResolve` expands
+  // the card so the highlight lands on an open one.
+  useDeepLinkHighlight({
+    elementId: credentialRowElementId,
+    onResolve: setOpenKey,
+    param: 'key',
+    ready: key => entries.some(([entryKey]) => entryKey === key)
+  })
+
   if (!vars) {
-    return <SettingsSkeleton sections={[{ rows: 5 }]} />
+    return (
+      <SettingsSkeleton sections={[{ rows: 5 }]}>
+        <SettingsProfileScope className="mb-5" />
+      </SettingsSkeleton>
+    )
   }
 
   return (
     <SettingsContent>
+      <SettingsProfileScope className="mb-5" />
       {entries.length === 0 ? (
         <div className="mt-4 rounded-lg border border-dashed border-(--ui-stroke-tertiary) px-4 py-8 text-center text-[length:var(--conversation-caption-font-size)] text-muted-foreground">
           {t.settings.keys.empty}
@@ -62,6 +87,7 @@ export function KeysSection({ view }: { view: KeysView }) {
 
             return (
               <CredentialKeyCard
+                elementId={credentialRowElementId(key)}
                 expanded={openKey === key}
                 info={info}
                 key={key}

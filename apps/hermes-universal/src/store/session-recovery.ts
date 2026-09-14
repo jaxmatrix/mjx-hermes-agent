@@ -22,8 +22,8 @@
  *    against a session they are no longer looking at.
  */
 
-import { requestGateway } from '@/store/gateway'
-import { knownSessionProfile, resolveSessionProfile, sessionProfileIsAmbiguous } from '@/store/session'
+import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
+import { requestForSession } from '@/store/session-request-router'
 import { aliasStoredSessionId, rekeySession, runtimeKeyForStoredSession } from '@/store/session-state-types'
 
 /** Does this rejection mean "that runtime id no longer exists"? The gateway
@@ -109,20 +109,22 @@ export interface SessionRecoveryDeps {
  * `omit_messages` because this is a REBIND, not an open: the transcript is
  * already on screen and re-fetching it would repaint the chat mid-action.
  *
- * The profile probe is gated on `sessionProfileIsAmbiguous()` for the reason
- * recorded on MJXHRM-81: awaiting a resolution unconditionally defers the
- * resume by a microtask, which is long enough for a concurrent open to overtake
- * it. A single-profile install and an already-stamped row both answer
- * synchronously, so the resume still goes out in the same tick.
+ * The owning-profile probe now lives inside `requestForSession`, still gated on
+ * `sessionProfileIsAmbiguous()` for the reason recorded on MJXHRM-81: awaiting a
+ * resolution unconditionally defers the resume by a microtask, which is long
+ * enough for a concurrent open to overtake it. A single-profile install and an
+ * already-stamped row both answer synchronously, so the resume still goes out in
+ * the same tick.
  */
 export async function resumeStoredRuntimeSession(storedSessionId: string): Promise<null | string> {
-  const known = knownSessionProfile(storedSessionId)
-  const profile = known ?? (sessionProfileIsAmbiguous() ? await resolveSessionProfile(storedSessionId) : undefined)
-
-  const resumed = await requestGateway<{ session_id?: string }>('session.resume', {
+  // ROUTED: `requestForSession` resolves the owner through the same two fast
+  // paths and then re-reads the ROUTE inside the dispatch, so a soft switch
+  // landing across the probe cannot send this rebind to a backend that never
+  // held the session.
+  const resumed = await requestForSession<{ session_id?: string }>(storedSessionId, 'session.resume', {
     session_id: storedSessionId,
     omit_messages: true,
-    ...(profile ? { profile } : {})
+    ...SESSION_SOURCE_PARAMS
   })
 
   return resumed?.session_id ?? null

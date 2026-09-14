@@ -30,6 +30,38 @@ export const isArtifactTab = (path: string): boolean => path.startsWith(ARTIFACT
 
 export const artifactIdFromTab = (path: string): string => path.slice(ARTIFACT_TAB_PREFIX.length)
 
+/**
+ * The in-app browser's one tab (MJXHRM-447).
+ *
+ * A SINGLETON: every URL collapses onto this one path, because the tab names
+ * the SURFACE and not the page — the same rule desktop's `BROWSER_TAB_ID`
+ * states. File tabs stay keyed by their path and artifact tabs by
+ * `artifact:<id>`; only the web surface behaves this way, and it is what stops
+ * a chatty agent from stacking twelve tabs onto the rail.
+ *
+ * It lives here rather than in `store/browser.ts` so this leaf module can name
+ * it without importing the browser store (which imports this one).
+ * `store/browser.ts` re-exports both, and that is the door the rest of the app
+ * uses.
+ */
+export const BROWSER_TAB_PATH = 'url:browser'
+
+export const isBrowserTab = (path: string): boolean => path === BROWSER_TAB_PATH
+
+/** Open (or re-front, and re-label) the one browser tab. */
+export function openBrowserPreviewTab(title: string): void {
+  const tabs = $previewTabs.get()
+  const name = title || 'Browser'
+
+  $previewTabs.set(
+    tabs.some(tab => tab.path === BROWSER_TAB_PATH)
+      ? tabs.map(tab => (tab.path === BROWSER_TAB_PATH ? { name, path: BROWSER_TAB_PATH } : tab))
+      : [...tabs, { name, path: BROWSER_TAB_PATH }]
+  )
+
+  $activePreviewPath.set(BROWSER_TAB_PATH)
+}
+
 // Live preview-server restart status (verbatim from desktop store/preview.ts).
 // Universal doesn't drive preview-server restarts yet, but the ported activity
 // rail (store/activity.ts) consumes this shape; callers pass null until wired.
@@ -116,7 +148,13 @@ export function openArtifactPreviewTab(artifactId: string, title: string): void 
  */
 function forgetPreviewPath(path: string): void {
   forgetPreviewView(path)
-  setPreviewDirty(path, false)
+
+  // The dirty map is a FILE concept — a browser tab can never hold unsaved
+  // edits, and writing `false` for it would seed an entry for a path nothing
+  // else prunes.
+  if (!isBrowserTab(path)) {
+    setPreviewDirty(path, false)
+  }
 }
 
 /** Drop every artifact tab — the registry they reference is gone. */

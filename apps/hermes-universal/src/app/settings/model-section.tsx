@@ -21,8 +21,11 @@ import {
 } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { AlertTriangle, Cpu, Loader2 } from '@/lib/icons'
+import { queryClient } from '@/lib/query-client'
+import { REASONING_EFFORT_VALUES } from '@/lib/reasoning-effort'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
+import { setCurrentModel, setCurrentProvider } from '@/store/model'
 import { notifyError } from '@/store/notifications'
 import { beginProviderConnect, openOnboarding, resolveProviderSetup } from '@/store/onboarding'
 import { $activeGatewayProfile } from '@/store/profile'
@@ -88,10 +91,6 @@ export function ModelSettingsSkeleton() {
     </div>
   )
 }
-
-// Hermes' reasoning levels (VALID_REASONING_EFFORTS); `none` = thinking off.
-// Empty config = Hermes default (medium), shown as Medium.
-const EFFORT_VALUES = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
 
 // agent.service_tier stores "fast"/"priority"/"on" for fast; anything else is
 // normal (mirrors tui_gateway _load_service_tier).
@@ -511,6 +510,16 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
 
   const reasoningSupported = mainCaps?.reasoning ?? true
   const fastSupported = mainCaps?.fast ?? false
+  // Settings has no Thinking switch — "off" is the `none` entry in this Select,
+  // so desktop's hidden toggle (`d15cd18fa1`) is a dropped OPTION here. A route
+  // the catalog marks reasoning-mandatory answers 400 to a disable, and leaving
+  // the entry in offers a default the agent can never actually run.
+  // `undefined` = the catalog did not say, so keep offering it.
+  const canDisableReasoning = mainCaps?.can_disable_reasoning !== false
+
+  const effortOptions = canDisableReasoning
+    ? REASONING_EFFORT_VALUES
+    : REASONING_EFFORT_VALUES.filter(value => value !== 'none')
 
   // Hand-written `reasoning_effort: false`/`off` reaches us as boolean false
   // ("false" once stringified) — show it as Off, not an empty select.
@@ -844,7 +853,7 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {EFFORT_VALUES.map(value => (
+                    {effortOptions.map(value => (
                       <SelectItem key={value} value={value}>
                         {value === 'none' ? m.reasoningOff : t.shell.modelOptions[effortLabelKey(value)]}
                       </SelectItem>
@@ -1294,5 +1303,22 @@ export function ModelSection() {
   // The 3-section ModelSettings renders above the schema fields (context length,
   // fallback providers) inside the section's single scroll container — exactly
   // like desktop config-settings.
-  return <ConfigSection headerSlot={<ModelSettings />} sectionId="model" />
+  //
+  // A new default has to reach the composer: `refreshCurrentModel` only fills an
+  // EMPTY selection, so without this the draft pill kept the old name for good
+  // (desktop wires the same callback in contrib/wiring.tsx).
+  return (
+    <ConfigSection
+      headerSlot={
+        <ModelSettings
+          onMainModelChanged={(provider, model) => {
+            setCurrentProvider(provider)
+            setCurrentModel(model)
+            void queryClient.invalidateQueries({ queryKey: ['model-options'] })
+          }}
+        />
+      }
+      sectionId="model"
+    />
+  )
 }

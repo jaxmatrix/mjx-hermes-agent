@@ -58,6 +58,25 @@ export interface TileDockHint {
   pos: DropPosition
   /** Center docks: stack BEFORE this tile id (the strip divider's slot). */
   before?: null | string
+  /**
+   * A STANDING OWNER INVARIANT, not a migration.
+   *
+   * A plain `dock` is consulted once per pane LIFETIME — a pane that has ever
+   * been adopted keeps whatever the user did with it afterwards. `enforce` says
+   * the relationship itself IS the feature: the tile is half of a compound
+   * surface with its anchor (Bot Mode's BOTS tab IS the sessions strip's second
+   * tab), so every BOOT's first adoption pass re-homes it there, overriding a
+   * persisted user placement — including one recorded in `$userPlacedPanes`.
+   *
+   * Re-homed AT MOST ONCE PER BOOT (`$enforcedDocksThisBoot`), so an
+   * intra-session drag sticks until the next launch and there is never a
+   * tug-of-war. The same pass forces the landing zone's header SHOWN: an
+   * enforced tab must be REACHABLE, not merely co-located, or the anchor
+   * disappears behind it with no way back.
+   *
+   * A preference belongs in `dock` alone.
+   */
+  enforce?: boolean
 }
 
 /**

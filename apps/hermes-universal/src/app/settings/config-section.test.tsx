@@ -13,17 +13,20 @@ vi.mock('@/hermes', () => ({
       timezone: { type: 'string' }
     }
   })),
-  saveHermesConfig: vi.fn(async () => ({ ok: true }))
+  saveHermesConfig: vi.fn(async () => ({ ok: true })),
+  // The "Applies to" chips refresh the roster on mount.
+  getProfiles: vi.fn(async () => ({ profiles: [] }))
 }))
 
 import { act } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
-import { getHermesConfigRecord, saveHermesConfig } from '@/hermes'
+import { getHermesConfigRecord, getHermesConfigSchema, saveHermesConfig } from '@/hermes'
 import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 import { $approvalModes } from '@/store/approval-mode'
-import { setActiveProfile } from '@/store/profiles'
+import { $profiles, setActiveProfile } from '@/store/profiles'
+import { $settingsScopeOverride } from '@/store/settings-scope'
 
 import { ConfigField, ConfigSection } from './config-section'
 import { getNested } from './helpers'
@@ -98,6 +101,65 @@ describe('ConfigSection', () => {
     expect(save).not.toHaveBeenCalled()
   })
 
+  /**
+   * MJXHRM-443 — the two silent-data-loss shapes of the 08-20 contract delta.
+   * A save PUTs the WHOLE draft back, so every untouched key rides along; the
+   * question is whether it rides along unchanged. `agent.max_turns` is null =
+   * unlimited (DEFAULT_CONFIG, not a migration), and an unset `stt.provider` is
+   * what makes the backend's autodetect ladder run. Coercing either on the way
+   * out silently re-caps every run / pins every fresh install to faster-whisper.
+   */
+  describe('values the user never touched', () => {
+    it('writes back a null agent.max_turns as null, not 0 or a default', async () => {
+      vi.mocked(getHermesConfigRecord).mockResolvedValue({ agent: { api_max_retries: 3, max_turns: null } })
+      vi.mocked(getHermesConfigSchema).mockResolvedValue({
+        fields: { 'agent.api_max_retries': { type: 'number' }, 'agent.max_turns': { type: 'number' } }
+      })
+
+      renderSection('advanced')
+
+      // Both rows render; edit the OTHER one so max_turns is only along for the
+      // ride — which is exactly the case a coercing save loses.
+      const inputs = await screen.findAllByRole('spinbutton')
+      // Both declared rows plus timeouts.tools.sequential_call, which renders
+      // from FALLBACK_FIELD_SCHEMA with nothing seeding it.
+      expect(inputs).toHaveLength(3)
+      // Pick the field by its VALUE: a null max_turns renders as an empty box,
+      // so an index would silently drift if the section order changed.
+      const retries = inputs.find(input => (input as HTMLInputElement).value === '3')
+
+      expect(retries).toBeDefined()
+      fireEvent.change(retries!, { target: { value: '5' } })
+
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 1500 })
+
+      const saved = save.mock.calls[0][0]
+      expect(getNested(saved, 'agent.api_max_retries')).toBe(5)
+      expect(getNested(saved, 'agent.max_turns')).toBeNull()
+    })
+
+    it('leaves an unset stt.provider unset instead of writing local back', async () => {
+      // A fresh install: stt exists, provider does not, and the backend schema
+      // no longer declares it either (the seed removal stranded its override).
+      vi.mocked(getHermesConfigRecord).mockResolvedValue({ stt: { echo_transcripts: true } })
+      vi.mocked(getHermesConfigSchema).mockResolvedValue({ fields: { 'stt.echo_transcripts': { type: 'boolean' } } })
+
+      renderSection('voice')
+
+      // The picker still renders — that is FALLBACK_FIELD_SCHEMA doing its job.
+      expect(await screen.findByRole('combobox')).toBeInTheDocument()
+
+      fireEvent.click(await screen.findByRole('switch'))
+
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 1500 })
+
+      const saved = save.mock.calls[0][0]
+      expect(getNested(saved, 'stt.echo_transcripts')).toBe(false)
+      expect(getNested(saved, 'stt.provider')).toBeUndefined()
+      expect(Object.prototype.hasOwnProperty.call(saved.stt as object, 'provider')).toBe(false)
+    })
+  })
+
   // MJXHRM-399. `approvals.mode` has three writers — this panel (Safety), the
   // statusbar's Zap menu, and `/approvals` — and one cached reader,
   // `$approvalModes`, which the menu fills when it mounts and nothing else ever
@@ -168,5 +230,59 @@ describe('ConfigField', () => {
     )
 
     expect(screen.getByRole('combobox').textContent).toContain('Built-in only')
+  })
+})
+
+// The "Applies to" selector points the WHOLE page at another profile. The
+// fixture disagrees with the app's active profile (null = default) so a save
+// that ignored the scope would still write, just to the wrong profile — which
+// is exactly the bug the assertion has to catch.
+describe('ConfigSection "Applies to" scope', () => {
+  beforeEach(() => {
+    save.mockClear()
+    vi.mocked(getHermesConfigRecord).mockClear()
+    vi.mocked(getHermesConfigSchema).mockClear()
+    queryClient.clear()
+    setActiveProfile(null)
+    // Earlier describes leave their own mockResolvedValue on these two; restate
+    // the fixture so this block reads the schema it asserts against.
+    vi.mocked(getHermesConfigRecord).mockResolvedValue({ display: { show_reasoning: false }, timezone: 'UTC' })
+    vi.mocked(getHermesConfigSchema).mockResolvedValue({
+      fields: { 'display.show_reasoning': { type: 'boolean' }, timezone: { type: 'string' } }
+    })
+    $profiles.set([
+      { has_env: true, is_default: true, model: null, name: 'default', path: '/h', provider: null, skill_count: 0 },
+      { has_env: true, is_default: false, model: null, name: 'research', path: '/h/r', provider: null, skill_count: 0 }
+    ])
+    $settingsScopeOverride.set('research')
+  })
+  afterEach(() => {
+    queryClient.clear()
+    setActiveProfile(null)
+    $settingsScopeOverride.set(null)
+    $profiles.set([])
+  })
+
+  it('loads and autosaves the scoped profile, not the active one', async () => {
+    renderSection()
+    const toggle = await screen.findByRole('switch')
+
+    expect(getHermesConfigRecord).toHaveBeenCalledWith('research')
+    expect(getHermesConfigSchema).toHaveBeenCalledWith('research')
+
+    fireEvent.click(toggle)
+
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 1500 })
+    expect(save.mock.calls[0][1]).toBe('research')
+  })
+
+  // Without the scope in the cache key, profile A's record would paint under
+  // profile B's chip — the page would claim to edit one and show the other.
+  it('caches the scoped record under its own query key', async () => {
+    renderSection()
+    await screen.findByRole('switch')
+
+    expect(queryClient.getQueryData(['hermes-config-record', 'research'])).toBeTruthy()
+    expect(queryClient.getQueryData(['hermes-config-record'])).toBeUndefined()
   })
 })

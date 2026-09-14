@@ -40,6 +40,7 @@
 
 import { setSessionPinnedRemote } from '@/hermes'
 import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
+import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import {
   $pinnedSessionCache,
   $sessions,
@@ -50,6 +51,7 @@ import {
   sessionPinId
 } from '@/store/session'
 import { ownsPersistedAppState } from '@/store/windows'
+import type { SessionInfo } from '@/types/hermes'
 
 // pin ids we've successfully PATCHed pinned=true this session.
 const mirrored = new Set<string>()
@@ -69,6 +71,38 @@ const WRITE_GUARD_MS = 10_000
 
 function profileFor(pinId: string): null | string | undefined {
   return $sessions.get().find(row => sessionMatchesStoredId(row, pinId))?.profile
+}
+
+/**
+ * One authoritative row per durable pin id. Session ids are only unique inside
+ * a profile, so the cross-profile list can legitimately hold two rows with the
+ * same `sessionPinId` but different `pinned` flags (copied/imported profile
+ * databases). Iterating both would pin then unpin the same id in one pass and
+ * re-fire `reconcile` forever — the runaway that overflows nanostores'
+ * listenerQueue. Collapse to a single row per id, preferring the active
+ * gateway's profile, so the pull is deterministic and never oscillates.
+ */
+function rowsByPinId(rows: readonly SessionInfo[]): Map<string, SessionInfo> {
+  const byId = new Map<string, SessionInfo>()
+  const gateway = normalizeProfileKey($activeGatewayProfile.get())
+
+  for (const row of rows) {
+    const pinId = sessionPinId(row)
+    const existing = byId.get(pinId)
+
+    if (!existing) {
+      byId.set(pinId, row)
+
+      continue
+    }
+
+    // Prefer the active gateway's profile; otherwise keep the first seen.
+    if (normalizeProfileKey(row.profile) === gateway && normalizeProfileKey(existing.profile) !== gateway) {
+      byId.set(pinId, row)
+    }
+  }
+
+  return byId
 }
 
 /** PATCH the flag, guarding reads against pages that predate the write. */
@@ -103,7 +137,7 @@ function writePin(id: string, pinned: boolean, profile?: null | string): Promise
 function pullRemotePins(): void {
   const local = new Set($pinnedSessionIds.get())
 
-  for (const row of $sessions.get()) {
+  for (const row of rowsByPinId($sessions.get()).values()) {
     // A backend without the flag has no opinion; never act on `undefined`.
     if (typeof row.pinned !== 'boolean') {
       continue
@@ -160,7 +194,37 @@ function pullRemotePins(): void {
   }
 }
 
+// Re-entrancy guard, desktop's (0599b66de7). reconcile() is subscribed to BOTH
+// $sessions and $pinnedSessionIds, and pullRemotePins() mutates
+// $pinnedSessionIds (via pinSession/unpinSession) — so the pull re-enters
+// reconcile through a listener.
+//
+// Knowingly untestable, and said plainly: neutralising this guard leaves the
+// whole suite green, because nanostores QUEUES a listener fired during an
+// in-progress notify rather than calling it re-entrantly. That queueing is the
+// bug — the oscillation grows `listenerQueue` until `Array.push` throws
+// `RangeError: Invalid array length` — and `rowsByPinId` above is what actually
+// stops it (drop the dedup and this file's suite kills the test worker). The
+// guard is kept for the case the queue does not cover: a future DIRECT call to
+// reconcile() from inside the pull. Same reasoning as the `pending` fence at
+// the top of pullRemotePins, and desktop carries it too.
+let reconciling = false
+
 function reconcile(): void {
+  if (reconciling) {
+    return
+  }
+
+  reconciling = true
+
+  try {
+    reconcileInner()
+  } finally {
+    reconciling = false
+  }
+}
+
+function reconcileInner(): void {
   // One writer per install. A satellite or activity window shares this origin's
   // localStorage, so letting it adopt rows too would have two windows authoring
   // the same persisted set (and double every PATCH).

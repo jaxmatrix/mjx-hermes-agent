@@ -26,6 +26,23 @@ import type { SessionResumeResponse } from '@/types/hermes'
 const MAX_CHOICE_LENGTH = 200
 
 /**
+ * The backend labels the agent's recommended option by appending this to the
+ * FIRST choice (`tools/clarify_tool.py::mark_recommended`) — there is no
+ * `recommended` field on the wire, the label is baked into the choice string
+ * itself and `strip_recommended` takes it back off the answer server-side.
+ *
+ * So the renderer never writes it: it only styles it, and discounts it when
+ * measuring a choice so a long option is not dropped for length the label
+ * added. The answer goes back VERBATIM, label and all — the tool strips it
+ * before the model ever sees it.
+ */
+export const RECOMMENDED_LABEL = '(Recommended)'
+
+/** The choice without its recommendation label, for measuring and rendering. */
+export const bareChoice = (choice: string): string =>
+  choice.endsWith(RECOMMENDED_LABEL) ? choice.slice(0, -RECOMMENDED_LABEL.length).trim() : choice
+
+/**
  * The choices worth rendering. Anything blank, over-long, or multi-line is
  * dropped rather than rendered badly; an empty result means "free text only",
  * which the panel already handles.
@@ -39,9 +56,87 @@ export function normalizeChoices(choices: unknown): string[] {
     (choice): choice is string =>
       typeof choice === 'string' &&
       choice.trim().length > 0 &&
-      choice.length <= MAX_CHOICE_LENGTH &&
+      bareChoice(choice).length <= MAX_CHOICE_LENGTH &&
       !choice.includes('\n')
   )
+}
+
+/**
+ * One question of a batch clarify.
+ *
+ * `qid` is the gateway's wire id (`q0`..`qN`, `tui_gateway/server.py`'s
+ * `_batch_clarify`), NOT the model's own `id` — `clarify.respond` keys the
+ * per-question lock by it and answers a `4002` to anything else.
+ */
+export interface ClarifyQuestion {
+  qid: string
+  question: string
+  choices: string[] | null
+  multiSelect: boolean
+}
+
+/**
+ * The `questions[]` of a batch `clarify.request`, made safe to render.
+ *
+ * Same hygiene as `normalizeChoices` one level up: an entry with no `qid` can
+ * never be answered (the lock would 4002), and one with no question text
+ * renders an unlabelled block, so both are dropped. `multi_select` is only
+ * honored alongside surviving choices — there is nothing to multi-pick from in
+ * a free-text question. An empty result means "not a batch", and the caller
+ * falls back to the single-question shape rather than mounting an
+ * unanswerable form.
+ */
+export function normalizeQuestions(questions: unknown): ClarifyQuestion[] {
+  if (!Array.isArray(questions)) {
+    return []
+  }
+
+  const normalized: ClarifyQuestion[] = []
+
+  for (const entry of questions) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue
+    }
+
+    const row = entry as Record<string, unknown>
+    const qid = typeof row.qid === 'string' ? row.qid.trim() : ''
+    const question = typeof row.question === 'string' ? row.question.trim() : ''
+
+    if (!qid || !question) {
+      continue
+    }
+
+    const choices = normalizeChoices(row.choices)
+
+    normalized.push({
+      choices: choices.length > 0 ? choices : null,
+      multiSelect: row.multi_select === true && choices.length > 0,
+      qid,
+      question
+    })
+  }
+
+  return normalized
+}
+
+/**
+ * The per-question answers the gateway has already locked, as replayed on a
+ * reconnect (`answers` on the resumed `clarify.request` payload —
+ * `_pending_clarify_request_payload`). Non-string values are dropped rather
+ * than staged as `[object Object]`.
+ */
+export function readLockedAnswers(answers: unknown): Record<string, string> | undefined {
+  if (typeof answers !== 'object' || answers === null) {
+    return undefined
+  }
+
+  const locked = Object.fromEntries(
+    Object.entries(answers as Record<string, unknown>).filter(
+      (pair): pair is [string, string] => typeof pair[1] === 'string'
+    )
+  )
+
+  return Object.keys(locked).length > 0 ? locked : undefined
 }
 
 /**
@@ -112,13 +207,34 @@ export function applyResumedClarify(key: string, resumed: Pick<SessionResumeResp
 
   const payload = pending.payload ?? {}
   const requestId = coerceText(payload.request_id)
+  const questions = normalizeQuestions(payload.questions)
   const question = coerceText(payload.question)
 
-  if (!requestId || !question) {
+  if (!requestId || (!question && questions.length === 0)) {
     return
   }
 
-  setSessionClarify(key, { requestId, question, choices: readChoices('gateway', question, payload.choices) })
+  setSessionClarify(
+    key,
+    questions.length > 0
+      ? {
+          requestId,
+          // A batch carries no top-level question; the card reads `questions`.
+          question: '',
+          choices: null,
+          questions,
+          // The half a batch resume has that a live batch event does not: the
+          // answers already locked server-side, so the card comes back with its
+          // ✓s instead of presenting settled questions as unanswered.
+          lockedAnswers: readLockedAnswers(payload.answers)
+        }
+      : {
+          requestId,
+          question,
+          choices: readChoices('gateway', question, payload.choices),
+          ...(payload.multi_select === true ? { multiSelect: true } : {})
+        }
+  )
   updateSession(key, state =>
     reduceSessionState(state, { type: 'clarify.request' } as GatewayEvent, payload as Record<string, unknown>)
   )

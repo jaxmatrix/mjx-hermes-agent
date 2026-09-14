@@ -18,6 +18,7 @@ const UNSCOPED_STREAM_EVENT_TYPES = new Set([
   'browser.progress',
   'clarify.request',
   'error',
+  'mcp.setup.request',
   'message.complete',
   'message.delta',
   'message.start',

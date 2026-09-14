@@ -441,6 +441,36 @@ function overlayProjectionRow(projection: ChatMessage, journalRow: ChatMessage):
 }
 
 /**
+ * Whether every recoverable assistant row in the journal tail already exists as
+ * committed text in the base transcript. When true the journal outlived the
+ * turn it recorded, and appending it would re-render the same answers at the
+ * end of the conversation.
+ *
+ * `tailAssistants` is already filtered to recoverable rows by the caller, so an
+ * empty list means there is nothing to compare and the answer is "no" — never
+ * treat a contentless tail as caught up.
+ */
+function journalTailAlreadyCommitted(tailAssistants: ChatMessage[], base: ChatMessage[]): boolean {
+  if (tailAssistants.length === 0) {
+    return false
+  }
+
+  const baseTexts = new Set(
+    base
+      .filter(message => message.role === 'assistant' && !(message as { hidden?: boolean }).hidden)
+      .map(message => normalizedText(chatMessageText(message)))
+  )
+
+  return tailAssistants.every(message => {
+    const text = normalizedText(chatMessageText(message))
+
+    // Error-only rows carry no text to verify against — keep the conservative
+    // append path rather than risk dropping a recoverable failure.
+    return text.length > 0 && baseTexts.has(text)
+  })
+}
+
+/**
  * Fold a journaled tail onto a freshly-hydrated transcript.
  *
  * Three outcomes:
@@ -492,6 +522,15 @@ export function mergeInFlightMessages(
   const journalRow = tailAssistants[tailAssistants.length - 1]
 
   if (baseUserIndex < 0) {
+    // ...unless the journal simply outlived the turn it recorded. A reclaim,
+    // reconnect or restart race skips the settle that clears the entry, and on
+    // the next resume its assistant rows carry ids the committed rows do not,
+    // so `withoutBaseIds` waves them through and the conversation ends with the
+    // same answers appended again, out of order. Ids cannot see that; text can.
+    if (journalTailAlreadyCommitted(tailAssistants, base)) {
+      return { ...settled, caughtUp: true }
+    }
+
     // The turn never reached the backend's history at all. The journal is the
     // only copy of it.
     const rows = withoutBaseIds(tail, base)

@@ -149,6 +149,80 @@ export default [
     }
   },
   {
+    // THE PLUGIN FENCE: a plugin speaks `@hermes/plugin-sdk` (+ react), never
+    // `@/…` internals — the same isolation a runtime-fetched published plugin
+    // gets, enforced on the BUNDLED ones so the SDK surface stays honest.
+    //
+    // An in-tree plugin is compiled with the app, so nothing STRUCTURALLY stops
+    // it importing `@/store/…`. That is exactly the hazard: the first time one
+    // does, the app's most demanding plugin stops being a test of the SDK and
+    // every door it should have needed goes unbuilt — which is what makes Bot
+    // Mode's "still missing" list true or a fiction. Ported from
+    // `apps/desktop/eslint.config.mjs`, which has carried this rule since its
+    // own plugin tree existed.
+    //
+    // A test file beside a plugin is exempt: it is not shipped to a plugin host
+    // and needs the app's test doubles.
+    files: ['src/plugins/**/*.{ts,tsx}'],
+    ignores: ['src/plugins/**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              // `@/*` is the app; `../../*` is an escape from the plugin's own
+              // tree (its sibling plugins, and `src/` beyond them). A plain
+              // `../*` is NOT banned — a plugin is a module tree, and forbidding
+              // `../ids` would force every plugin into one file.
+              group: ['@/*', '../../*', '@hermes/shared'],
+              message:
+                'Plugins import only @hermes/plugin-sdk (and react). Missing something? Add it to the SDK — that is the point.'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    // The browser's own modal dialogs are banned in this app (MJXHRM-479). Two
+    // separate traps, hence two rules:
+    //
+    //  - `window.confirm` BLOCKS the webview's event loop, cannot be styled,
+    //    themed, translated or given an Enter/Esc contract, and on Android it
+    //    renders as a bare system dialog over a themed app. Six of them had
+    //    quietly survived here. Use `confirm()` from `@/store/confirm` (backed
+    //    by the one `<ConfirmHost />` in `app.tsx`) or mount `<ConfirmDialog>`.
+    //
+    //  - the BARE global is the nastier one: forget the import and `confirm({…})`
+    //    still resolves — to `window.confirm` — so lint stays green and the app
+    //    ships a native popup reading "[object Object]". Only `tsc` catches that
+    //    today, by argument type, which is one refactor away from not catching
+    //    it. This rule names it directly.
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        {
+          message: "Import { confirm } from '@/store/confirm' — the bare global silently resolves to window.confirm.",
+          name: 'confirm'
+        },
+        { message: 'Use notify() from @/store/notifications.', name: 'alert' },
+        { message: 'Use a ConfirmDialog or a real input surface.', name: 'prompt' }
+      ],
+      'no-restricted-properties': [
+        'error',
+        {
+          message: "Blocks the event loop and cannot be themed or translated. Use confirm() from '@/store/confirm'.",
+          object: 'window',
+          property: 'confirm'
+        },
+        { message: 'Use notify() from @/store/notifications.', object: 'window', property: 'alert' },
+        { message: 'Use a ConfirmDialog or a real input surface.', object: 'window', property: 'prompt' }
+      ]
+    }
+  },
+  {
     // The perf bench is a plain script served straight to the browser, not part
     // of the app's module graph — it has no TS build step and legitimately uses
     // script-scope globals.

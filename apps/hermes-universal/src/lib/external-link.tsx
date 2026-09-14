@@ -73,6 +73,65 @@ export async function openExternalLink(url: string): Promise<void> {
   }
 }
 
+/**
+ * Does this click want the OS browser rather than the in-app one?
+ *
+ * Desktop's rule, kept exactly: the platform modifier and the middle button are
+ * the escape hatch, and everything else stays in Hermes. Middle-click needs its
+ * own handler because it never fires `click` — the `auxclick` event is the only
+ * one it produces, and forgetting that is how "middle-click opens two tabs" and
+ * "middle-click does nothing" both happen.
+ */
+export function wantsNativeBrowser(event: {
+  button?: number
+  ctrlKey?: boolean
+  metaKey?: boolean
+  shiftKey?: boolean
+}): boolean {
+  if (event.button === 1) {
+    return true
+  }
+
+  // ⌘ on macOS, Ctrl elsewhere — the same modifier that opens a new tab in
+  // every browser. Shift is a new WINDOW, which is equally "not here".
+  return !!(event.metaKey || event.ctrlKey || event.shiftKey)
+}
+
+/**
+ * THE link funnel. Every `<ExternalLink>` in the app goes through it.
+ *
+ * http(s) opens in the in-app browser when the user has left that on and the
+ * platform has a guest host; everything else — `mailto:`, `tel:`, an installed
+ * app's scheme, a ⌘-click, a middle-click — goes to the OS. The pane exists so
+ * that reading a doc does not cost a context switch out of Hermes, AND so that
+ * the surface is one the agent can read; a per-call-site opt-in would leave
+ * most links outside both.
+ *
+ * The browser store is imported LAZILY: this module is a leaf that every
+ * surface pulls in, and the store reaches the whole Tauri command layer.
+ */
+export async function openLink(href: string, options: { native?: boolean } = {}): Promise<void> {
+  const target = normalizeExternalUrl(href)
+
+  if (options.native || !/^https?:\/\//i.test(target)) {
+    await openExternalLink(target)
+
+    return
+  }
+
+  try {
+    const { $openLinksInApp, openInAppBrowser } = await import('@/store/browser')
+
+    if ($openLinksInApp.get() && (await openInAppBrowser(target))) {
+      return
+    }
+  } catch {
+    // A browser store that cannot load is not a reason to swallow the click.
+  }
+
+  await openExternalLink(target)
+}
+
 export function normalizeExternalUrl(value: string): string {
   const trimmed = value.trim()
 
@@ -292,6 +351,18 @@ export function ExternalLink({
     <a
       className={cn('ref', className)}
       href={target}
+      onAuxClick={event => {
+        // Middle-click never fires `click`, so without this the escape hatch
+        // simply does not exist — and the browser's own default would navigate
+        // the APP document away.
+        if (event.button !== 1) {
+          return
+        }
+
+        event.stopPropagation()
+        event.preventDefault()
+        void openLink(target, { native: true })
+      }}
       onClick={event => {
         event.stopPropagation()
         onClick?.(event)
@@ -301,7 +372,7 @@ export function ExternalLink({
         }
 
         event.preventDefault()
-        void openExternalLink(target)
+        void openLink(target, { native: wantsNativeBrowser(event) })
       }}
       rel="noopener noreferrer"
       target="_blank"

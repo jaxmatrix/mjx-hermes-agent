@@ -94,9 +94,14 @@ def test_bulk_delete_sessiondb_work_runs_off_event_loop(monkeypatch):
     db_modes: list[bool] = []
 
     class _DB:
-        def delete_sessions(self, ids):
+        def delete_sessions(self, ids, *, include_compression_lineage=False):
             db_threads.append(threading.get_ident())
             assert ids == ["one", "two"]
+            # Bulk delete takes whole compression chains (MJXHRM-414,
+            # web_routers/sessions.py). Defaulting to False rather than
+            # swallowing the kwarg means this fake fails loudly if the caller
+            # ever stops asking for the lineage.
+            assert include_compression_lineage is True
             return 2
 
         def close(self):

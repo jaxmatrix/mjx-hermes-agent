@@ -55,17 +55,20 @@
  *   before clearing someone else's live turn.
  */
 
+import { sealOpenToolParts } from '@/lib/chat-messages'
 import { $gatewayState, requestGateway } from '@/store/gateway'
 import { clearLiveSessionStatuses, type LiveSessionStatus, setLiveSessionStatuses } from '@/store/live-session-registry'
 import { $changeEventsAvailable, $sessionsChangeTick } from '@/store/live-sync'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import {
-  $activeStoredSessionId,
   $unreadFinishedSessionIds,
   refreshMessagingSessions,
-  refreshSessions
+  refreshSessions,
+  sameStoredSession,
+  unreadPersistenceHooks
 } from '@/store/session'
 import {
+  $focusedStoredSessionId,
   $sessionStates,
   publishSessionState,
   runtimeKeyForStoredSession,
@@ -221,7 +224,13 @@ export function rehydrateLiveSessionStatuses(
   // registry diff instead, or a cron / messaging / TUI turn finishing while
   // nothing local held the session would never raise "your turn".
   for (const storedSessionId of setLiveSessionStatuses(profileKey, live)) {
-    if (runtimeKeyForStoredSession(storedSessionId) || storedSessionId === $activeStoredSessionId.get()) {
+    // Same FOCUS gate as the local busy→idle edge: a session the user is
+    // looking at in a tile is not "finished while you were away", and a tile is
+    // never `$activeStoredSessionId`.
+    if (
+      runtimeKeyForStoredSession(storedSessionId) ||
+      sameStoredSession(storedSessionId, $focusedStoredSessionId.get())
+    ) {
       continue
     }
 
@@ -230,6 +239,8 @@ export function rehydrateLiveSessionStatuses(
     if (!unread.includes(storedSessionId)) {
       $unreadFinishedSessionIds.set([...unread, storedSessionId])
     }
+
+    unreadPersistenceHooks()?.markFinished(storedSessionId)
   }
 }
 
@@ -255,7 +266,11 @@ function reapVanishedRuntimes(seen: Map<string, string>, profileKey: string): vo
     const key = runtimeKeyForStoredSession(storedSessionId)
     const existing = key ? $sessionStates.get()[key] : undefined
 
-    if (!existing?.busy && !existing?.needsInput) {
+    // `awaitingResponse` too: a turn whose submit was acknowledged but whose
+    // stream never started sits `awaitingResponse: true, busy: false`, and a
+    // gate that only asks about `busy`/`needsInput` never reaps it — the
+    // session stays "waiting" forever after its runtime vanished.
+    if (!existing?.busy && !existing?.needsInput && !existing?.awaitingResponse) {
       continue
     }
 
@@ -271,6 +286,10 @@ function reapVanishedRuntimes(seen: Map<string, string>, profileKey: string): vo
       ...existing,
       awaitingResponse: false,
       busy: false,
+      // The turn ended without its completion events reaching us — a lost
+      // `tool.complete` would otherwise leave a spinning tool row in a session
+      // the UI now shows as idle. Seal the same way the settle path does.
+      messages: sealOpenToolParts(existing.messages),
       needsInput: false,
       streamId: null,
       turnStartedAt: null

@@ -22,7 +22,9 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { COMPOSER_AREAS, type ComposerAtCompletionSource } from '@/app/chat/composer/contrib'
 import { refChipElement } from '@/app/chat/composer/rich-editor'
+import { registry } from '@/contrib/registry'
 import { queryClient } from '@/lib/query-client'
 
 import { classify, useAtCompletions } from './use-at-completions'
@@ -247,5 +249,89 @@ describe('de-duplication', () => {
     await search(result, 'src/')
 
     expect(words.length).toBe(2)
+  })
+})
+
+// ── contributed sources (MJXHRM-455) ─────────────────────────────────────────
+// `composer.atCompletions` is what MJXHRM-445's bot handles land in. The rows
+// merge ABOVE the path results, and a broken source drops its own rows only.
+
+describe('contributed @ sources', () => {
+  const registered: (() => void)[] = []
+
+  const contribute = (id: string, provide: ComposerAtCompletionSource['provide']) => {
+    registered.push(registry.register({ area: COMPOSER_AREAS.atCompletions, data: { provide }, id, source: 'test' }))
+  }
+
+  afterEach(() => {
+    registered.splice(0).forEach(dispose => dispose())
+  })
+
+  const labels = async (query: string) => {
+    const { result } = setup()
+    await search(result, query)
+
+    return (result.current.adapter.search?.(query) as { label: string }[]).map(item => item.label)
+  }
+
+  it('is byte-identical to today when no source is registered', async () => {
+    expect(await labels('apps/')).toEqual(['apps/desktop/'])
+  })
+
+  it('sorts contributed rows ABOVE the path results', async () => {
+    contribute('bots', () => [{ display: '@researcher', insert: '@researcher', meta: 'Bot' }])
+
+    expect(await labels('apps/')).toEqual(['@researcher', 'apps/desktop/'])
+  })
+
+  it('passes the query through, without the leading @', async () => {
+    const seen: string[] = []
+    contribute('bots', query => {
+      seen.push(query)
+
+      return []
+    })
+
+    await labels('resea')
+
+    expect(seen).toContain('resea')
+  })
+
+  it('drops a row with no insertable text rather than offering a dead pick', async () => {
+    contribute('bots', () => [{ insert: '' }, { insert: '@ok' }] as never)
+
+    expect(await labels('apps/')).toEqual(['@ok', 'apps/desktop/'])
+  })
+
+  it('drops ONE throwing source\u2019s rows, never the popover', async () => {
+    contribute('broken', () => {
+      throw new Error('plugin bug')
+    })
+    contribute('bots', () => [{ insert: '@researcher' }])
+
+    // The path results and the healthy source both survive — a completion
+    // popover is not the place to report a plugin bug.
+    expect(await labels('apps/')).toEqual(['@researcher', 'apps/desktop/'])
+  })
+
+  it('still offers contributed rows when the gateway is down', async () => {
+    contribute('bots', () => [{ insert: '@researcher' }])
+
+    const failing = {
+      request: vi.fn(async () => {
+        throw new Error('gateway down')
+      })
+    }
+
+    const { result } = renderHook(() =>
+      useAtCompletions({ gateway: failing as never, sessionId: 's1', cwd: '/repo' })
+    ) as { result: Adapter }
+
+    await search(result, 'fi')
+
+    expect((result.current.adapter.search?.('fi') as { label: string }[]).map(item => item.label)).toEqual([
+      '@researcher',
+      '@file:'
+    ])
   })
 })

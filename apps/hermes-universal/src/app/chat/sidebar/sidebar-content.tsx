@@ -120,9 +120,14 @@ import { WorktreeDialog } from './projects/worktree-dialog'
 import { SidebarPinnedEmptyState } from './section-states'
 import type { SessionDotState } from './session-row-state'
 import { SidebarSessionsSection } from './sessions-section'
+import { stripFtsMarkers } from './strip-fts-markers'
 
 // Synthesize a minimal row for a server search hit not in the loaded page.
 function searchResultToSession(r: SessionSearchResult): SessionInfo {
+  // The snippet arrives wrapped in the FTS layer's '>>>' / '<<<' highlight
+  // markers and is painted as plain text in BOTH fields below.
+  const snippet = stripFtsMarkers(r.snippet ?? '').trim() || null
+
   return {
     _lineage_root_id: r.lineage_root ?? null,
     ended_at: null,
@@ -133,10 +138,10 @@ function searchResultToSession(r: SessionSearchResult): SessionInfo {
     message_count: 0,
     model: r.model,
     output_tokens: 0,
-    preview: r.snippet ?? null,
+    preview: snippet,
     source: r.source,
     started_at: r.session_started ?? 0,
-    title: r.snippet ?? null,
+    title: snippet,
     tool_call_count: 0
   }
 }
@@ -1000,7 +1005,7 @@ export function SidebarScrollBody({
                 onNavigate?.()
               }}
               onToggle={() => setSidebarCronOpen(!cronOpen)}
-              onTriggerJob={id => void triggerCron(id)}
+              onTriggerJob={(id, profile) => void triggerCron(id, profile)}
               open={cronOpen}
             />
           )}

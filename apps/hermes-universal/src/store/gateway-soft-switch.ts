@@ -1,6 +1,8 @@
 import { translateNow } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
+import { clearTranscriptTails } from '@/lib/transcript-tail-cache'
 import { clearArtifactRegistry } from '@/store/artifacts'
+import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import { resetChat } from '@/store/chat'
 import { resetRepoStatusForBackendSwitch } from '@/store/coding-status'
 import { $connection, beginGatewaySwitch, disconnect, endGatewaySwitch } from '@/store/connection'
@@ -8,6 +10,7 @@ import { setCronJobs } from '@/store/cron'
 import { closeGateway } from '@/store/gateway'
 import type { Connection, GatewayMode } from '@/store/gateway-config'
 import { dialSavedTarget, type GatewayTarget, loadGatewayTarget } from '@/store/gateway-restore'
+import { closeAllSecondaries } from '@/store/gateway-secondaries'
 import { $gatewayMode, $gatewaySwitching } from '@/store/gateway-switch'
 import { resetLiveRuntimeTracking } from '@/store/live-session-status'
 import { resetLiveSync } from '@/store/live-sync'
@@ -25,6 +28,7 @@ import {
   $sessionsTotal,
   $unreadFinishedSessionIds,
   clearPinnedSessionCache,
+  forgetLastSessionMarkers,
   refreshMessagingSessions,
   refreshSessions,
   resetSessionsPaging,
@@ -33,6 +37,8 @@ import {
 import { resetSessionPinMirror } from '@/store/session-pin-sync'
 import { clearAllSessionStates, resetTileRuntimeBindings } from '@/store/session-states'
 import { resetArchivedSessionsForBackendSwitch } from '@/store/sidebar-archive'
+import { resetSystemStatusForBackendSwitch } from '@/store/system-status'
+import { clearTranscriptPaint } from '@/store/transcript-paint'
 import { resetWorkspaceCwd } from '@/store/workspace-events'
 
 // The soft gateway switch: re-home the running app onto another gateway in place.
@@ -93,6 +99,16 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // collides with a same-shaped id over there.
   clearArtifactRegistry()
 
+  // Another backend can recycle stored ids, so a cached tail from the previous
+  // one would paint ANOTHER MACHINE'S conversation under a same-named id — worse
+  // than a loader. The remembered-chat marker goes with it: setting
+  // `$activeStoredSessionId` to null below does not clear it (the subscriber
+  // ignores null), so without this the next boot opens backend A's id on
+  // backend B.
+  clearTranscriptTails()
+  clearTranscriptPaint()
+  forgetLastSessionMarkers()
+
   // BEFORE `resetChat`, which reads it. The project tree is the OLD gateway's
   // filesystem — `projects.tree` is a gateway RPC — and the sidebar only
   // re-pulls it on window focus or on entering the grouped view, so a switch
@@ -131,6 +147,20 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // one here. The artifact half of this was already handled above
   // (`clearArtifactRegistry`); file tabs were the half that wasn't.
   closeAllPreviewTabs()
+
+  // The statusbar's gateway health, inference readiness and backend VERSION all
+  // came from the previous backend, and `system-status.ts` only re-polls every
+  // 30 s behind a `$gatewayState === 'open'` guard — so without this the new
+  // gateway is described by the old one's numbers until the next tick (D-1).
+  resetSystemStatusForBackendSwitch()
+  // A registered source's credentials are attached per BASE URL in Rust, so the
+  // secondaries opened against the source we are leaving have to go with it.
+  closeAllSecondaries()
+  // And the in-app browser (MJXHRM-447): a browsed `localhost:5173` names the
+  // OLD machine, and the SSH forward lease behind it is a tunnel into a host we
+  // have stopped talking to. A new host never inherits a tunnel into the old
+  // one (rule 20).
+  forgetBrowserForGatewaySwitch()
 
   // Sidebar skeletons until refreshSessions lands.
   $sessionsLoading.set(true)

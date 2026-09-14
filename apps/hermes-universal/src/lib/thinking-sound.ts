@@ -18,44 +18,13 @@
 // and must not be one, or a conversation that blips forever is one missed render
 // away.
 
+import { getAudioContext } from '@/lib/audio-context'
 import { $hapticsMuted } from '@/store/haptics'
 import type { VoiceConversationState } from '@/store/voice-conversation'
 import { $thinkingSoundEnabled } from '@/store/voice-prefs'
 
-let ctx: AudioContext | null = null
 let timer: null | number = null
 let blipIndex = 0
-
-function getCtx(): AudioContext | null {
-  if (typeof window === 'undefined') {
-    return null
-  }
-
-  try {
-    if (!ctx) {
-      const Ctor =
-        window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-
-      if (!Ctor) {
-        return null
-      }
-
-      ctx = new Ctor()
-    }
-
-    // Autoplay policy can leave the context suspended until a gesture; resuming
-    // here recovers it once the user has interacted with the window. (On
-    // WebKitGTK this is the difference between blips and silence — the same
-    // recovery wake-sound.ts relies on.)
-    if (ctx.state === 'suspended') {
-      void ctx.resume().catch(() => undefined)
-    }
-
-    return ctx
-  } catch {
-    return null
-  }
-}
 
 // One soft "blub": a short sine with a gentle downward pitch glide and a smooth
 // attack into an exponential decay — no clicks, deliberately quiet.
@@ -93,7 +62,7 @@ export function startThinkingSound(): void {
     // Re-read the mute on every blip rather than latching it at start: muting
     // mid-turn has to take effect on the next blip, not the next conversation.
     if (!$hapticsMuted.get()) {
-      const ac = getCtx()
+      const ac = getAudioContext()
 
       if (ac) {
         try {

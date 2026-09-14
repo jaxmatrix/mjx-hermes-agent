@@ -35,6 +35,8 @@ export function validateCronEditor(input: CronEditorValidationInput): CronEditor
 }
 
 export interface CronEditorSaveValues {
+  /** Feed the job its own previous output into the next run. */
+  continuity: boolean
   deliver: string
   /** Per-job model override ('' = follow the global default at fire time). */
   model: string
@@ -135,9 +137,118 @@ export function cronDeliverSummary(value: unknown, labels: Record<string, string
     .join(', ')
 }
 
+/** The reserved `context_from` entry meaning "this job's own previous output". */
+const CONTINUITY_REF = 'self'
+
+const isContinuityRef = (ref: unknown): boolean => asText(ref).trim().toLowerCase() === CONTINUITY_REF
+
+/** Split a stored `context_from` (list, or a comma/newline string) into refs. */
+export function parseCronContextFrom(value: unknown): string[] {
+  const items = Array.isArray(value) ? value : asText(value).split(/[\n,]/)
+
+  return items.map(item => asText(item).trim()).filter(Boolean)
+}
+
+/**
+ * Is continuity on for this job?
+ *
+ * The two backend serializers disagree and BOTH reach this app: REST returns
+ * the raw record with `self` still inside `context_from`, while the RPC's
+ * `_format_job` strips it and sets an explicit `continuity: true`. A reader
+ * that only knew one shape reported the toggle off on the other — and the
+ * editor would then have written that "off" back on the next save, silently
+ * unlinking a job from its own history.
+ *
+ * A job that names its OWN id instead of the reserved word counts too; that is
+ * what the backend's own check does (tools/cronjob_tools.py `_format_job`).
+ */
+export function cronJobContinuity(job: Pick<CronJob, 'context_from' | 'continuity' | 'id'>): boolean {
+  return (
+    Boolean(job.continuity) ||
+    parseCronContextFrom(job.context_from).some(ref => isContinuityRef(ref) || ref === job.id)
+  )
+}
+
+/** External `context_from` refs — everything the continuity toggle does not own. */
+export function cronExternalContextFrom(job: Pick<CronJob, 'context_from' | 'id'>): string[] {
+  return parseCronContextFrom(job.context_from).filter(ref => !isContinuityRef(ref) && ref !== job.id)
+}
+
+/**
+ * The `context_from` list to WRITE for a given continuity choice.
+ *
+ * The editor shows one checkbox but the field is a list, so the external refs a
+ * job already carries (another job's output feeding this one — set from the CLI
+ * or the dashboard, which universal has no control for) have to be carried
+ * through untouched. Writing a bare `['self']` would delete them.
+ *
+ * Returns `null`, not `[]`, when nothing is left: the backend treats an omitted
+ * key as "leave it alone", so clearing needs an explicit null.
+ */
+export function cronContextFromPayload(continuity: boolean, external: string[]): null | string[] {
+  const refs = external.filter(ref => !isContinuityRef(ref))
+
+  if (continuity) {
+    refs.push(CONTINUITY_REF)
+  }
+
+  return refs.length > 0 ? refs : null
+}
+
+/** The scheduler's "this fire never started" stamp, or null. Unlike last_error
+ *  this is a dict on the wire, and a stamp with no detail is not worth showing. */
+export function cronJobFireError(job: Pick<CronJob, 'last_fire_error'>): { at: string; detail: string } | null {
+  const stamp = job.last_fire_error
+
+  if (!stamp || typeof stamp !== 'object') {
+    return null
+  }
+
+  const detail = asText(stamp.detail).trim()
+
+  return detail ? { at: asText(stamp.at).trim(), detail } : null
+}
+
+/**
+ * The run-count cap, read for display: "3 of 5" or "runs forever".
+ *
+ * `repeat` is a PAIR on the stored record ({times, completed}) — not the digit
+ * string `cron.manage` accepts — and `times: null` means forever. Read-only
+ * here: the REST create route this app uses has no `repeat` field at all (only
+ * cron.manage and a raw update dict carry one), so offering an editor for it
+ * would be offering a control that silently does nothing on create.
+ */
+export function cronRepeatSummary(
+  job: Pick<CronJob, 'repeat'>,
+  forever: string,
+  of: (completed: number, times: number) => string
+): string {
+  const repeat = job.repeat
+
+  if (!repeat || typeof repeat !== 'object') {
+    return ''
+  }
+
+  const times = typeof repeat.times === 'number' ? repeat.times : null
+  const completed = typeof repeat.completed === 'number' ? repeat.completed : 0
+
+  // Nothing to say about a job with no cap that has never run — that is simply
+  // every ordinary recurring job, and a "runs forever" row on all of them is
+  // noise. A cap, or progress against one, is what is worth reading.
+  if (times === null) {
+    return completed > 0 ? forever : ''
+  }
+
+  return of(completed, times)
+}
+
 /** Build the API update payload, preserving an empty prompt on script-only jobs. */
-export function cronEditorUpdates(values: CronEditorSaveValues, options: { scriptOnlyJob: boolean }): CronJobUpdates {
+export function cronEditorUpdates(
+  values: CronEditorSaveValues,
+  options: { externalContextFrom?: string[]; scriptOnlyJob: boolean }
+): CronJobUpdates {
   const updates: CronJobUpdates = {
+    context_from: cronContextFromPayload(values.continuity, options.externalContextFrom ?? []),
     deliver: values.deliver,
     name: values.name,
     schedule: values.schedule.trim()

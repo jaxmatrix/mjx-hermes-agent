@@ -48,6 +48,7 @@ import { canOpenNewWindow } from '@/store/windows'
 
 import { $layoutEditMode } from '../../edit-mode'
 import { hiddenPaneProps, PaneGroupContext, PaneVisibleContext } from '../../pane-visibility'
+import { PaneVisibilityPublisher } from '../../pane-visibility-publisher'
 import { $detachedTiles, detachTile, reattachTile } from '../../tile/detach'
 import { useTileMap } from '../../tile/registry'
 import { tileChrome } from '../../tile/types'
@@ -1013,6 +1014,11 @@ export function TreeGroup({
                           active one gates its hot subscriptions off too — the
                           same contract an inactive tab has always had. */}
                       <PaneVisibleContext.Provider value={isActive && !node.minimized}>
+                        {/* The same verdict, published as an atom for callers
+                            that are not React components — a plugin's polling
+                            loop, `host.paneVisibility(id)`. One writer, so the
+                            two answers cannot drift. */}
+                        <PaneVisibilityPublisher paneId={paneId} visible={isActive && !node.minimized} />
                         <PaneProfiler kind={tile.kind}>
                           {/* The reload epoch keys the CONTENT, not this layer:
                               a Reload remounts the contribution (effects re-run,

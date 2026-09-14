@@ -1,3 +1,4 @@
+import { atom } from 'nanostores'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const requestGateway = vi.fn()
@@ -9,6 +10,10 @@ const rekeySession = vi.fn()
 const runtimeKeyForStoredSession = vi.fn<(id: null | string) => null | string>(() => null)
 
 vi.mock('@/store/gateway', () => ({
+  // `$gatewayState` too: `store/connection.ts` subscribes to it at module scope,
+  // and the session-request-router's dispatch reads it as the "is there a socket"
+  // half of the route check.
+  $gatewayState: atom('open'),
   requestGateway: (...args: unknown[]) => requestGateway(...args)
 }))
 
@@ -24,7 +29,13 @@ vi.mock('@/store/session-state-types', () => ({
   runtimeKeyForStoredSession: (id: null | string) => runtimeKeyForStoredSession(id)
 }))
 
+const { setSessionOwnerResolver } = await import('./session-request-router')
 const { isSessionNotFoundError, SessionRecoveryAborted, withSessionNotFoundResume } = await import('./session-recovery')
+
+// The owning-profile lookup is a hook the real `store/session` registers at
+// module init; this stands in for it with the same two fast paths, so the route
+// assertions below still exercise the real router.
+setSessionOwnerResolver(id => knownSessionProfile(id) ?? (sessionProfileIsAmbiguous() ? resolveSessionProfile() : undefined))
 
 const notFound = () => new Error('session not found: dead-runtime')
 

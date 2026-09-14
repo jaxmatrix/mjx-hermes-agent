@@ -343,6 +343,16 @@ export default defineConfig(({ command }) => ({
   // `src/entry-graph.test.ts` walks the static import graph from `main.tsx` and
   // fails if anything puts shiki back on it.
   optimizeDeps: {
+    // driver.js only enters the graph through the tour's DYNAMIC import chain
+    // (lib/tour/run-tour.ts — `src/entry-graph.test.ts` enforces that), so the
+    // dep scanner never sees it at startup. Left alone, first use registers it
+    // as a missing dep at runtime and triggers Vite's "new dependencies
+    // optimized" full page reload — mid-tour, which is the one moment a reload
+    // is most visible. It is pure ESM with no CJS deps, so serving it
+    // unoptimized is free. Desktop also aliases `driver.js.iife.js?raw` for its
+    // preview surface; universal has no preview pane yet (MJXHRM-447), so the
+    // bare id is the only form that reaches the resolver here.
+    exclude: ['driver.js'],
     include: [
       '@codemirror/commands',
       '@codemirror/language',

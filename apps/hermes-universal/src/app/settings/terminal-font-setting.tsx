@@ -16,6 +16,7 @@ import type { HermesConfigRecord } from '@/types/hermes'
 
 import { setNested } from './helpers'
 import { ListRow } from './primitives'
+import { settingRowElementId } from './settings-search'
 import { setHermesConfigCache, useHermesConfigRecord } from './use-config-record'
 
 // The Settings half of `terminal.font_family` — the consumption half lives in
@@ -174,6 +175,7 @@ export function TerminalFontSetting() {
         </div>
       }
       description={copy.terminalFontDesc}
+      id={settingRowElementId('appearance.terminal-font')}
       title={copy.terminalFontTitle}
       wide
     />

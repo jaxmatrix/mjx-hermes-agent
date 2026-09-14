@@ -16,9 +16,10 @@
  * path goes through it.
  */
 
+import { BrowserPane } from '@/app/browser/browser-pane'
 import { ArtifactPreview } from '@/app/right-pane/preview/preview-artifact'
 import { PreviewFile } from '@/app/right-pane/preview/preview-file'
-import { previewStripTools } from '@/app/right-pane/preview/preview-strip-tools'
+import { browserStripTools, previewStripTools } from '@/app/right-pane/preview/preview-strip-tools'
 import { findGroup } from '@/components/pane-shell/tree/model'
 import {
   $activeTreeGroup,
@@ -27,6 +28,7 @@ import {
   revealTreePane,
   treePanesWithPrefix
 } from '@/components/pane-shell/tree/store'
+import { Codicon } from '@/components/ui/codicon'
 import { FileTypeIcon } from '@/components/ui/file-type-icon'
 import { ToolIcon } from '@/components/ui/tool-icon'
 import { useStore } from '@/store/atom'
@@ -34,6 +36,7 @@ import {
   $activePreviewPath,
   $previewTabs,
   isArtifactTab,
+  isBrowserTab,
   type PreviewTarget,
   requestClosePreviewTab,
   selectPreviewTab
@@ -97,6 +100,10 @@ function PreviewTabLead({ path }: { path: string }) {
     return <span aria-hidden className="size-1.5 rounded-full bg-(--ui-yellow)" />
   }
 
+  if (isBrowserTab(path)) {
+    return <Codicon className="opacity-70" name="globe" size="0.6875rem" />
+  }
+
   return isArtifactTab(path) ? (
     <ToolIcon className="opacity-70" name="sparkle" size="0.6875rem" />
   ) : (
@@ -114,6 +121,12 @@ function PreviewTilePane({ path }: { path: string }) {
   // tick later).
   if (!target) {
     return null
+  }
+
+  // The browser tab names a SURFACE, not a file: there is exactly one of it and
+  // its content is a native guest webview the compositor paints above this DOM.
+  if (isBrowserTab(target.path)) {
+    return <BrowserPane />
   }
 
   // An artifact tab names a registry entry rather than a file on disk.
@@ -192,7 +205,8 @@ const watchPreviewTileMirror = paneMirror<PreviewTarget>({
   // handing it the file glyphs put two disabled buttons and a live `diff` that
   // wrote a mode nothing reads on its strip. Same gate desktop applies (there:
   // console/DevTools glyphs only for a `url` tab).
-  stripTools: path => (isArtifactTab(path) ? [] : previewStripTools(path)),
+  stripTools: path =>
+    isBrowserTab(path) ? browserStripTools() : isArtifactTab(path) ? [] : previewStripTools(path),
   render: path => <PreviewTilePane path={path} />,
   // Per-path view mode, caps and dirty flag are dropped by `closePreviewTab`
   // itself, so every door out (the ✕, ⌘W, the close verbs, the rail) forgets.

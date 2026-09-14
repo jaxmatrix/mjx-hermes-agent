@@ -14,6 +14,11 @@ vi.mock('@/hermes', () => ({
 // reaches `store/connection` through `lib/api`, and `branchStoredSession` now
 // resolves its parent through `store/session-lookup` (which reads the project
 // tree). Omitting either makes the whole suite fail to import, not one test.
+// `deleteSessionLocal` now asks before deleting a PINNED session (MJXHRM-479).
+// Nothing here renders a `<ConfirmHost />`, so an unmocked `confirm()` would
+// park a promise and every pinned-delete test would time out. Default: yes.
+vi.mock('@/store/confirm', () => ({ confirm: vi.fn(async () => true) }))
+
 vi.mock('@/store/gateway', async () => {
   const { atom } = await import('@/store/atom')
 
@@ -25,13 +30,25 @@ vi.mock('@/store/gateway', async () => {
   }
 })
 
+import { GatewayRpcError } from '@/gateway/rpc-error'
 import { deleteSession, getSession, getSessionMessages, listAllProfileSessions, renameSession } from '@/hermes'
 import { ApiError } from '@/lib/api'
+import type { ChatMessage } from '@/lib/chat-messages'
+import { __resetTranscriptTailCache, readTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
 import { $busy, $currentCwd, $messages, $sessionId } from '@/store/chat'
+import { confirm } from '@/store/confirm'
 import { requestGateway } from '@/store/gateway'
+import * as notifications from '@/store/notifications'
 import { $showAllProfiles } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
-import { $sessionStates, hydratingKey, updateSession } from '@/store/session-state-types'
+import {
+  $activeSessionKey,
+  $sessionStates,
+  hydratingKey,
+  runtimeKeyForStoredSession,
+  updateSession
+} from '@/store/session-state-types'
+import { $transcriptPaint, __resetTranscriptPaint } from '@/store/transcript-paint'
 import { clearAllTurns, getInflightTurn } from '@/store/turn-lifecycle'
 import { resetSessionStates, seedActiveSession, seedSession } from '@/test-sessions'
 import type { PaginatedSessions, SessionInfo } from '@/types/hermes'
@@ -49,6 +66,7 @@ import {
   $sessionsTotal,
   $unreadFinishedSessionIds,
   $workingSessionIds,
+  adoptLiveSession,
   archiveSessionLocal,
   branchCurrentSession,
   branchStoredSession,
@@ -56,8 +74,11 @@ import {
   clearUnreadFinishedSession,
   deleteSessionLocal,
   isMessagingSource,
+  isSessionPinned,
   knownSessionProfile,
+  lastOpenedSessionId,
   loadMoreSessions,
+  markPluginOwnedSession,
   messagingSourceLabel,
   openSession,
   pinnedSessionRows,
@@ -460,10 +481,13 @@ describe('reclaimSessionTransport', () => {
     resolveProbe()
     await reclaiming
 
+    // NO `profile`: the owner ('default') is the ambient route here, and a route
+    // that matches the ambient one dispatches unscoped so the reauth-aware
+    // reconnect path in the ambient dispatcher still applies
+    // (`sessionRpcNeedsProfileRoute`).
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-popped',
-      cols: 96,
-      profile: 'default'
+      cols: 96
     })
   })
 
@@ -525,6 +549,20 @@ describe('owning profile', () => {
     // resume must stay synchronous rather than pay a by-id lookup first.
     await expect(resolveSessionProfile('unknown')).resolves.toBeUndefined()
     expect(getSession).not.toHaveBeenCalled()
+  })
+
+  it('asks the ACTIVE profile BY NAME first, not the launch database', async () => {
+    // Unscoped, the first probe read the backend's launch database — and the
+    // active profile is excluded from the rest of the list, so the profile most
+    // likely to own the id was never actually asked.
+    $profiles.set([profile('default'), profile('work')])
+    vi.mocked(getSession)
+      .mockReset()
+      .mockResolvedValueOnce({ id: 'stored-e', profile: 'default' } as SessionInfo)
+
+    await expect(resolveSessionProfile('stored-e')).resolves.toBe('default')
+
+    expect(vi.mocked(getSession).mock.calls[0]).toEqual(['stored-e', 'default'])
   })
 
   it('probes other profiles for a session outside the loaded rows', async () => {
@@ -1428,6 +1466,40 @@ describe('pinned rows survive the loaded window', () => {
     expect($pinnedSessionIds.get()).toEqual([])
   })
 
+  // MJXHRM-479. `deleteSessionLocal` is the one function six delete surfaces
+  // funnel through, so the "are you sure?" for a pinned chat lives here rather
+  // than in six menu rows. Unpinned deletes stay unconfirmed (desktop parity).
+  it('asks before deleting a PINNED session, and deletes nothing when told no', async () => {
+    $pinnedSessionIds.set(['stored-pin'])
+    $sessions.set([row('stored-pin', 'Pinned chat')])
+    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
+    // Seed the ANSWER against the outcome asserted: if the guard were missing,
+    // the row would be gone regardless of what confirm() said.
+    vi.mocked(confirm).mockResolvedValueOnce(false)
+
+    await deleteSessionLocal('stored-pin')
+
+    expect(confirm).toHaveBeenCalled()
+    expect(vi.mocked(confirm).mock.calls[0]?.[0]).toMatchObject({ destructive: true })
+    // Nothing moved: not the RPC, not the optimistic removal, not the pin.
+    expect(deleteSession).not.toHaveBeenCalled()
+    expect($sessions.get().map(entry => entry.id)).toEqual(['stored-pin'])
+    expect($pinnedSessionIds.get()).toEqual(['stored-pin'])
+  })
+
+  it('does NOT ask when the session is unpinned', async () => {
+    // Pin a DIFFERENT row, so "no pins at all" cannot be what makes this pass.
+    $pinnedSessionIds.set(['someone-else'])
+    $sessions.set([row('plain', 'Plain chat'), row('someone-else', 'Pinned chat')])
+    vi.mocked(deleteSession).mockResolvedValue({ ok: true })
+
+    await deleteSessionLocal('plain')
+
+    expect(confirm).not.toHaveBeenCalled()
+    expect(deleteSession).toHaveBeenCalledWith('plain', undefined)
+    expect($sessions.get().map(entry => entry.id)).toEqual(['someone-else'])
+  })
+
   it('restores the pin when the delete RPC fails', async () => {
     $pinnedSessionIds.set(['stored-pin'])
     $sessions.set([row('stored-pin', 'Pinned chat')])
@@ -1546,5 +1618,305 @@ describe('messaging sources stay in sync with the icon table', () => {
   it('labels the new platforms rather than falling back to a capitalised id', () => {
     expect(messagingSourceLabel('photon')).toBe('Photon')
     expect(messagingSourceLabel('buzz')).toBe('Buzz')
+  })
+})
+
+// The keep-flag question asked before a DESTRUCTIVE action. It cannot be the
+// pin toggles' `$pinnedSessionIds.includes(sessionPinId(row))`: Settings →
+// Archived fetches its own rows and archived ids never enter `$sessions`, so
+// the local set is routinely empty for exactly the rows this decides about.
+describe('isSessionPinned', () => {
+  it('reads the backend keep flag off the row being acted on', () => {
+    // Fixture DISAGREES with the local set: nothing is pinned locally.
+    $pinnedSessionIds.set([])
+    expect(isSessionPinned({ id: 'a', pinned: true } as unknown as SessionInfo)).toBe(true)
+    expect(isSessionPinned({ id: 'a', pinned: false } as unknown as SessionInfo)).toBe(false)
+  })
+
+  it('keys the local set on the lineage root, not the row id', () => {
+    // The row is a post-compaction TIP and the backend never heard about the
+    // pin. Keyed on `id` this returns false and the delete goes unwarned.
+    $pinnedSessionIds.set(['root'])
+    expect(isSessionPinned({ _lineage_root_id: 'root', id: 'tip', pinned: false } as unknown as SessionInfo)).toBe(true)
+  })
+
+  it('does not fire on a pin belonging to another conversation', () => {
+    $pinnedSessionIds.set(['someone-else'])
+    expect(isSessionPinned({ _lineage_root_id: 'root', id: 'tip', pinned: false } as unknown as SessionInfo)).toBe(
+      false
+    )
+  })
+
+  it('treats a gateway that predates the column as unpinned', () => {
+    $pinnedSessionIds.set([])
+    expect(isSessionPinned({ id: 'a' } as unknown as SessionInfo)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The paint lane on the cold-open path (MJXHRM-480). The rows go on screen
+// through `$paintedMessages` BEFORE any I/O and are gone the moment the
+// authority lands — or the moment the open fails, which is the half that
+// matters most.
+// ---------------------------------------------------------------------------
+describe('openSession — the cached-tail paint', () => {
+  const cached = (id: string, body: string): ChatMessage => ({
+    id,
+    parts: [{ text: body, type: 'text' }],
+    role: 'user'
+  })
+
+  const seedTail = (storedId: string, body = 'last screen') => {
+    __resetTranscriptTailCache()
+    __resetTranscriptPaint()
+    localStorage.clear()
+    saveTranscriptTail(storedId, [cached('cached-1', body)])
+  }
+
+  it('paints the cached tail before any I/O, and the REST transcript replaces it', async () => {
+    seedTail('stored-9')
+
+    let painted: string[] = []
+
+    vi.mocked(getSessionMessages).mockImplementation(async () => {
+      // Called after the paint, by construction: the paint is synchronous and
+      // precedes both promises.
+      painted = ($transcriptPaint.get()[hydratingKey('stored-9')]?.messages ?? []).map(m => m.id)
+
+      return { messages: [{ content: 'authoritative', role: 'user' }], session_id: 'stored-9' } as never
+    })
+    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1' })
+
+    await openSession('stored-9')
+
+    expect(painted).toEqual(['cached-1'])
+    // Replaced wholesale, and the lane is empty again.
+    expect($messages.get().map(m => m.parts[0])).toEqual([{ text: 'authoritative', type: 'text' }])
+    expect($transcriptPaint.get()).toEqual({})
+  })
+
+  // A paint left behind on a session whose resume failed is a transcript that
+  // looks healthy and cannot receive a message — and typing into it would open a
+  // brand-new chat. So the catch clears FIRST, before the fallback and before
+  // the toast.
+  it('clears the paint BEFORE the error is surfaced, leaving no ghost transcript', async () => {
+    seedTail('stored-9')
+    vi.mocked(getSessionMessages).mockResolvedValue(null as never)
+    vi.mocked(requestGateway).mockRejectedValue(new Error('session not found'))
+
+    // The ORDERING is the assertion: a toast raised while a healthy-looking
+    // transcript is still on screen tells the user the chat is fine and the
+    // error is incidental — the opposite of the truth.
+    let paintedWhenReported: string[] = []
+
+    const reported = vi.spyOn(notifications, 'notifyError').mockImplementation(() => {
+      paintedWhenReported = Object.keys($transcriptPaint.get())
+
+      return ''
+    })
+
+    await openSession('stored-9')
+
+    expect(reported).toHaveBeenCalled()
+    expect(paintedWhenReported).toEqual([])
+    expect($transcriptPaint.get()).toEqual({})
+    expect($messages.get()).toEqual([])
+    reported.mockRestore()
+  })
+
+  // Warm promote is synchronous and lossless (MJX-132): the slice is already
+  // whole, so a paint there would be a flicker on top of correct rows.
+  // Deliberately an EMPTY warm slice: a session opened, found empty and parked
+  // is still authoritative about being empty, and `paintCachedTail`'s own
+  // has-messages guard cannot save this path. Promotion is synchronous and
+  // lossless (MJX-132) — a paint here is a flicker on top of a correct answer.
+  it('paints nothing on a warm promote', async () => {
+    seedTail('stored-9')
+    seedSession('runtime-1', { messages: [], storedSessionId: 'stored-9' })
+
+    await openSession('stored-9')
+
+    expect($transcriptPaint.get()).toEqual({})
+    expect(requestGateway).not.toHaveBeenCalled()
+  })
+
+  // A transport-only rebind: the transcript on screen is already correct and
+  // richer than any cache.
+  it('paints nothing on a warm reclaim', async () => {
+    seedTail('stored-9')
+    seedSession('runtime-1', { messages: [], storedSessionId: 'stored-9' })
+    vi.mocked(requestGateway).mockResolvedValue({ messages: [], session_id: 'runtime-1' })
+
+    await openSession('stored-9', { forceResume: true })
+
+    expect($transcriptPaint.get()).toEqual({})
+  })
+
+  // A deleted conversation must not be able to paint itself back onto the next
+  // launch — under ANY of its lineage aliases.
+  it('drops the cached tail when the session is deleted', async () => {
+    seedTail('stored-9')
+    $sessions.set([{ _lineage_root_id: 'stored-root', id: 'stored-9' } as unknown as SessionInfo])
+    saveTranscriptTail('stored-root', [cached('cached-root', 'older identity')])
+    vi.mocked(deleteSession).mockResolvedValue(undefined as never)
+
+    await deleteSessionLocal('stored-9')
+
+    expect(readTranscriptTail('stored-9')).toBeNull()
+    expect(readTranscriptTail('stored-root')).toBeNull()
+  })
+})
+
+describe('adoptLiveSession — a session created a moment ago', () => {
+  it('binds the LIVE runtime id and focuses it, with no resume and no transcript read', () => {
+    resetSessionStates()
+    $sessions.set([])
+    vi.mocked(requestGateway).mockClear()
+    vi.mocked(getSessionMessages).mockClear()
+
+    adoptLiveSession({ profile: 'radar', runtimeSessionId: 'run-1', storedSessionId: 'stored-1' })
+
+    expect($activeSessionKey.get()).toBe('run-1')
+    expect($activeStoredSessionId.get()).toBe('stored-1')
+    expect($sessionStates.get()['run-1']).toMatchObject({
+      busy: false,
+      runtimeSessionId: 'run-1',
+      storedSessionId: 'stored-1'
+    })
+    // Found again by its durable id — what the router and the focus lookup use.
+    expect(runtimeKeyForStoredSession('stored-1')).toBe('run-1')
+    // There is nothing to wake: a resume here is what broke a hidden session.
+    expect(requestGateway).not.toHaveBeenCalled()
+    expect(getSessionMessages).not.toHaveBeenCalled()
+  })
+
+  it('writes NO sidebar row — a hidden session stays out of the shared list', () => {
+    // A bot's forever-chat and an ordinary session are different modes of
+    // conversation; a row here is exactly the overlap hiding exists to prevent.
+    resetSessionStates()
+    $sessions.set([])
+
+    adoptLiveSession({ profile: 'radar', runtimeSessionId: 'run-2', storedSessionId: 'stored-2' })
+
+    expect($sessions.get()).toEqual([])
+  })
+
+  it('remembers the owner that no listing could ever report', () => {
+    resetSessionStates()
+    $sessions.set([])
+
+    adoptLiveSession({ profile: 'radar', runtimeSessionId: 'run-3', storedSessionId: 'stored-3' })
+
+    expect(knownSessionProfile('stored-3')).toBe('radar')
+  })
+})
+
+describe('openSession — a resume that fails never fakes a live binding', () => {
+  const liveKeyOf = (storedId: string) => {
+    const key = runtimeKeyForStoredSession(storedId)
+
+    return key ? ($sessionStates.get()[key]?.runtimeSessionId ?? null) : null
+  }
+
+  it('keeps the history on screen but leaves the session UNBOUND', async () => {
+    // A stored id posing as a runtime id made the open look successful, and the
+    // first keystroke then went out as prompt.submit with an id the gateway's
+    // runtime map has never held: "session not found".
+    resetSessionStates()
+    vi.mocked(getSessionMessages)
+      .mockReset()
+      .mockResolvedValue({
+        messages: [{ content: 'earlier words', role: 'user' }],
+        session_id: 'stored-dead'
+      } as never)
+    vi.mocked(requestGateway).mockReset().mockRejectedValue(new GatewayRpcError('session not found', 4007))
+
+    await openSession('stored-dead')
+
+    expect($messages.get().some(message => message.role === 'user')).toBe(true)
+    expect($sessionId.get()).toBeFalsy()
+    expect(liveKeyOf('stored-dead')).toBeFalsy()
+  })
+
+  it('leaves it unbound when the transcript page is merely empty, too', async () => {
+    // `{messages: []}` is truthy — it took the same fake-binding branch.
+    resetSessionStates()
+    vi.mocked(getSessionMessages)
+      .mockReset()
+      .mockResolvedValue({ messages: [], session_id: 'stored-dead-2' } as never)
+    vi.mocked(requestGateway).mockReset().mockRejectedValue(new GatewayRpcError('session not found', 4007))
+
+    await openSession('stored-dead-2')
+
+    expect($sessionId.get()).toBeFalsy()
+  })
+
+  it('re-opening an unbound session resumes again, and binds when it now succeeds', async () => {
+    // Promoting a warm-but-UNBOUND slice without a resume is a chat that can
+    // neither stream nor submit, and a plugin waiting on its binding ran out the
+    // clock as "exhausted".
+    resetSessionStates()
+    vi.mocked(getSessionMessages)
+      .mockReset()
+      .mockResolvedValue({ messages: [{ content: 'hi', role: 'user' }], session_id: 'stored-3' } as never)
+    vi.mocked(requestGateway).mockReset().mockRejectedValue(new GatewayRpcError('session not found', 4007))
+
+    await openSession('stored-3')
+    expect($sessionId.get()).toBeFalsy()
+
+    vi.mocked(requestGateway).mockReset().mockResolvedValue({ messages: [], session_id: 'runtime-3' })
+
+    await openSession('stored-3')
+
+    expect(requestGateway).toHaveBeenCalled()
+    expect($sessionId.get()).toBe('runtime-3')
+    expect(liveKeyOf('stored-3')).toBe('runtime-3')
+  })
+})
+
+describe('last-session memory — a hidden plugin session is never the place to land', () => {
+  it('remembers an ordinary session (the control) but never a hidden one', () => {
+    resetSessionStates()
+    $sessions.set([])
+
+    // CONTROL. If the last-session subscriber did not run under test at all, the
+    // hidden assertion below would pass for nothing.
+    adoptLiveSession({ runtimeSessionId: 'run-c', storedSessionId: 'stored-control' })
+    expect(lastOpenedSessionId()).toBe('stored-control')
+
+    // A bot's forever-chat restored into the main pane at boot is two modes of
+    // conversation overlapping.
+    adoptLiveSession({ hidden: true, runtimeSessionId: 'run-h', storedSessionId: 'stored-hidden' })
+    expect(lastOpenedSessionId()).toBe('stored-control')
+  })
+
+  it('forgets a hidden session that was ALREADY remembered', () => {
+    // An install that opened a bot's chat before this guard has that id persisted.
+    resetSessionStates()
+    $sessions.set([])
+
+    adoptLiveSession({ runtimeSessionId: 'run-p', storedSessionId: 'stored-polluted' })
+    expect(lastOpenedSessionId()).toBe('stored-polluted')
+
+    markPluginOwnedSession('stored-polluted')
+
+    expect(lastOpenedSessionId()).not.toBe('stored-polluted')
+  })
+})
+
+describe('adoptLiveSession — bound without activating', () => {
+  it('binds the live slice for a tab, and leaves the main chat where it was', () => {
+    resetSessionStates()
+    $sessions.set([])
+
+    adoptLiveSession({ runtimeSessionId: 'run-main', storedSessionId: 'stored-main' })
+    adoptLiveSession({ activate: false, runtimeSessionId: 'run-tab', storedSessionId: 'stored-tab' })
+
+    expect($activeStoredSessionId.get()).toBe('stored-main')
+    expect($activeSessionKey.get()).toBe('run-main')
+
+    const key = runtimeKeyForStoredSession('stored-tab')
+
+    expect(key ? $sessionStates.get()[key]?.runtimeSessionId : null).toBe('run-tab')
   })
 })

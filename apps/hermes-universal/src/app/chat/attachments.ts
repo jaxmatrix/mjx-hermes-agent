@@ -1,20 +1,29 @@
 import { open } from '@tauri-apps/plugin-dialog'
-import { readFile } from '@tauri-apps/plugin-fs'
 
 import { formatRefValue as refValue } from '@/components/assistant-ui/directive-text'
 import { translateNow } from '@/i18n'
 import { selectRemotePaths } from '@/lib/desktop-fs'
 import { ensureSession } from '@/store/chat'
 import type { ComposerAttachment } from '@/store/composer'
+import { $dataUrlReadMaxMb, dataUrlReadMaxBytes, readCappedFileBase64 } from '@/store/data-url-read-max'
 import { requestGateway } from '@/store/gateway'
 import { notifyError } from '@/store/notifications'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
+import { requestForSession } from '@/store/session-request-router'
+import { $sessionStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
 
 // Attachment staging (Gc8/R7). Pick a file → read bytes → data-URL → file.attach
 // (which stages it server-side and returns a @file:/@image: ref) → the ref is
 // spliced into the prompt text on submit (the desktop model).
-// FIXME(Gc8): base64 of a large file blocks the main thread; Android SAF
-// content-URIs vs fs.readFile paths need on-device validation.
+//
+// The read is CAPPED and it happens in Rust (`readCappedFileBase64` →
+// `data_url_read_max.rs`), not here. `@tauri-apps/plugin-fs`'s `readFile` used
+// to do it, which meant the base64 of an arbitrarily large file was allocated
+// in the webview before anything could object — on a phone that is the system
+// killing the process, so there was no error to show and no draft left to show
+// it in. Rust refuses on the file's own size before allocating, and the same
+// call resolves Android SAF `content://` URIs (which is why it goes through the
+// fs plugin's `Fs::open` rather than `std::fs`). Settings ▸ Chat sets the cap.
 //
 // Every ref this module BUILDS goes through `refValue` (formatRefValue), which
 // quotes a value the reference grammar would otherwise cut short. The gateway's
@@ -55,6 +64,10 @@ function mimeFor(name: string): string {
   return MIME_BY_EXT[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream'
 }
 
+function dataUrl(base64: string, mime: string): string {
+  return `data:${mime};base64,${base64}`
+}
+
 function toDataUrl(bytes: Uint8Array, mime: string): string {
   let binary = ''
 
@@ -62,7 +75,7 @@ function toDataUrl(bytes: Uint8Array, mime: string): string {
     binary += String.fromCharCode(bytes[i])
   }
 
-  return `data:${mime};base64,${btoa(binary)}`
+  return dataUrl(btoa(binary), mime)
 }
 
 export interface StagedAttachment {
@@ -78,15 +91,15 @@ export interface StagedAttachment {
  *
  * Failure RAISES a notification rather than returning quietly. The caller can't
  * tell "cancelled" from "failed" (both were null), so an unreadable file, an
- * Android SAF content-URI `readFile` can't open, or a `file.attach` that answers
- * without a ref all used to land as complete silence: no chip, no error, the
- * turn sent as if nothing had been attached. Cancel never reaches here — the
- * pickers return before calling.
+ * Android SAF content-URI the resolver can't open, a file over the size cap, or
+ * a `file.attach` that answers without a ref all used to land as complete
+ * silence: no chip, no error, the turn sent as if nothing had been attached.
+ * Cancel never reaches here — the pickers return before calling.
  */
 export async function stageAttachmentFromPath(path: string): Promise<StagedAttachment | null> {
   const name = basename(path)
 
-  return stageAttachment(name, async () => toDataUrl(await readFile(path), mimeFor(name)), path)
+  return stageAttachment(name, async () => dataUrl(await readCappedFileBase64(path), mimeFor(name)), path)
 }
 
 /**
@@ -106,12 +119,76 @@ export async function stageAttachmentFromPath(path: string): Promise<StagedAttac
 export async function stageAttachmentFromBlob(blob: Blob, name?: string): Promise<StagedAttachment | null> {
   const label = name || `pasted-image-${Date.now()}.${EXT_BY_MIME[blob.type] ?? 'png'}`
 
-  return stageAttachment(label, async () =>
-    toDataUrl(new Uint8Array(await blob.arrayBuffer()), blob.type || mimeFor(label))
-  )
+  return stageAttachment(label, async () => {
+    // Same cap, checked here rather than in Rust: these bytes never had a path,
+    // so there is nothing for Rust to open — but base64 still expands them by a
+    // third on the way to a gateway frame, and a 400 MB screenshot buffer is
+    // exactly as fatal on a phone as a 400 MB file.
+    const maxMb = $dataUrlReadMaxMb.get()
+
+    if (blob.size > dataUrlReadMaxBytes(maxMb)) {
+      throw new Error(translateNow('composer.attachTooLarge', maxMb))
+    }
+
+    return toDataUrl(new Uint8Array(await blob.arrayBuffer()), blob.type || mimeFor(label))
+  })
 }
 
-/** Shared body of the two stagers above: bytes → data URL → `file.attach` → ref. */
+/**
+ * Stage bytes into ONE named session — not the active one.
+ *
+ * `stageAttachment` below resolves `ensureSession()`, which is the session the
+ * user is looking at. That is right for a composer and wrong for anything
+ * staging into a session it names: a Bot Mode room fans one attachment out to
+ * six member sessions, none of them focused, and the active-session resolve
+ * would have quietly put all six copies in the user's own chat.
+ *
+ * Routed through MJXHRM-480's session router rather than `requestGateway`, so a
+ * member on another connection is reached on ITS gateway. `withSessionNotFoundResume`
+ * still guards the runtime id, which is what a sleep/wake invalidates.
+ *
+ * Returns null on failure, having already raised the notification — same
+ * contract as the stagers below.
+ */
+export async function attachToSession(
+  storedSessionId: string,
+  input: { dataUrl: string; name: string; path?: string; profile?: null | string }
+): Promise<StagedAttachment | null> {
+  const { name } = input
+
+  try {
+    const runtimeKey = runtimeKeyForStoredSession(storedSessionId)
+    const live = (runtimeKey ? $sessionStates.get()[runtimeKey]?.runtimeSessionId : null) ?? storedSessionId
+
+    const { result: res } = await withSessionNotFoundResume(live, storedSessionId, sessionId =>
+      requestForSession<{ ref_text?: string }>(
+        storedSessionId,
+        'file.attach',
+        {
+          name,
+          path: input.path,
+          session_id: sessionId,
+          data_url: input.dataUrl
+        },
+        undefined,
+        input.profile ?? undefined
+      )
+    )
+
+    if (res.ref_text) {
+      return { ref: res.ref_text, name }
+    }
+
+    throw new Error(translateNow('composer.attachNoRef'))
+  } catch (error) {
+    notifyError(error, translateNow('composer.attachFailed', name))
+
+    return null
+  }
+}
+
+/** Shared body of the two stagers above: bytes → data URL → `file.attach` → ref.
+ *  The ACTIVE-session caller of `attachToSession`. */
 async function stageAttachment(
   name: string,
   readDataUrl: () => Promise<string>,
@@ -121,10 +198,16 @@ async function stageAttachment(
     const dataUrl = await readDataUrl()
     const { id: sessionId, storedId } = await ensureSession()
 
-    // Attach runs against the RUNTIME session id, so after a sleep/wake it hits
-    // a dead runtime and 'session not found' — while plain text silently
-    // recovered on its own, which is exactly why the bug read as "text works,
-    // images don't". One shared resolver rebinds and retries once (MJXHRM-219).
+    if (storedId) {
+      return attachToSession(storedId, { dataUrl, name, path })
+    }
+
+    // A draft has no stored id to route by, so the runtime id is the only
+    // handle there is. Attach runs against the RUNTIME session id, so after a
+    // sleep/wake it hits a dead runtime and 'session not found' — while plain
+    // text silently recovered on its own, which is exactly why the bug read as
+    // "text works, images don't". One shared resolver rebinds and retries once
+    // (MJXHRM-219).
     const { result: res } = await withSessionNotFoundResume(sessionId, storedId, live =>
       requestGateway<{ ref_text?: string }>('file.attach', {
         name,

@@ -26,6 +26,10 @@ vi.mock('@/lib/query-client', () => ({
   invalidateProfileScopedQueries: vi.fn(),
   queryClient: { invalidateQueries: vi.fn() }
 }))
+// Switching starts a fresh draft (loaded lazily — the real module would pull
+// the whole session graph in, and it is the call that matters here).
+vi.mock('@/store/new-session', () => ({ startNewSession: vi.fn() }))
+import { startNewSession } from '@/store/new-session'
 
 import {
   $profileColors,
@@ -36,6 +40,7 @@ import {
   ALL_PROFILES,
   cycleProfile,
   normalizeProfileKey,
+  profileLabel,
   requestProfileCreate,
   selectProfile,
   setProfileColor,
@@ -135,6 +140,30 @@ describe('selectProfile', () => {
     selectProfile('research')
     expect($activeProfile.get()).toBe('research')
   })
+
+  // Like desktop: a real switch lands you on a fresh chat in that profile (the
+  // open chat keeps the profile it was started in); re-tapping the profile you
+  // are already in leaves your chat alone.
+  it('starts a fresh draft on a switch but not on a re-tap', async () => {
+    vi.mocked(startNewSession).mockClear()
+
+    selectProfile('research')
+    await vi.waitFor(() => expect(startNewSession).toHaveBeenCalledTimes(1))
+
+    selectProfile('research')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(startNewSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('starts a fresh draft when leaving the all-profiles browse view', async () => {
+    vi.mocked(startNewSession).mockClear()
+    $activeProfile.set('research')
+    setShowAllProfiles(true)
+
+    selectProfile('research')
+
+    await vi.waitFor(() => expect(startNewSession).toHaveBeenCalledTimes(1))
+  })
 })
 
 describe('hotkey navigation', () => {
@@ -196,5 +225,28 @@ describe('requestProfileCreate', () => {
 
     requestProfileCreate()
     expect($profileCreateRequest.get()).toBe(before + 1)
+  })
+})
+
+// The default profile is renamable by DISPLAY NAME only: its canonical id stays
+// "default" so routing, comparison and the wire are untouched. Everything the
+// user reads goes through profileLabel.
+describe('profileLabel', () => {
+  it('prefers the display name over the canonical id', () => {
+    expect(profileLabel({ display_name: 'Ada', name: 'default' })).toBe('Ada')
+  })
+
+  it('falls back to the canonical name when the display name is absent or blank', () => {
+    expect(profileLabel({ name: 'research' })).toBe('research')
+    expect(profileLabel({ display_name: '   ', name: 'research' })).toBe('research')
+  })
+
+  // The label must never become an identity: normalizeProfileKey still answers
+  // "default" for a renamed default profile, which is what every lookup uses.
+  it('does not change the key a renamed default profile is looked up by', () => {
+    const renamed = { display_name: 'Ada', name: 'default' }
+
+    expect(profileLabel(renamed)).toBe('Ada')
+    expect(normalizeProfileKey(renamed.name)).toBe('default')
   })
 })

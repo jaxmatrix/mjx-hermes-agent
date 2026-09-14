@@ -41,6 +41,24 @@ async function refreshSystemStatus(): Promise<void> {
   }
 }
 
+/**
+ * Drop the PREVIOUS backend's health, readiness and version (D-1).
+ *
+ * `refreshSystemStatus` only guards on `$gatewayState !== 'open'` and polls
+ * every 30 s, so without this a gateway switch leaves the old backend's version
+ * and inference readiness on the statusbar for up to half a minute — and on a
+ * multi-source install that is not a cosmetic lag, it is the wrong machine's
+ * health under the new machine's name. Called from
+ * `wipeSessionListsForGatewaySwitch()`, which is the ONE wipe list (rule 20).
+ *
+ * `$appVersion` is deliberately NOT reset: it is THIS app's version, not the
+ * backend's, and it does not change when the gateway does.
+ */
+export function resetSystemStatusForBackendSwitch(): void {
+  $statusSnapshot.set(null)
+  $inferenceStatus.set(null)
+}
+
 let appVersionLoaded = false
 
 // Poll only while something (the statusbar) subscribes. Also refresh the instant

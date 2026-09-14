@@ -36,6 +36,13 @@
   private-IP literals, and Tailscale's 100.64.0.0/10 is CGNAT rather than local
   networking at all. It is kept alongside for the .local / loopback cases.
 
+  CFBundleURLTypes claims the `hermes://` scheme with iOS (MJXHRM-455), so a link
+  in Safari opens the app instead of 404ing. Hand-written here rather than left to
+  tauri-plugin-deep-link's build script, whose `update_info_plist` half is
+  `#[cfg(target_os = "macos")]` — a Linux or CI build host would silently produce an
+  app that does not own the scheme. Tauri merges this file over the generated
+  plist, so a macOS host writing the same key is a no-op rather than a conflict.
+
   App Store note: NSAllowsArbitraryLoadsInWebContent can draw a justification request
   at review. The justification is real — this app connects to gateways its user runs
   on their own private network, which cannot carry a publicly trusted certificate.
@@ -51,6 +58,17 @@
     <key>NSAllowsLocalNetworking</key>
     <true/>
   </dict>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>hermes</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>hermes</string>
+      </array>
+    </dict>
+  </array>
   <key>UIApplicationSceneManifest</key>
   <dict>
     <key>UIApplicationSupportsMultipleScenes</key>

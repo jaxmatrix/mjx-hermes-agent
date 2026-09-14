@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { LONG_PRESS_MS } from '@/lib/long-press'
 import { PROFILE_SWATCHES, resolveProfileColor } from '@/lib/profile-color'
 import { $profileColors, $profileOrder, $showAllProfiles } from '@/store/profile'
 import { $activeProfile, $profiles } from '@/store/profiles'
@@ -169,7 +170,7 @@ describe('ProfileRail — overflow menu', () => {
 
       const target = grid().getByRole('button', { name: firstSpilled })
       fireEvent.pointerDown(target, { button: 0 })
-      act(() => vi.advanceTimersByTime(450))
+      act(() => vi.advanceTimersByTime(LONG_PRESS_MS))
 
       const swatch = PROFILE_SWATCHES[2]
       fireEvent.click(
@@ -204,7 +205,7 @@ describe('ProfileRail — long-press recolor', () => {
     renderRail()
 
     fireEvent.pointerDown(square('research'), { button: 0 })
-    act(() => vi.advanceTimersByTime(450))
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS))
 
     const picker = screen.getByLabelText('Color for research')
     expect(picker).toBeInTheDocument()
@@ -232,7 +233,7 @@ describe('ProfileRail — long-press recolor', () => {
     renderRail()
 
     fireEvent.pointerDown(square('research'), { button: 0 })
-    act(() => vi.advanceTimersByTime(450))
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS))
 
     const swatch = PROFILE_SWATCHES[3]
     fireEvent.click(
@@ -241,7 +242,7 @@ describe('ProfileRail — long-press recolor', () => {
     expect($profileColors.get()).toEqual({ research: swatch })
 
     fireEvent.pointerDown(square('research'), { button: 0 })
-    act(() => vi.advanceTimersByTime(450))
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS))
     fireEvent.click(within(screen.getByLabelText('Color for research')).getByRole('button', { name: 'Auto' }))
     expect($profileColors.get()).toEqual({})
   })

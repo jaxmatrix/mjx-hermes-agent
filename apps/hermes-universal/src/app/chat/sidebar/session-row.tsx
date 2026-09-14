@@ -15,6 +15,8 @@ import { addBubble } from '@/store/chat-bubbles'
 import { $sidebarRowMeta } from '@/store/layout'
 import { $pullRequestsByBranch, sessionPrKey } from '@/store/pull-requests'
 import { $attentionSessionIds } from '@/store/session'
+import { $sessionListDensity } from '@/store/session-list-density'
+import { $sessionOwnerLabels, withSessionOwner } from '@/store/session-owner-label'
 import { openSessionTile } from '@/store/session-states'
 import { sessionCostUsd } from '@/store/sidebar-archive'
 import { canOpenSessionWindow, openSessionInNewWindow } from '@/store/windows'
@@ -27,6 +29,7 @@ import { SessionStatusDot } from '../session-status-dot'
 
 import { SidebarRowBody, SidebarRowGrab, SidebarRowLabel, SidebarRowLead, SidebarRowShell } from './chrome'
 import { SessionActionsMenu, SessionContextMenu } from './session-actions-menu'
+import { sessionRowDetails } from './session-row-details'
 import { sessionShowsRunningArc } from './session-row-state'
 
 // Ported/adapted from desktop `app/chat/sidebar/session-row.tsx`. ⇧⌘-click pops
@@ -102,6 +105,10 @@ function SidebarSessionRowImpl({
   const { t } = useI18n()
   const r = t.sidebar.row
   const title = sessionTitle(session)
+  // What the row SHOWS: the title under its owner's name when a plugin named
+  // that profile (`Radar: Bot Chat`). `title` stays bare for everything that
+  // writes or carries it — rename, the drag payload, the actions menu.
+  const shownTitle = useStoreSelector($sessionOwnerLabels, labels => withSessionOwner(title, session.profile, labels))
   const age = formatAge(session.last_active || session.started_at, r)
   // Selector, not `useStore(...).includes(...)`: the attention array's reference
   // changes whenever ANY session starts or stops waiting on an answer, which
@@ -116,6 +123,15 @@ function SidebarSessionRowImpl({
   // can never take away the PR or profile chips, which universal renders by
   // their own rules (see `SidebarRowMeta` in store/layout).
   const rowMeta = useStore($sidebarRowMeta)
+  // Orthogonal to rowMeta: that picks WHICH chips ride the title line, this
+  // picks how many LINES the row gets. Compact is the row exactly as it shipped.
+  const density = useStore($sessionListDensity)
+
+  const details = sessionRowDetails(session, {
+    messageCount: r.messageCount,
+    toolCallCount: r.toolCallCount
+  })
+
   const pinnedAge = rowMeta.includes('updated')
   const totalTokens = session.input_tokens + session.output_tokens
   const cost = sessionCostUsd(session)
@@ -202,6 +218,9 @@ function SidebarSessionRowImpl({
           dragging && 'z-10 cursor-grabbing bg-(--ui-sidebar-surface-background)',
           className
         )}
+        // A row lifted out of the list floats OVER its neighbours, so under
+        // glass it has to stay opaque or it reads as two rows at once.
+        data-glass-opaque={dragging ? '' : undefined}
         data-working={isWorking ? 'true' : undefined}
         ref={ref}
         style={style}
@@ -309,9 +328,29 @@ function SidebarSessionRowImpl({
             </SidebarRowLead>
           )}
           {showProfile && <ProfileTag profile={session.profile} />}
-          <SidebarRowLabel className="flex-1 font-normal group-hover:text-foreground group-data-[working=true]:text-foreground/90">
-            {title}
-          </SidebarRowLabel>
+          {density === 'compact' ? (
+            <SidebarRowLabel className="flex-1 font-normal group-hover:text-foreground group-data-[working=true]:text-foreground/90">
+              {shownTitle}
+            </SidebarRowLabel>
+          ) : (
+            // The extra lines live INSIDE the label column so they truncate with
+            // the title rather than pushing the trailing chips around.
+            <span className="flex min-w-0 flex-1 flex-col justify-center">
+              <SidebarRowLabel className="font-normal group-hover:text-foreground group-data-[working=true]:text-foreground/90">
+                {shownTitle}
+              </SidebarRowLabel>
+              {details.metadata && (
+                <span className="mt-0.5 block truncate text-[0.625rem] leading-none text-(--ui-text-tertiary)">
+                  {details.metadata}
+                </span>
+              )}
+              {density === 'detailed' && details.preview && (
+                <span className="mt-1 block truncate text-[0.625rem] leading-none text-(--ui-text-quaternary)">
+                  {details.preview}
+                </span>
+              )}
+            </span>
+          )}
           {/* Stays put on hover, unlike the other chips: it's a link, and the
               kebab lives in its own column rather than over this one. */}
           {pr && <PrTag pr={pr} />}

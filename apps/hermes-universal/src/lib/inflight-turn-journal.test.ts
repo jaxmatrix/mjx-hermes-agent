@@ -114,6 +114,50 @@ describe('mergeInFlightMessages', () => {
     expect(result.messages.filter(m => m.id === 'assistant-stream-1')).toHaveLength(1)
   })
 
+  // The journal can outlive the turn it recorded: a reclaim, reconnect or
+  // restart race skips the settle that clears the entry. On the next resume its
+  // rows carry ids the committed rows do not, so id-based dedupe waves them
+  // through and the conversation ends with the same answers appended again, out
+  // of order.
+  it('treats a tail whose answers are already committed as caught up', () => {
+    // Deliberately mismatched ids and a user row the base does not hold, so the
+    // ONLY thing that can recognise the duplicate is the text comparison.
+    const base = [user('committed-u', 'do a thing'), assistant('committed-a', 'the answer')]
+    const stale = [user('journal-u', 'a different prompt'), assistant('journal-a', 'the answer')]
+
+    expect(mergeInFlightMessages(base, stale)).toMatchObject({ applied: false, caughtUp: true })
+  })
+
+  it('ignores whitespace when deciding the tail is already committed', () => {
+    const base = [user('committed-u', 'do a thing'), assistant('committed-a', 'the   answer')]
+    const stale = [user('journal-u', 'a different prompt'), assistant('journal-a', 'the answer')]
+
+    expect(mergeInFlightMessages(base, stale).caughtUp).toBe(true)
+  })
+
+  it('still appends a tail the base has never seen', () => {
+    // The crash-recovery path the journal exists for must not regress: same
+    // shape as above, different answer text.
+    const base = [user('committed-u', 'do a thing'), assistant('committed-a', 'the answer')]
+    const fresh = [user('journal-u', 'a different prompt'), assistant('journal-a', 'a NEW answer')]
+    const result = mergeInFlightMessages(base, fresh)
+
+    expect(result.applied).toBe(true)
+    expect(chatMessageText(result.messages[result.messages.length - 1])).toBe('a NEW answer')
+  })
+
+  it('appends a tail where only SOME answers are already committed', () => {
+    const base = [user('committed-u', 'do a thing'), assistant('committed-a', 'the answer')]
+
+    const partly = [
+      user('journal-u', 'a different prompt'),
+      assistant('journal-a', 'the answer'),
+      assistant('journal-b', 'and then some')
+    ]
+
+    expect(mergeInFlightMessages(base, partly).applied).toBe(true)
+  })
+
   it('does nothing for a tail with no recoverable assistant', () => {
     expect(mergeInFlightMessages([], [user('u1', 'x')])).toMatchObject({ applied: false, caughtUp: false })
   })

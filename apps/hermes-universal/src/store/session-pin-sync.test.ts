@@ -30,6 +30,7 @@ vi.mock('@/store/windows', async importOriginal => ({
 
 import { ApiError } from '@/lib/api'
 import { $pinnedSessionIds } from '@/store/layout'
+import { $activeProfile } from '@/store/profiles'
 import { $pinnedSessionCache, $removedSessionIds, $sessions, $sessionsListEpoch } from '@/store/session'
 
 import { resetSessionPinMirror, watchSessionPins } from './session-pin-sync'
@@ -347,6 +348,40 @@ describe('watchSessionPins remote pull', () => {
 
     expect($pinnedSessionIds.get()).toContain('failed')
     expect(patch).toHaveBeenCalledWith('failed', true, undefined)
+  })
+
+  it('does not oscillate when two profiles share a session id with conflicting pins', async () => {
+    // Session ids are only unique inside a profile, so the cross-profile list
+    // can hold the same durable id twice with opposite `pinned` flags
+    // (copied/imported profile DBs). A profile-blind pull pins then unpins the
+    // id in one pass and re-fires reconcile forever, overflowing nanostores'
+    // listenerQueue (`RangeError: Invalid array length`). Seeded the way that
+    // runaway needs: the SECOND row disagrees with the first.
+    $sessions.set([
+      row('shared', { profile: 'default', pinned: true }),
+      row('shared', { profile: 'hcoder', pinned: false })
+    ])
+    await flush()
+
+    // Exactly one row wins, so the local set settles instead of recursing.
+    expect($pinnedSessionIds.get()).toEqual(['shared'])
+  })
+
+  it('prefers the active gateway profile when duplicate ids disagree', async () => {
+    // `$activeGatewayProfile` is COMPUTED over `$activeProfile`, so this is the
+    // only way to move it. The seed disagrees with the assertion on purpose:
+    // the FIRST row says pinned, and only the active profile's tie-break makes
+    // the answer an empty set.
+    $activeProfile.set('hcoder')
+    $sessions.set([
+      row('shared', { profile: 'default', pinned: true }),
+      row('shared', { profile: 'hcoder', pinned: false })
+    ])
+    await flush()
+
+    // The active profile's row is authoritative, so the pin is dropped.
+    expect($pinnedSessionIds.get()).toEqual([])
+    $activeProfile.set(null)
   })
 })
 

@@ -14,15 +14,25 @@ import { IS_NATIVE_MOBILE } from '@/lib/platform'
 import { reconnectBackoffDelayMs } from '@/lib/reconnect-backoff'
 import { clearSecrets, loadSecrets, loadSshSecrets, saveSecrets, type Secrets } from '@/lib/secure-store'
 import { persistSessionCookies } from '@/lib/session-persist'
-import { atom } from '@/store/atom'
+import {
+  $activeConnection,
+  describeConnection,
+  publishActiveConnection,
+  setPendingConnectionHint,
+  takePendingConnectionHint
+} from '@/store/active-connection'
+import {
+  $connection,
+  $connectionError,
+  $connectionPhase,
+  $hasConnected,
+  $status,
+  type StatusInfo
+} from '@/store/connection-atoms'
+import { isLatched, latchBackendFailure, releaseLatch } from '@/store/connection-latches'
 import { $gatewayState, closeGateway, connectGateway } from '@/store/gateway'
 import { chooseGatedAuth, type Connection } from '@/store/gateway-config'
-import {
-  loadGatewayTarget,
-  saveGatewayTarget,
-  savePendingOAuth,
-  takePendingOAuth
-} from '@/store/gateway-restore'
+import { loadGatewayTarget, saveGatewayTarget, savePendingOAuth, takePendingOAuth } from '@/store/gateway-restore'
 import { getInstallationId } from '@/store/installation-id'
 import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import {
@@ -37,6 +47,19 @@ import {
 } from '@/store/ssh-backend'
 import { httpRequest } from '@/transport/http'
 
+// The atoms themselves live in the LEAF `store/connection-atoms.ts` so that
+// `lib/api.ts` and `store/active-connection.ts` can read them without pulling in
+// the connect/reconnect machinery (and without the import cycle that would
+// create). Re-exported here so every existing importer is unchanged.
+export {
+  $connection,
+  $connectionError,
+  $connectionPhase,
+  $hasConnected,
+  $status,
+  type ConnectionPhase,
+  type StatusInfo
+} from '@/store/connection-atoms'
 // AuthMode / Connection are now defined in store/gateway-config (the reconciled
 // model incl. 'oauth' + gateway mode). Re-exported here so existing importers of
 // '@/store/connection' keep working.
@@ -53,22 +76,6 @@ export type { AuthMode, Connection } from '@/store/gateway-config'
 //                      session cookie (held in Rust), and the WS uses a fresh
 //                      single-use ?ticket= minted per connect (store/gateway.ts).
 
-export type ConnectionPhase = 'idle' | 'probing' | 'connecting' | 'ready' | 'error'
-
-export interface StatusInfo {
-  version?: string
-  auth_required?: boolean
-  auth_providers?: string[]
-  /** Which sign-in flows this gateway can run — `"cookie"` always when gated,
-   *  `"native_pkce"` only when a provider can broker an RFC 8252 native login
-   *  (`hermes_cli/web_server.py`). Absent on gateways older than those routes,
-   *  which is the compatibility mechanism: see `lib/native-auth-decisions.ts`.
-   *  Rust re-probes this itself before choosing a flow (`oauth.rs`); the field is
-   *  declared here so surfaces can say WHICH way the user is signed in. */
-  auth_flows?: string[]
-  [key: string]: unknown
-}
-
 export interface ConnectInput {
   url: string
   token?: string
@@ -80,22 +87,6 @@ export interface ConnectInput {
 // secrets (token/password) live in the OS keyring (see @/lib/secure-store).
 const URL_KEY = 'hermes.url'
 const USER_KEY = 'hermes.username'
-
-export const $connection = atom<Connection | null>(null)
-export const $connectionPhase = atom<ConnectionPhase>('idle')
-export const $connectionError = atom<string | null>(null)
-export const $status = atom<StatusInfo | null>(null)
-
-/**
- * True once a live connection has been reached in this session (until an explicit
- * disconnect). The root gate reads it so an in-session reconnect (a dropped socket
- * or a settings "Save & reconnect") shows the connecting screen over the mounted
- * shell/Settings instead of bouncing to the full-screen connect picker — the
- * picker is reserved for a genuine first run. Reset by `disconnect()` (deliberate
- * sign-out → back to the picker). Not persisted: a fresh launch starts false and
- * the boot restore (`$restoring`) drives the connecting screen instead.
- */
-export const $hasConnected = atom(false)
 
 export const lastUrl = (): string => loadString(URL_KEY)
 export const lastUsername = (): string => loadString(USER_KEY)
@@ -112,6 +103,12 @@ export function loadSavedLogin(): Promise<Secrets | null> {
  *  check: a failed wipe used to be indistinguishable from a clean one. */
 export function forgetSavedLogin(): Promise<boolean> {
   return clearSecrets()
+}
+
+/** The registry id of whatever is live, for the saved target. Read AFTER the
+ *  publish, so it names the connection that actually came up. */
+function activeConnectionId(): string | undefined {
+  return $activeConnection.get()?.connectionId
 }
 
 export function normalizeBaseUrl(raw: string): string {
@@ -157,7 +154,11 @@ async function beginOAuthLogin(base: string, provider?: string, username?: strin
     return
   }
 
-  savePendingOAuth({ base, provider, username })
+  // The marker carries the SOURCE (MJXHRM-446). The navigation destroys this JS
+  // context, so without an id the post-reload resume can only guess which
+  // gateway it just signed into — and on a multi-source install a guess means
+  // coming back on the wrong machine.
+  savePendingOAuth({ base, connectionId: $activeConnection.get()?.connectionId, provider, username })
 
   try {
     await oauthLogin(base, provider)
@@ -176,6 +177,12 @@ async function beginOAuthLogin(base: string, provider?: string, username?: strin
 
 export async function connect(input: ConnectInput): Promise<void> {
   const base = normalizeBaseUrl(input.url)
+  // Taken SYNCHRONOUSLY, before the first await. The hint is one-shot and
+  // `selectConnection` parks it immediately before calling this, so two
+  // overlapping switches would otherwise each publish whichever identity was
+  // parked last.
+  const hint = takePendingConnectionHint()
+
   armReconnect()
   $connectionError.set(null)
   $connectionPhase.set('probing')
@@ -224,7 +231,10 @@ export async function connect(input: ConnectInput): Promise<void> {
       conn = { baseUrl: base, mode: 'remote', authMode: 'none' }
     }
 
-    $connection.set(conn)
+    // ONE notification: the descriptor, its profile and its identity land
+    // together, so nothing can fire REST at the new base under the old source's
+    // scope while this awaits (store/active-connection.ts).
+    publishActiveConnection(describeConnection(conn, hint))
     $connectionPhase.set('connecting')
 
     try {
@@ -250,11 +260,16 @@ export async function connect(input: ConnectInput): Promise<void> {
     // oauth/cloud once D6/E land) survives an app restart. No-op in token/none mode.
     await persistSessionCookies()
     // Remember this target so the next launch auto-reconnects (D8).
-    saveGatewayTarget({ mode: 'remote', url: input.url.trim(), username: input.username || undefined })
+    saveGatewayTarget({
+      connectionId: activeConnectionId(),
+      mode: 'remote',
+      url: input.url.trim(),
+      username: input.username || undefined
+    })
   } catch (err) {
     $connectionError.set(errorText(err))
     $connectionPhase.set('error')
-    $connection.set(null)
+    publishActiveConnection(null)
     throw err
   }
 }
@@ -264,6 +279,8 @@ export async function connect(input: ConnectInput): Promise<void> {
  * token mode. The Rust command resolves only once the backend is HTTP-ready.
  */
 export async function connectLocal(profile?: null | string): Promise<void> {
+  const hint = takePendingConnectionHint()
+
   armReconnect()
   $connectionError.set(null)
   $connectionPhase.set('connecting')
@@ -279,17 +296,17 @@ export async function connectLocal(profile?: null | string): Promise<void> {
       profile: profile ?? null
     }
 
-    $connection.set(conn)
+    publishActiveConnection(describeConnection(conn, hint))
     await connectGateway(conn)
     $connectionPhase.set('ready')
     // Remember this target so the next launch auto-reconnects (D8).
-    saveGatewayTarget({ mode: 'local', profile: profile ?? null })
+    saveGatewayTarget({ connectionId: activeConnectionId(), mode: 'local', profile: profile ?? null })
   } catch (err) {
     // Tear the child down so a failed connect doesn't leave an orphan process.
     void stopLocalBackend().catch(() => {})
     $connectionError.set(errorText(err))
     $connectionPhase.set('error')
-    $connection.set(null)
+    publishActiveConnection(null)
     throw err
   }
 }
@@ -322,6 +339,9 @@ export async function connectSsh(
 
   const attemptId = options.attemptId ?? newAttemptId()
   const profile = target.profile ?? null
+  // Taken BEFORE the long dial: a 90 s SSH connect must not have its identity
+  // stolen by a second dial that started meanwhile.
+  const hint = takePendingConnectionHint()
   // Tracked so `disconnect()` can abort a dial that is still running. A cold SSH
   // connect can take 90s, and without this the "Use a different gateway" escape
   // hatch only *looks* like it worked: the UI moves on while Rust keeps
@@ -344,6 +364,9 @@ export async function connectSsh(
     const backend = await connectSshBackend(attemptId, {
       ...target,
       profile,
+      // Absent for the legacy owner, which is what collapses its ownership id to
+      // the bare profile so a running remote backend is REATTACHED (§8.6).
+      connectionId: hint?.dialConnectionId ?? undefined,
       installationId,
       privateKeyPem: sshSecrets.privateKeyPem,
       passphrase: sshSecrets.passphrase,
@@ -365,22 +388,31 @@ export async function connectSsh(
       remoteIdentity: backend.ownershipId
     }
 
-    $connection.set(conn)
+    publishActiveConnection(describeConnection(conn, hint))
     await connectGateway(conn)
     $connectionPhase.set('ready')
 
     // Persist the token so the NEXT launch can reattach rather than respawn.
-    await saveSecrets({ token: backend.token })
-    saveGatewayTarget({ mode: 'ssh', profile, ssh: target })
-    await watchSshTunnel(profile)
+    //
+    // ONLY for the legacy owner. A REGISTERED connection's reattach token is
+    // written by Rust under its own account (`connections::remember_reuse_token`)
+    // — the bare `SecretKey::Token` is shared with the remote gateway path, so
+    // writing it here for every source is D-4: an ssh reattach token clobbering
+    // a remote gateway's token and vice-versa.
+    if (!hint?.dialConnectionId) {
+      await saveSecrets({ token: backend.token })
+    }
+
+    saveGatewayTarget({ connectionId: activeConnectionId(), mode: 'ssh', profile, ssh: target })
+    await watchSshTunnel(profile, hint?.dialConnectionId ?? null)
   } catch (err) {
     // Drop the tunnel so a failed connect does not leave one open. The remote
     // backend is deliberately left alone — Rust already reaped it if the failure
     // was its own.
-    void disconnectSsh(profile).catch(() => {})
+    void disconnectSsh(profile, hint?.dialConnectionId ?? null).catch(() => {})
     $connectionError.set(errorText(err))
     $connectionPhase.set('error')
-    $connection.set(null)
+    publishActiveConnection(null)
     throw err
   } finally {
     unlistenProgress?.()
@@ -401,6 +433,8 @@ let activeSshAttempt: null | string = null
  * so this is an OAuth-style connect — the WS mints a ticket from that cookie.
  */
 export async function connectCloud(baseUrl: string, profile?: null | string): Promise<void> {
+  const hint = takePendingConnectionHint()
+
   armReconnect()
   $connectionError.set(null)
   $connectionPhase.set('connecting')
@@ -413,7 +447,7 @@ export async function connectCloud(baseUrl: string, profile?: null | string): Pr
       profile: profile ?? null
     }
 
-    $connection.set(conn)
+    publishActiveConnection(describeConnection(conn, hint))
 
     try {
       await connectGateway(conn)
@@ -432,11 +466,16 @@ export async function connectCloud(baseUrl: string, profile?: null | string): Pr
     await persistSessionCookies()
     // Remember this target so the next launch auto-reconnects (D8). connectCloudAgent
     // enriches it with the agent id/name afterwards (for the restore label).
-    saveGatewayTarget({ mode: 'cloud', cloudBaseUrl: conn.baseUrl, profile: profile ?? null })
+    saveGatewayTarget({
+      cloudBaseUrl: conn.baseUrl,
+      connectionId: activeConnectionId(),
+      mode: 'cloud',
+      profile: profile ?? null
+    })
   } catch (err) {
     $connectionError.set(errorText(err))
     $connectionPhase.set('error')
-    $connection.set(null)
+    publishActiveConnection(null)
     throw err
   }
 }
@@ -460,7 +499,7 @@ export function disconnect(): void {
   // spawn — matching desktop.
   if (conn?.mode === 'ssh') {
     stopWatchingSshTunnel()
-    void disconnectSsh(conn.profile ?? null).catch(() => {})
+    void disconnectSsh(conn.profile ?? null, $activeConnection.get()?.dialConnectionId ?? null).catch(() => {})
   }
 
   // Abort a dial that has not produced a connection yet — at this point there is
@@ -471,7 +510,7 @@ export function disconnect(): void {
   }
 
   closeGateway()
-  $connection.set(null)
+  publishActiveConnection(null)
   $connectionPhase.set('idle')
   $connectionError.set(null)
 }
@@ -513,19 +552,23 @@ export async function signOut(): Promise<void> {
 
 let sshWatcher: null | (() => void) = null
 
-async function watchSshTunnel(profile: null | string): Promise<void> {
+async function watchSshTunnel(profile: null | string, connectionId: null | string): Promise<void> {
   sshWatcher?.()
   sshWatcher = null
 
-  const unlisten = await onSshDisconnected(profile, () => {
-    // A deliberate disconnect does not emit this, but the user may have torn the
-    // connection down between the event firing and it arriving.
-    if (intentionalClose || $connection.get()?.mode !== 'ssh') {
-      return
-    }
+  const unlisten = await onSshDisconnected(
+    profile,
+    () => {
+      // A deliberate disconnect does not emit this, but the user may have torn the
+      // connection down between the event firing and it arriving.
+      if (intentionalClose || $connection.get()?.mode !== 'ssh') {
+        return
+      }
 
-    void rebootstrapSsh(profile)
-  }).catch(() => null)
+      void rebootstrapSsh()
+    },
+    connectionId
+  ).catch(() => null)
 
   if (unlisten) {
     sshWatcher = unlisten
@@ -540,7 +583,16 @@ function stopWatchingSshTunnel(): void {
 
 let rebootstrapping = false
 
-async function rebootstrapSsh(profile: null | string): Promise<void> {
+/**
+ * Re-bootstrap the tunnel that died.
+ *
+ * Reads the LIVE connection rather than `loadGatewayTarget()`: the saved target
+ * is whatever was persisted last, which after a source switch is a DIFFERENT
+ * host — so the watchdog used to be able to re-dial the wrong machine (D-2). The
+ * live descriptor is also what carries the registry identity, so a re-bootstrap
+ * reattaches under the same ownership id instead of spawning a second backend.
+ */
+async function rebootstrapSsh(): Promise<void> {
   if (rebootstrapping) {
     return
   }
@@ -548,15 +600,36 @@ async function rebootstrapSsh(profile: null | string): Promise<void> {
   rebootstrapping = true
 
   try {
-    const target = loadGatewayTarget()
+    const active = $activeConnection.get()
 
-    if (!target?.ssh?.host) {
+    // The watchdog stands down for a latched source too — otherwise the latch
+    // only stops one of the two retry paths and the loop continues through this
+    // one instead.
+    if (isLatched(active?.connectionId ?? null)) {
       return
+    }
+
+    const target = loadGatewayTarget()
+    const ssh = target?.ssh
+
+    if (!ssh?.host || (active && active.connection.mode !== 'ssh')) {
+      return
+    }
+
+    const profile = active?.connection.profile ?? target?.profile ?? null
+
+    if (active) {
+      // Re-arm the identity for the dial that is about to publish.
+      setPendingConnectionHint({
+        connectionId: active.connectionId,
+        dialConnectionId: active.dialConnectionId,
+        label: active.label
+      })
     }
 
     // Non-interactive: this fires on its own schedule, with no user waiting on a
     // dialog. Keyring-held credentials are all it gets.
-    await connectSsh({ ...target.ssh, profile }, { interactive: false })
+    await connectSsh({ ...ssh, profile }, { interactive: false })
   } catch {
     // connectSsh already set $connectionError + phase; the connecting screen
     // surfaces it and the ordinary supervisor keeps retrying the socket.
@@ -673,7 +746,7 @@ async function runReconnectLoop(): Promise<void> {
       // the port is gone with it. Re-bootstrap instead; it reattaches to the
       // still-running remote backend through the reuse path.
       if (conn.mode === 'ssh') {
-        await rebootstrapSsh(conn.profile ?? null)
+        await rebootstrapSsh()
 
         if ($connectionPhase.get() === 'ready') {
           break
@@ -695,6 +768,25 @@ async function runReconnectLoop(): Promise<void> {
 
       break
     } catch (err) {
+      // A failure that cannot self-heal is LATCHED, per connection, and the loop
+      // stands down for that source (P-23). Nothing latched before this: the
+      // loop re-entered on every `'closed'` and backed off forever, which is how
+      // desktop's bundle showed 157 boot retries in 2.5 hours against a
+      // reinstalled VPS. A transient fault is deliberately NOT latched.
+      const latched = latchBackendFailure($activeConnection.get()?.connectionId ?? conn.baseUrl, {
+        attemptedRemote: conn.mode !== 'local',
+        error: err,
+        isReauth: conn.authMode === 'oauth' && isGatewayReauthRequired(err)
+      })
+
+      if (latched === 'host-key-changed') {
+        // Terminal by construction (`ssh/known_hosts.rs` calls it "always
+        // fatal"): retrying cannot succeed until someone verifies the new key.
+        $connectionError.set(errorText(err))
+
+        break
+      }
+
       if (conn.authMode === 'oauth' && isGatewayReauthRequired(err)) {
         // On mobile an interactive sign-in is a ONE-WAY DOOR: it navigates the app's only
         // webview to the login page and never returns (see `beginOAuthLogin`). This loop
@@ -773,5 +865,12 @@ $gatewayState.subscribe(state => {
 $connectionPhase.subscribe(phase => {
   if (phase === 'ready') {
     $hasConnected.set(true)
+
+    // A source that just connected is, by definition, no longer held down.
+    const connectionId = $activeConnection.get()?.connectionId
+
+    if (connectionId) {
+      releaseLatch(connectionId)
+    }
   }
 })

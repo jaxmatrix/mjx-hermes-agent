@@ -241,6 +241,28 @@ const DESKTOP_COMMAND_SPECS: readonly DesktopCommandSpec[] = [
     args: true,
     takesFreeText: true
   },
+  // Recurring in-session wakeups (hermes_cli/loops.py). It already EXECUTED
+  // before this entry existed — an unlisted command falls through to
+  // isDesktopSlashExtensionCommand, which treats anything the table does not
+  // name as a backend skill command — but it was undiscoverable: the popover
+  // only offers what this table or the gateway's commands.catalog lists, and
+  // /loop is in neither. Same shape as /goal: subcommands (status/pause/resume/
+  // stop/help) AND a free-text prompt after an optional interval.
+
+  // Recurring in-session wakeups (hermes_cli/loops.py). It already EXECUTED
+  // before this entry existed — an unlisted command falls through to
+  // isDesktopSlashExtensionCommand, which treats anything the table does not
+  // name as a backend skill command — but it was undiscoverable: the popover
+  // only offers what this table or the gateway's commands.catalog lists, and
+  // /loop is in neither. Same shape as /goal: subcommands (status/pause/resume/
+  // stop/help) AND a free-text prompt after an optional interval.
+  {
+    name: '/loop',
+    description: 'Repeat a prompt on a schedule in this session (/loop 5m check CI, /loop status, /loop stop)',
+    surface: exec(),
+    args: true,
+    takesFreeText: true
+  },
   { name: '/personality', description: 'Switch personality for this session', surface: exec(), args: true },
   {
     name: '/pet',

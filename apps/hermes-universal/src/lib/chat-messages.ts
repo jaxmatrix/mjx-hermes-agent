@@ -412,6 +412,84 @@ export function completionErrorText(finalText: string): null | string {
 const normalizeForCompare = (value: string): string => value.replace(/\s+/g, ' ').trim()
 
 /**
+ * Drop earlier text parts that a later text part repeats verbatim (after
+ * whitespace normalisation). Providers that continue a turn after a tool call
+ * sometimes re-send the previous assistant text as the next message's prefix
+ * (a tool_calls row, then a stop row with identical prose — both persisted).
+ * The turn merge then holds the same paragraph twice and everything in it
+ * renders twice, most visibly `::preview` frames. The LAST occurrence is the
+ * authoritative one; keep it.
+ */
+/**
+ * Turn-settle reconciliation: close every tool-call part that never received
+ * its completion event. A `tool.complete` lost to a degraded websocket
+ * (reconnect, profile swap, hidden window) leaves the part without a `result`,
+ * which renders as a permanently spinning tool row even though the turn itself
+ * completed. A settled session cannot have tools still running, so an open part
+ * at settle time is a lost event, not live work. Pending messages are left
+ * alone, and no-op calls return the input array unchanged.
+ */
+export function sealOpenToolParts(messages: ChatMessage[]): ChatMessage[] {
+  let changed = false
+
+  const next = messages.map(message => {
+    if (message.role !== 'assistant' || message.pending) {
+      return message
+    }
+
+    let partChanged = false
+
+    const parts = message.parts.map(part => {
+      if (part.type !== 'tool-call' || Object.hasOwn(part, 'result')) {
+        return part
+      }
+
+      partChanged = true
+
+      return { ...part, result: {} }
+    })
+
+    if (!partChanged) {
+      return message
+    }
+
+    changed = true
+
+    return { ...message, parts }
+  })
+
+  return changed ? next : messages
+}
+
+const normalizeRepeatedText = (value: string) => value.replace(/\s+/g, ' ').trim()
+
+export function dedupeRepeatedTextInParts(parts: ChatPart[]): ChatPart[] {
+  const lastByText = new Map<string, number>()
+
+  parts.forEach((part, index) => {
+    if (part.type === 'text') {
+      const key = normalizeRepeatedText(part.text)
+
+      if (key) {
+        lastByText.set(key, index)
+      }
+    }
+  })
+
+  const dropped = parts.filter((part, index) => {
+    if (part.type !== 'text') {
+      return true
+    }
+
+    const key = normalizeRepeatedText(part.text)
+
+    return !key || lastByText.get(key) === index
+  })
+
+  return dropped.length === parts.length ? parts : dropped
+}
+
+/**
  * Settle a turn's parts against the authoritative `final_response` the gateway
  * ships on `message.complete` (tui_gateway/server.py).
  *

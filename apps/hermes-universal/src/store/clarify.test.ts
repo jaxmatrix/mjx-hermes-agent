@@ -3,10 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ToolCallPart } from '@/lib/chat-messages'
 import {
   applyResumedClarify,
+  bareChoice,
   hasClarifyRequest,
   matchClarifyRequest,
   normalizeChoices,
+  normalizeQuestions,
   readChoices,
+  readLockedAnswers,
+  RECOMMENDED_LABEL,
   skipClarifyRequest
 } from '@/store/clarify'
 import { clearAllPrompts, sessionClarifyRequest, setSessionClarify } from '@/store/prompts'
@@ -217,6 +221,120 @@ describe('applyResumedClarify', () => {
     applyResumedClarify('s1', {})
     applyResumedClarify('s1', { pending_prompt: null })
     applyResumedClarify('s1', pending({ request_id: 'req-1' }))
+
+    expect(sessionClarifyRequest('s1').get()).toBeNull()
+    expect(toolParts('s1')).toEqual([])
+  })
+})
+
+/**
+ * MJXHRM-458. There is no `recommended` field on the wire: the backend appends
+ * "(Recommended)" to the FIRST choice string (`mark_recommended`) and strips it
+ * back off the answer (`strip_recommended`). So the label arrives inside the
+ * data the renderer measures and displays.
+ */
+describe('recommended-choice labelling', () => {
+  it('reads the option without the label the backend appended', () => {
+    expect(bareChoice(`Rebase onto main ${RECOMMENDED_LABEL}`)).toBe('Rebase onto main')
+    // No label — the string is the option, trailing spaces and all.
+    expect(bareChoice('Rebase onto main')).toBe('Rebase onto main')
+  })
+
+  // The label is 14 characters the model did not write. Measuring the decorated
+  // string dropped an option that was inside the limit as offered — and a
+  // dropped first choice is exactly the recommended one.
+  it('does not drop a choice for length the label added', () => {
+    const atLimit = 'x'.repeat(200)
+
+    expect(normalizeChoices([`${atLimit} ${RECOMMENDED_LABEL}`])).toEqual([`${atLimit} ${RECOMMENDED_LABEL}`])
+    expect(normalizeChoices([`${'x'.repeat(201)} ${RECOMMENDED_LABEL}`])).toEqual([])
+  })
+})
+
+describe('normalizeQuestions', () => {
+  it('keeps the questions a card can actually answer', () => {
+    expect(
+      normalizeQuestions([
+        { qid: ' q0 ', question: ' Drink? ', choices: ['Coffee', '', 'line\nbreak'], multi_select: true },
+        { qid: 'q1', question: 'Open?', choices: null }
+      ])
+    ).toEqual([
+      { qid: 'q0', question: 'Drink?', choices: ['Coffee'], multiSelect: true },
+      { qid: 'q1', question: 'Open?', choices: null, multiSelect: false }
+    ])
+  })
+
+  // A qid-less entry can never be locked — `clarify.respond` answers 4002 to
+  // anything that is not one of the batch's own qids — so rendering it offers
+  // the user an answer the gateway will refuse.
+  it('drops entries that could never be answered', () => {
+    expect(
+      normalizeQuestions([{ question: 'no qid' }, { qid: 'q0' }, { qid: 'q1', question: '  ' }, 'nope', null])
+    ).toEqual([])
+    expect(normalizeQuestions('not an array')).toEqual([])
+  })
+
+  // multi_select with nothing to multi-pick from is a free-text question.
+  it('only honors multi_select alongside surviving choices', () => {
+    expect(normalizeQuestions([{ qid: 'q0', question: 'Q?', choices: ['   '], multi_select: true }])).toEqual([
+      { qid: 'q0', question: 'Q?', choices: null, multiSelect: false }
+    ])
+  })
+})
+
+describe('readLockedAnswers', () => {
+  it('keeps only the answers a card can stage back', () => {
+    expect(readLockedAnswers({ q0: 'Coffee', q1: 7, q2: null })).toEqual({ q0: 'Coffee' })
+  })
+
+  it('reports nothing locked as undefined, not an empty map', () => {
+    expect(readLockedAnswers({})).toBeUndefined()
+    expect(readLockedAnswers({ q0: 7 })).toBeUndefined()
+    expect(readLockedAnswers(null)).toBeUndefined()
+  })
+})
+
+/**
+ * The resume half of MJXHRM-458: `clarify.request` is emitted once and never
+ * buffered, so a client that cold-opens a session parked on a BATCH had no
+ * questions, no request_id, and — uniquely to batches — no record of the
+ * answers it had already locked before the disconnect.
+ */
+describe('applyResumedClarify (batch)', () => {
+  const pending = (payload: Record<string, unknown>) => ({ pending_prompt: { event: 'clarify.request', payload } })
+
+  beforeEach(() => {
+    publishSessionState('s1', { ...emptySessionState('stored-1'), busy: true })
+  })
+
+  it('rebuilds a batch with the answers already locked', () => {
+    applyResumedClarify(
+      's1',
+      pending({
+        request_id: 'req-1',
+        questions: [
+          { qid: 'q0', question: 'Drink?', choices: ['Coffee', 'Tea'] },
+          { qid: 'q1', question: 'Time?', choices: ['Morning'] }
+        ],
+        answers: { q0: 'Tea' }
+      })
+    )
+
+    expect(sessionClarifyRequest('s1').get()).toEqual({
+      requestId: 'req-1',
+      question: '',
+      choices: null,
+      questions: [
+        { qid: 'q0', question: 'Drink?', choices: ['Coffee', 'Tea'], multiSelect: false },
+        { qid: 'q1', question: 'Time?', choices: ['Morning'], multiSelect: false }
+      ],
+      lockedAnswers: { q0: 'Tea' }
+    })
+    expect(toolParts('s1')).toHaveLength(1)
+  })
+
+  it('ignores a batch with nothing answerable in it', () => {
+    applyResumedClarify('s1', pending({ request_id: 'req-1', questions: [{ question: 'no qid' }] }))
 
     expect(sessionClarifyRequest('s1').get()).toBeNull()
     expect(toolParts('s1')).toEqual([])

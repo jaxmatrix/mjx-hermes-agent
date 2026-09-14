@@ -41,10 +41,40 @@ import {
   $restDoorEnabled,
   type DiskEntry,
   type PluginDisk,
+  type PluginRoot,
   resolvePluginDisk,
   REST_CONTENT_DIFF_CAP
 } from './plugin-disk'
-import { dropPlugin, pluginActive, type PluginKind, publishPlugin } from './plugins-store'
+import { $pluginRecords, dropPlugin, pluginActive, type PluginKind, publishPlugin } from './plugins-store'
+
+/**
+ * The root's posture capping the plugin's own default. Pure, and exported so the
+ * rule is pinned directly rather than inferred from a load: it can only LOWER.
+ *
+ * A package half declaring `defaultEnabled: true` in the opt-in root stays off
+ * (it does not get to choose its own posture), and a plugin declaring `false` in
+ * the permissive root also stays off (the root does not get to override it).
+ * Absence on either side means "no opinion", not "off".
+ */
+export function rootCappedDefault(pluginDefault?: boolean, rootDefault?: boolean): boolean {
+  return (pluginDefault ?? true) && (rootDefault ?? true)
+}
+
+/**
+ * Would loading this plugin take over an IN-TREE one's id?
+ *
+ * An in-tree plugin (`src/plugins/*`) is a first-party FEATURE, not a sample —
+ * MJXHRM-445's Bot Mode ships that way. `loaded` is keyed by id and a second
+ * registration disposes the first, so a disk plugin, including an agent package
+ * the user installed for entirely unrelated reasons, could silently replace one
+ * just by picking its slug. Refused, and named (MJXHRM-455 D3).
+ *
+ * Only ever refuses the DISK side: a bundled plugin re-registering itself is a
+ * reload, not a takeover.
+ */
+export function shadowsBundledPlugin(id: string, kind: PluginKind): boolean {
+  return kind !== 'bundled' && $pluginRecords.get()[id]?.kind === 'bundled'
+}
 
 interface LoadOptions {
   /** Absolute plugin.js path (disk plugins) — recorded for reveal/inventory. */
@@ -53,6 +83,17 @@ interface LoadOptions {
   integrity?: string
   /** Inventory bucket; the disk door is the default runtime source. */
   kind?: PluginKind
+  /** Which disk root the entry came from — the inventory row's badge. */
+  root?: PluginRoot
+  /**
+   * The ROOT's posture, which can only LOWER the plugin's own `defaultEnabled`.
+   *
+   * A plugin declaring `defaultEnabled: true` in an opt-in root stays off; a
+   * plugin declaring `false` in a permissive root also stays off. An explicit
+   * user decision still wins over both — absence in `$pluginDecisions` means
+   * "no choice", not "off".
+   */
+  defaultEnabled?: boolean
 }
 
 /** Live runtime plugins: id -> disposers (unload/reload support). */
@@ -159,12 +200,17 @@ export async function loadRuntimePlugin(
       throw new Error(`${origin} has no valid default HermesPlugin export`)
     }
 
+    if (shadowsBundledPlugin(plugin.id, options.kind ?? 'disk')) {
+      throw new Error(`plugin id "${plugin.id}" is already used by a built-in plugin`)
+    }
+
     const record = {
       id: plugin.id,
       name: plugin.name ?? plugin.id,
       description: plugin.description,
       kind: options.kind ?? 'disk',
-      file: options.file
+      file: options.file,
+      root: options.root
     }
 
     const activate = () => {
@@ -180,7 +226,7 @@ export async function loadRuntimePlugin(
 
     // A disabled plugin still inventories (settings shows it, toggle
     // reactivates via the handle above) — it just never registers.
-    if (pluginActive(plugin.id, plugin.defaultEnabled ?? true)) {
+    if (pluginActive(plugin.id, rootCappedDefault(plugin.defaultEnabled, options.defaultEnabled))) {
       activate()
     }
 
@@ -188,11 +234,18 @@ export async function loadRuntimePlugin(
   } catch (error) {
     console.error(`[plugins] runtime load failed (${origin})`, error)
     notifyError(error, `Plugin "${origin}" failed to load`)
+    // Keyed by the entry FILE when there is one, NOT by the folder name.
+    // Inventory rows are keyed by `plugin.id`, and with two roots a folder name
+    // can equal a healthy plugin's id in the other one — so a folder-named error
+    // row overwrote that plugin's row and then took it away again when the
+    // broken folder was fixed. `name` still carries the folder, so the settings
+    // page reads the same.
     publishPlugin({
-      id: origin,
+      id: options.file ?? origin,
       name: origin,
       kind: options.kind ?? 'disk',
       file: options.file,
+      root: options.root,
       status: 'error',
       error: error instanceof Error ? error.message : String(error)
     })
@@ -227,6 +280,14 @@ interface DiskPlugin {
   stamp: string
 }
 
+/**
+ * Disk records, keyed by ENTRY FILE — not by folder name.
+ *
+ * Two roots means two folders can share a name (`desktop-plugins/demo` and
+ * `plugins/demo/desktop`), and they are different plugins. Keying on the name
+ * made the second one overwrite the first's record, so one of them silently
+ * stopped being reconciled and never unloaded when its folder went away.
+ */
 const disk = new Map<string, DiskPlugin>()
 let watching = false
 let scanning = false
@@ -238,25 +299,30 @@ let activeDoor: null | PluginDisk = null
  *  (profile switch, gateway-door toggle), since the inventory then describes a
  *  different filesystem entirely. */
 function unloadAllDiskPlugins(): void {
-  for (const [name, record] of disk) {
+  for (const record of disk.values()) {
     if (record.id) {
       unloadRuntimePlugin(record.id)
       dropPlugin(record.id)
     }
 
-    dropPlugin(name)
+    dropPlugin(record.file)
   }
 
   disk.clear()
 }
 
 async function loadDiskPlugin(door: PluginDisk, entry: DiskEntry, stamp: string): Promise<void> {
-  const record = disk.get(entry.name)
+  const record = disk.get(entry.file)
   const prevId = record?.id
 
   try {
     const source = await door.read(entry)
-    const id = await loadRuntimePlugin(source, entry.name, { file: entry.file })
+
+    const id = await loadRuntimePlugin(source, entry.name, {
+      defaultEnabled: entry.defaultEnabled,
+      file: entry.file,
+      root: entry.root
+    })
 
     // A hot-edit that changes `plugin.id`: loadRuntimePlugin only disposes the
     // NEW id, so unload the previous incarnation here or its contributions +
@@ -271,10 +337,10 @@ async function loadDiskPlugin(door: PluginDisk, entry: DiskEntry, stamp: string)
       record.stamp = stamp
     }
 
-    // A fixing save under a different plugin id — drop the folder-named
-    // error record so the inventory shows one row, not a ghost.
-    if (id && id !== entry.name) {
-      dropPlugin(entry.name)
+    // A fixing save under a different plugin id — drop THIS FILE's error record
+    // so the inventory shows one row, not a ghost.
+    if (id && id !== entry.file) {
+      dropPlugin(entry.file)
     }
   } catch {
     // File vanished mid-read — the next scan reconciles.
@@ -314,12 +380,12 @@ export async function scanDiskPlugins(door?: PluginDisk): Promise<void> {
     const diffContent = active.hashToDetectChange && entries.length <= REST_CONTENT_DIFF_CAP
 
     for (const entry of entries) {
-      seen.add(entry.name)
+      seen.add(entry.file)
 
-      const known = disk.get(entry.name)
+      const known = disk.get(entry.file)
 
       if (!known) {
-        disk.set(entry.name, { file: entry.file, id: null, stamp: '' })
+        disk.set(entry.file, { file: entry.file, id: null, stamp: '' })
         await loadDiskPlugin(active, entry, await changeToken(active, entry, true))
 
         continue
@@ -346,8 +412,8 @@ export async function scanDiskPlugins(door?: PluginDisk): Promise<void> {
     }
 
     // Folder deleted -> plugin gone, cleanly (inventory row included).
-    for (const [name, record] of disk) {
-      if (seen.has(name)) {
+    for (const [file, record] of disk) {
+      if (seen.has(file)) {
         continue
       }
 
@@ -356,8 +422,8 @@ export async function scanDiskPlugins(door?: PluginDisk): Promise<void> {
         dropPlugin(record.id)
       }
 
-      dropPlugin(name)
-      disk.delete(name)
+      disk.delete(file)
+      dropPlugin(file)
     }
   } catch {
     // No plugin root, or no gateway yet — nothing to reconcile.
@@ -456,6 +522,12 @@ export function watchRuntimePlugins(): void {
 
 function doorProfile(): null | string {
   return $connection.get()?.profile ?? $activeProfile.get() ?? null
+}
+
+/** Test seam: the entry files the scanner is tracking. Keying these on the FILE
+ *  rather than the folder name is what lets two roots carry the same name. */
+export function __diskRecordFiles(): string[] {
+  return [...disk.keys()]
 }
 
 /** Test seam: reset the module's disk state between cases. */

@@ -11,6 +11,7 @@ import { Check, ChevronDown, ChevronRight, Key, Loader2, Terminal, Trash } from 
 import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
+import { confirm } from '@/store/confirm'
 import { $currentModel, $currentProvider } from '@/store/model'
 import { notify, notifyError } from '@/store/notifications'
 import { $connectProvider, beginProviderConnect } from '@/store/onboarding'
@@ -359,7 +360,13 @@ export function ProvidersSection({ view }: { view: 'accounts' | 'custom-endpoint
   async function handleDisconnect(provider: OAuthProvider) {
     const name = providerTitle(provider)
 
-    if (!window.confirm(t.settings.providers.removeConfirm(name))) {
+    const ok = await confirm({
+      confirmLabel: t.settings.providers.disconnect,
+      destructive: true,
+      title: t.settings.providers.removeConfirm(name)
+    })
+
+    if (!ok) {
       return
     }
 

@@ -26,9 +26,13 @@ import { sessionTileDelegate } from '@/store/session-states'
 
 import type { SessionView } from './session-view'
 
-export async function submitPromptToSurface(view: SessionView, text: string): Promise<void> {
+/**
+ * `displayText` is the slash dispatcher's `display` projection: the model gets
+ * `text`, the transcript shows this. Both surfaces honour it the same way.
+ */
+export async function submitPromptToSurface(view: SessionView, text: string, displayText?: string): Promise<void> {
   if (view.kind === 'primary') {
-    await sendPrompt(text)
+    await sendPrompt(text, { displayText })
 
     return
   }
@@ -52,5 +56,5 @@ export async function submitPromptToSurface(view: SessionView, text: string): Pr
     return
   }
 
-  await delegate.submitToSession(key, text)
+  await delegate.submitToSession(key, text, displayText)
 }
