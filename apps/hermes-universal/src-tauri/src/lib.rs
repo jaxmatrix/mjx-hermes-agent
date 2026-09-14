@@ -71,7 +71,7 @@ use data_url_read_max::{read_capped_file_base64, set_data_url_read_max, DataUrlR
 use deep_link::{deep_link_ready, DeepLinkState};
 #[cfg(desktop)]
 use external_terminal::open_in_terminal;
-use files::download_file;
+use files::{cancel_download, download_file, download_folder, DownloadState};
 use find_in_page::{find_in_page, stop_find_in_page};
 use keep_awake::{set_keep_awake, KeepAwakeState};
 use link_title::fetch_link_title;
@@ -249,6 +249,11 @@ pub fn run() {
     builder
         .manage(TransportState::new())
         .manage(MediaState::default())
+        // The live downloads' cancel flags. Managed on BOTH targets so the
+        // builder chain is one shape — and unlike the empty mobile stubs beside
+        // it this one is real on the phone too: a download is a network fetch
+        // plus a local write, and both halves work there.
+        .manage(DownloadState::default())
         .manage(ArtifactState::default())
         .manage(LocalBackendState::default())
         .manage(local_install::InstallState::default())
@@ -413,6 +418,8 @@ pub fn run() {
             artifact_stage,
             media_set_target,
             download_file,
+            download_folder,
+            cancel_download,
             fetch_link_title,
             oauth_login,
             oauth_status,

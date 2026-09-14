@@ -61,6 +61,7 @@ import { registerBrowserContributions } from './app/browser/context-target'
 import { installContextMenuBridge } from './app/context-menu/bridge'
 import { installBrowserBridge } from './store/browser-bridge'
 import { initializeConnectionsRegistry, startConnectionsWatcher } from './store/connections'
+import { initDownloadSync } from './store/downloads'
 import { installNotificationActivation } from './store/plugin-notify-handlers'
 import { installTourDriver } from './store/tour-bridge'
 import { installWindowBelowReader } from './store/window-below'
@@ -69,6 +70,14 @@ import { installWindowBelowReader } from './store/window-below'
 // boot, next to the responder it feeds, because the first turn can ask before
 // any component has mounted (MJXHRM-213).
 installWindowBelowReader()
+// Downloads are app-global but the transfer runs in whichever WebView started
+// it, so every OTHER window has to be told or its tray is blank for a file that
+// is very much being written to this device. Armed here rather than at the
+// store's module scope: the tray lives in the titlebar, so a module-scope
+// subscription would be established by anything that merely imports that graph
+// — every window, and every test that renders a shell. A store that is imported
+// should hold state, not start listening.
+initDownloadSync()
 // Same contract for `tour.request` (MJXHRM-473): the frame parks a blocked tool,
 // so the driver has to be registered before the first turn rather than when some
 // component happens to mount. driver.js itself stays off this path — the driver
