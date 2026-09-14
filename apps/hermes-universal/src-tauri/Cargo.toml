@@ -410,6 +410,12 @@ window-vibrancy = "0.6"
 # sign-in that completed and left the app signed out, because the token set
 # could not reach the keyring (`oauth.rs::store_native_tokens`).
 #
+# What this store HOLDS on macOS is one login-keychain item,
+# `hermes/vaultKey/password`, the key that seals `secrets.vault` in the app data
+# dir; every credential lives in that file (src/secrets/vault.rs explains why:
+# per-item, per-direction ACL checks, each a password dialog on an unsigned
+# build).
+#
 # `protected` stays enabled on macOS for READING only: `secrets/store.rs` still
 # consults it as a legacy source, so a credential an earlier build did manage to
 # store there is adopted into the login keychain instead of being orphaned.

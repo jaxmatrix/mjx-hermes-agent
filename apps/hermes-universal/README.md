@@ -129,6 +129,25 @@ adb logcat -c && adb logcat | grep -iE '\[vite\]'
 - `[vite] optimized dependencies changed. reloading` means a dependency escaped the cold-start scan. Add it to
   `optimizeDeps.include` in `vite.config.ts` — that list exists precisely to keep this line from appearing.
 
+## macOS keychain dialogs
+
+A Developer ID signed build shows one Touch ID prompt — the app's own credential
+gate — and no keychain password dialogs. An ad-hoc signed build shows that prompt
+plus exactly one keychain dialog per launch, for the key that seals the credential
+vault; never one per credential. To check what is stored:
+
+```
+ls -l ~/Library/Application\ Support/com.jaxmatrix.mjx-unofficial-hermes/secrets.vault  # -rw-------, the sealed secrets
+security find-generic-password -s hermes -a hermes/vaultKey/password                    # the one keychain item
+security dump-keychain | grep 'hermes/'                                                  # should be that one line
+```
+
+Credentials from an older build move into the vault on first read, so the first
+launch after upgrading may raise one dialog per surviving item, once. A `vaultKey`
+item created by an ad-hoc build prompts once more under the first signed build,
+because the ACL is being bound to a code identity for the first time; "Always
+Allow" sticks from then on.
+
 ## Performance harness
 
 Markdown/KaTeX rendering is the app's heaviest path. Three tools, deliberately measuring different layers:
