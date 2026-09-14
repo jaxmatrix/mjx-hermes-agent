@@ -835,3 +835,40 @@ class TestConversationStartedTwoLine:
         assert "Conversation started:" not in vol
         assert "as of the last context rebuild" not in vol
 
+
+class TestIntentClarificationBlock:
+    """The block only ships where a live user can actually answer through ``clarify``."""
+
+    MARKER = "Understand the request before you act"
+
+    def test_injected_when_clarify_loaded(self):
+        assert self.MARKER in _stable_prompt(_make_agent(valid_tool_names=["clarify"]))
+
+    def test_absent_without_clarify(self):
+        # Naming a tool outside the schema invites a hallucinated call.
+        assert self.MARKER not in _stable_prompt(_make_agent(valid_tool_names=["read_file"]))
+
+    def test_absent_when_disabled_in_config(self):
+        agent = _make_agent(valid_tool_names=["clarify"], _intent_clarification_guidance=False)
+        assert self.MARKER not in _stable_prompt(agent)
+
+    def test_absent_for_kanban_worker(self):
+        agent = _make_agent(
+            valid_tool_names=["clarify", "kanban_show"],
+            _kanban_worker_guidance="# Kanban task execution protocol\n...",
+        )
+        assert self.MARKER not in _stable_prompt(agent)
+
+    def test_absent_when_kanban_guidance_comes_from_the_tool_fallback(self):
+        # Paths that bypass agent_init leave _kanban_worker_guidance unset; _tool_guidance_block still
+        # injects KANBAN_GUIDANCE because kanban_show is loaded, so the ask-the-user block must not.
+        agent = _make_agent(valid_tool_names=["clarify", "kanban_show"])
+        del agent._kanban_worker_guidance
+        stable = _stable_prompt(agent)
+        assert "Do not call `clarify`" in stable
+        assert self.MARKER not in stable
+
+    def test_config_default_is_on(self):
+        from hermes_cli.config_defaults import DEFAULT_CONFIG
+
+        assert DEFAULT_CONFIG["agent"]["intent_clarification_guidance"] is True
