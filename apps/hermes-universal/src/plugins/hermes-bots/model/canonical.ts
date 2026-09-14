@@ -58,10 +58,7 @@ export type CanonicalVerdict =
  * miss there means the registry contradicted the database, and minting again
  * on that is precisely the duplicate this design exists to prevent.
  */
-export function resolveCanonicalChat(
-  answer: RegistryAnswer,
-  options: { mayMint?: boolean } = {}
-): CanonicalVerdict {
+export function resolveCanonicalChat(answer: RegistryAnswer, options: { mayMint?: boolean } = {}): CanonicalVerdict {
   if (answer.failed) {
     // Minting on a transport error is how a second Bot Chat appears on a flaky
     // connection. The caller surfaces the failure instead.
@@ -129,6 +126,18 @@ export function maySweep(input: { owned: boolean; title?: null | string }): bool
   }
 
   return input.title === BOT_CHAT_TITLE || input.title.startsWith('Group: ')
+}
+
+/**
+ * Which way the sweep sets a session it may touch.
+ *
+ * A room member's `Group:` session is plumbing — the room pane is where it is
+ * read — so it stays out of the Sessions sidebar. A bot's Bot Chat is a
+ * conversation the user reads, and it is LISTED there under the bot's name
+ * (MJXHRM-518), so the sweep un-hides one an older client hid.
+ */
+export function sweepHidesSession(title: string): boolean {
+  return title.startsWith('Group: ')
 }
 
 /**

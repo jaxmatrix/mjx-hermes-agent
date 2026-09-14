@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 
 import { sessionTitle } from '@/lib/chat-runtime'
 import { cn } from '@/lib/utils'
+import { $sessionOwnerLabels, withSessionOwner } from '@/store/session-owner-label'
 import { $switcherIndex, $switcherOpen, $switcherSessions, closeSwitcher } from '@/store/session-switcher'
 
 import { SessionStatusDot } from './chat/session-status-dot'
@@ -17,6 +18,7 @@ export function SessionSwitcher() {
   const open = useStore($switcherOpen)
   const sessions = useStore($switcherSessions)
   const index = useStore($switcherIndex)
+  const ownerLabels = useStore($sessionOwnerLabels)
   const navigate = useNavigate()
 
   const activeRef = useRef<HTMLDivElement>(null)
@@ -70,7 +72,9 @@ export function SessionSwitcher() {
               ref={selected ? activeRef : undefined}
             >
               <SessionStatusDot className="shrink-0" session={session} storedSessionId={session.id} />
-              <span className="min-w-0 flex-1 truncate">{sessionTitle(session)}</span>
+              <span className="min-w-0 flex-1 truncate">
+                {withSessionOwner(sessionTitle(session), session.profile, ownerLabels)}
+              </span>
               {i < 9 && (
                 <span
                   className={cn(

@@ -37,6 +37,7 @@ import {
   useSessionRow,
   useSessionRowScalars
 } from '@/store/session-lookup'
+import { $sessionOwnerLabels } from '@/store/session-owner-label'
 import {
   $sessionTiles,
   discardSessionTile,
@@ -292,7 +293,10 @@ export const watchSessionTiles = paneMirror<SessionTile>({
   // typed into it. It writes only when the derived title actually changes (see
   // `publishDraftTitle`), on the stash's own debounce, and stops changing once
   // the draft passes the 48-character cut.
-  also: [...SESSION_ROW_SOURCES, $draftTitles],
+  //
+  // `$sessionOwnerLabels` because a plugin naming a profile (`Radar: …`)
+  // retitles a tab without any row moving.
+  also: [...SESSION_ROW_SOURCES, $draftTitles, $sessionOwnerLabels],
   key: tile => tile.storedSessionId,
   kind: 'chat',
   linkTarget: true,

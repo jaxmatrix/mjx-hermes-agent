@@ -1192,6 +1192,14 @@ export function openSession(storedId: string, options?: OpenSessionOptions): Pro
  * overlap between two modes of conversation that hiding exists to prevent.
  */
 export function adoptLiveSession(input: {
+  /**
+   * Make it the MAIN chat — the default. `false` binds the live slice and
+   * nothing else, for a caller showing the session in its own tab: a tile finds
+   * its slice by stored id, and an active-id write would also load the same
+   * conversation into the main pane behind it — and make `openSessionTile`
+   * refuse the tab, since the session loaded in main never opens as a tile.
+   */
+  activate?: boolean
   cwd?: null | string
   /** A plugin's hidden session: never remembered as the profile's place. */
   hidden?: boolean
@@ -1219,6 +1227,10 @@ export function adoptLiveSession(input: {
     sessionStartedAt: Date.now(),
     storedSessionId
   })
+
+  if (input.activate === false) {
+    return
+  }
 
   openGeneration++ // cancel any hydrate still in flight
   resetUnscopedStreamPin()

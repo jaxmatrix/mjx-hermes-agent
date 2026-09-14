@@ -556,7 +556,9 @@ describe('owning profile', () => {
     // active profile is excluded from the rest of the list, so the profile most
     // likely to own the id was never actually asked.
     $profiles.set([profile('default'), profile('work')])
-    vi.mocked(getSession).mockReset().mockResolvedValueOnce({ id: 'stored-e', profile: 'default' } as SessionInfo)
+    vi.mocked(getSession)
+      .mockReset()
+      .mockResolvedValueOnce({ id: 'stored-e', profile: 'default' } as SessionInfo)
 
     await expect(resolveSessionProfile('stored-e')).resolves.toBe('default')
 
@@ -1651,7 +1653,6 @@ describe('isSessionPinned', () => {
   })
 })
 
-
 // ---------------------------------------------------------------------------
 // The paint lane on the cold-open path (MJXHRM-480). The rows go on screen
 // through `$paintedMessages` BEFORE any I/O and are gone the moment the
@@ -1822,10 +1823,12 @@ describe('openSession — a resume that fails never fakes a live binding', () =>
     // first keystroke then went out as prompt.submit with an id the gateway's
     // runtime map has never held: "session not found".
     resetSessionStates()
-    vi.mocked(getSessionMessages).mockReset().mockResolvedValue({
-      messages: [{ content: 'earlier words', role: 'user' }],
-      session_id: 'stored-dead'
-    } as never)
+    vi.mocked(getSessionMessages)
+      .mockReset()
+      .mockResolvedValue({
+        messages: [{ content: 'earlier words', role: 'user' }],
+        session_id: 'stored-dead'
+      } as never)
     vi.mocked(requestGateway).mockReset().mockRejectedValue(new GatewayRpcError('session not found', 4007))
 
     await openSession('stored-dead')
@@ -1898,5 +1901,22 @@ describe('last-session memory — a hidden plugin session is never the place to 
     markPluginOwnedSession('stored-polluted')
 
     expect(lastOpenedSessionId()).not.toBe('stored-polluted')
+  })
+})
+
+describe('adoptLiveSession — bound without activating', () => {
+  it('binds the live slice for a tab, and leaves the main chat where it was', () => {
+    resetSessionStates()
+    $sessions.set([])
+
+    adoptLiveSession({ runtimeSessionId: 'run-main', storedSessionId: 'stored-main' })
+    adoptLiveSession({ activate: false, runtimeSessionId: 'run-tab', storedSessionId: 'stored-tab' })
+
+    expect($activeStoredSessionId.get()).toBe('stored-main')
+    expect($activeSessionKey.get()).toBe('run-main')
+
+    const key = runtimeKeyForStoredSession('stored-tab')
+
+    expect(key ? $sessionStates.get()[key]?.runtimeSessionId : null).toBe('run-tab')
   })
 })

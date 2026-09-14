@@ -61,6 +61,7 @@ import {
   openPluginSession,
   type PluginCreatedSession,
   type PluginOpenSessionOptions,
+  type PluginOpenTarget,
   warmProfile
 } from '@/store/plugin-open-session'
 import {
@@ -77,7 +78,8 @@ import {
   sessionSecretRequest,
   sessionSudoRequest
 } from '@/store/prompts'
-import { $activeStoredSessionId, knownSessionProfile } from '@/store/session'
+import { $activeStoredSessionId, knownSessionProfile, refreshSessions } from '@/store/session'
+import { setSessionOwnerLabels } from '@/store/session-owner-label'
 import { $sessionStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
 import { $focusedRuntimeId, $focusedSessionState, $focusedStoredSessionId } from '@/store/session-states'
 import { runGatewayRestart } from '@/store/system-status'
@@ -331,11 +333,27 @@ export const host = {
    * nothing to resume, and a resume of a session no listing contains cannot find
    * its owner. Writes no sidebar row — a plugin's hidden session stays hidden.
    */
-  openCreatedSession: async (created: PluginCreatedSession, options?: { focus?: boolean }) =>
+  openCreatedSession: async (created: PluginCreatedSession, options?: { focus?: boolean; target?: PluginOpenTarget }) =>
     openCreatedPluginSession(created, options),
 
   /** The owning profile of a stored session, as far as the client knows. */
   sessionProfile: (storedSessionId: string): string | undefined => knownSessionProfile(storedSessionId),
+
+  /**
+   * Re-read the Sessions sidebar's list NOW rather than on the next
+   * `sessions.changed`. For a plugin that just made a LISTED session into a row:
+   * `openCreatedSession` writes no row of its own, so without this the sidebar
+   * shows the chat only once the change broadcast catches up.
+   */
+  refreshSessions: async (): Promise<void> => refreshSessions(),
+
+  /**
+   * Name the sessions a profile owns — they read as `Name: title` on the sidebar
+   * row, the chat header, every chat tab and the switcher. REPLACES the whole
+   * set, so pass every profile you name; one left out reads bare again. Display
+   * only: titles, rename and search are untouched.
+   */
+  setSessionOwnerLabels: (labels: Readonly<Record<string, string>>): void => setSessionOwnerLabels(labels),
 
   /**
    * One session's transcript. Read from `$sessionStates` — the source of truth
@@ -871,7 +889,8 @@ export {
 export type {
   PluginOpenSessionError,
   PluginOpenSessionOptions,
-  PluginOpenSessionResult
+  PluginOpenSessionResult,
+  PluginOpenTarget
 } from '@/store/plugin-open-session'
 export { $accentOverride, setAccentOverride } from '@/themes/accent-override'
 /** OKLCH colour maths, for anything deriving a palette rather than hardcoding

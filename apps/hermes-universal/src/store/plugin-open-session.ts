@@ -11,7 +11,7 @@ import {
   resolveSessionProfile
 } from './session'
 import { $sessionStates, runtimeKeyForStoredSession } from './session-state-types'
-import { focusOpenSession } from './session-states'
+import { focusOpenSession, openSessionTab } from './session-states'
 import { awaitSessionPainted, SessionWakeError } from './transcript-cache-sync'
 
 /**
@@ -37,11 +37,22 @@ export type PluginOpenSessionError =
   | /** The profile switch never settled. */ 'profile-unavailable'
   | /** The user moved on mid-open. NOT an error to shout about. */ 'superseded'
 
+/** Where a plugin-opened session lands — see `PluginOpenSessionOptions.target`. */
+export type PluginOpenTarget = 'main' | 'tab'
+
 export interface PluginOpenSessionOptions {
   /** Whose session this is. Resolved from the session itself when omitted. */
   profile?: null | string
   /** Bring it to the front once it is real. */
   focus?: boolean
+  /**
+   * WHERE it opens. `main` — the default — loads it into the main chat. `tab`
+   * opens it as its own tab beside what is there, as a modifier-click on a
+   * sidebar row does, and never takes over the main chat. A tab resumes when
+   * its pane mounts, so a `tab` open should also `focus`: one left behind
+   * another tab has nothing painting it for the wake to see.
+   */
+  target?: PluginOpenTarget
   /**
    * A plugin's HIDDEN session — a bot's forever-chat. Never remembered as the
    * profile's place to land at boot, so it is never restored into the main pane
@@ -65,8 +76,7 @@ export interface PluginOpenSessionOptions {
 }
 
 export type PluginOpenSessionResult =
-  | { ok: false; error: PluginOpenSessionError; exhausted?: boolean }
-  | { ok: true; storedSessionId: string }
+  { ok: false; error: PluginOpenSessionError; exhausted?: boolean } | { ok: true; storedSessionId: string }
 
 const DEFAULT_OPEN_TIMEOUT_MS = 20_000
 const PROFILE_SWITCH_TIMEOUT_MS = 5_000
@@ -169,7 +179,8 @@ export async function openPluginSession(
     markPluginOwnedSession(storedSessionId)
   }
 
-  const owner = options.profile ?? knownSessionProfile(storedSessionId) ?? (await resolveSessionProfile(storedSessionId))
+  const owner =
+    options.profile ?? knownSessionProfile(storedSessionId) ?? (await resolveSessionProfile(storedSessionId))
 
   if (owner && normalizeProfileKey(owner) !== $activeGatewayProfile.get() && !(await warmProfile(owner))) {
     return { error: 'profile-unavailable', ok: false }
@@ -177,7 +188,15 @@ export async function openPluginSession(
 
   // Warm promote is SYNCHRONOUS and issues no resume (rule 18); a cold one
   // hydrates. Either way the wake below is what says it is real.
-  await openSession(storedSessionId)
+  //
+  // A TAB resumes itself — its pane binds the slice on mount — so the wake
+  // below waits on that instead. It is fronted now rather than after the wake,
+  // so what is on screen while it loads is the chat that was asked for.
+  if (options.target === 'tab') {
+    openSessionTab(storedSessionId, focus)
+  } else {
+    await openSession(storedSessionId)
+  }
 
   const wake = async () => awaitSessionPainted(storedSessionId, { expectHistory, timeoutMs })
 
@@ -250,16 +269,29 @@ export interface PluginCreatedSession {
  */
 export function openCreatedPluginSession(
   created: PluginCreatedSession,
-  options: { focus?: boolean } = {}
+  options: { focus?: boolean; target?: PluginOpenTarget } = {}
 ): PluginOpenSessionResult {
   if (!$connectionReady.get()) {
     return { error: 'no-gateway', ok: false }
   }
 
+  const focus = options.focus !== false
+
+  // A TAB binds the live slice WITHOUT making it the main chat, then opens the
+  // tab onto it. The tile finds that slice warm, so there is still nothing to
+  // resume — and an active-id write here would load the chat into main as well.
+  if (options.target === 'tab') {
+    adoptLiveSession({ ...created, activate: false })
+    $resumeExhaustedSessionId.set(null)
+    openSessionTab(created.storedSessionId, focus)
+
+    return { ok: true, storedSessionId: created.storedSessionId }
+  }
+
   adoptLiveSession(created)
   $resumeExhaustedSessionId.set(null)
 
-  if (options.focus !== false) {
+  if (focus) {
     focusOpenSession(created.storedSessionId)
   }
 

@@ -36,6 +36,7 @@ import {
   invalidateRuntimeBindings,
   MAX_CACHED_SESSIONS,
   openBranchTile,
+  openSessionTab,
   openSessionTile,
   pruneSessionStates,
   reopenLastClosedTile
@@ -328,6 +329,39 @@ describe('focusWorkspaceSession', () => {
         anchor: WORKSPACE_PANE_ID,
         dir: 'center'
       })
+    })
+  })
+
+  /**
+   * A plugin-opened chat as its OWN tab (MJXHRM-518) — a bot’s chat lands beside
+   * the conversation the user was in, never on top of it.
+   */
+  describe('openSessionTab', () => {
+    it('opens its own tab in the main strip, fronted, and leaves the main chat alone', () => {
+      const tab = sessionTilePaneId('bot-chat')
+      seedTree([WORKSPACE_PANE_ID, tab], WORKSPACE_PANE_ID)
+      $activeStoredSessionId.set('loaded')
+
+      openSessionTab('bot-chat')
+
+      expect($sessionTiles.get().find(t => t.storedSessionId === 'bot-chat')).toMatchObject({
+        anchor: WORKSPACE_PANE_ID,
+        dir: 'center'
+      })
+      expect(findGroup($layoutTree.get()!, CHAT_GROUP)?.active).toBe(tab)
+      expect($activeStoredSessionId.get()).toBe('loaded')
+    })
+
+    it('opens no second tab for a chat already on screen — in main, or as a tile in another zone', () => {
+      seedTree([WORKSPACE_PANE_ID])
+      $activeStoredSessionId.set('loaded')
+      $sessionTiles.set([{ anchor: 'elsewhere', dir: 'left', storedSessionId: 'tiled' }])
+
+      openSessionTab('loaded')
+      openSessionTab('tiled')
+
+      // Not moved either: `openSessionTile` would drag the tile out of its zone.
+      expect($sessionTiles.get()).toEqual([{ anchor: 'elsewhere', dir: 'left', storedSessionId: 'tiled' }])
     })
   })
 

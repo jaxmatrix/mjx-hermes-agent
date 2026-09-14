@@ -127,8 +127,8 @@ export interface CreatedSession {
  *
  * O(1) against the core schema's unique title index, and — unlike a windowed
  * listing — unaffected by how busy the profile is, which is what makes
- * adopt-before-mint reliable. Hidden rows DO resolve, because a canonical chat
- * is normally born hidden.
+ * adopt-before-mint reliable. Hidden rows DO resolve: a room member's session
+ * is born hidden, and a Bot Chat an older client made may be too.
  *
  * The returned title is CHECKED by the caller: an older gateway ignores the
  * param and answers a normal listing, so a one-element result is not a match.
@@ -136,12 +136,17 @@ export interface CreatedSession {
 export const findSessionByTitle = (title: string, route?: AgentRoute): Promise<{ sessions?: SessionRow[] }> =>
   call('session.list', { include_hidden: true, title }, route)
 
-/** Mint a session. NOT `startNewSession()` — a Bot Mode session is born hidden,
- *  titled and owned by a named profile. */
-export const createSession = (params: { cwd?: string; title: string }, route?: AgentRoute): Promise<CreatedSession> =>
+/** Mint a session. NOT `startNewSession()` — a Bot Mode session is titled and
+ *  owned by a named profile. Born HIDDEN unless the caller says otherwise: a
+ *  room member's session is plumbing, while a bot's Bot Chat is listed
+ *  (MJXHRM-518) and passes `hidden: false`. */
+export const createSession = (
+  params: { cwd?: string; hidden?: boolean; title: string },
+  route?: AgentRoute
+): Promise<CreatedSession> =>
   call(
     'session.create',
-    { cols: 96, hidden: true, title: params.title, ...(params.cwd ? { cwd: params.cwd } : {}) },
+    { cols: 96, hidden: params.hidden ?? true, title: params.title, ...(params.cwd ? { cwd: params.cwd } : {}) },
     route
   )
 
@@ -155,8 +160,8 @@ export const createSession = (params: { cwd?: string; title: string }, route?: A
  * addresses nothing.
  *
  * Takes the RUNTIME id: the gateway resolves the live session, then persists
- * it — and applies the `hidden` flag `session.create` was holding, so the chat
- * is born hidden in the same step. Throws 4022 when another writer already
+ * it — and applies whatever `hidden` flag `session.create` was holding, in the
+ * same step. Throws 4022 when another writer already
  * holds the title; the caller adopts the winner rather than minting again.
  */
 export const setSessionTitle = (runtimeSessionId: string, title: string, route?: AgentRoute): Promise<unknown> =>

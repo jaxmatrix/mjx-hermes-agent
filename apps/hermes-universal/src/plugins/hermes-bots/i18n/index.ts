@@ -12,6 +12,11 @@
 import type { PluginLocaleBundles } from '@hermes/plugin-sdk'
 
 const en = {
+  chat: {
+    neverResetsBody:
+      'Bot chats are one continuous conversation — compacting instead. For a throwaway session with this agent, use Sessions mode.',
+    neverResetsTitle: 'This chat never resets'
+  },
   dialog: {
     cancel: 'Cancel',
     create: 'Create',

@@ -9,6 +9,7 @@ import { SessionWakeError } from './transcript-cache-sync'
 const awaitSessionPainted = vi.fn()
 const openSession = vi.fn()
 const focusOpenSession = vi.fn()
+const openSessionTab = vi.fn()
 const selectProfile = vi.fn()
 const knownSessionProfile = vi.fn<(id: string) => string | undefined>()
 const adoptLiveSession = vi.fn()
@@ -31,7 +32,10 @@ vi.mock('./session', () => ({
   resolveSessionProfile: () => resolveSessionProfile()
 }))
 
-vi.mock('./session-states', () => ({ focusOpenSession: (id: string) => focusOpenSession(id) }))
+vi.mock('./session-states', () => ({
+  focusOpenSession: (id: string) => focusOpenSession(id),
+  openSessionTab: (id: string, focus?: boolean) => openSessionTab(id, focus)
+}))
 
 // PARTIAL, deliberately: `transcript-cache-sync` subscribes to `$sessionStates`
 // at module scope and other modules read `$activeSessionKey` from here, so a
@@ -82,6 +86,7 @@ beforeEach(() => {
   rememberSessionProfile.mockReset()
   markPluginOwnedSession.mockReset()
   focusOpenSession.mockReset()
+  openSessionTab.mockReset()
   selectProfile.mockReset()
   knownSessionProfile.mockReset().mockReturnValue(undefined)
   resolveSessionProfile.mockReset().mockResolvedValue(undefined)
@@ -237,6 +242,25 @@ describe('openPluginSession — a hidden session', () => {
   })
 })
 
+describe('openPluginSession — as a TAB', () => {
+  it('opens its own tab rather than loading the main chat, and still waits for paint', async () => {
+    const result = await openPluginSession('s1', { profile: 'radar', target: 'tab' })
+
+    expect(openSessionTab).toHaveBeenCalledWith('s1', true)
+    expect(openSession).not.toHaveBeenCalled()
+    // Fronted BEFORE the wake, so what is on screen while it loads is this chat.
+    expect(openSessionTab.mock.invocationCallOrder[0]).toBeLessThan(awaitSessionPainted.mock.invocationCallOrder[0])
+    expect(result).toMatchObject({ ok: true })
+  })
+
+  it('loads the main chat, and opens no tab, when no target is given', async () => {
+    await openPluginSession('s1', { profile: 'radar' })
+
+    expect(openSession).toHaveBeenCalledWith('s1')
+    expect(openSessionTab).not.toHaveBeenCalled()
+  })
+})
+
 describe('openCreatedPluginSession', () => {
   const created = { profile: 'radar', runtimeSessionId: 'run-1', storedSessionId: 'stored-1' }
 
@@ -267,6 +291,16 @@ describe('openCreatedPluginSession', () => {
     focusOpenSession.mockReset()
     openCreatedPluginSession(created, { focus: false })
     expect(focusOpenSession).not.toHaveBeenCalled()
+  })
+
+  it('opens a TAB onto the live slice WITHOUT making it the main chat', () => {
+    const result = openCreatedPluginSession(created, { target: 'tab' })
+
+    expect(adoptLiveSession).toHaveBeenCalledWith({ ...created, activate: false })
+    expect(openSessionTab).toHaveBeenCalledWith('stored-1', true)
+    // Fronting main is the other door; a tab must not also front the main chat.
+    expect(focusOpenSession).not.toHaveBeenCalled()
+    expect(result).toEqual({ ok: true, storedSessionId: 'stored-1' })
   })
 
   it('refuses without a gateway, and adopts nothing', async () => {

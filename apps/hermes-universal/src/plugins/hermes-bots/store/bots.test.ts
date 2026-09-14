@@ -19,8 +19,10 @@ const {
   notifyError,
   openCreatedSession,
   openSession,
+  refreshSessions,
   request,
-  requestProfile
+  requestProfile,
+  setSessionOwnerLabels
 } = vi.hoisted(() => ({
   activeConnectionId: vi.fn(),
   agents: vi.fn(),
@@ -29,8 +31,10 @@ const {
   notifyError: vi.fn(),
   openCreatedSession: vi.fn(),
   openSession: vi.fn(),
+  refreshSessions: vi.fn(),
   request: vi.fn(),
-  requestProfile: vi.fn()
+  requestProfile: vi.fn(),
+  setSessionOwnerLabels: vi.fn()
 }))
 
 // A PARTIAL mock: the store's own atoms come from the real SDK re-export, so
@@ -46,15 +50,17 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => ({
     notifyError,
     openCreatedSession,
     openSession,
+    refreshSessions,
     request,
     requestProfile,
+    setSessionOwnerLabels,
     state: { liveSessions: { get: () => ({}) } }
   },
   livePollIntervalMs: (legacy: number) => legacy
 }))
 
 import { $rooms, $roster } from './atoms'
-import { openBotChat, refreshRoster, saveBotMeta, sweepHiddenSessions } from './bots'
+import { knownCanonicalIds, openBotChat, refreshRoster, saveBotMeta, sweepHiddenSessions } from './bots'
 
 type Call = [string, Record<string, unknown>]
 
@@ -101,13 +107,13 @@ const registry = (sessions: Record<string, unknown>[]) => async (method: string)
 beforeEach(() => {
   request.mockReset()
   requestProfile.mockReset()
+  refreshSessions.mockReset()
+  setSessionOwnerLabels.mockReset()
   openSession.mockReset().mockResolvedValue({ ok: true, storedSessionId: 'x' })
-  openCreatedSession
-    .mockReset()
-    .mockImplementation(async (created: { storedSessionId: string }) => ({
-      ok: true,
-      storedSessionId: created.storedSessionId
-    }))
+  openCreatedSession.mockReset().mockImplementation(async (created: { storedSessionId: string }) => ({
+    ok: true,
+    storedSessionId: created.storedSessionId
+  }))
   agents.mockReset().mockResolvedValue({ agents: [], sources: [] })
   connections.mockReset().mockResolvedValue([])
   activeConnectionId.mockReset().mockReturnValue('local')
@@ -128,10 +134,10 @@ describe('opening a bot chat', () => {
     // Identity is the title, so there is nothing durable to write down. The
     // click path must not touch the bot's record at all.
     expect(calls('profiles.configure')).toEqual([])
-    expect(openSession).toHaveBeenCalledWith('existing', { expectHistory: true, hidden: true, profile: 'radar' })
+    expect(openSession).toHaveBeenCalledWith('existing', { expectHistory: true, profile: 'radar', target: 'tab' })
   })
 
-  it('asks the registry with include_hidden — a canonical chat is born hidden', async () => {
+  it('asks the registry with include_hidden — a Bot Chat an older client made may be hidden', async () => {
     request.mockImplementation(registry([{ id: 'existing', title: 'Bot Chat' }]))
 
     await openBotChat(row('radar') as never)
@@ -140,14 +146,12 @@ describe('opening a bot chat', () => {
   })
 
   it('opens the live TIP when a compaction rotated the lineage', async () => {
-    request.mockImplementation(
-      registry([{ id: 'root', message_count: 9, resolved_id: 'tip', title: 'Bot Chat' }])
-    )
+    request.mockImplementation(registry([{ id: 'root', message_count: 9, resolved_id: 'tip', title: 'Bot Chat' }]))
 
     const result = await openBotChat(row('radar') as never)
 
     expect(result.storedId).toBe('tip')
-    expect(openSession).toHaveBeenCalledWith('tip', { expectHistory: true, hidden: true, profile: 'radar' })
+    expect(openSession).toHaveBeenCalledWith('tip', { expectHistory: true, profile: 'radar', target: 'tab' })
   })
 
   it('mints, TITLES the runtime id, then opens the durable one', async () => {
@@ -158,16 +162,16 @@ describe('opening a bot chat', () => {
     const result = await openBotChat(row('radar') as never)
 
     expect(result).toMatchObject({ action: 'create', storedId: 'stored-1' })
-    expect(calls('session.create')[0]).toMatchObject({ hidden: true, title: 'Bot Chat' })
+    // LISTED (MJXHRM-518): a bot's chat is a row in the Sessions sidebar.
+    expect(calls('session.create')[0]).toMatchObject({ hidden: false, title: 'Bot Chat' })
     expect(calls('session.title')[0]).toMatchObject({ session_id: 'run-1', title: 'Bot Chat' })
     // ADOPTED, not resumed: the session is live under `run-1` already. A resume
     // here is what left a hidden chat looking open with nothing live behind it.
-    expect(openCreatedSession).toHaveBeenCalledWith({
-      hidden: true,
-      profile: 'radar',
-      runtimeSessionId: 'run-1',
-      storedSessionId: 'stored-1'
-    })
+    expect(openCreatedSession).toHaveBeenCalledWith(
+      { profile: 'radar', runtimeSessionId: 'run-1', storedSessionId: 'stored-1' },
+      // Its own TAB, never the main chat the user was in.
+      { target: 'tab' }
+    )
     expect(openSession).not.toHaveBeenCalled()
   })
 
@@ -178,25 +182,56 @@ describe('opening a bot chat', () => {
 
     const order = (request.mock.calls as Call[]).map(([method]) => method).filter(m => m !== 'profiles.list')
 
-    expect(order).toEqual(['session.list', 'session.create', 'session.title'])
+    expect(order).toEqual(['session.list', 'session.create', 'session.title', 'prompt.submit'])
 
     // The title write — the one that makes the row — lands before the view does.
     const titleIndex = (request.mock.calls as Call[]).findIndex(([method]) => method === 'session.title')
 
-    expect(openCreatedSession.mock.invocationCallOrder[0]).toBeGreaterThan(
-      request.mock.invocationCallOrder[titleIndex]
-    )
+    expect(openCreatedSession.mock.invocationCallOrder[0]).toBeGreaterThan(request.mock.invocationCallOrder[titleIndex])
   })
 
-  it('never sends a kickoff message', async () => {
-    // Universal has no New-Agent flow, and firing an intro from the CLICK path
-    // burns a model turn and stamps a user-attributed greeting into the chat
-    // every time a lookup misses.
+  it('greets a chat it just minted ONCE, by its live runtime id, after it is open — and lists it', async () => {
     request.mockImplementation(registry([]))
 
     await openBotChat(row('radar') as never)
 
+    expect(calls('prompt.submit')).toEqual([
+      { profile: 'radar', session_id: 'run-1', text: 'Hey, tell me about yourself!' }
+    ])
+
+    const submitIndex = (request.mock.calls as Call[]).findIndex(([method]) => method === 'prompt.submit')
+
+    expect(openCreatedSession.mock.invocationCallOrder[0]).toBeLessThan(request.mock.invocationCallOrder[submitIndex])
+    expect(refreshSessions).toHaveBeenCalledTimes(1)
+  })
+
+  it('never greets a chat that already exists, and refreshes the row once it is open', async () => {
+    request.mockImplementation(registry([{ id: 'existing', message_count: 2, title: 'Bot Chat' }]))
+
+    await openBotChat(row('radar') as never)
+
     expect(calls('prompt.submit')).toEqual([])
+    expect(refreshSessions).not.toHaveBeenCalled()
+    // Not left on "No conversations yet" until the next poll.
+    expect(calls('profiles.list')).toHaveLength(1)
+  })
+
+  it('reports a refused greeting, and still reports the chat as open', async () => {
+    // The chat exists and is on screen; "could not open" over it would be a lie.
+    const answer = registry([])
+
+    request.mockImplementation(async (method: string) => {
+      if (method === 'prompt.submit') {
+        throw new Error('busy')
+      }
+
+      return answer(method)
+    })
+
+    const result = await openBotChat(row('radar') as never)
+
+    expect(result).toEqual({ action: 'create', storedId: 'stored-1' })
+    expect(notifyError).toHaveBeenCalledTimes(1)
   })
 
   it('never claims an ORDINARY session an older gateway answered with', async () => {
@@ -206,7 +241,9 @@ describe('opening a bot chat', () => {
     await openBotChat(row('radar') as never)
 
     expect(calls('session.create')).toHaveLength(1)
-    expect(openCreatedSession).toHaveBeenCalledWith(expect.objectContaining({ storedSessionId: 'stored-1' }))
+    expect(openCreatedSession).toHaveBeenCalledWith(expect.objectContaining({ storedSessionId: 'stored-1' }), {
+      target: 'tab'
+    })
   })
 
   it('ADOPTS the winner when another writer took the title first', async () => {
@@ -236,7 +273,9 @@ describe('opening a bot chat', () => {
 
     expect(result).toMatchObject({ storedId: 'theirs' })
     expect(calls('session.create')).toHaveLength(1)
-    expect(openSession).toHaveBeenCalledWith('theirs', { expectHistory: true, hidden: true, profile: 'radar' })
+    expect(openSession).toHaveBeenCalledWith('theirs', { expectHistory: true, profile: 'radar', target: 'tab' })
+    // The chat existed already — greeting it would stamp a second intro into it.
+    expect(calls('prompt.submit')).toEqual([])
   })
 
   it('refuses to mint TWICE when the second lookup still misses', async () => {
@@ -288,7 +327,9 @@ describe('opening a bot chat', () => {
     expect(result).toMatchObject({ action: 'create', storedId: 'stored-1' })
     expect(calls('session.list')).toHaveLength(1)
     expect(calls('session.create')).toHaveLength(1)
-    expect(openCreatedSession).toHaveBeenCalledWith(expect.objectContaining({ runtimeSessionId: 'run-1' }))
+    expect(openCreatedSession).toHaveBeenCalledWith(expect.objectContaining({ runtimeSessionId: 'run-1' }), {
+      target: 'tab'
+    })
   })
 
   it('adopts the live session when the title write only QUEUED', async () => {
@@ -313,7 +354,9 @@ describe('opening a bot chat', () => {
     const result = await openBotChat(row('radar') as never)
 
     expect(result).toMatchObject({ action: 'create', storedId: 'stored-1' })
-    expect(openCreatedSession).toHaveBeenCalledWith(expect.objectContaining({ storedSessionId: 'stored-1' }))
+    expect(openCreatedSession).toHaveBeenCalledWith(expect.objectContaining({ storedSessionId: 'stored-1' }), {
+      target: 'tab'
+    })
   })
 
   it('reports an adoption the host refused, without minting again', async () => {
@@ -362,6 +405,8 @@ describe('an open that fails', () => {
     expect(result).toMatchObject({ action: 'open', error: 'exhausted' })
     expect(calls('session.create')).toEqual([])
     expect(notifyError).toHaveBeenCalled()
+    // Nothing changed, so there is nothing to refresh.
+    expect(calls('profiles.list')).toEqual([])
   })
 
   it('says nothing when the user simply moved on mid-open', async () => {
@@ -375,7 +420,7 @@ describe('an open that fails', () => {
 })
 
 describe('the hidden-session sweep', () => {
-  it('hides the registry row, and nothing it was not told about', async () => {
+  it('LISTS the registry’s Bot Chat — un-hiding one an older client hid — and touches nothing else', async () => {
     request.mockImplementation(async (method: string, sent: Record<string, unknown>) => {
       if (method === 'session.list') {
         return sent.title === 'Bot Chat' ? { sessions: [{ id: 'chat-radar', title: 'Bot Chat' }] } : { sessions: [] }
@@ -387,17 +432,30 @@ describe('the hidden-session sweep', () => {
 
     const swept = await sweepHiddenSessions()
 
-    expect(calls('session.set_hidden')).toEqual([
-      { hidden: true, profile: 'radar', session_id: 'chat-radar' }
-    ])
-    expect(swept).toMatchObject({ failed: 0, hidden: 1 })
+    expect(calls('session.set_hidden')).toEqual([{ hidden: false, profile: 'radar', session_id: 'chat-radar' }])
+    expect(swept).toEqual({ failed: 0, hidden: 0, shown: 1, skipped: 0 })
+  })
+
+  it('keeps a room member’s Group session HIDDEN', async () => {
+    request.mockImplementation(async (method: string, sent: Record<string, unknown>) => {
+      if (method === 'session.list') {
+        return sent.title === 'Group: Ops' ? { sessions: [{ id: 'grp-radar', title: 'Group: Ops' }] } : { sessions: [] }
+      }
+
+      return { ok: true }
+    })
+    $roster.set([row('radar')] as never)
+    $rooms.set([{ name: 'Ops', sessions: { radar: 'grp-radar' } }] as never)
+
+    const swept = await sweepHiddenSessions()
+
+    expect(calls('session.set_hidden')).toEqual([{ hidden: true, profile: 'radar', session_id: 'grp-radar' }])
+    expect(swept).toEqual({ failed: 0, hidden: 1, shown: 0, skipped: 0 })
   })
 
   it('touches NOTHING for a bot with no Bot Chat', async () => {
     // Where a stale pin used to fire a doomed set_hidden on every reconnect.
-    request.mockImplementation(async (method: string) =>
-      method === 'session.list' ? { sessions: [] } : { ok: true }
-    )
+    request.mockImplementation(async (method: string) => (method === 'session.list' ? { sessions: [] } : { ok: true }))
     $roster.set([row('radar')] as never)
 
     expect(await sweepHiddenSessions()).toMatchObject({ failed: 0, hidden: 0 })
@@ -409,9 +467,7 @@ describe('the hidden-session sweep', () => {
     // the title the GATEWAY reported, which is what closes this in the sweep
     // and not only in adoption.
     request.mockImplementation(async (method: string) =>
-      method === 'session.list'
-        ? { sessions: [{ id: 'someones-work', title: 'Refactor the parser' }] }
-        : { ok: true }
+      method === 'session.list' ? { sessions: [{ id: 'someones-work', title: 'Refactor the parser' }] } : { ok: true }
     )
     $roster.set([row('radar')] as never)
 
@@ -428,7 +484,7 @@ describe('the hidden-session sweep', () => {
     expect(calls('session.set_hidden')).toEqual([])
   })
 
-  it('reports a REFUSED hide as failed, not as hidden', async () => {
+  it('reports a REFUSED write as failed, not as done', async () => {
     request.mockImplementation(async (method: string, sent: Record<string, unknown>) => {
       if (method === 'session.list') {
         return { sessions: [{ id: `chat-${sent.profile}`, title: 'Bot Chat' }] }
@@ -442,7 +498,7 @@ describe('the hidden-session sweep', () => {
     })
     $roster.set([row('radar'), row('scout')] as never)
 
-    expect(await sweepHiddenSessions()).toEqual({ failed: 1, hidden: 1, skipped: 0 })
+    expect(await sweepHiddenSessions()).toEqual({ failed: 1, hidden: 0, shown: 1, skipped: 0 })
   })
 })
 
@@ -511,7 +567,12 @@ describe('the roster', () => {
 
     await refreshRoster()
 
-    expect($roster.get().map(entry => entry.profile).sort()).toEqual(['owl', 'radar'])
+    expect(
+      $roster
+        .get()
+        .map(entry => entry.profile)
+        .sort()
+    ).toEqual(['owl', 'radar'])
   })
 
   it('does NOT list the active connection twice, though the union reports it', async () => {
@@ -577,9 +638,7 @@ describe('a bot on another machine', () => {
     expect(openSession).not.toHaveBeenCalled()
     expect(calls('session.list')).toEqual([])
     expect(requestProfile).not.toHaveBeenCalled()
-    expect(notify).toHaveBeenCalledWith(
-      expect.objectContaining({ message: expect.stringContaining('@radar') })
-    )
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('@radar') }))
   })
 })
 
@@ -629,5 +688,26 @@ describe('writing a bot record', () => {
 
     expect(await saveBotMeta(row('radar') as never, { hidden: true })).toBe('unsupported')
     expect(notifyError).not.toHaveBeenCalled()
+  })
+})
+
+describe('recognising a bot chat for the /new reroute', () => {
+  it('knows a compacted chat by its TIP — the id its tab holds after a reload — as well as its root', () => {
+    $roster.set([{ ...row('radar'), canonicalId: 'root', canonicalTipId: 'tip' }] as never)
+
+    expect(knownCanonicalIds().has('tip')).toBe(true)
+    expect(knownCanonicalIds().has('root')).toBe(true)
+  })
+})
+
+describe('the names a bot’s sessions read under', () => {
+  it('publishes each local bot’s roster name, and never the default profile’s', async () => {
+    request.mockResolvedValue({
+      profiles: [profile('default'), profile('radar', { 'hermes-bots': { title: 'Sentinel', v: 1 } })]
+    })
+
+    await refreshRoster()
+
+    expect(setSessionOwnerLabels).toHaveBeenLastCalledWith({ radar: 'Sentinel' })
   })
 })

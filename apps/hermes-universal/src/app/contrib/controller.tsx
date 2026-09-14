@@ -58,6 +58,7 @@ import { openPluginInstallRequest } from '@/store/plugin-install-request'
 import { $reviewOpen, closeReview, REVIEW_PANE_ID } from '@/store/review'
 import { $activeStoredSessionId, openSession, setBranchedSessionOpener } from '@/store/session'
 import { chatTabTitle, SESSION_ROW_SOURCES, sessionRowFor } from '@/store/session-lookup'
+import { $sessionOwnerLabels } from '@/store/session-owner-label'
 import { watchSessionPins } from '@/store/session-pin-sync'
 import { $activeSessionKey } from '@/store/session-state-types'
 import {
@@ -507,6 +508,8 @@ $activeSessionKey.listen(syncWorkspaceTitle)
 // itself, so a project recolour repaints the dot without re-registering the
 // tile (which invalidates the whole tree).
 $workspacePage.listen(syncWorkspaceTitle)
+// A plugin naming a profile (`Radar: …`) retitles the tab without any row moving.
+$sessionOwnerLabels.listen(syncWorkspaceTitle)
 
 // Typing lands in the chat you are LOOKING at. The focus bus resolves `'active'`
 // through a module latch; without this it moves only when a composer is focused

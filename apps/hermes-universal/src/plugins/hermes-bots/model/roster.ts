@@ -60,6 +60,9 @@ export interface RosterRow {
    *  forever-chat apart from an ordinary session — they are different modes of
    *  conversation and must not be confused for one another. */
   canonicalId?: string
+  /** That chat's live TIP, when a compaction has rotated it away from the root.
+   *  An open lands on the tip, so it is the id a focused tab holds. */
+  canonicalTipId?: string
   preview: string
   /** A `kanban`/`tool` worker is running — the profile is ACTIVE even with no
    *  recent human chat. Reading only `last_session` paints a busy agent idle. */
@@ -93,6 +96,9 @@ function rowFrom(input: RosterRowInput, connectionId: string | undefined, metaKn
     canonical: canonical ? 'present' : canonical === null ? 'none' : 'unknown',
     ...(connectionId ? { connectionId } : {}),
     ...(canonical ? { canonicalId: canonical.id } : {}),
+    ...(canonical?.resolved_id && canonical.resolved_id !== canonical.id
+      ? { canonicalTipId: canonical.resolved_id }
+      : {}),
     description: input.description ?? '',
     handle: botHandle(input.name),
     hasAvatar: Boolean(input.has_avatar),
@@ -200,3 +206,16 @@ export function sortRoster(roster: readonly RosterRow[]): RosterRow[] {
 /** Rows the roster shows: `hidden` is a per-bot opt-out, not a delete. */
 export const visibleRoster = (roster: readonly RosterRow[], showHidden: boolean): RosterRow[] =>
   showHidden ? [...roster] : roster.filter(row => row.meta.hidden !== true)
+
+/**
+ * The names this window's bots go by, keyed by profile — what every surface that
+ * names a session prefixes a bot's sessions with (`Radar: Bot Chat`).
+ *
+ * LOCAL bots only: a listed session lives on THIS gateway, and a bot on another
+ * machine that shares a profile name would lend its name to sessions it has
+ * nothing to do with. And not the default profile, which is the user's own
+ * agent rather than a bot they named — its sessions keep their bare titles.
+ */
+export function sessionOwnerLabels(rows: readonly RosterRow[]): Record<string, string> {
+  return Object.fromEntries(rows.filter(row => !row.connectionId && !row.isDefault).map(row => [row.profile, row.name]))
+}

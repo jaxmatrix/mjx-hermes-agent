@@ -15,6 +15,7 @@
  */
 
 import {
+  $sessionsChangeTick,
   COMPOSER_AREAS,
   type ComposerAtCompletionSource,
   type ComposerMiddleware,
@@ -113,6 +114,18 @@ const plugin: HermesPlugin = {
       })
     )
 
+    // `sessions.changed` is what moves a row: a bot's first exchange, a
+    // compaction rotating its chat. `listen`, not `subscribe` — the immediate call
+    // would double the reveal refresh above — and only while the tab is on
+    // screen, the one place a stale row can be seen.
+    ctx.onDispose(
+      $sessionsChangeTick.listen(() => {
+        if (host.paneVisibility(BOTS_PANE).get()) {
+          void refreshRoster()
+        }
+      })
+    )
+
     ctx.onDispose(() => {
       routinesDispose?.()
       closeAllRoomPanes()
@@ -149,7 +162,19 @@ const plugin: HermesPlugin = {
 
           const text = rewriteNewCommand(draft.text, inCanonical)
 
-          return text === draft.text ? draft : { ...draft, text }
+          if (text === draft.text) {
+            return draft
+          }
+
+          // SAID, not silent — desktop's notice. A `/new` that quietly compacted
+          // instead reads as the command being broken.
+          host.notify({
+            kind: 'info',
+            message: ctx.i18n.t('chat.neverResetsBody'),
+            title: ctx.i18n.t('chat.neverResetsTitle')
+          })
+
+          return { ...draft, text }
         }
       } satisfies ComposerMiddleware,
       id: 'mention-middleware'
@@ -376,6 +401,7 @@ function runnerDeps() {
     },
     settledText: (plan: { member: { storedSessionId: string } }, before: number) => {
       const messages = host.sessionMessages(plan.member.storedSessionId).get()
+
       const fresh = messages
         .slice(before)
         .reverse()
