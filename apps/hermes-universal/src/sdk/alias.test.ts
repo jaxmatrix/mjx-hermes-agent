@@ -131,9 +131,11 @@ describe('@hermes/plugin-sdk', () => {
       'openWorkspace',
       'paneVisibility',
       'profileRoutes',
+      'refreshSessions',
       'requestProfile',
       'sessionMessages',
       'sessionProfile',
+      'setSessionOwnerLabels',
       'warmAgent',
       'warmProfile'
     ] as const) {

@@ -788,6 +788,31 @@ export function openBranchTile(branchStoredId: string, parentStoredId: null | st
 }
 
 /**
+ * Open a session as its OWN tab in the main strip, beside whatever is there —
+ * never by taking over the main chat.
+ *
+ * Already on screen (a tile, or the chat loaded in main) → it is only fronted:
+ * `openSessionTile` would MOVE an existing tile out of the zone the user put it
+ * in. Otherwise the tab is added and, unless `focus` is false, fronted —
+ * registering a tile only contributes a pane (see `openBranchTile`), so without
+ * the explicit reveal it would stack behind the chat the user was reading. The
+ * tile resumes itself on mount, and binds straight to a slice already warm.
+ */
+export function openSessionTab(storedSessionId: string, focus = true): void {
+  const onScreen =
+    sameStoredSession(storedSessionId, $activeStoredSessionId.get()) ||
+    $sessionTiles.get().some(tile => sameStoredSession(tile.storedSessionId, storedSessionId))
+
+  if (!onScreen) {
+    openSessionTile(storedSessionId, 'center', WORKSPACE_PANE_ID)
+  }
+
+  if (focus) {
+    focusOpenSession(storedSessionId)
+  }
+}
+
+/**
  * "New chat tab" — ⌘T, and the `+` at the end of a chat tab strip.
  *
  * The new chat gets its OWN tile, beside whatever is already open. It used to

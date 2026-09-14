@@ -89,7 +89,7 @@ export async function sendRemoteDm(
     if (verdict.kind === 'open') {
       storedId = verdict.storedId
     } else {
-      const created = await createSession({ title: BOT_CHAT_TITLE }, route)
+      const created = await createSession({ hidden: false, title: BOT_CHAT_TITLE }, route)
 
       // The title write is what makes it a row; the durable id is what we keep.
       if (created.session_id && created.stored_session_id) {
@@ -161,7 +161,11 @@ export async function awaitRemoteReply(
     }
 
     const messages = bound.messages ?? []
-    const reply = messages.slice(before).reverse().find(message => message.role === 'assistant')
+
+    const reply = messages
+      .slice(before)
+      .reverse()
+      .find(message => message.role === 'assistant')
 
     if (reply) {
       return reply.text

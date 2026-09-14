@@ -5,11 +5,18 @@
 
 import { host, livePollIntervalMs } from '@hermes/plugin-sdk'
 
-import { BOT_CHAT_TITLE, botHandle, groupSessionTitle, isOwnedSessionTitle } from '../ids'
-import { maySweep, type RegistryAnswer, resolveCanonicalChat } from '../model/canonical'
+import { BOT_CHAT_TITLE, BOT_KICKOFF_TEXT, botHandle, groupSessionTitle, isOwnedSessionTitle } from '../ids'
+import { maySweep, type RegistryAnswer, resolveCanonicalChat, sweepHidesSession } from '../model/canonical'
 import { type BotMeta, type BotMetaWriteOutcome, classifyWrite } from '../model/meta'
 import { liveRooms, roomsFromRoster, rosterMetaSource } from '../model/rooms'
-import { handleIndex, mergeMultiSourceRoster, type RosterRow, type RosterRowInput, sortRoster } from '../model/roster'
+import {
+  handleIndex,
+  mergeMultiSourceRoster,
+  type RosterRow,
+  type RosterRowInput,
+  sessionOwnerLabels,
+  sortRoster
+} from '../model/roster'
 
 import { $botProtocolSupported, $rooms, $roster, $rosterError, $rosterLoading } from './atoms'
 import {
@@ -19,6 +26,7 @@ import {
   listProfiles,
   setSessionHidden,
   setSessionTitle,
+  submitPrompt,
   writeBotMeta
 } from './rpc'
 
@@ -60,20 +68,24 @@ export async function refreshRoster(): Promise<RosterRow[]> {
       // member card is what says a machine is unreachable.
       const remotes = await remoteRosters()
 
-      const roster = sortRoster(
-        mergeMultiSourceRoster([{ metaKnown: true, rows: local.profiles ?? [] }, ...remotes])
-      )
+      const roster = sortRoster(mergeMultiSourceRoster([{ metaKnown: true, rows: local.profiles ?? [] }, ...remotes]))
 
       $botProtocolSupported.set(local.bot_mode_protocol === true)
       $roster.set(roster)
       $rosterError.set(null)
+      // The names these bots' sessions read under wherever a session is named
+      // (`Radar: Bot Chat`) — published from the SAME rows the pane shows, so a
+      // row and a tab can never call one bot by two names.
+      host.setSessionOwnerLabels(sessionOwnerLabels(roster))
 
       const fetchedAt = Date.now()
 
       $rooms.set(
         liveRooms(
           roomsFromRoster(
-            roster.map(row => rosterMetaSource({ name: row.profile, ui_meta: { 'hermes-bots': row.meta } }, row.connectionId)),
+            roster.map(row =>
+              rosterMetaSource({ name: row.profile, ui_meta: { 'hermes-bots': row.meta } }, row.connectionId)
+            ),
             fetchedAt
           )
         )
@@ -201,6 +213,12 @@ export function knownCanonicalIds(): ReadonlySet<string> {
     if (row.canonicalId) {
       ids.add(row.canonicalId)
     }
+
+    // The TIP as well: after a compaction the chat is opened — and so focused —
+    // by its tip id, and after a reload the roster is all that can recognise it.
+    if (row.canonicalTipId) {
+      ids.add(row.canonicalTipId)
+    }
   }
 
   return ids
@@ -228,6 +246,14 @@ export async function openBotChat(row: RosterRow): Promise<OpenChatResult> {
 
   const run = (async () => {
     const result = await resolveBotChat(row)
+
+    // The row shows what the registry says, and an open or a mint just changed
+    // that — a chat that exists now, a greeting on its way. Refreshed here, not
+    // on the next poll, which is what left "No conversations yet" under a bot the
+    // user was already talking to.
+    if (!result.error && result.action !== 'remote') {
+      void refreshRoster()
+    }
 
     // Reported HERE because all three call sites — the row tap, the kebab verb
     // and the `hermes://bot/…` deep link — used to drop this on the floor, and
@@ -308,16 +334,19 @@ async function resolveBotChat(row: RosterRow): Promise<OpenChatResult> {
  * `session.create` persists NOTHING — the row is created lazily on the first
  * prompt, because every launch and every draft opens a session just to paint a
  * composer. A Bot Mode chat has no first prompt to wait for, so the eager
- * `session.title` write is what turns it into a row, and the same call applies
- * the `hidden` flag the create was holding.
+ * `session.title` write is what turns it into a row.
  *
- * No kickoff message. Universal has no New-Agent flow, and upstream's rule is
- * that only that flow may introduce a bot — firing an intro from the click path
- * burns a model turn and stamps a user-attributed greeting into the chat every
- * time a lookup misses.
+ * LISTED, not hidden (MJXHRM-518): a bot's chat is a conversation the user
+ * reads, so it is a row in the Sessions sidebar under the bot's name and opens
+ * as its own tab. Its identity is still the title and nothing else.
+ *
+ * Then the KICKOFF — desktop's greeting, sent once and only from here. A chat
+ * minted empty leaves the bot's row with nothing to show and its tab with
+ * nothing in it; the greeting is what gives both a first exchange. Never from an
+ * open, and never on the adopt path below, where the chat already existed.
  */
 async function createCanonical(row: RosterRow, route: AgentRoute): Promise<OpenChatResult> {
-  const created = await createSession({ title: BOT_CHAT_TITLE }, route)
+  const created = await createSession({ hidden: false, title: BOT_CHAT_TITLE }, route)
   const runtimeId = created.session_id
   const storedId = created.stored_session_id
 
@@ -357,14 +386,13 @@ async function createCanonical(row: RosterRow, route: AgentRoute): Promise<OpenC
   //
   // The same holds when the title write only queued (`{pending: true}`): adoption
   // needs no row.
-  // HIDDEN: a bot's forever-chat is never remembered as the place to land, so a
-  // restart can never put it in the main pane as an ordinary chat.
-  const opened = await host.openCreatedSession({
-    hidden: true,
-    profile: row.profile,
-    runtimeSessionId: runtimeId,
-    storedSessionId: storedId
-  })
+  //
+  // A TAB of its own, never the main chat: the conversation the user was in
+  // stays where it was.
+  const opened = await host.openCreatedSession(
+    { profile: row.profile, runtimeSessionId: runtimeId, storedSessionId: storedId },
+    { target: 'tab' }
+  )
 
   if (!opened.ok) {
     return { action: 'create', error: opened.error, storedId }
@@ -372,7 +400,28 @@ async function createCanonical(row: RosterRow, route: AgentRoute): Promise<OpenC
 
   openedCanonical.add(storedId)
 
+  await greet(row, runtimeId, route)
+  // The row exists by now — the title write made it, or the greeting just did —
+  // so the sidebar can list it before the reply lands.
+  void host.refreshSessions()
+
   return { action: 'create', storedId }
+}
+
+/**
+ * Send the kickoff into a chat minted a moment ago, by its RUNTIME id — the
+ * session is live under it right now.
+ *
+ * A refused greeting does not undo the chat: it exists, it is open and the user
+ * can type into it. So it is reported, never returned as a failed open, which
+ * would read "could not open" over a chat that is on screen.
+ */
+async function greet(row: RosterRow, runtimeId: string, route: AgentRoute): Promise<void> {
+  try {
+    await submitPrompt(runtimeId, BOT_KICKOFF_TEXT, route)
+  } catch (error) {
+    host.notifyError(error instanceof Error ? error : new Error(String(error)), `${row.name} did not get the greeting`)
+  }
 }
 
 /**
@@ -396,7 +445,7 @@ async function openCanonical(
   expectHistory: boolean,
   action: OpenChatResult['action'] = 'open'
 ): Promise<OpenChatResult> {
-  const opened = await host.openSession(storedId, { expectHistory, hidden: true, profile: row.profile })
+  const opened = await host.openSession(storedId, { expectHistory, profile: row.profile, target: 'tab' })
 
   if (opened.ok) {
     openedCanonical.add(storedId)
@@ -453,10 +502,14 @@ export async function saveBotMeta(row: RosterRow, meta: BotMeta): Promise<SaveBo
   return outcome
 }
 
-// ── the hidden-session sweep ────────────────────────────────────────────────
+// ── the session-visibility sweep ────────────────────────────────────────────
 
 /**
- * Re-assert `hidden` on every session THIS PLUGIN OWNS.
+ * Re-assert the visibility of every session THIS PLUGIN OWNS.
+ *
+ * Which way is the title's call (`sweepHidesSession`): a room member's `Group:`
+ * session is plumbing and stays hidden, while a bot's Bot Chat is LISTED in the
+ * Sessions sidebar (MJXHRM-518) — so one an older client hid is un-hidden here.
  *
  * Two guards, because `session.set_hidden` flips a session's whole compression
  * lineage — a wrong call buries a real conversation and every ancestor of it:
@@ -475,7 +528,12 @@ export async function saveBotMeta(row: RosterRow, meta: BotMeta): Promise<SaveBo
  * Idempotent, `allSettled`, one pass — a failure for one id never aborts the
  * sweep.
  */
-export async function sweepHiddenSessions(): Promise<{ failed: number; hidden: number; skipped: number }> {
+export async function sweepHiddenSessions(): Promise<{
+  failed: number
+  hidden: number
+  shown: number
+  skipped: number
+}> {
   const roster = $roster.get()
   const rooms = $rooms.get()
 
@@ -486,9 +544,7 @@ export async function sweepHiddenSessions(): Promise<{ failed: number; hidden: n
   // contribute a 4001 on every reconnect.
   const local = roster.filter(row => !row.connectionId)
 
-  const canonical = await Promise.all(
-    local.map(async row => ({ answer: await askRegistry(routeFor(row)), row }))
-  )
+  const canonical = await Promise.all(local.map(async row => ({ answer: await askRegistry(routeFor(row)), row })))
 
   for (const { answer, row } of canonical) {
     const found = answer.failed ? null : answer.row
@@ -520,31 +576,38 @@ export async function sweepHiddenSessions(): Promise<{ failed: number; hidden: n
     }
   }
 
-  let skipped = 0
-
-  // `allSettled`, so one failure never aborts the sweep — but a REJECTION is
-  // neither hidden nor skipped, and counting fulfilled-minus-skipped reported
-  // it as hidden. A stale pin makes `session.set_hidden` return 4001, so this
-  // was the common case, not the edge one.
+  // `allSettled`, so one failure never aborts the sweep — and each entry reports
+  // what it DID. A rejection is neither hidden, shown nor skipped, and deriving
+  // one count from the others is how a refused write was once reported as done.
   const results = await Promise.allSettled(
-    owned.map(async entry => {
+    owned.map(async (entry): Promise<SweepOutcome> => {
       // Guard 2 reads the title the GATEWAY reported for this row, not one we
       // remembered — that is what closes the old-gateway hole in the sweep and
       // not only in adoption.
       if (!maySweep({ owned: true, title: entry.title }) || !isOwnedSessionTitle(entry.title)) {
-        skipped += 1
-
-        return
+        return 'skipped'
       }
 
-      await setSessionHidden(entry.id, true, entry.route)
+      const hide = sweepHidesSession(entry.title)
+
+      await setSessionHidden(entry.id, hide, entry.route)
+
+      return hide ? 'hidden' : 'shown'
     })
   )
 
-  const fulfilled = results.filter(result => result.status === 'fulfilled').length
+  const count = (outcome: SweepOutcome): number =>
+    results.filter(result => result.status === 'fulfilled' && result.value === outcome).length
 
-  return { failed: results.length - fulfilled, hidden: fulfilled - skipped, skipped }
+  return {
+    failed: results.filter(result => result.status === 'rejected').length,
+    hidden: count('hidden'),
+    shown: count('shown'),
+    skipped: count('skipped')
+  }
 }
+
+type SweepOutcome = 'hidden' | 'shown' | 'skipped'
 
 /** A bot's @tag, for the composer completions and the room roster. */
 export const handleOf = (row: RosterRow): string => row.handle || botHandle(row.profile)

@@ -15,6 +15,7 @@
  */
 
 import {
+  $sessionsChangeTick,
   COMPOSER_AREAS,
   type ComposerAtCompletionSource,
   type ComposerMiddleware,
@@ -113,6 +114,18 @@ const plugin: HermesPlugin = {
       })
     )
 
+    // `sessions.changed` is what moves a row: a bot's first exchange, a
+    // compaction rotating its chat. `listen`, not `subscribe` — the immediate call
+    // would double the reveal refresh above — and only while the tab is on
+    // screen, the one place a stale row can be seen.
+    ctx.onDispose(
+      $sessionsChangeTick.listen(() => {
+        if (host.paneVisibility(BOTS_PANE).get()) {
+          void refreshRoster()
+        }
+      })
+    )
+
     ctx.onDispose(() => {
       routinesDispose?.()
       closeAllRoomPanes()
@@ -149,7 +162,19 @@ const plugin: HermesPlugin = {
 
           const text = rewriteNewCommand(draft.text, inCanonical)
 
-          return text === draft.text ? draft : { ...draft, text }
+          if (text === draft.text) {
+            return draft
+          }
+
+          // SAID, not silent — desktop's notice. A `/new` that quietly compacted
+          // instead reads as the command being broken.
+          host.notify({
+            kind: 'info',
+            message: ctx.i18n.t('chat.neverResetsBody'),
+            title: ctx.i18n.t('chat.neverResetsTitle')
+          })
+
+          return { ...draft, text }
         }
       } satisfies ComposerMiddleware,
       id: 'mention-middleware'
@@ -265,7 +290,9 @@ const plugin: HermesPlugin = {
             return true
           }
 
-          const row = $roster.get().find(candidate => botHandle(candidate.profile) === name || candidate.profile === name)
+          const row = $roster
+            .get()
+            .find(candidate => botHandle(candidate.profile) === name || candidate.profile === name)
 
           if (!row) {
             return false
@@ -294,14 +321,17 @@ const plugin: HermesPlugin = {
       })
     )
 
-    let timer: ReturnType<typeof setInterval> | null = setInterval(() => {
-      if (host.paneVisibility(BOTS_PANE).get()) {
-        void refreshRoster()
-      }
-      // There is no `profiles.changed` event, so this backstop cannot be
-      // deleted — but it IS capability-gated, so a gateway that broadcasts
-      // change events gets the slow interval.
-    }, livePollIntervalMs(15_000, 90_000))
+    let timer: ReturnType<typeof setInterval> | null = setInterval(
+      () => {
+        if (host.paneVisibility(BOTS_PANE).get()) {
+          void refreshRoster()
+        }
+        // There is no `profiles.changed` event, so this backstop cannot be
+        // deleted — but it IS capability-gated, so a gateway that broadcasts
+        // change events gets the slow interval.
+      },
+      livePollIntervalMs(15_000, 90_000)
+    )
 
     ctx.onDispose(() => {
       if (timer) {
@@ -371,7 +401,11 @@ function runnerDeps() {
     },
     settledText: (plan: { member: { storedSessionId: string } }, before: number) => {
       const messages = host.sessionMessages(plan.member.storedSessionId).get()
-      const fresh = messages.slice(before).reverse().find(message => message.role === 'assistant')
+
+      const fresh = messages
+        .slice(before)
+        .reverse()
+        .find(message => message.role === 'assistant')
 
       if (!fresh || fresh.pending) {
         return null

@@ -55,16 +55,13 @@ import { $currentModel } from '@/store/model'
 import { startNewSession } from '@/store/new-session'
 import { notify, notifyError } from '@/store/notifications'
 import { $paneVisible } from '@/store/pane-visibility-store'
-import {
-  pluginConnectionSource,
-  type PluginProfileRoute,
-  requestPluginProfile
-} from '@/store/plugin-connection-source'
+import { pluginConnectionSource, type PluginProfileRoute, requestPluginProfile } from '@/store/plugin-connection-source'
 import {
   openCreatedPluginSession,
   openPluginSession,
   type PluginCreatedSession,
   type PluginOpenSessionOptions,
+  type PluginOpenTarget,
   warmProfile
 } from '@/store/plugin-open-session'
 import {
@@ -81,7 +78,8 @@ import {
   sessionSecretRequest,
   sessionSudoRequest
 } from '@/store/prompts'
-import { $activeStoredSessionId, knownSessionProfile } from '@/store/session'
+import { $activeStoredSessionId, knownSessionProfile, refreshSessions } from '@/store/session'
+import { setSessionOwnerLabels } from '@/store/session-owner-label'
 import { $sessionStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
 import { $focusedRuntimeId, $focusedSessionState, $focusedStoredSessionId } from '@/store/session-states'
 import { runGatewayRestart } from '@/store/system-status'
@@ -335,11 +333,27 @@ export const host = {
    * nothing to resume, and a resume of a session no listing contains cannot find
    * its owner. Writes no sidebar row — a plugin's hidden session stays hidden.
    */
-  openCreatedSession: async (created: PluginCreatedSession, options?: { focus?: boolean }) =>
+  openCreatedSession: async (created: PluginCreatedSession, options?: { focus?: boolean; target?: PluginOpenTarget }) =>
     openCreatedPluginSession(created, options),
 
   /** The owning profile of a stored session, as far as the client knows. */
   sessionProfile: (storedSessionId: string): string | undefined => knownSessionProfile(storedSessionId),
+
+  /**
+   * Re-read the Sessions sidebar's list NOW rather than on the next
+   * `sessions.changed`. For a plugin that just made a LISTED session into a row:
+   * `openCreatedSession` writes no row of its own, so without this the sidebar
+   * shows the chat only once the change broadcast catches up.
+   */
+  refreshSessions: async (): Promise<void> => refreshSessions(),
+
+  /**
+   * Name the sessions a profile owns — they read as `Name: title` on the sidebar
+   * row, the chat header, every chat tab and the switcher. REPLACES the whole
+   * set, so pass every profile you name; one left out reads bare again. Display
+   * only: titles, rename and search are untouched.
+   */
+  setSessionOwnerLabels: (labels: Readonly<Record<string, string>>): void => setSessionOwnerLabels(labels),
 
   /**
    * One session's transcript. Read from `$sessionStates` — the source of truth
@@ -557,10 +571,7 @@ export { PALETTE_AREA, type PaletteContribution } from '@/app/command-palette/co
  *  whatever target the gesture landed on, in contribution `order`. `provide()`
  *  runs per gesture, which is how live state reaches it — `when()` is not
  *  reactive. */
-export {
-  CONTEXT_MENU_ITEMS_AREA,
-  type ContextMenuItemsContribution
-} from '@/app/context-menu/contrib'
+export { CONTEXT_MENU_ITEMS_AREA, type ContextMenuItemsContribution } from '@/app/context-menu/contrib'
 /** Claim a whole new target KIND (the sharp door — MJXHRM-447's browser webview
  *  is its first user). `order < 100` is reserved for core and `dom` is total at
  *  100, so a provider registered below it can swallow the app's own menu. */
@@ -875,7 +886,12 @@ export {
   type PluginProfileRoute,
   setPluginConnectionSource
 } from '@/store/plugin-connection-source'
-export type { PluginOpenSessionError, PluginOpenSessionOptions, PluginOpenSessionResult } from '@/store/plugin-open-session'
+export type {
+  PluginOpenSessionError,
+  PluginOpenSessionOptions,
+  PluginOpenSessionResult,
+  PluginOpenTarget
+} from '@/store/plugin-open-session'
 export { $accentOverride, setAccentOverride } from '@/themes/accent-override'
 /** OKLCH colour maths, for anything deriving a palette rather than hardcoding
  *  one: perceptual conversion, the sRGB gamut boundary, WCAG contrast, and

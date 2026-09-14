@@ -14,6 +14,10 @@
 /** The canonical per-bot private chat. Matched EXACTLY, server-side. */
 export const BOT_CHAT_TITLE = 'Bot Chat'
 
+/** The greeting a freshly minted Bot Chat opens with — desktop's, verbatim. It
+ *  goes in as the user's first message, so a model reads it like any other. */
+export const BOT_KICKOFF_TEXT = 'Hey, tell me about yourself!'
+
 const GROUP_TITLE_PREFIX = 'Group: '
 
 /** One member's side of a room. Also matched exactly by the hide sweep. */

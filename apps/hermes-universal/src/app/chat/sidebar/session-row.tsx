@@ -16,6 +16,7 @@ import { $sidebarRowMeta } from '@/store/layout'
 import { $pullRequestsByBranch, sessionPrKey } from '@/store/pull-requests'
 import { $attentionSessionIds } from '@/store/session'
 import { $sessionListDensity } from '@/store/session-list-density'
+import { $sessionOwnerLabels, withSessionOwner } from '@/store/session-owner-label'
 import { openSessionTile } from '@/store/session-states'
 import { sessionCostUsd } from '@/store/sidebar-archive'
 import { canOpenSessionWindow, openSessionInNewWindow } from '@/store/windows'
@@ -104,6 +105,10 @@ function SidebarSessionRowImpl({
   const { t } = useI18n()
   const r = t.sidebar.row
   const title = sessionTitle(session)
+  // What the row SHOWS: the title under its owner's name when a plugin named
+  // that profile (`Radar: Bot Chat`). `title` stays bare for everything that
+  // writes or carries it — rename, the drag payload, the actions menu.
+  const shownTitle = useStoreSelector($sessionOwnerLabels, labels => withSessionOwner(title, session.profile, labels))
   const age = formatAge(session.last_active || session.started_at, r)
   // Selector, not `useStore(...).includes(...)`: the attention array's reference
   // changes whenever ANY session starts or stops waiting on an answer, which
@@ -325,14 +330,14 @@ function SidebarSessionRowImpl({
           {showProfile && <ProfileTag profile={session.profile} />}
           {density === 'compact' ? (
             <SidebarRowLabel className="flex-1 font-normal group-hover:text-foreground group-data-[working=true]:text-foreground/90">
-              {title}
+              {shownTitle}
             </SidebarRowLabel>
           ) : (
             // The extra lines live INSIDE the label column so they truncate with
             // the title rather than pushing the trailing chips around.
             <span className="flex min-w-0 flex-1 flex-col justify-center">
               <SidebarRowLabel className="font-normal group-hover:text-foreground group-data-[working=true]:text-foreground/90">
-                {title}
+                {shownTitle}
               </SidebarRowLabel>
               {details.metadata && (
                 <span className="mt-0.5 block truncate text-[0.625rem] leading-none text-(--ui-text-tertiary)">

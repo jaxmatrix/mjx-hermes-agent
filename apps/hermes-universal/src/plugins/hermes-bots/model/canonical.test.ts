@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { isCanonicalChatSession, maySweep, resolveCanonicalChat, rewriteNewCommand } from './canonical'
+import {
+  isCanonicalChatSession,
+  maySweep,
+  resolveCanonicalChat,
+  rewriteNewCommand,
+  sweepHidesSession
+} from './canonical'
 
 const T = 'Bot Chat'
 
@@ -105,5 +111,12 @@ describe('the /new reroute', () => {
   it('only matches a whole leading command', () => {
     expect(rewriteNewCommand('/newsletter', true)).toBe('/newsletter')
     expect(rewriteNewCommand('type /new to start over', true)).toBe('type /new to start over')
+  })
+})
+
+describe('which way the sweep sets the flag', () => {
+  it('keeps a room member session hidden, and LISTS a Bot Chat', () => {
+    expect(sweepHidesSession('Group: Ops')).toBe(true)
+    expect(sweepHidesSession('Bot Chat')).toBe(false)
   })
 })

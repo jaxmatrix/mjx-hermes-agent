@@ -45,6 +45,7 @@ import {
   sessionMatchesStoredId,
   sessionPinId
 } from '@/store/session'
+import { withSessionOwner } from '@/store/session-owner-label'
 import { $focusedStoredSessionId } from '@/store/session-states'
 import type { SessionInfo } from '@/types/hermes'
 
@@ -131,7 +132,9 @@ export function chatTabTitle({ draftTitle, page, selected, stored }: ChatTabTitl
   }
 
   if (stored) {
-    return sessionTitle(stored)
+    // Under its owner's name when a plugin named that profile — `Radar: Bot
+    // Chat`. Display only: a tab's drag payload and rename read the bare title.
+    return withSessionOwner(sessionTitle(stored), stored.profile)
   }
 
   if (selected) {
