@@ -1846,7 +1846,8 @@ export const ar = defineLocale({
     kindLink: 'رابط',
     chat: 'المحادثة',
     copyUrl: 'نسخ الرابط',
-    copyPath: 'نسخ المسار'
+    copyPath: 'نسخ المسار',
+    download: name => `تنزيل ${name}`
   },
   artifactCard: {
     kind: {

@@ -1981,7 +1981,8 @@ export const zhHant = defineLocale({
     kindLink: '連結',
     chat: '聊天',
     copyUrl: '複製 URL',
-    copyPath: '複製路徑'
+    copyPath: '複製路徑',
+    download: name => `下載 ${name}`
   },
 
   sidebar: {

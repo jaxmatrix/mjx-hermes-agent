@@ -1888,6 +1888,7 @@ export interface Translations {
     chat: string
     copyUrl: string
     copyPath: string
+    download: (name: string) => string
   }
 
   sidebar: {

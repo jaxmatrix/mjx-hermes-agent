@@ -2055,7 +2055,8 @@ export const ja = defineLocale({
     kindLink: 'リンク',
     chat: 'チャット',
     copyUrl: 'URL をコピー',
-    copyPath: 'パスをコピー'
+    copyPath: 'パスをコピー',
+    download: name => `${name} をダウンロード`
   },
 
   sidebar: {

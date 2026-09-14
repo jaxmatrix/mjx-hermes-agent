@@ -2221,7 +2221,8 @@ export const en: Translations = {
     kindLink: 'link',
     chat: 'Chat',
     copyUrl: 'Copy URL',
-    copyPath: 'Copy path'
+    copyPath: 'Copy path',
+    download: name => `Download ${name}`
   },
 
   sidebar: {

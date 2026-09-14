@@ -2357,7 +2357,8 @@ export const zh: Translations = {
     kindLink: '链接',
     chat: '对话',
     copyUrl: '复制 URL',
-    copyPath: '复制路径'
+    copyPath: '复制路径',
+    download: name => `下载 ${name}`
   },
 
   sidebar: {
