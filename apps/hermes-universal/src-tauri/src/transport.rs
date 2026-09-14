@@ -625,7 +625,7 @@ fn caller_set_authorization(headers: &HashMap<String, String>) -> bool {
 /// Attach the gateway bearer, if we hold one. Split out so the "the header is
 /// actually on the request" invariant is testable without a network or a
 /// keyring: `RequestBuilder::build` produces the request without sending it.
-fn apply_gateway_bearer(
+pub(crate) fn apply_gateway_bearer(
     builder: reqwest::RequestBuilder,
     bearer: Option<&str>,
 ) -> reqwest::RequestBuilder {
@@ -732,7 +732,7 @@ fn upload_lost_to_redirect(req: &HttpReq, final_url: &reqwest::Url) -> bool {
 /// The caller wins for the same reason `caller_set_authorization` exists: an MCP
 /// or marketplace panel talking to a third-party service with its own key must
 /// not have it overwritten by a credential meant for somewhere else.
-fn apply_connection_auth(
+pub(crate) fn apply_connection_auth(
     mut builder: reqwest::RequestBuilder,
     caller_headers: &HashMap<String, String>,
     auth: Option<&ConnectionAuth>,

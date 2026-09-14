@@ -21,6 +21,7 @@ mod data_url_read_max;
 mod deep_link;
 #[cfg(desktop)]
 mod external_terminal;
+mod files;
 mod find_in_page;
 mod keep_awake;
 mod link_title;
@@ -70,6 +71,7 @@ use data_url_read_max::{read_capped_file_base64, set_data_url_read_max, DataUrlR
 use deep_link::{deep_link_ready, DeepLinkState};
 #[cfg(desktop)]
 use external_terminal::open_in_terminal;
+use files::download_file;
 use find_in_page::{find_in_page, stop_find_in_page};
 use keep_awake::{set_keep_awake, KeepAwakeState};
 use link_title::fetch_link_title;
@@ -410,6 +412,7 @@ pub fn run() {
             artifact_release,
             artifact_stage,
             media_set_target,
+            download_file,
             fetch_link_title,
             oauth_login,
             oauth_status,
