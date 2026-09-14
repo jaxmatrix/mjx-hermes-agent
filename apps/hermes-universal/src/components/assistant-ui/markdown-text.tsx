@@ -19,10 +19,11 @@ import {
 
 import { ArtifactCard } from '@/components/assistant-ui/artifact-card'
 import { ExpandableBlock } from '@/components/chat/expandable-block'
-import { chunkByLines, SyntaxHighlighter } from '@/components/chat/shiki-highlighter'
+import { SyntaxHighlighter } from '@/components/chat/shiki-highlighter'
 import { ZoomableImage } from '@/components/chat/zoomable-image'
 import { ErrorBoundary } from '@/components/error-boundary'
 import { detectArtifact } from '@/lib/artifact-detect'
+import { chunkByLines } from '@/lib/code-budget'
 import { normalizeExternalUrl, openExternalLink, PrettyLink } from '@/lib/external-link'
 import { createMemoizedMathPlugin, KATEX_HTML_TAG } from '@/lib/katex-memo'
 import { parseMarkdownIntoBlocksCached } from '@/lib/markdown-blocks'
