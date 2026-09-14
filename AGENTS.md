@@ -181,6 +181,28 @@ source .venv/bin/activate   # or: source venv/bin/activate
 `scripts/run_tests.sh` probes `.venv`, then `venv`, then `$HOME/.hermes/hermes-agent/venv`
 (worktrees sharing the main checkout's venv).
 
+### JavaScript: npm workspaces, never pnpm or yarn
+
+The JS side of this repo is a single **npm workspace tree**, pinned by the root
+`package-lock.json`. There is no `pnpm-lock.yaml` and no `yarn.lock`, and adding
+one would split the dependency graph the lockfile exists to pin. Install from the
+repo root (`npm install`); the workspaces are `apps/*`, `ui-tui`,
+`ui-tui/packages/*`, `web` and `tests-js`.
+
+Run a workspace's scripts either from its own directory or with `--workspace`
+from the root — both resolve through the same lockfile:
+
+```bash
+cd apps/hermes-universal && npm run tauri dev   # or:
+npm run tauri dev --workspace @hermes/universal
+```
+
+That `pnpm` appears in `agent/`, `tests/` and the skills is unrelated and must not
+be "fixed": the agent DETECTS a user project's package manager
+(`agent/coding_context.py`, `agent/verify/recipes.py` key off `pnpm-lock.yaml`),
+and those fixtures assert that detection works. Package-manager strings in test
+data describe someone else's repo, not ours.
+
 ## Project Structure
 
 Counts shift constantly; the filesystem is canonical. Load-bearing entry points:
@@ -208,6 +230,8 @@ hermes-agent/
 ├── ui-tui/               # Ink (React) terminal UI — `hermes --tui`
 ├── tui_gateway/          # Python JSON-RPC backend for TUI + Desktop — server.py + methods_*.py
 ├── apps/desktop/         # Electron desktop app (+ apps/shared JSON-RPC client)   web/: dashboard SPA
+├── apps/hermes-universal/ # Tauri client (desktop + Android/iOS from one React app); own AGENTS.md, Rust in src-tauri/
+├── apps/bootstrap-installer/ # Tauri installer ("Hermes Setup")
 ├── acp_adapter/          # ACP server (VS Code / Zed / JetBrains)
 ├── cron/                 # jobs.py + scheduler.py (+ scheduler_*.py)
 ├── evals/                # Offline benchmarks (codebase_navigability/, compaction/, ...)

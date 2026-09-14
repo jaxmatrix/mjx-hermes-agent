@@ -7,6 +7,28 @@ with `apps/desktop/AGENTS.md`, whose seams and state rules universal shares.
 When a rule here and the code disagree, trust the code and fix whichever is
 wrong.
 
+## Commands
+
+**npm, never pnpm or yarn** — this repo is one npm workspace tree pinned by the
+root `package-lock.json` (see the root `AGENTS.md`). This package is
+`@hermes/universal`, so every script below also works from the repo root as
+`npm run <script> --workspace @hermes/universal`.
+
+```bash
+npm run tauri dev     # desktop shell (pair with `npm run dev`, Vite on 5176)
+npm run android:dev   # Android; ios:build:debug / dev:ios for iOS
+npm test              # vitest (this package only)
+npm run check         # the full gate: check:js (typecheck, lint, test, build),
+                      #   check:i18n, cargo fmt --check, cargo check, cargo test
+```
+
+`npm run check` is the one to run before calling a change done — it covers both
+halves, and the Rust half is easy to forget because nothing in the JS tooling
+touches `src-tauri/`. Keep `check` a pure umbrella over its `check:<name>`
+sub-scripts: CI runs each sub-script as its own job and never the plain `check`.
+`README.md` has the full script table and the several-shells-on-one-dev-server
+workflow (`dev:ext:*`).
+
 ## `position: fixed` is not above the soft keyboard
 
 On the mobile webviews Tauri embeds, the on-screen keyboard does **not**
