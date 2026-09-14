@@ -4,12 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as PluginDiskModule from '@/contrib/plugin-disk'
 import type * as PluginsStoreModule from '@/contrib/plugins-store'
+import type * as HermesModule from '@/hermes'
 import type * as AgentPluginsModule from '@/store/agent-plugins'
 
 const resolvePluginDisk = vi.hoisted(() => vi.fn())
 const discoverRuntimePlugins = vi.hoisted(() => vi.fn())
 const reveal = vi.hoisted(() => vi.fn(async () => {}))
 const toggleAgentPlugin = vi.hoisted(() => vi.fn())
+const loadAgentPlugins = vi.hoisted(() => vi.fn(async () => {}))
+const setEnvVar = vi.hoisted(() => vi.fn(async () => ({ ok: true })))
 
 vi.mock('@/contrib/runtime-loader', () => ({ discoverRuntimePlugins }))
 vi.mock('@/contrib/plugin-disk', async importActual => {
@@ -24,8 +27,9 @@ vi.mock('@/contrib/plugin-disk', async importActual => {
 vi.mock('@/store/agent-plugins', async importActual => {
   const actual = await importActual<typeof AgentPluginsModule>()
 
-  return { ...actual, toggleAgentPlugin }
+  return { ...actual, loadAgentPlugins, toggleAgentPlugin }
 })
+vi.mock('@/hermes', async importActual => ({ ...(await importActual<typeof HermesModule>()), setEnvVar }))
 
 import { $restDoorEnabled } from '@/contrib/plugin-disk'
 import { $pluginRecords, type PluginRecord, setPluginEnabled } from '@/contrib/plugins-store'
@@ -394,5 +398,34 @@ describe('PluginsSettings ▸ agent plugins', () => {
     // agent section's, which cannot work on this platform (jsdom is not Tauri,
     // and neither is Android or iOS).
     expect(screen.getAllByRole('button', { name: /Open plugins folder/ })).toHaveLength(1)
+  })
+})
+
+// The manifest's declared env vars (API keys) edited under the plugin itself.
+describe('PluginsSettings ▸ agent plugin keys', () => {
+  const falKey = { description: 'FAL API key', is_set: false, name: 'FAL_KEY', password: true, required: true, url: null }
+
+  it('saves a declared key through /api/env and refetches the list', async () => {
+    loadedWith([agentRow({ env: [falKey], key: 'video_gen/fal', name: 'fal' })])
+    renderPage()
+
+    const input = await screen.findByLabelText('FAL_KEY')
+    const save = screen.getByRole('button', { name: 'Save' })
+
+    expect(input).toHaveAttribute('type', 'password')
+    expect(save).toBeDisabled()
+
+    fireEvent.change(input, { target: { value: 'fal-secret' } })
+    fireEvent.click(save)
+
+    await waitFor(() => expect(setEnvVar).toHaveBeenCalledWith('FAL_KEY', 'fal-secret'))
+    await waitFor(() => expect(loadAgentPlugins).toHaveBeenCalled())
+  })
+
+  it('shows nothing extra for a row without declared env', () => {
+    loadedWith([agentRow({ env: [] }), agentRow({ key: 'kanban', name: 'kanban' })])
+    renderPage()
+
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
   })
 })

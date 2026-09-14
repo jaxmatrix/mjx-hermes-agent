@@ -443,6 +443,12 @@ export interface Translations {
         noMatches: string
         toggleFailed: (name: string) => string
         updateBackendToManage: string
+        required: string
+        keySet: string
+        keepCurrent: string
+        saveKey: string
+        keySaved: (name: string) => string
+        keyFailed: (name: string) => string
         sources: Record<string, string>
       }
     }
