@@ -367,9 +367,27 @@ webkit2gtk = { version = "2.0", features = ["v2_8"] }
 window-vibrancy = "0.6"
 # The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
 # plugin that used to wrap them — see the keyring-core note under [dependencies].
-# `protected` selects the Protected Data keychain. Required on iOS (the crate
-# errors without it) and used on macOS too, so both Apple targets store alike.
-apple-native-keyring-store = { version = "1.0", features = ["protected"] }
+#
+# `keychain` — the file-based login keychain — is where macOS stores, NOT the
+# `protected` Protected Data store the iOS block below selects. The two Apple
+# targets deliberately do not store alike, because only one of them has a
+# provisioning profile.
+#
+# The Protected Data keychain writes with `kSecUseDataProtectionKeychain`, which
+# on macOS requires the process to carry a keychain access group — granted by a
+# `keychain-access-groups`/`application-identifier` entitlement, which only a
+# provisioning profile supplies. This bundle has neither (there is no
+# `bundle.macOS` section in tauri.conf.json, and `tauri dev` runs a bare binary),
+# so every write returned `errSecMissingEntitlement (-34018)`. Nothing surfaced
+# it: `protected::Store::new()` is infallible, so the store reported itself
+# available and only the writes failed. The visible symptom was an RFC 8252
+# sign-in that completed and left the app signed out, because the token set
+# could not reach the keyring (`oauth.rs::store_native_tokens`).
+#
+# `protected` stays enabled on macOS for READING only: `secrets/store.rs` still
+# consults it as a legacy source, so a credential an earlier build did manage to
+# store there is adopted into the login keychain instead of being orphaned.
+apple-native-keyring-store = { version = "1.0", features = ["keychain", "protected"] }
 core-graphics = "0.25"
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
@@ -409,6 +427,9 @@ windows-sys = { version = "0.61", features = [
 [target.'cfg(target_os = "ios")'.dependencies]
 # The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
 # plugin that used to wrap them — see the keyring-core note under [dependencies].
+# `protected` is REQUIRED here — the crate `compile_error!`s on iOS without it,
+# and iOS has a provisioning profile so the entitlement macOS lacks is present.
+# Do not "unify" this with the macOS block above; see the note there.
 apple-native-keyring-store = { version = "1.0", features = ["protected"] }
 oslog = { version = "0.2.0", default-features = false, features = ["logger"] }
 

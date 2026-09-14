@@ -19,9 +19,9 @@
 //! stored token, key and password — there is no migration, because there does
 //! not need to be one.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use keyring_core::Entry;
+use keyring_core::{CredentialStore, Entry};
 
 use super::error::SecretsError;
 
@@ -36,6 +36,29 @@ pub const SERVICE: &str = "hermes";
 /// populated from the Java side, and caching that one early failure forever
 /// would disable credential storage for the whole run.
 static READY: Mutex<bool> = Mutex::new(false);
+
+/// A store an EARLIER build wrote credentials to, still consulted on read.
+///
+/// Only macOS has one: it used to select the Protected Data keychain, and now uses
+/// the login keychain (see `install`). A credential found only here is adopted —
+/// copied into the current store, read back, and only then deleted from here — so
+/// switching stores can never be what signs someone out. `None` everywhere else,
+/// and cleared for the rest of the run the first time the legacy store refuses a
+/// call, because a store that cannot be read cannot be holding anything we wrote.
+static LEGACY: Mutex<Option<Arc<CredentialStore>>> = Mutex::new(None);
+
+fn legacy_store() -> Option<Arc<CredentialStore>> {
+    LEGACY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+fn set_legacy_store(store: Option<Arc<CredentialStore>>) {
+    *LEGACY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = store;
+}
 
 /// Install the platform store, once.
 pub fn ensure() -> Result<(), SecretsError> {
@@ -76,7 +99,37 @@ fn install() -> Result<(), SecretsError> {
         return Ok(());
     }
 
-    #[cfg(all(not(test), any(target_os = "macos", target_os = "ios")))]
+    // The two Apple targets take different stores, and the split is load-bearing.
+    //
+    // The Protected Data keychain writes with `kSecUseDataProtectionKeychain`, which
+    // needs the process to carry a keychain access group. That comes from a
+    // `keychain-access-groups`/`application-identifier` entitlement, i.e. from a
+    // provisioning profile. iOS always has one; a macOS bundle only has one if it is
+    // signed with a profile, and this one is not (no `bundle.macOS` in
+    // tauri.conf.json, and `tauri dev` runs a bare binary). Using it there returned
+    // `errSecMissingEntitlement (-34018)` on every single write.
+    //
+    // That failure was invisible from here: `protected::Store::new()` is infallible,
+    // so `ensure` succeeded and `secrets_status` advertised a working store while
+    // nothing could be written to it. What it looked like from the outside was a
+    // desktop sign-in that finished and left the app signed out —
+    // `oauth.rs::store_native_tokens` could not persist the token set.
+    #[cfg(all(not(test), target_os = "macos"))]
+    {
+        // The file-based login keychain. Available to any process, entitlement or not.
+        let store = apple_native_keyring_store::keychain::Store::new()
+            .map_err(|e| SecretsError::unavailable(format!("the Keychain is unavailable: {e}")))?;
+        keyring_core::set_default_store(store);
+
+        // The store earlier builds selected. Read-only from here on: see `LEGACY`.
+        if let Ok(previous) = apple_native_keyring_store::protected::Store::new() {
+            set_legacy_store(Some(previous as Arc<CredentialStore>));
+        }
+
+        return Ok(());
+    }
+
+    #[cfg(all(not(test), target_os = "ios"))]
     {
         // The `protected` store is the Protected Data keychain, and is required
         // on iOS — the crate errors without it.
@@ -151,8 +204,68 @@ fn install() -> Result<(), SecretsError> {
 fn entry(account: &str) -> Result<Entry, SecretsError> {
     ensure()?;
 
-    Entry::new(SERVICE, &format!("{SERVICE}/{account}/password"))
+    Entry::new(SERVICE, &user(account))
         .map_err(|e| SecretsError::store_failed(format!("the keyring refused the entry: {e}")))
+}
+
+fn user(account: &str) -> String {
+    format!("{SERVICE}/{account}/password")
+}
+
+/// The same entry in the legacy store, when this platform has one.
+fn legacy_entry(account: &str) -> Option<Entry> {
+    let store = legacy_store()?;
+
+    match store.build(SERVICE, &user(account), None) {
+        Ok(entry) => Some(entry),
+        Err(e) => {
+            log::warn!("[secrets] the previous credential store refused an entry: {e}");
+            set_legacy_store(None);
+
+            None
+        }
+    }
+}
+
+/// Move one credential out of the legacy store, returning its value.
+///
+/// The order is the whole point: write to the current store, read it back, and
+/// delete the legacy copy only once the read-back matches. Any failure on the way
+/// leaves the legacy copy exactly where it was — the value is still returned, so
+/// this run works, and the next read simply tries again. Deleting first, or
+/// deleting on an unverified write, would turn one keychain hiccup into a lost
+/// credential.
+fn adopt_legacy(current: &Entry, legacy: &Entry) -> Option<String> {
+    let value = match legacy.get_password() {
+        Ok(value) => value,
+        Err(keyring_core::Error::NoEntry) => return None,
+        Err(e) => {
+            // On macOS without a keychain access group this is -34018. A store we
+            // cannot read cannot be holding anything we managed to write, so stop
+            // asking for the rest of the run instead of paying for it on every read.
+            log::warn!("[secrets] the previous credential store is unreadable: {e}");
+            set_legacy_store(None);
+
+            return None;
+        }
+    };
+
+    if let Err(e) = current.set_password(&value) {
+        log::warn!("[secrets] could not move a credential out of the previous store: {e}");
+
+        return Some(value);
+    }
+
+    match current.get_password() {
+        Ok(read_back) if read_back == value => {
+            if let Err(e) = legacy.delete_credential() {
+                log::warn!("[secrets] moved a credential but could not delete the old copy: {e}");
+            }
+        }
+        _ => log::warn!("[secrets] a moved credential did not read back; keeping the old copy"),
+    }
+
+    Some(value)
 }
 
 /// Read one entry. A missing entry is `None`, not an error.
@@ -161,9 +274,13 @@ fn entry(account: &str) -> Result<Entry, SecretsError> {
 /// which is two IPC hops and a window in which the answer can change between
 /// them — for no gain, since "not there" is exactly what `NoEntry` means.
 pub fn read(account: &str) -> Result<Option<String>, SecretsError> {
-    match entry(account)?.get_password() {
+    let current = entry(account)?;
+
+    match current.get_password() {
         Ok(value) => Ok(Some(value)),
-        Err(keyring_core::Error::NoEntry) => Ok(None),
+        Err(keyring_core::Error::NoEntry) => {
+            Ok(legacy_entry(account).and_then(|legacy| adopt_legacy(&current, &legacy)))
+        }
         Err(e) => Err(SecretsError::store_failed(format!(
             "the keyring refused the read: {e}"
         ))),
@@ -183,9 +300,137 @@ pub fn write(account: &str, value: &str) -> Result<(), SecretsError> {
 /// for the one operation whose entire job is that the credential is gone.
 pub fn remove(account: &str) -> Result<(), SecretsError> {
     match entry(account)?.delete_credential() {
-        Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
-        Err(e) => Err(SecretsError::store_failed(format!(
-            "the keyring refused the delete: {e}"
-        ))),
+        Ok(()) | Err(keyring_core::Error::NoEntry) => {}
+        Err(e) => {
+            return Err(SecretsError::store_failed(format!(
+                "the keyring refused the delete: {e}"
+            )))
+        }
+    }
+
+    // The legacy copy goes too, or the next read would adopt it straight back and
+    // undo a sign-out. A legacy store that refuses is dropped for the run instead of
+    // failing the delete: on macOS it refuses everything, and holds nothing.
+    if let Some(legacy) = legacy_entry(account) {
+        match legacy.delete_credential() {
+            Ok(()) | Err(keyring_core::Error::NoEntry) => {}
+            Err(e) => {
+                log::warn!("[secrets] the previous credential store refused a delete: {e}");
+                set_legacy_store(None);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use keyring_core::api::CredentialStoreApi;
+    use keyring_core::mock;
+
+    use super::*;
+
+    const ACCOUNT: &str = "nativeAuth:https://gw.example.com";
+
+    fn entries() -> (Entry, Entry) {
+        let current = mock::Store::new().unwrap();
+        let legacy = mock::Store::new().unwrap();
+
+        (
+            current.build(SERVICE, &user(ACCOUNT), None).unwrap(),
+            legacy.build(SERVICE, &user(ACCOUNT), None).unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_credential_stored_by_an_earlier_build_survives_the_store_switch() {
+        let (current, legacy) = entries();
+        legacy.set_password("stored-before-the-upgrade").unwrap();
+
+        assert_eq!(
+            adopt_legacy(&current, &legacy).as_deref(),
+            Some("stored-before-the-upgrade")
+        );
+        // Moved, not copied: it now lives in the current store…
+        assert_eq!(current.get_password().unwrap(), "stored-before-the-upgrade");
+        // …and the legacy copy is gone only because the move was verified.
+        assert!(matches!(
+            legacy.get_password(),
+            Err(keyring_core::Error::NoEntry)
+        ));
+    }
+
+    #[test]
+    fn a_failed_write_never_deletes_the_legacy_copy() {
+        let (current, legacy) = entries();
+        legacy.set_password("only-copy").unwrap();
+
+        let cred: &mock::Cred = current.as_any().downcast_ref().unwrap();
+        cred.set_error(keyring_core::Error::BadStoreFormat("refused".to_string()));
+
+        // The value still reaches the caller for this run…
+        assert_eq!(
+            adopt_legacy(&current, &legacy).as_deref(),
+            Some("only-copy")
+        );
+        // …and the one copy that exists is untouched, so the next read retries.
+        assert_eq!(legacy.get_password().unwrap(), "only-copy");
+    }
+
+    #[test]
+    fn nothing_in_the_legacy_store_reads_as_nothing() {
+        let (current, legacy) = entries();
+
+        assert_eq!(adopt_legacy(&current, &legacy), None);
+        assert!(matches!(
+            current.get_password(),
+            Err(keyring_core::Error::NoEntry)
+        ));
+    }
+
+    #[test]
+    fn read_adopts_and_remove_clears_both_stores() {
+        let _guard = crate::secrets::gate::test_guard();
+        let previous = mock::Store::new().unwrap();
+        let account = "store-test-legacy";
+
+        previous
+            .build(SERVICE, &user(account), None)
+            .unwrap()
+            .set_password("from-the-old-store")
+            .unwrap();
+        set_legacy_store(Some(previous.clone() as Arc<CredentialStore>));
+
+        // The current store has nothing, so the read has to come through the
+        // legacy one — and leave the credential in the current store behind it.
+        remove_current_only(account);
+        assert_eq!(
+            read(account).unwrap().as_deref(),
+            Some("from-the-old-store")
+        );
+        assert_eq!(
+            entry(account).unwrap().get_password().unwrap(),
+            "from-the-old-store"
+        );
+
+        // A sign-out that left the legacy copy behind would be undone by the very
+        // next read, which would adopt it straight back.
+        previous
+            .build(SERVICE, &user(account), None)
+            .unwrap()
+            .set_password("stale-legacy-copy")
+            .unwrap();
+        remove(account).unwrap();
+        assert_eq!(read(account).unwrap(), None);
+
+        set_legacy_store(None);
+    }
+
+    fn remove_current_only(account: &str) {
+        match entry(account).unwrap().delete_credential() {
+            Ok(()) | Err(keyring_core::Error::NoEntry) => {}
+            Err(e) => panic!("{e}"),
+        }
     }
 }
