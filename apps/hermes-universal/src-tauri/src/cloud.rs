@@ -22,7 +22,7 @@
 //!     call reads the portal cookies back out of that same app-global store.
 //!
 //! This used to carry a `FIXME(E4)` claiming `cookies_for_url()` returns an empty Vec on
-//! Android. That was the wry `RustWebView.getCookies` null bug, now patched in `build.rs`
+//! Android. That was the wry `RustWebView.getCookies` null bug, now patched in Gradle's `BuildTask.kt`
 //! — the same read is what makes the Android gateway OAuth poll work today.
 
 #[cfg(desktop)]
