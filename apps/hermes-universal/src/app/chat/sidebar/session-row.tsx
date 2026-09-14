@@ -28,7 +28,7 @@ import { startSessionDrag } from '../session-drag'
 import { SessionStatusDot } from '../session-status-dot'
 
 import { SidebarRowBody, SidebarRowGrab, SidebarRowLabel, SidebarRowLead, SidebarRowShell } from './chrome'
-import { SessionActionsMenu, SessionContextMenu } from './session-actions-menu'
+import { SessionActionsMenu, SessionContextMenu, sessionMenuClaimedPress } from './session-actions-menu'
 import { sessionRowDetails } from './session-row-details'
 import { sessionShowsRunningArc } from './session-row-state'
 
@@ -174,7 +174,11 @@ function SidebarSessionRowImpl({
     >
       <SidebarRowShell
         actions={
-          <div className="relative z-2 grid w-[1.375rem] place-items-center">
+          // 22px is the pointer width — the kebab is `size-5` and only appears
+          // on hover. On touch it is permanently visible AND sized to
+          // `--touch-target-compact`, so the cell has to widen to hold it or the
+          // control is clipped against the row (which is what it was).
+          <div className="relative z-2 grid w-[1.375rem] place-items-center coarse:w-8">
             {/* Switched-on metadata stays put; the bare age is hover-only, so a
                 resting sidebar is titles and nothing else. A running row hides
                 the hover age (the arc already owns that space) but keeps any
@@ -234,7 +238,11 @@ function SidebarSessionRowImpl({
           onClick={event => {
             // A finger already resumed this row from `onTap` below; whether the
             // engine also synthesizes a click is its business, not ours.
-            if (tapped.current) {
+            //
+            // Or the press was a HOLD, which opened the row's menu instead
+            // — the trailing click must not resume the session behind
+            // the drawer that just opened over it.
+            if (tapped.current || sessionMenuClaimedPress()) {
               return
             }
 
@@ -305,7 +313,18 @@ function SidebarSessionRowImpl({
                 ? undefined
                 : {
                     onTap: () => {
+                      // Latched either way, so the click the engine may still
+                      // synthesize is swallowed by the guard above.
                       tapped.current = true
+
+                      // A hold that opened the row's menu is not a tap. The
+                      // drag session's own cap (TAP_MAX_MS, 700ms) sits ABOVE
+                      // the long-press threshold (500ms), so a release in
+                      // between reaches here with the drawer already open.
+                      if (sessionMenuClaimedPress()) {
+                        return
+                      }
+
                       onResume()
                     }
                   }

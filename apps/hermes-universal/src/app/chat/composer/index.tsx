@@ -14,6 +14,7 @@ import { isImeCommitEnter, reconcileCompositionFlag } from '@/lib/ime-compositio
 import { IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { sessionCompacting } from '@/store/compaction'
+import { isSessionDraftRekey } from '@/store/composer'
 import { browseBackward, browseForward, deriveUserHistory, isBrowsingHistory } from '@/store/composer-input-history'
 import { POPOUT_WIDTH_REM } from '@/store/composer-popout'
 import { parkQueuedPrompts, removeQueuedPrompt, unparkQueuedPrompts } from '@/store/composer-queue'
@@ -25,7 +26,7 @@ import { useTheme } from '@/themes'
 
 import { AttachmentList } from './attachments'
 import { BubbleRow } from './bubble-row'
-import { COMPOSER_FADE_BACKGROUND, type QueueEditState, slashArgStage, swallowsTriggerTab } from './composer-utils'
+import { composerEnterIntent, type QueueEditState, slashArgStage, swallowsTriggerTab } from './composer-utils'
 import { ContextMenu } from './context-menu'
 import { COMPOSER_AREAS, runComposerMiddleware } from './contrib'
 import { ComposerControls } from './controls'
@@ -59,6 +60,7 @@ import {
   deleteChipBeforeCaret,
   deleteSelectionInEditor,
   insertComposerContentsAtCaret,
+  insertComposerLineBreak,
   normalizeComposerEditorDom,
   RICH_INPUT_SLOT
 } from './rich-editor'
@@ -73,6 +75,62 @@ import { isRedoShortcut, isUndoShortcut } from './undo-history'
 import { UrlDialog } from './url-dialog'
 import { chipTypedUrlOnSpace, linkifyUrls } from './url-refs'
 import { VoiceActivity, VoicePlaybackActivity } from './voice-activity'
+
+/**
+ * Refuse the caret for a tap that is not on the text.
+ *
+ * The editor is a `contenteditable` filling the composer's first row, and a tap
+ * on the surface padding still raised the soft keyboard over half the screen for
+ * a tap the user never meant as typing.
+ *
+ * WHY THE TARGET IS NOT ENOUGH, which is the whole reason this is fiddly.
+ * Chrome and WebKit apply TOUCH ADJUSTMENT on a phone: a tap that misses an
+ * editable by a few pixels is snapped onto it, so the event arrives with the
+ * editor as its target even though `elementFromPoint` for the same coordinates
+ * returns the padding. Filtering on `event.target` therefore sees a normal tap
+ * on the text and lets every one of these through — measured, before this: taps
+ * on the padding reported `target=composer-rich-input`.
+ *
+ * So the test is GEOMETRIC. The pointer's own coordinates are compared against
+ * the editor's box; a real tap on the text is inside it, a snapped one is not.
+ *
+ * Everything else is left alone: interactive elements keep their press, and on
+ * desktop this does not run at all — clicking the padding to land in the
+ * composer is a real affordance there, and there is no keyboard to raise.
+ */
+function keepKeyboardClosed(event: {
+  clientX: number
+  clientY: number
+  currentTarget: EventTarget | null
+  preventDefault: () => void
+  target: EventTarget | null
+}) {
+  const target = event.target as HTMLElement | null
+
+  // A real control must still take the press.
+  if (target?.closest('a, button, input, textarea, select, [role="button"]')) {
+    return
+  }
+
+  const editor = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>(
+    `[data-slot="${RICH_INPUT_SLOT}"]`
+  )
+
+  if (!editor) {
+    return
+  }
+
+  const box = editor.getBoundingClientRect()
+
+  const insideText =
+    event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom
+
+  if (insideText) {
+    return
+  }
+
+  event.preventDefault()
+}
 
 export function ChatBar({
   busy,
@@ -208,7 +266,23 @@ export function ChatBar({
 
   // Prior history belongs to the draft that just left — undoing into another
   // conversation's text is worse than having none.
+  //
+  // A REKEY is not that. `session.create` moves a chat off its `draft:N` key the
+  // first time it needs a backend (dropping a file on an unsent chat is the
+  // shortest path to it), and a sleep/wake resume moves a live one — same
+  // conversation, same text still on screen, so the steps that produced it are
+  // still the user's to undo. Throwing them away on an id change was the same
+  // mistake the draft stash was making one layer down.
+  const previousUndoScopeRef = useRef(activeQueueSessionKey)
+
   useEffect(() => {
+    const previousScope = previousUndoScopeRef.current
+    previousUndoScopeRef.current = activeQueueSessionKey
+
+    if (isSessionDraftRekey(previousScope, activeQueueSessionKey)) {
+      return
+    }
+
     resetUndoHistory()
   }, [activeQueueSessionKey, resetUndoHistory])
 
@@ -266,7 +340,7 @@ export function ChatBar({
     return onCancel()
   }, [activeQueueSessionKeyRef, onCancel])
 
-  const { compactPill, stacked } = useComposerMetrics({ composerRef, composerSurfaceRef, editorRef, poppedOut })
+  useComposerMetrics({ composerRef, composerSurfaceRef, editorRef, poppedOut })
   const hasComposerPayload = hasText || attachments.length > 0
   const canSubmit = busy || hasComposerPayload
 
@@ -593,6 +667,37 @@ export function ChatBar({
       return
     }
 
+    // The Enter family, decided in one place (see `composerEnterIntent`) so the
+    // ORDER — line break beats the completion menu beats queue beats send — is
+    // one testable rule instead of the emergent property of four branches spread
+    // across 200 lines. The branches below still own what to DO; this only says
+    // which one owns the keystroke.
+    const enterIntent = composerEnterIntent({
+      completionOpen: Boolean(trigger) && triggerItems.length > 0,
+      ctrlKey: event.ctrlKey,
+      key: event.key,
+      metaKey: event.metaKey,
+      shiftKey: event.shiftKey
+    })
+
+    // Shift+Enter, owned rather than inferred. Letting the webview run its own
+    // `insertLineBreak` is what made this keystroke a no-op on macOS: WebKit
+    // represents the result as a trailing `<div><br></div>`, which
+    // `normalizeComposerEditorDom` could not tell from the phantom block
+    // Chromium leaves after a chip, so the newline was deleted on the very next
+    // flush. `insertComposerLineBreak` writes a TAGGED break, identical on every
+    // engine and never mistaken for junk.
+    //
+    // Ahead of the popover for the same reason it is first in `composerEnterIntent`.
+    if (enterIntent === 'line-break') {
+      event.preventDefault()
+      triggerKeyConsumedRef.current = true
+      withUndoPoint(() => insertComposerLineBreak(event.currentTarget))
+      flushEditorToDraft(event.currentTarget)
+
+      return
+    }
+
     // The popover is open but its items are still in flight (debounce + RPC).
     // Tab must not fall through to the browser — it would move focus out of
     // the composer mid-completion, which reads as the popover "eating" the
@@ -633,8 +738,13 @@ export function ChatBar({
       // options step, and an arg option commits the full `/cmd arg` chip. Space
       // is slash-only (an `@` mention takes a literal space) and gated to a
       // non-empty query so a bare `/ ` still types a space.
+      //
+      // Shift+Enter is NOT an accept. It is already claimed above, so this guard
+      // is redundant today — and it stays anyway, because "the completion menu
+      // ate my line break" is a bug that comes back the moment someone moves a
+      // branch, and the cost of it never coming back is one boolean.
       const acceptOnSpace = event.key === ' ' && trigger.kind === '/' && Boolean(trigger.query.trim())
-      const accept = event.key === 'Enter' || event.key === 'Tab' || acceptOnSpace
+      const accept = (event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab' || acceptOnSpace
 
       if (accept) {
         event.preventDefault()
@@ -766,14 +876,14 @@ export function ChatBar({
     // `queueDraft` re-reads the editor first: this branch consumes the keystroke
     // with preventDefault, so queueing the render-lagged `draftRef` would drop
     // whatever was typed since the last input event (upstream 406d7a67f0).
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
+    if (enterIntent === 'queue') {
       event.preventDefault()
       queueDraft()
 
       return
     }
 
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (enterIntent === 'send') {
       event.preventDefault()
 
       // Decide from the DOM, not React state. `hasComposerPayload` is derived
@@ -915,7 +1025,7 @@ export function ChatBar({
       busyAction={busyAction}
       busyActionActive={turnOccupied}
       canSubmit={canSubmit}
-      compactModelPill={poppedOut || compactPill}
+      compactModelPill={poppedOut}
       conversation={{
         active: voiceConversationActive,
         level: conversation.level,
@@ -937,7 +1047,7 @@ export function ChatBar({
   )
 
   const input = (
-    <div className={cn('relative', stacked ? 'w-full' : 'min-w-(--composer-input-inline-min-width) flex-1')}>
+    <div className="relative w-full">
       <div
         aria-disabled={inputDisabled ? true : undefined}
         aria-label={t.composer.message}
@@ -947,8 +1057,11 @@ export function ChatBar({
           'min-h-(--composer-input-min-height) max-h-(--composer-input-max-height) cursor-text overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] bg-transparent pb-1 pe-1 pt-1 leading-normal text-foreground outline-none disabled:cursor-not-allowed',
           'empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground/60',
           '**:data-ref-text:cursor-default',
-          stacked && 'ps-3',
-          stacked ? 'w-full' : 'min-w-(--composer-input-inline-min-width) flex-1'
+          // Start inset is a token, not a literal — `--composer-input-pad-start`
+          // in styles.css, which defaults to 0 so the caret lines up with the
+          // "+" on the row below. It exists to be tuned without moving the
+          // controls row, which is what the surface padding would do.
+          'w-full ps-(--composer-input-pad-start)'
         )}
         contentEditable={!inputDisabled}
         data-placeholder={placeholder}
@@ -1047,7 +1160,7 @@ export function ChatBar({
       <ComposerPrimitive.Unstable_TriggerPopoverRoot>
         <ComposerPrimitive.Root
           className={cn(
-            'group/composer z-30 overflow-visible rounded-2xl',
+            'group/composer z-30 overflow-visible rounded-(--composer-radius)',
             poppedOut
               ? // Floating: the composer (with its own border) floats with an even
                 // 5px transparent grab margin around it — drag that to move it.
@@ -1104,12 +1217,6 @@ export function ChatBar({
               onHover={setTriggerActive}
               onPick={replaceTriggerWithChip}
               scope={trigger.scope}
-            />
-          )}
-          {!poppedOut && (
-            <div
-              className="pointer-events-none absolute inset-0 rounded-[inherit]"
-              style={{ background: COMPOSER_FADE_BACKGROUND }}
             />
           )}
           {/* Drag region: covers the transparent grab margin around the surface.
@@ -1224,6 +1331,32 @@ export function ChatBar({
                     : 'opacity-100'
                 )}
                 data-slot="composer-fade"
+                // TOUCH: only the text raises the keyboard.
+                //
+                // The editor is a `contenteditable` filling the first row, and a
+                // tap on the surface PADDING or on the input's own wrapper — 8px
+                // of dead space that is not the text — still handed it the
+                // caret, so the keyboard came up over half the screen for a tap
+                // the user did not mean as typing. Cancelling the default on
+                // pointerdown is what stops the caret placement.
+                //
+                // Deliberately narrow. It bails for the editor itself (typing
+                // must work) and for anything interactive (a button must still
+                // take the press), so the only thing it cancels is the dead
+                // space. Mobile only: on desktop, clicking the padding to land
+                // in the composer is a real affordance and costs nothing,
+                // because there is no keyboard to raise.
+                //
+                // BOTH handlers, and that is not belt-and-braces. Cancelling
+                // `pointerdown` alone left the caret exactly where it was: what
+                // actually places it is the compatibility MOUSEDOWN the browser
+                // synthesises from the tap, and preventing default on that is
+                // the long-standing way to refuse focus without swallowing the
+                // click. `pointerdown` is kept because it is the one that
+                // suppresses the synthetic pair in the first place on engines
+                // that honour it.
+                onMouseDown={IS_MOBILE ? keepKeyboardClosed : undefined}
+                onPointerDown={IS_MOBILE ? keepKeyboardClosed : undefined}
               >
                 {/* Contribution seams: banners above, a row below, inline
                     additions beside the "+" menu and before the controls.
@@ -1256,14 +1389,13 @@ export function ChatBar({
                   </div>
                 )}
                 {attachments.length > 0 && <AttachmentList attachments={attachments} onRemove={onRemoveAttachment} />}
-                <div
-                  className={cn(
-                    'grid w-full',
-                    stacked
-                      ? 'grid-cols-[auto_1fr] gap-(--composer-row-gap) [grid-template-areas:"input_input"_"menu_controls"]'
-                      : 'grid-cols-[auto_1fr_auto] items-center gap-(--composer-control-gap) [grid-template-areas:"menu_input_controls"]'
-                  )}
-                >
+                {/* TWO ROWS, ALWAYS — the input on its own line, then the
+                    attach menu, model pill and voice controls beneath it. This
+                    used to be a width ladder that inlined the controls beside
+                    the input above a breakpoint, which meant the chat screen,
+                    a phone and the HUD each showed a different arrangement of
+                    the same bar. One layout is the point. */}
+                <div className='grid w-full grid-cols-[auto_1fr] gap-(--composer-row-gap) [grid-template-areas:"input_input"_"menu_controls"]'>
                   <div className="flex translate-y-[3px] items-start gap-(--composer-control-gap) self-start [grid-area:menu]">
                     {contextMenu}
                     <ContribSlot area={COMPOSER_AREAS.leading} />
@@ -1304,7 +1436,7 @@ export function ChatBarFallback() {
     <div
       className={cn(
         // eslint-disable-next-line better-tailwindcss/no-restricted-classes -- centring, not an edge — pairs with a physical -translate-x-1/2, and start-1/2 would resolve to right:50% while the transform still pulled left
-        'group/composer absolute bottom-0 left-1/2 z-30 w-[min(var(--composer-width),calc(100%-2rem))] max-w-full -translate-x-1/2 rounded-2xl pt-2 pb-[var(--composer-shell-pad-block-end)]',
+        'group/composer absolute bottom-0 left-1/2 z-30 w-[min(var(--composer-width),calc(100%-2rem))] max-w-full -translate-x-1/2 rounded-(--composer-radius) pt-2 pb-[var(--composer-shell-pad-block-end)]',
         'bg-linear-to-b from-transparent to-background/55'
       )}
       data-slot="composer-root"

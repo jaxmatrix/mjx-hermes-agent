@@ -4,30 +4,6 @@ import type { SlashChipKind } from '@/components/assistant-ui/directive-text'
 import type { ComposerAttachment } from '@/store/composer'
 import { setSessionPickerOpen } from '@/store/session'
 
-export const COMPOSER_STACK_BREAKPOINT_PX = 320
-
-// Above the stack breakpoint but still cramped: the model pill sheds its label
-// for its chevron icon so the controls stop crowding the input before the whole
-// row has to stack. Progressive collapse: full pill → icon pill → stacked.
-//
-// Sized off what the controls actually cost, because guessing put the two
-// stages on top of each other. With the full pill the controls take ~284px
-// (pill 111 + the icon cluster), so at the old 440 the inline input was ~156px
-// — barely over its 128px minimum. A few words wrapped, wrapping is what
-// stacks the row, and the pill's chevron arrived at the same moment the row
-// gave up, which is the one thing progressive collapse is supposed to avoid.
-// At 560 the label goes while the input still has ~276px, and the ~110px the
-// chevron frees is spent keeping the row single for another stretch.
-export const COMPOSER_COMPACT_PILL_PX = 560
-
-// A single editor line is ~28px (--composer-input-min-height 1.625rem + 0.5rem
-// vertical padding). Anything taller means the text wrapped to a second line,
-// which is when the composer should expand to the stacked layout.
-export const COMPOSER_SINGLE_LINE_MAX_PX = 36
-
-export const COMPOSER_FADE_BACKGROUND =
-  'linear-gradient(to bottom, transparent, color-mix(in srgb, var(--dt-background) 10%, transparent))'
-
 // Quiet period after the last keystroke before persisting the draft;
 // unmount/pagehide flushes bypass it.
 export const DRAFT_PERSIST_DEBOUNCE_MS = 400
@@ -83,6 +59,78 @@ export function swallowsTriggerTab(options: {
   open: boolean
 }): boolean {
   return options.open && options.loading && options.itemCount === 0 && options.key === 'Tab'
+}
+
+/**
+ * What an Enter-family keystroke means, before anything is done about it.
+ *
+ * - `line-break` — Shift+Enter: put a newline in the message.
+ * - `accept-completion` — an open `@` / `/` / `:emoji` menu takes the key.
+ * - `queue` — ⌘/Ctrl+Enter: line this up behind the running turn
+ *   (`composer.queue`, `lib/keybinds/actions.ts`). A composer with no queue
+ *   simply does nothing with it, which is the point: it must not fall through
+ *   and send.
+ * - `send` — plain Enter.
+ * - `pass-through` — not ours; let the webview have it.
+ */
+export type ComposerEnterIntent = 'accept-completion' | 'line-break' | 'pass-through' | 'queue' | 'send'
+
+/**
+ * The Enter half of a composer's keydown decision, as a pure function.
+ *
+ * Extracted because the ORDER is the whole rule and the order is what kept
+ * getting this wrong. Two bugs lived in it:
+ *
+ *  1. Shift+Enter was never claimed at all — it fell through to the webview's
+ *     own `insertLineBreak`, whose DOM differs per engine, and the normalizer
+ *     downstream then deleted the newline on WebKit (see
+ *     `insertComposerLineBreak`). It has to be answered FIRST, ahead of the
+ *     completion menu, which otherwise eats it: the accept test was `Enter ||
+ *     Tab || space` with no `shiftKey` guard, so typing `@fi` and pressing
+ *     Shift+Enter committed a chip instead of breaking the line.
+ *  2. In the message-EDIT composer the send test was `Enter && !shiftKey` with
+ *     no modifier guard, so ⌘+Enter — the queue chord everywhere else — resent
+ *     the edited message outright, and that composer's send is destructive
+ *     (it rewinds the conversation to that turn).
+ *
+ * The composer's real handler cannot be mounted in a unit test; this is the
+ * whole of the decision it makes, so the rule is pinned here instead.
+ */
+export function composerEnterIntent(options: {
+  key: string
+  shiftKey: boolean
+  metaKey: boolean
+  ctrlKey: boolean
+  /** A completion popover is open AND has items to accept. */
+  completionOpen: boolean
+}): ComposerEnterIntent {
+  const { completionOpen, ctrlKey, key, metaKey, shiftKey } = options
+
+  if (key !== 'Enter') {
+    return 'pass-through'
+  }
+
+  // Ahead of the menu, deliberately. A newline is what the user asked for with
+  // their fingers; the menu is a suggestion.
+  if (shiftKey && !metaKey && !ctrlKey) {
+    return 'line-break'
+  }
+
+  if (completionOpen) {
+    return 'accept-completion'
+  }
+
+  if ((metaKey || ctrlKey) && !shiftKey) {
+    return 'queue'
+  }
+
+  // Alt is deliberately NOT excluded: ⌥+Enter has always sent, and no binding
+  // claims it.
+  if (!shiftKey && !metaKey && !ctrlKey) {
+    return 'send'
+  }
+
+  return 'pass-through'
 }
 
 /** A `/` query is at its arg stage once it's past the command name. */

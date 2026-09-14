@@ -2268,7 +2268,6 @@ export const en: Translations = {
     allPinned: 'Everything here is pinned. Unpin a chat to show it in recents.',
     shiftClickHint: 'Shift-click a chat to pin',
     noWorkspace: 'No workspace',
-    noProject: 'No project',
     projectEmpty: 'No sessions yet',
     noSessions: 'No sessions yet',
     filters: {
@@ -3106,7 +3105,10 @@ export const en: Translations = {
 
   mobileWorkspace: {
     backToChat: 'Chat',
-    noProject: 'No project',
+    /** The bar's title while the Workspace panel is open. It names the PANEL,
+     *  not the project: the project name is one path segment with no label on
+     *  it, which read as a stray word rather than as where you are. */
+    menu: 'Menu',
     tabsAria: 'Workspace sections',
     review: 'Review',
     files: 'Files',

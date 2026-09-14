@@ -2399,7 +2399,6 @@ export const zh: Translations = {
     allPinned: '这里的全部已置顶。取消置顶某个对话即可在最近中显示。',
     shiftClickHint: 'Shift+ 单击对话以置顶 · 拖动以重新排序',
     noWorkspace: '无工作区',
-    noProject: '无项目',
     projectEmpty: '暂无会话',
     noSessions: '暂无会话',
     filters: {
@@ -3218,7 +3217,7 @@ export const zh: Translations = {
 
   mobileWorkspace: {
     backToChat: '对话',
-    noProject: '未打开项目',
+    menu: '菜单',
     tabsAria: '工作区分区',
     review: '审阅',
     files: '文件',

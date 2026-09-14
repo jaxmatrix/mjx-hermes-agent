@@ -1,11 +1,15 @@
 /**
- * Shiki's THEME CONSTANTS, split out from `shiki-highlighter.tsx`.
+ * Shiki's THEME CONSTANTS.
  *
- * They live alone because `diff-lines.tsx` and the preview pane both need them
- * and neither should have to import the highlighter component to get them —
- * that import is what kept dragging the engine back into the entry chunk
- * (MJXHRM-380). Values only: this module must never import `shiki` or
- * `react-shiki`, or it stops being cheap to reach.
+ * They live alone because a caller should not have to import a highlighter
+ * component to get them — that import is what kept dragging the engine back
+ * into the entry chunk (MJXHRM-380). Values only: this module must never import
+ * `shiki`, or it stops being cheap to reach.
+ *
+ * `diff-lines.tsx` is the last reader. The chat fence (the iOS one-line collapse) and the file
+ * preview's source view (the empty source pane) render their own tokens instead, painted with
+ * the `--code-*` custom properties in styles.css — seeded from these same two
+ * themes so the surfaces still match.
  */
 
 // `github-dark-dimmed` is GitHub's lower-contrast dark palette — the vivid

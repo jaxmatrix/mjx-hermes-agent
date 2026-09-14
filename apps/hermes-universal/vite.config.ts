@@ -15,6 +15,7 @@ import { defineConfig } from 'vitest/config'
 // default) resolves config imports through Node, which does not do extension
 // inference. Without it the config loads today and warns, and stops loading
 // the day that flag flips.
+import { addSpanSources } from './src/observability/auto/span-sources.ts'
 import { addStoreNames } from './src/observability/auto/store-names.ts'
 
 // Tauri expects a fixed dev port and a non-clearing console.
@@ -123,6 +124,36 @@ const storeNamePlugin = {
   }
 }
 
+/**
+ * Span source attribution — same shape as the store transform above, and on in
+ * every build rather than dev-only.
+ *
+ * It ships because a span that cannot say which module raised it is materially
+ * harder to read, and the cost is one interned integer per span (see the
+ * `spanSrc` column in span.ts) rather than the alias-plus-wrapper the store
+ * transform needs. A user's OTLP dump from a release build is worth the same
+ * attribution a dev capture gets.
+ */
+const spanSourcePlugin = {
+  enforce: 'pre' as const,
+  name: 'hermes-span-sources',
+  transform(code: string, id: string) {
+    // Tests excluded for the reason the store transform gives: this matches raw
+    // TEXT, and a spec whose fixtures ARE import statements is indistinguishable
+    // from the real thing. `span-sources.test.ts` is exactly that file.
+    if (!id.includes('/src/') || !/\.tsx?$/.test(id) || /\.(test|spec)\.tsx?$/.test(id)) {
+      return null
+    }
+
+    const next = addSpanSources(code, id)
+
+    // `map: null` — the rewrite replaces one line with one line, so line
+    // numbers are unchanged and stack traces stay truthful. The transform
+    // refuses multi-line imports to keep that true.
+    return next === null ? null : { code: next, map: null }
+  }
+}
+
 // The emoji picker (frimousse) fetches `<emojibaseUrl>/<locale>/data.json` at
 // runtime, defaulting to a CDN. The app's CSP has no `connect-src` for one, and
 // a client that has to reach the internet to draw a picker is broken on a
@@ -179,7 +210,7 @@ export default defineConfig(({ command }) => ({
   define: {
     __TRACE_RUN_DEFAULT__: JSON.stringify(traceRunDefault())
   },
-  plugins: [react(), tailwindcss(), emojibaseAssets(), ...(STORE_TRACING ? [storeNamePlugin] : [])],
+  plugins: [react(), tailwindcss(), emojibaseAssets(), spanSourcePlugin, ...(STORE_TRACING ? [storeNamePlugin] : [])],
   // Tailwind v4 is handled entirely by `@tailwindcss/vite`; pin an explicit
   // empty PostCSS config so Vite doesn't walk UP the filesystem and pick up a
   // stray postcss/tailwind config from the install location (see desktop
@@ -234,10 +265,13 @@ export default defineConfig(({ command }) => ({
     // second copy anywhere in the graph emits the whole set twice — measured at
     // ~19.8 MB of byte-identical chunks, a third of the release bundle. That is
     // exactly what `@streamdown/code` (`shiki: ^3.19.0`) did until the root
-    // package.json pinned it forward with an override — that package is gone from
-    // this app now (see markdown-text.tsx), but `react-shiki` declares the same
-    // kind of range, so this line stays as the guard that keeps a future nested
-    // copy from silently doing it again.
+    // package.json pinned it forward with an override.
+    //
+    // Both packages that brought a nested range are now gone — `@streamdown/code`
+    // (see markdown-text.tsx) and `react-shiki` — so this app is the
+    // only thing that depends on shiki, and `codeToTokens` in diff-lines.tsx is
+    // the only thing that imports it. The entry stays as the guard against the
+    // next package that ships a range, alongside the root override.
     dedupe: ['react', 'react-dom', 'shiki']
   },
   clearScreen: false,
@@ -330,6 +364,11 @@ export default defineConfig(({ command }) => ({
   // entries the first code fence in a conversation would re-run the optimiser and
   // reload the page mid-reply.
   //
+  // `react-shiki` left this list with the dependency. `shiki` stays:
+  // three of those four seams are gone (the fence and the preview compute their
+  // own colours), but `import('shiki')` in diff-lines.tsx is still there and
+  // still first hit mid-conversation, which is the whole hazard.
+  //
   // MJXHRM-45 then found the seam was still defeated by a fifth importer we do
   // not own — `@streamdown/code` statically imports shiki, and
   // `markdown-text.tsx` statically imported that — and deferred it to first
@@ -367,7 +406,6 @@ export default defineConfig(({ command }) => ({
       '@xterm/xterm',
       'katex',
       'mermaid',
-      'react-shiki',
       'shiki'
     ]
   },

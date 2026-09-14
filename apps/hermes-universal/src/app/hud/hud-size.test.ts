@@ -76,18 +76,21 @@ describe('hudWindowHeight', () => {
   it('expands to fit the model dropdown menu and restores when closed', () => {
     // Collapsed bar with model menu open: 88 + 360 = 448
     expect(hudWindowHeight({ bandMaxPx: 336, barPx: 88, contentPx: 0, modelMenuOpen: true, open: false })).toBe(448)
-    // When closed, collapses back to bar height
-    expect(hudWindowHeight({ bandMaxPx: 336, barPx: 88, contentPx: 0, modelMenuOpen: false, open: false })).toBe(
-      HUD_BAR_HEIGHT_PX
-    )
+    // Closed, it collapses back to THE MEASURED BAR — 88, the value passed in —
+    // not to `HUD_BAR_HEIGHT_PX`, which is a floor and not an answer. This
+    // asserted the constant and failed for as long as the constant was smaller
+    // than the bar in the fixture.
+    expect(hudWindowHeight({ bandMaxPx: 336, barPx: 88, contentPx: 0, modelMenuOpen: false, open: false })).toBe(88)
   })
 
   it('expands to fit the attachment dropdown menu and restores when closed', () => {
     // Collapsed bar with attachment menu open: 88 + 360 = 448
-    expect(hudWindowHeight({ attachmentMenuOpen: true, bandMaxPx: 336, barPx: 88, contentPx: 0, open: false })).toBe(448)
-    // When closed, collapses back to bar height
+    expect(hudWindowHeight({ attachmentMenuOpen: true, bandMaxPx: 336, barPx: 88, contentPx: 0, open: false })).toBe(
+      448
+    )
+    // Same as above: back to the measured 88, not the floor.
     expect(hudWindowHeight({ attachmentMenuOpen: false, bandMaxPx: 336, barPx: 88, contentPx: 0, open: false })).toBe(
-      HUD_BAR_HEIGHT_PX
+      88
     )
   })
 
