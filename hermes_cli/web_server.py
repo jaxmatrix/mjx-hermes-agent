@@ -416,8 +416,12 @@ def _has_valid_session_token(request: Request) -> bool:
 
 
 # Routes that may also authenticate via ``?token=`` (download links opened by
-# the OS shell / a new tab, where no header can be set). Kept narrow.
-_QUERY_TOKEN_API_PATHS: frozenset[str] = frozenset({"/api/files/download"})
+# the OS shell / a new tab, where no header can be set). Kept narrow; the folder
+# archive is here for the same reason as the single-file download.
+_QUERY_TOKEN_API_PATHS: frozenset[str] = frozenset({
+    "/api/files/download",
+    "/api/files/download-archive",
+})
 
 
 def _has_valid_query_token(request: Request, path: str) -> bool:

@@ -263,3 +263,31 @@ def test_completion_ignores_real_terminal_cwd(tmp_path, monkeypatch):
     )
 
 
+# ---------------------------------------------------------------------------
+# The ranked walk is shared with the dashboard's `GET /api/fs/search` as
+# `_fuzzy_rank_paths` (methods_complete_helpers.py). `complete.path` resolves it
+# as a server global at call time, so these go through the real handler.
+# ---------------------------------------------------------------------------
+
+
+def test_complete_path_fuzzy_reads_the_shared_ranked_walk(tmp_path, monkeypatch):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "appChrome.tsx").write_text("x")
+    (tmp_path / "Desktop").mkdir()
+    (tmp_path / "Desktop" / "notes.md").write_text("x")
+    monkeypatch.chdir(tmp_path)
+
+    texts = [t for t, _, _ in _items("@appChrome")]
+    assert any(t.endswith("src/appChrome.tsx") for t in texts), texts
+
+    server._fuzzy_cache.clear()
+    assert "@folder:Desktop/" in [t for t, _, _ in _items("@Desktop")]
+
+
+def test_complete_path_and_fs_search_share_one_ranker(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        server, "_fuzzy_rank_paths", lambda root, query: [((0, 5), "planted/x.md", "x.md", False)]
+    )
+
+    assert [t for t, _, _ in _items("@anything")] == ["@file:planted/x.md"]
