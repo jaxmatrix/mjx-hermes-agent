@@ -100,7 +100,8 @@ export const ja = defineLocale({
     sourceLink: 'ソースを表示',
     invalidIdentifier:
       'Hermes がインストールできるリポジトリではありません。owner/repo、owner/repo/subdir、または git URL を使ってください。',
-    insecureWarning: url => `${url} は認証されたソースではありません。そのネットワークに到達できる誰もが内容を決められます。`,
+    insecureWarning: url =>
+      `${url} は認証されたソースではありません。そのネットワークに到達できる誰もが内容を決められます。`,
     targetProfile: 'インストール先プロファイル',
     authorityNotice:
       'インストールすると、このリポジトリのコードがエージェントの完全な権限でゲートウェイ上で実行され、デスクトップ側はアプリの完全な権限で Hermes 内で実行されます。プラグインは互いのエラーからは隔離されますが、互いからは隔離されません。',
@@ -324,7 +325,8 @@ export const ja = defineLocale({
       add: 'ゲートウェイを追加',
       pickOne: '設定を表示するゲートウェイを選んでください。',
       readOnly: 'このゲートウェイ一覧は新しいバージョンの Hermes で書かれているため、ここでは読み取り専用です。',
-      degradedReason: reason => `保存されたファイルが使用できませんでした（${reason}）。以前のファイルは隣に残してあります。`,
+      degradedReason: reason =>
+        `保存されたファイルが使用できませんでした（${reason}）。以前のファイルは隣に残してあります。`,
       fieldLabel: '名前',
       fieldLabelPlaceholder: 'studio-box',
       fieldUrl: 'ゲートウェイ URL',
@@ -332,10 +334,15 @@ export const ja = defineLocale({
       fieldRemoteProfile: 'リモートプロファイル',
       fieldToken: 'ゲートウェイトークン',
       fieldTokenPlaceholder: 'このゲートウェイに必要な場合のみ',
-      noKeyring: 'この端末には資格情報ストアがないため、ゲートウェイトークンを保存できません。ブラウザーでのサインイン、または認証不要のゲートウェイをご利用ください。',
+      noKeyring:
+        'この端末には資格情報ストアがないため、ゲートウェイトークンを保存できません。ブラウザーでのサインイン、または認証不要のゲートウェイをご利用ください。',
       localUnsupported: 'この端末では Hermes バックエンドを実行できません。SSH または URL で接続してください。',
       kindHint: kind =>
-        kind === 'ssh' ? 'Hermes がそのホスト上でバックエンドを起動（または再接続）し、トンネルを張ります。' : kind === 'cloud' ? 'ポータル経由で到達する Hermes Cloud エージェントです。' : 'URL で到達できる Hermes バックエンドです。',
+        kind === 'ssh'
+          ? 'Hermes がそのホスト上でバックエンドを起動（または再接続）し、トンネルを張ります。'
+          : kind === 'cloud'
+            ? 'ポータル経由で到達する Hermes Cloud エージェントです。'
+            : 'URL で到達できる Hermes バックエンドです。',
       save: '保存',
       saved: 'ゲートウェイを保存しました',
       saveFailed: 'このゲートウェイを保存できませんでした',
@@ -367,7 +374,9 @@ export const ja = defineLocale({
       launchLastUsed: '最後に使用したもの',
       updateAll: 'すべて更新',
       updateAllSummary: (total, failed) =>
-        failed > 0 ? `${total} 個のターゲットのうち ${failed} 個に到達できませんでした。` : `${total} 個のターゲットを更新しました。`,
+        failed > 0
+          ? `${total} 個のターゲットのうち ${failed} 個に到達できませんでした。`
+          : `${total} 個のターゲットを更新しました。`,
       degradedTitle: 'ゲートウェイ一覧を修復しました',
       degradedMessage: '保存済みゲートウェイの一部を読み込めなかったため再作成しました。下の一覧を確認してください。',
       latchedTitle: 'このゲートウェイは停止中です',
@@ -458,7 +467,8 @@ export const ja = defineLocale({
       enableAll: '通知を有効にする',
       enableAllDesc: 'マスタースイッチ。オフにすると以下のすべての通知を無効にします。',
       focusedHint: '完了通知は Hermes がバックグラウンドにあるときのみ表示されます。',
-      noActionsNotice: 'このプラットフォームの通知にはボタンがありません。ボタンを使うプラグインはアプリ内メッセージにフォールバックします。',
+      noActionsNotice:
+        'このプラットフォームの通知にはボタンがありません。ボタンを使うプラグインはアプリ内メッセージにフォールバックします。',
       kinds: {
         approval: {
           label: '承認が必要',
@@ -896,11 +906,19 @@ export const ja = defineLocale({
       openInPlayStore: 'Play ストアで開く',
       openInAppStore: 'App Store で開く',
       tapCheck: '更新を探すには「今すぐ確認」を押してください。',
+      storePendingTitle: 'ストアでの配信は近日開始します。',
+      storePendingPlay: 'Hermes はまだ Google Play で配信されていません。公開後は、そこから更新が届きます。',
+      storePendingAppStore: 'Hermes はまだ App Store で配信されていません。公開後は、そこから更新が届きます。',
+      comingSoonSuffix: '（近日公開）',
+      preparingDownload: 'ダウンロードを準備中…',
+      downloadingPercent: percent => `ダウンロード中… ${percent}%`,
+      installFailed: '更新をインストールできませんでした。',
+      updateChannelSigned: '署名付きリリース · インストール前に検証されます',
       updateReady: count => `新しい更新の準備ができました (${count} 件の変更を含みます)。`,
       lastChecked: age => `前回確認: ${age}`,
       justNowSuffix: ' · たった今',
       automaticUpdates: '自動更新',
-      automaticUpdatesDesc: 'Hermes はバックグラウンドで自動的に更新を確認し、利用可能になったら通知します。',
+      automaticUpdatesDesc: 'Hermes はこのページを開いたときに新しいバージョンを確認します（6 時間に 1 回まで）。',
       branchCommit: (branch, commit) => `ブランチ ${branch} · コミット ${commit}`,
       never: '未確認',
       justNow: 'たった今',
@@ -2815,9 +2833,11 @@ export const ja = defineLocale({
     resume: '再開',
     paletteOpen: 'アプリ内ブラウザを開く',
     openLinksInApp: 'Web リンクを Hermes 内で開く',
-    openLinksInAppDescription: 'Web リンクはアプリ内ブラウザで開きます。⌘/Ctrl を押しながら、または中クリックすると通常のブラウザで開きます。',
+    openLinksInAppDescription:
+      'Web リンクはアプリ内ブラウザで開きます。⌘/Ctrl を押しながら、または中クリックすると通常のブラウザで開きます。',
     isolatedStore: 'アプリ内ブラウザの Cookie を分離する',
-    isolatedStoreDescription: 'ペインでサイトにサインインしても、Hermes 自身のアカウントには影響しません。変更すると保存済みのデータは消去されます。',
+    isolatedStoreDescription:
+      'ペインでサイトにサインインしても、Hermes 自身のアカウントには影響しません。変更すると保存済みのデータは消去されます。',
     consoleDefault: 'プレビューコンソールを既定で表示',
     consoleDefaultDescription: 'アプリ内ブラウザを開いたときに常にコンソールを表示します。',
     clearData: '閲覧データを消去',
@@ -2921,7 +2941,8 @@ export const ja = defineLocale({
       fallbackTitle: 'プレビュー',
       // The ONE key desktop has that universal lacked: why a loopback
       // address cannot load when the gateway is somewhere else.
-      remoteLoopback: 'このアドレスは Hermes の接続先マシンを指していますが、このゲートウェイにはそこへのトンネルがありません。SSH で接続するか、そのマシン上でページを開いてください。'
+      remoteLoopback:
+        'このアドレスは Hermes の接続先マシンを指していますが、このゲートウェイにはそこへのトンネルがありません。SSH で接続するか、そのマシン上でページを開いてください。'
     }
   },
 

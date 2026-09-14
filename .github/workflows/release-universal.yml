@@ -1,0 +1,296 @@
+# .github/workflows/release-universal.yml
+#
+# Cuts a signed Hermes Universal release (MJXHRM-144).
+#
+# The app's updater trusts a minisign public key compiled into the binary
+# (`plugins.updater.pubkey` in src-tauri/tauri.conf.json) and verifies every
+# downloaded bundle against it before installing. This workflow holds the
+# matching PRIVATE key, which makes it — not GitHub Releases, not the CDN in
+# front of it — the actual root of trust for everything users install.
+#
+# That is why:
+#   * the build job runs in the `release` environment, so the signing key is
+#     scoped there rather than living in plain repo secrets;
+#   * `permissions` is read-only at the top level and `contents: write` is
+#     granted only to the jobs that publish;
+#   * every third-party action is pinned by commit SHA, and the toolchain is
+#     installed with rustup instead of pulling another action in.
+#
+# Losing the private key means never being able to update installed copies
+# again — it cannot be rotated for users who already have the old pubkey baked
+# in. Back it up somewhere that is not this repo.
+#
+# ── The flow, in three phases ────────────────────────────────────────────────
+#
+#   1. `preflight` — no secrets, no environment. Establishes that the version is
+#      the SAME in tauri.conf.json, Cargo.toml and the tag, then runs the app's
+#      full check suite. Nothing else starts until this passes, so a broken tree
+#      cannot burn four 90-minute platform builds, and — more importantly — a
+#      version that disagrees with its tag can never be signed. That last point
+#      is not cosmetic: the updater compares the running build's version against
+#      the manifest's, so drift here silently breaks every future update check.
+#
+#   2. `build` — signs and uploads the bundles as a DRAFT release. Nothing
+#      reaches users until a human reviews the artifacts and hits publish.
+#
+#   3. `manifest` — fires on that human publish, and republishes the release's
+#      `latest.json` under the floating `universal-latest` tag, which is the URL
+#      the shipped app actually polls.
+#
+# ── Why `universal-latest` exists ────────────────────────────────────────────
+#
+# The obvious endpoint, `/releases/latest/download/latest.json`, does NOT work
+# here: GitHub resolves `/releases/latest/` to the newest *non-prerelease,
+# non-draft* release, and we ship betas with `prerelease: true`. That URL would
+# 404 for every beta, and the app renders a 404 as "We couldn't reach the update
+# server" — a silent misconfiguration that looks like a network fault. So the
+# app points at a fixed `universal-latest` release instead and phase 3 keeps its
+# `latest.json` asset current.
+#
+# `universal-latest` deliberately does not match the `universal-v*` push trigger
+# below, so refreshing it cannot re-enter this workflow. Do not "tidy" that glob
+# into `universal-*` — that would make every release loop.
+
+name: Release (Hermes Universal)
+
+on:
+  push:
+    # Namespaced so it can't collide with the backend's own version tags.
+    tags:
+      - 'universal-v*'
+  # Phase 3 only. Publishing a draft cut by this workflow is what refreshes the
+  # update manifest — so a draft that gets discarded instead never ships.
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, without the tag prefix (e.g. 0.1.0-beta.1). Must already match src-tauri/tauri.conf.json.'
+        required: true
+        type: string
+
+permissions: read-all
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Phase 1 — the gate. Secret-free and environment-free on purpose: it runs
+  # before any approval, so it must not be able to touch the signing key.
+  # ──────────────────────────────────────────────────────────────────────────
+  preflight:
+    name: preflight
+    if: github.event_name != 'release'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # The single source of truth is tauri.conf.json. Everything else — the
+      # crate version, the tag, the release title — is checked against it or
+      # derived from it, so there is no second place to forget to bump.
+      - name: Resolve and verify the version
+        id: version
+        run: |
+          set -euo pipefail
+          conf_version="$(jq -r '.version' apps/hermes-universal/src-tauri/tauri.conf.json)"
+          cargo_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' apps/hermes-universal/src-tauri/Cargo.toml | head -1)"
+
+          if [ "$conf_version" != "$cargo_version" ]; then
+            echo "::error::version drift — tauri.conf.json says '$conf_version', Cargo.toml says '$cargo_version'. They are compared against the published manifest and must agree."
+            exit 1
+          fi
+
+          if [ "${{ github.event_name }}" = 'workflow_dispatch' ]; then
+            requested='${{ inputs.version }}'
+            if [ "$requested" != "$conf_version" ]; then
+              echo "::error::asked to release '$requested' but this tree is version '$conf_version'. Bump the version files first, or dispatch from the ref that carries it."
+              exit 1
+            fi
+          else
+            expected="universal-v${conf_version}"
+            if [ "${{ github.ref_name }}" != "$expected" ]; then
+              echo "::error::tag '${{ github.ref_name }}' does not match this tree's version — expected '$expected'."
+              exit 1
+            fi
+          fi
+
+          echo "version=$conf_version" >> "$GITHUB_OUTPUT"
+          echo "tag=universal-v$conf_version" >> "$GITHUB_OUTPUT"
+          echo "Releasing $conf_version as universal-v$conf_version"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.18.0 --activate
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libasound2-dev \
+            patchelf
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1 # v2.8.1
+        with:
+          workspaces: apps/hermes-universal/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: apps/hermes-universal
+        run: pnpm install --frozen-lockfile
+
+      # typecheck && lint && test && build.
+      - name: Check the frontend
+        working-directory: apps/hermes-universal
+        run: pnpm check
+
+      # Both feature configurations, because `update-checks` being on by default
+      # means the stub path is the one that silently rots.
+      - name: Check the Rust side
+        working-directory: apps/hermes-universal/src-tauri
+        run: |
+          cargo check --all-targets
+          cargo check --no-default-features --all-targets
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Phase 2 — sign and upload. Only reached once preflight is green.
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: ${{ matrix.label }}
+    needs: preflight
+    # Scopes TAURI_SIGNING_PRIVATE_KEY to this job. Note that a required-reviewer
+    # rule on this environment prompts once PER MATRIX ENTRY — four approvals for
+    # one release. The meaningful human gate is `releaseDraft: true` below, which
+    # already stops anything reaching users until someone publishes; prefer that
+    # over reviewers here unless you specifically want to gate the signing key.
+    environment: release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x86_64
+            platform: ubuntu-22.04
+            args: ''
+          - label: macos-aarch64
+            platform: macos-latest
+            args: '--target aarch64-apple-darwin'
+          - label: macos-x86_64
+            platform: macos-latest
+            args: '--target x86_64-apple-darwin'
+          - label: windows-x86_64
+            platform: windows-latest
+            args: ''
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # apps/hermes-universal carries its own pnpm-lock.yaml (the rest of the
+      # repo is npm workspaces), so it installs with pnpm and nothing else.
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.18.0 --activate
+
+      # Tauri's Linux webview + the ALSA backend cpal builds against. Not needed
+      # on macOS/Windows, which ship their own webview.
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libasound2-dev \
+            patchelf
+
+      # rustup is preinstalled on every runner, so the toolchain needs no action
+      # of its own — one less third-party step in the chain that signs releases.
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - name: Add macOS targets
+        if: matrix.platform == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1 # v2.8.1
+        with:
+          workspaces: apps/hermes-universal/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: apps/hermes-universal
+        run: pnpm install --frozen-lockfile
+
+      # Builds the bundles, signs the updater artifacts, uploads them to the
+      # release and writes the `latest.json` phase 3 republishes.
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/hermes-universal
+          tagName: ${{ needs.preflight.outputs.tag }}
+          releaseName: 'Hermes Universal v${{ needs.preflight.outputs.version }}'
+          releaseBody: 'Signed builds for desktop. Installed copies update themselves from here.'
+          releaseDraft: true
+          prerelease: true
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Phase 3 — point the shipped app at the release a human just published.
+  # ──────────────────────────────────────────────────────────────────────────
+  manifest:
+    name: refresh universal-latest
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'universal-v')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      # Copy the manifest across rather than deleting and recreating the
+      # floating release: `gh release upload --clobber` swaps the asset in place,
+      # so there is no window in which a running app polls a 404.
+      - name: Republish latest.json under universal-latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --pattern latest.json --dir . --clobber
+
+          if gh release view universal-latest >/dev/null 2>&1; then
+            gh release upload universal-latest latest.json --clobber
+          else
+            # --prerelease keeps this bookkeeping release out of the repo's
+            # "Latest release" slot; it carries no binaries, only the manifest.
+            gh release create universal-latest latest.json \
+              --title 'Update manifest (Hermes Universal)' \
+              --notes 'Points installed copies at the newest published release. Not a download — see the versioned releases for those.' \
+              --prerelease
+          fi
+
+          echo "universal-latest now serves the manifest from $TAG"

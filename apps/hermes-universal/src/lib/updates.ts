@@ -8,24 +8,37 @@ import { IS_TAURI } from '@/lib/platform'
 // imported and guarded by IS_TAURI so plain-web dev and vitest degrade to null
 // instead of throwing on a missing runtime.
 
-/** Which authority answered the check. `disabled` = built without the
- *  `update-checks` cargo feature (the default), so no network call was made. */
+/** Which authority answered the check. `disabled` = built with
+ *  `--no-default-features`, so no network call was made. */
 export type UpdateSource = 'appstore' | 'disabled' | 'github' | 'play'
 
-/** Why we don't know the published version. Absent on a successful check. */
-export type UpdateReason = 'checks_disabled' | 'unparsed' | 'unreachable'
+/** Why we don't know the published version. Absent on a successful check.
+ *  `store_pending` = the Play/App Store listing isn't published yet, so the
+ *  mobile check is mocked rather than pointed at a dead page. */
+export type UpdateReason = 'checks_disabled' | 'store_pending' | 'unparsed' | 'unreachable'
 
 export interface UpdateStatus {
   source: UpdateSource
   currentVersion: string
   latestVersion: null | string
   updateAvailable: boolean
-  /** Release asset URL, or a `market://` / `itms-apps://` store deep link. */
+  /** Release page URL, or a `market://` / `itms-apps://` store deep link. */
   downloadUrl: null | string
   /** Human-facing page for the same thing (release page / store listing). */
   notesUrl: null | string
   checkedAtMs: number
+  /** Whether the native side can apply this update in place. False on mobile
+   *  (the store owns installs) and in a checks-disabled build — which is what
+   *  picks "Update now" over "Download". */
+  canSelfInstall: boolean
   reason: null | UpdateReason
+}
+
+/** Bytes moved so far during `installAppUpdate`. `total` is absent when the
+ *  server sends no Content-Length. */
+export interface UpdateProgress {
+  downloaded: number
+  total: null | number
 }
 
 /**
@@ -44,6 +57,42 @@ export async function checkAppUpdate(force = false): Promise<null | UpdateStatus
     return await invoke<UpdateStatus>('update_check', { force })
   } catch {
     return null
+  }
+}
+
+/**
+ * Download, verify and install the published update, then restart into it.
+ *
+ * Resolves only on failure: on success the native side replaces the bundle and
+ * restarts the process, so nothing here runs again. Desktop-only — mobile
+ * rejects with `unsupported_platform`.
+ */
+export async function installAppUpdate(): Promise<void> {
+  if (!IS_TAURI) {
+    throw new Error('unsupported_platform')
+  }
+
+  const { invoke } = await import('@tauri-apps/api/core')
+
+  await invoke('update_install')
+}
+
+/**
+ * Subscribe to download progress for an in-flight `installAppUpdate`. Resolves
+ * to an unsubscribe function — a no-op off Tauri, so callers can always call it
+ * on cleanup.
+ */
+export async function onUpdateProgress(handler: (progress: UpdateProgress) => void): Promise<() => void> {
+  if (!IS_TAURI) {
+    return () => {}
+  }
+
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+
+    return await listen<UpdateProgress>('update://progress', event => handler(event.payload))
+  } catch {
+    return () => {}
   }
 }
 

@@ -157,9 +157,8 @@ export const $messagesEmpty = computed($messages, messages => messages.length ==
  * here would break nanostores' dedupe and re-render every transcript on every
  * token.
  */
-export const $paintedMessages = computed(
-  [$messages, $transcriptPaint, $activeSessionKey],
-  (messages, paint, key) => (messages.length ? messages : (paint[key]?.messages ?? messages))
+export const $paintedMessages = computed([$messages, $transcriptPaint, $activeSessionKey], (messages, paint, key) =>
+  messages.length ? messages : (paint[key]?.messages ?? messages)
 )
 
 export const $paintedMessagesEmpty = computed($paintedMessages, messages => messages.length === 0)

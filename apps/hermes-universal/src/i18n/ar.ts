@@ -214,7 +214,8 @@ export const ar = defineLocale({
     warningsTitle: 'تحذير تثبيت الإضافة',
     missingEnv: list => `تم التثبيت، لكنه معطّل حتى تُضبط هذه: ${list}.`,
     noIdentifier: 'لم يحدّد الرابط أي مستودع.',
-    stillRunning: 'لم تستجب البوابة. قد يكون التثبيت ما زال جاريًا — افتح الإعدادات ▸ الإضافات للتحقق قبل إعادة المحاولة.',
+    stillRunning:
+      'لم تستجب البوابة. قد يكون التثبيت ما زال جاريًا — افتح الإعدادات ▸ الإضافات للتحقق قبل إعادة المحاولة.',
     restDoorOff: 'هذه البوابة بعيدة وباب إضافات البوابة مغلق، لذا لن يُحمَّل النصف المكتبي لهذه الإضافة هنا.'
   },
 
@@ -354,10 +355,15 @@ export const ar = defineLocale({
       fieldRemoteProfile: 'الملف الشخصي البعيد',
       fieldToken: 'رمز البوابة',
       fieldTokenPlaceholder: 'فقط إذا كانت البوابة تحتاجه',
-      noKeyring: 'لا يوجد في هذا الجهاز مخزن بيانات اعتماد، لذا لا يمكن حفظ رمز البوابة. استخدم تسجيل الدخول عبر المتصفح أو بوابة غير محمية.',
+      noKeyring:
+        'لا يوجد في هذا الجهاز مخزن بيانات اعتماد، لذا لا يمكن حفظ رمز البوابة. استخدم تسجيل الدخول عبر المتصفح أو بوابة غير محمية.',
       localUnsupported: 'لا يستطيع هذا الجهاز تشغيل خادم هيرميس — اتصل بواحد عبر SSH أو عبر رابط.',
       kindHint: kind =>
-        kind === 'ssh' ? 'سيشغّل هيرميس خادمًا على ذلك المضيف (أو يعيد الاتصال به) وينشئ نفقًا إليه.' : kind === 'cloud' ? 'وكيل Hermes Cloud يتم الوصول إليه عبر البوابة.' : 'خادم هيرميس يمكن الوصول إليه عبر رابط.',
+        kind === 'ssh'
+          ? 'سيشغّل هيرميس خادمًا على ذلك المضيف (أو يعيد الاتصال به) وينشئ نفقًا إليه.'
+          : kind === 'cloud'
+            ? 'وكيل Hermes Cloud يتم الوصول إليه عبر البوابة.'
+            : 'خادم هيرميس يمكن الوصول إليه عبر رابط.',
       save: 'حفظ',
       saved: 'تم حفظ البوابة',
       saveFailed: 'تعذّر حفظ هذه البوابة',
@@ -466,7 +472,8 @@ export const ar = defineLocale({
       enableAll: 'تفعيل الإشعارات',
       enableAllDesc: 'إيقافه يصمت كل الإشعارات أدناه.',
       focusedHint: 'تنبيهات الاكتمال تظهر فقط عندما يكون Hermes في الخلفية.',
-      noActionsNotice: 'لا تحتوي الإشعارات على هذه المنصة على أزرار — تعود الإضافة التي توفّرها إلى رسالة داخل التطبيق.',
+      noActionsNotice:
+        'لا تحتوي الإشعارات على هذه المنصة على أزرار — تعود الإضافة التي توفّرها إلى رسالة داخل التطبيق.',
       kinds: {
         approval: {
           label: 'يلزم الموافقة',
@@ -800,6 +807,14 @@ export const ar = defineLocale({
       updateReady: count => `${count} تحديث متاح`,
       lastChecked: age => `آخر تحقق ${age}`,
       justNowSuffix: 'الآن',
+      storePendingTitle: 'قائمة المتجر قادمة قريبًا.',
+      storePendingPlay: 'Hermes غير متوفر على Google Play بعد. بعد نشره ستصل التحديثات من هناك.',
+      storePendingAppStore: 'Hermes غير متوفر على App Store بعد. بعد نشره ستصل التحديثات من هناك.',
+      comingSoonSuffix: ' (قريبًا)',
+      preparingDownload: 'جارٍ تحضير التنزيل…',
+      downloadingPercent: percent => `جارٍ التنزيل… ${percent}%`,
+      installFailed: 'تعذّر تثبيت التحديث.',
+      updateChannelSigned: 'إصدار موقَّع · يُتحقَّق منه قبل التثبيت',
       automaticUpdates: 'التحديثات التلقائية',
       automaticUpdatesDesc: 'اسمح لـ Hermes بالتحقق من التحديثات وتثبيتها.',
       branchCommit: (branch, commit) => `${branch} عند ${commit}`,
@@ -1123,6 +1138,9 @@ export const ar = defineLocale({
     }
   },
   skills: {
+    mcp: {
+      installFailed: name => `تعذّر تثبيت ${name}`
+    },
     tabSkills: 'المهارات',
     hub: {
       advisory: 'SkillEvaluator (استشاري)',
@@ -2541,9 +2559,11 @@ export const ar = defineLocale({
     resume: 'استئناف',
     paletteOpen: 'فتح المتصفح المدمج',
     openLinksInApp: 'فتح روابط الويب داخل Hermes',
-    openLinksInAppDescription: 'تُفتح روابط الويب في المتصفح المدمج. اضغط ⌘/Ctrl أو استخدم زر الفأرة الأوسط لفتحها في متصفحك.',
+    openLinksInAppDescription:
+      'تُفتح روابط الويب في المتصفح المدمج. اضغط ⌘/Ctrl أو استخدم زر الفأرة الأوسط لفتحها في متصفحك.',
     isolatedStore: 'إبقاء ملفات تعريف الارتباط للمتصفح المدمج منفصلة',
-    isolatedStoreDescription: 'تسجيل الدخول إلى موقع في اللوحة لا يمس الحساب الذي يستخدمه Hermes. تغيير هذا الخيار يمسح ما هو مخزَّن.',
+    isolatedStoreDescription:
+      'تسجيل الدخول إلى موقع في اللوحة لا يمس الحساب الذي يستخدمه Hermes. تغيير هذا الخيار يمسح ما هو مخزَّن.',
     consoleDefault: 'إظهار وحدة تحكم المعاينة افتراضيًا',
     consoleDefaultDescription: 'افتح لوحة وحدة التحكم كلما فُتح المتصفح المدمج.',
     clearData: 'مسح بيانات التصفح',
@@ -2644,7 +2664,8 @@ export const ar = defineLocale({
       fallbackTitle: 'معاينة',
       // The ONE key desktop has that universal lacked: why a loopback
       // address cannot load when the gateway is somewhere else.
-      remoteLoopback: 'يشير هذا العنوان إلى الجهاز الذي يتحدث إليه Hermes، ولا تملك هذه البوابة نفقًا إليه. اتصل عبر SSH أو افتح الصفحة على ذلك الجهاز.'
+      remoteLoopback:
+        'يشير هذا العنوان إلى الجهاز الذي يتحدث إليه Hermes، ولا تملك هذه البوابة نفقًا إليه. اتصل عبر SSH أو افتح الصفحة على ذلك الجهاز.'
     }
   },
   zones: {

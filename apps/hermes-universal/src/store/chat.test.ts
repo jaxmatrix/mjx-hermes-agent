@@ -14,6 +14,7 @@ vi.mock('@/store/gateway', async () => {
     $gatewayState: atom('open')
   }
 })
+import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { flushDeltas } from '@/lib/stream-batch'
 import { routeGatewayEvent as handleGatewayEvent } from '@/store/event-router'
 import { requestGateway } from '@/store/gateway'
@@ -792,7 +793,7 @@ describe('ensureSession profile + selection', () => {
 
     expect(requestGateway).toHaveBeenCalledWith('session.create', {
       cols: 96,
-      source: 'universal',
+      ...SESSION_SOURCE_PARAMS,
       profile: 'research',
       model: 'glm-5',
       provider: 'zai',
@@ -809,7 +810,7 @@ describe('ensureSession profile + selection', () => {
 
     await ensureSession()
 
-    expect(vi.mocked(requestGateway).mock.calls[0][1]).toEqual({ cols: 96, source: 'universal', fast: false })
+    expect(vi.mocked(requestGateway).mock.calls[0][1]).toEqual({ cols: 96, ...SESSION_SOURCE_PARAMS, fast: false })
   })
 
   // The composer reads the live slice, so the echo in the create reply is what

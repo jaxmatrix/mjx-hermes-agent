@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
+import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { clearSessionClarify, sessionApprovalRequest, sessionClarifyRequest, setSessionClarify } from '@/store/prompts'
 import {
   $activeSessionKey,
@@ -393,7 +394,12 @@ describe('reconcileSessionTurn', () => {
   // did not, so a multi-profile gateway looked the id up in its launch
   // profile's state.db. The owner comes off the loaded row when it is known.
   it("scopes the resume to the session's owning profile", async () => {
-    const requestGateway = vi.fn(async () => ({ message_count: 0, messages: [], running: false, session_id: 'runtime-10' }))
+    const requestGateway = vi.fn(async () => ({
+      message_count: 0,
+      messages: [],
+      running: false,
+      session_id: 'runtime-10'
+    }))
 
     vi.doMock('@/store/gateway', () => ({
       $gatewayState: { get: () => 'open', subscribe: () => () => {} },
@@ -415,7 +421,7 @@ describe('reconcileSessionTurn', () => {
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-10',
       omit_messages: true,
-      source: 'universal',
+      ...SESSION_SOURCE_PARAMS,
       profile: 'research'
     })
 
