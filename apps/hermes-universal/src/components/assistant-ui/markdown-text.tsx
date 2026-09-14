@@ -18,8 +18,8 @@ import {
 } from 'react'
 
 import { ArtifactCard } from '@/components/assistant-ui/artifact-card'
+import { CodeFence } from '@/components/chat/code-fence'
 import { ExpandableBlock } from '@/components/chat/expandable-block'
-import { SyntaxHighlighter } from '@/components/chat/shiki-highlighter'
 import { ZoomableImage } from '@/components/chat/zoomable-image'
 import { ErrorBoundary } from '@/components/error-boundary'
 import { detectArtifact } from '@/lib/artifact-detect'
@@ -65,9 +65,9 @@ import { paragraphPlainText, TranscriptDirectiveLeaf, useIsClaimedDirective } fr
 const mathPlugin = createMemoizedMathPlugin({ singleDollarTextMath: true })
 
 // NO `plugins.code` — deliberately, and the reason is not obvious enough to
-// rediscover by accident. Shiki here comes from ONE place: the
-// `SyntaxHighlighter` slot in `MARKDOWN_COMPONENTS` below, which reaches
-// `react-shiki` through `lazy(() => import('./shiki-block'))`.
+// rediscover by accident. Fences here render through ONE place: the
+// `SyntaxHighlighter` slot in `MARKDOWN_COMPONENTS` below, which hands off to
+// `CodeFence` — a component that owns its own DOM and computes its own colours.
 //
 // Supplying a `SyntaxHighlighter` component makes
 // `@assistant-ui/react-streamdown` install its code adapter — see
@@ -90,7 +90,8 @@ const mathPlugin = createMemoizedMathPlugin({ singleDollarTextMath: true })
 //
 // If a future change removes the `SyntaxHighlighter` slot, streamdown's own
 // code block comes back — and THEN it needs a code plugin, or fences render
-// unhighlighted. Re-add both together or neither.
+// unhighlighted. Re-add both together or neither. It would also hand the
+// fence's DOM back to a library, which is the thing the iOS fence collapse was about.
 const MARKDOWN_PLUGINS = { math: mathPlugin }
 
 // Renderer for the single node katex-memo emits per equation. See that file for
@@ -642,7 +643,7 @@ function MarkdownSyntaxHighlighter(props: SyntaxHighlighterProps) {
   return (
     <RichCodeBlock
       code={props.code}
-      fallback={<SyntaxHighlighter {...props} defer={isStreaming} />}
+      fallback={<CodeFence code={props.code} language={props.language} streaming={isStreaming} />}
       language={props.language}
       streaming={isStreaming}
     />
