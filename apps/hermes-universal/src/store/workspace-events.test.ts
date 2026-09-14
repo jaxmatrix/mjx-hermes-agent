@@ -1,8 +1,7 @@
 /**
- * The PROFILE half of `store/workspace-events` — the part MJXHRM-511 stage 3
- * added, plus the race it exposed.
+ * The PROFILE half of `store/workspace-events`, plus the race it exposed.
  *
- * `/api/fs/default-cwd` is profile-scoped (stage 1): it resolves the active
+ * `/api/fs/default-cwd` is profile-scoped: it resolves the active
  * profile's project folder → its `terminal.cwd` → the gateway default, and
  * reports that profile's `home`. So the three atoms this module owns are
  * per-profile values, and everything that reads them — the file tree, the
