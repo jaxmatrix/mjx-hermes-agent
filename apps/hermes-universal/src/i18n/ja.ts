@@ -1064,6 +1064,8 @@ export const ja = defineLocale({
       saveFailed: 'ゲートウェイ設定を保存できませんでした',
       connectingTitle: 'Hermes に接続しています',
       reconnectingTo: target => `${target} に再接続しています…`,
+      connectStoppedTitle: '接続できませんでした',
+      connectStoppedTo: target => `${target} への接続を中止しました。`,
       useDifferentGateway: '別のゲートウェイを使用',
       startOver: 'やり直す'
     },
