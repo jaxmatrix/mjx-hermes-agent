@@ -12,6 +12,7 @@ vi.mock('@/lib/auth', () => ({
   oauthLogin: vi.fn().mockResolvedValue(undefined),
   oauthLogout: vi.fn().mockResolvedValue(undefined),
   oauthStatus: vi.fn().mockResolvedValue({ signedIn: true }),
+  oauthStatusIsUnknown: (s: { reachable?: boolean }) => s?.reachable === false,
   fetchAuthProviders: vi.fn().mockResolvedValue([]),
   portalLogout: vi.fn().mockResolvedValue(undefined),
   portalAgentSignIn: vi.fn().mockResolvedValue({ connected: true, baseUrl: 'https://a1' })
