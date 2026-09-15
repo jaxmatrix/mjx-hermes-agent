@@ -99,10 +99,7 @@ export function registerContextTarget<T>(provider: ContextTargetProvider<T>): ()
  * `onError`, and the next provider is tried. `dom` is total, so a menu always
  * has something to open with even when a plugin's classifier is broken.
  */
-export function classifyGesture(
-  gesture: ContextGesture,
-  onError?: (kind: string) => void
-): ContextTargetMatch | null {
+export function classifyGesture(gesture: ContextGesture, onError?: (kind: string) => void): ContextTargetMatch | null {
   const ordered = [...providers.values()].sort((a, b) => a.order - b.order)
 
   for (const provider of ordered) {

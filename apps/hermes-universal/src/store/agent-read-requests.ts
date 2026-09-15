@@ -99,10 +99,7 @@ export interface AgentRequestContext {
   sessionId: null | string
 }
 
-export type PreviewActor = (
-  request: PreviewActRequest,
-  ctx: AgentRequestContext
-) => Promise<unknown> | unknown
+export type PreviewActor = (request: PreviewActRequest, ctx: AgentRequestContext) => Promise<unknown> | unknown
 
 /** One `tour` tool call. `action` is `targets`/`show`/`start`/`next`/`prev`/
  *  `stop`; `surface` picks the app chrome or the preview pane. The answer names

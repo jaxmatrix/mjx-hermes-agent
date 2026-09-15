@@ -159,11 +159,7 @@ export function resolveHermesOpenPath(target: HermesOpenTarget | null | undefine
 }
 
 /** Build a navigate path from a parsed deep-link payload's parts. */
-export function pathFromHermesDeepLink(
-  kind: string,
-  name: string,
-  params: Record<string, string> = {}
-): null | string {
+export function pathFromHermesDeepLink(kind: string, name: string, params: Record<string, string> = {}): null | string {
   if (!kind || !name) {
     return null
   }

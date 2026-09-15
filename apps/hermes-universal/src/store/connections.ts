@@ -90,13 +90,7 @@ export interface ProbeLeg {
 }
 
 export type ProbeVerdict =
-  | 'ok'
-  | 'credential-rejected'
-  | 'unreachable'
-  | 'auth-required'
-  | 'skipped-no-token'
-  | 'ws-unreachable'
-  | 'timeout'
+  'ok' | 'credential-rejected' | 'unreachable' | 'auth-required' | 'skipped-no-token' | 'ws-unreachable' | 'timeout'
 
 export interface ProbeResult {
   ok: boolean
@@ -175,10 +169,7 @@ export const $connectionsRegistry = atom<RegistryView>(EMPTY)
  * everything" are ABSENT — not disabled, not collapsed. Acceptance criterion 1
  * is that such an install looks exactly like today's.
  */
-export const $hasMultipleConnections = computed(
-  $connectionsRegistry,
-  registry => registry.connections.length > 1
-)
+export const $hasMultipleConnections = computed($connectionsRegistry, registry => registry.connections.length > 1)
 
 const LAST_PROFILE_KEY = 'hermes.connections.lastProfileByConnection'
 const LAST_PROFILE_MAX = 64

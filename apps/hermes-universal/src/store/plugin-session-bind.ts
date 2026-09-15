@@ -56,8 +56,7 @@ export interface BoundMessage {
 }
 
 export type BindSessionResult =
-  | { error: string; ok: false }
-  | { messages?: BoundMessage[]; ok: true; sessionKey: string }
+  { error: string; ok: false } | { messages?: BoundMessage[]; ok: true; sessionKey: string }
 
 /**
  * Idempotent: a session already bound resolves its existing key without a
@@ -111,7 +110,11 @@ export async function bindSessionSlice(
 
       rekeySession(placeholder, runtimeSessionId, { runtimeSessionId, storedSessionId })
 
-      return { ...(options.withHistory ? { messages: res.messages ?? [] } : {}), ok: true, sessionKey: runtimeSessionId }
+      return {
+        ...(options.withHistory ? { messages: res.messages ?? [] } : {}),
+        ok: true,
+        sessionKey: runtimeSessionId
+      }
     } catch (error) {
       // The placeholder is dropped rather than left behind: a slice with no
       // transport is exactly the lie this module exists to avoid.

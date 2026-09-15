@@ -14,8 +14,14 @@ const clipboard = { readClipboardText: vi.fn(async () => ''), writeClipboardText
 
 vi.mock('@/lib/clipboard', () => clipboard)
 
-const { editableCommand, editableSelectionText, imageFileName, noteComposition, selectAllInEditable, withEditableFocus } =
-  await import('./actions')
+const {
+  editableCommand,
+  editableSelectionText,
+  imageFileName,
+  noteComposition,
+  selectAllInEditable,
+  withEditableFocus
+} = await import('./actions')
 
 const { resolveDomTarget } = await import('./target')
 

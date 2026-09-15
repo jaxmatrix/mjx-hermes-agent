@@ -98,9 +98,7 @@ describe('resolveHermesOpenPath', () => {
   })
 
   it('merges params onto a path that already has a query', () => {
-    expect(resolveHermesOpenPath({ params: { server: 'x' }, path: '/skills?tab=mcp' })).toBe(
-      '/skills?tab=mcp&server=x'
-    )
+    expect(resolveHermesOpenPath({ params: { server: 'x' }, path: '/skills?tab=mcp' })).toBe('/skills?tab=mcp&server=x')
   })
 
   it('drops empty params rather than emitting a bare `=`', () => {

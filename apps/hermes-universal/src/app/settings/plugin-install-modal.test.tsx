@@ -14,11 +14,15 @@ vi.mock('@/store/notifications', () => ({ notify: (input: unknown) => notify(inp
 vi.mock('@/store/gateway', () => ({
   // `store/connection-ready` subscribes to `$gatewayState` at module scope, so a
   // partial mock of this module would silently remove it (the recipe-6.4 trap).
-  $gatewayState: { get: () => 'open', listen: () => () => {}, subscribe: (fn: (v: string) => void) => {
-    fn('open')
+  $gatewayState: {
+    get: () => 'open',
+    listen: () => () => {},
+    subscribe: (fn: (v: string) => void) => {
+      fn('open')
 
-    return () => {}
-  } },
+      return () => {}
+    }
+  },
   requestGateway: vi.fn()
 }))
 
@@ -162,7 +166,10 @@ describe('PluginInstallModal', () => {
   })
 
   it('surfaces missing_env as a warning rather than swallowing it', async () => {
-    installPluginRequest.mockResolvedValue({ ok: true, result: { missing_env: ['FOO', 'BAR'], name: 'demo', ok: true } })
+    installPluginRequest.mockResolvedValue({
+      ok: true,
+      result: { missing_env: ['FOO', 'BAR'], name: 'demo', ok: true }
+    })
     mount({ origin: 'deep-link', repo: 'owner/repo' })
     fireEvent.click(install())
 

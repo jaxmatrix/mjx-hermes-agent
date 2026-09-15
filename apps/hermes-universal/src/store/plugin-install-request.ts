@@ -51,8 +51,7 @@ export interface PluginInstallRequest {
 export type PluginInstallFailure = 'already-exists' | 'no-identifier' | 'unknown-action' | 'unreachable'
 
 export type PluginInstallOutcome =
-  | { ok: false; failure: PluginInstallFailure; message: string }
-  | { ok: true; result: PluginInstallResult }
+  { ok: false; failure: PluginInstallFailure; message: string } | { ok: true; result: PluginInstallResult }
 
 const ERROR_CODES: Record<number, PluginInstallFailure> = {
   4017: 'unknown-action',

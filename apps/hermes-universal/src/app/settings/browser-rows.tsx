@@ -75,11 +75,7 @@ export function BrowserRows() {
         title={copy.openLinksInApp}
       />
 
-      <ListRow
-        description={storeNote}
-        id={settingRowElementId('advanced.browser-store')}
-        title={copy.isolatedStore}
-      />
+      <ListRow description={storeNote} id={settingRowElementId('advanced.browser-store')} title={copy.isolatedStore} />
 
       <ListRow
         action={

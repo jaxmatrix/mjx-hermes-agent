@@ -51,11 +51,14 @@ describe('the registry router', () => {
     expect($activeSessionRoute.get().connectionId).toBe('studio')
 
     publishActiveConnection(
-      describeConnection({ ...REMOTE, profile: 'work' }, {
-        connectionId: 'laptop',
-        dialConnectionId: 'laptop',
-        label: 'Laptop'
-      })
+      describeConnection(
+        { ...REMOTE, profile: 'work' },
+        {
+          connectionId: 'laptop',
+          dialConnectionId: 'laptop',
+          label: 'Laptop'
+        }
+      )
     )
 
     expect($activeSessionRoute.get().connectionId).toBe('laptop')
@@ -99,7 +102,11 @@ describe('the registry router', () => {
 
     leaseSecondary.mockResolvedValue({ connectionId: 'laptop', request, scopeKey: 'conn:laptop::default' })
     // The merged rows' tag is what says where a session lives.
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
     await expect(requestForSession('s9', 'session.resume', { cols: 96 })).resolves.toBe('remote-answer')
 
@@ -118,7 +125,11 @@ describe('the registry router', () => {
       }),
       scopeKey: 'conn:laptop::default'
     })
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
     await expect(requestForSession('s9', 'session.resume')).rejects.toThrow('boom')
     expect(releaseSecondary).toHaveBeenCalledTimes(1)
@@ -126,7 +137,11 @@ describe('the registry router', () => {
 
   it('reports an unreachable foreign source as a route failure, not a gateway error', async () => {
     leaseSecondary.mockRejectedValue(new Error('unreachable'))
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
     await expect(requestForSession('s9', 'session.resume')).rejects.toBeInstanceOf(SessionRouteError)
   })
@@ -146,7 +161,11 @@ describe('the registry router', () => {
       request: vi.fn(async () => 'x'),
       scopeKey: 'conn:laptop::default'
     })
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
     await requestForSession('s9', 'session.resume')
 

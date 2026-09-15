@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { isBroadcast, isPassText, matchHandles, mentionTokenAt, parseMentions, resolveResponders, rotateSpeakers } from './mentions'
+import {
+  isBroadcast,
+  isPassText,
+  matchHandles,
+  mentionTokenAt,
+  parseMentions,
+  resolveResponders,
+  rotateSpeakers
+} from './mentions'
 import type { RoomLine } from './transcript'
 
 const members = [{ profile: 'radar' }, { profile: 'scout' }, { profile: 'owl' }, { profile: 'default' }]
@@ -128,6 +136,11 @@ describe('composer completions', () => {
     // A substring match would put `radar` under `da`, and the first row would
     // almost never be the one you meant.
     expect(matchHandles('da', roster)).toEqual([])
-    expect(matchHandles('', Array.from({ length: 20 }, (_, i) => ({ profile: `b${i}` })))).toHaveLength(8)
+    expect(
+      matchHandles(
+        '',
+        Array.from({ length: 20 }, (_, i) => ({ profile: `b${i}` }))
+      )
+    ).toHaveLength(8)
   })
 })

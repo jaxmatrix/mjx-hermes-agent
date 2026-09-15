@@ -59,9 +59,7 @@ describe('readActiveBrowserPage', () => {
 
   it('reports the FULL length so the agent can page', async () => {
     openBrowserTab()
-    evalInGuest.mockResolvedValue(
-      doubled({ f: 100, n: 50_000, s: 'hello', ti: 'Example', u: 'https://example.com/' })
-    )
+    evalInGuest.mockResolvedValue(doubled({ f: 100, n: 50_000, s: 'hello', ti: 'Example', u: 'https://example.com/' }))
 
     expect(await readActiveBrowserPage({ count: 5, start: 100 })).toEqual({
       end: 105,

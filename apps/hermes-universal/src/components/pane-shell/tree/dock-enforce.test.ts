@@ -44,7 +44,10 @@ describe('enforced docks', () => {
     ])
 
     tree.declareDefaultTree(
-      model.split('row', [model.group(['sessions'], { id: 'grp-rail' }), model.group(['workspace'], { id: 'grp-main' })])
+      model.split('row', [
+        model.group(['sessions'], { id: 'grp-rail' }),
+        model.group(['workspace'], { id: 'grp-main' })
+      ])
     )
 
     tree.watchContributedPanes()

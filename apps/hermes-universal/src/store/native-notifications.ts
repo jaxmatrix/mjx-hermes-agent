@@ -1,4 +1,9 @@
-import { isPermissionGranted, registerActionTypes, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
+import {
+  isPermissionGranted,
+  registerActionTypes,
+  requestPermission,
+  sendNotification
+} from '@tauri-apps/plugin-notification'
 
 import { type HermesOpenTarget, resolveHermesOpenPath } from '@/lib/hermes-open-target'
 import { nativeNotificationCapabilities } from '@/lib/native-notification-capabilities'
@@ -14,13 +19,7 @@ import { registerNotifyHandlers } from './plugin-notify-handlers'
 // backgrounded" is the whole rule. Per-kind toggles + throttle are kept.
 
 export type NativeNotificationKind =
-  | 'approval'
-  | 'backgroundDone'
-  | 'credits'
-  | 'input'
-  | 'plugin'
-  | 'turnDone'
-  | 'turnError'
+  'approval' | 'backgroundDone' | 'credits' | 'input' | 'plugin' | 'turnDone' | 'turnError'
 
 export const NATIVE_NOTIFICATION_KINDS: readonly NativeNotificationKind[] = [
   'approval',
@@ -163,7 +162,8 @@ export interface NativeNotificationInput {
 /** Why a notification did not go out. Named rather than reduced to a boolean:
  *  "you have them switched off" and "the OS refused permission" are different
  *  things for a caller to do something about (rule 9). */
-export type NativeNotifyRefusal = 'foreground' | 'kind-off' | 'no-permission' | 'prefs-off' | 'send-failed' | 'throttled'
+export type NativeNotifyRefusal =
+  'foreground' | 'kind-off' | 'no-permission' | 'prefs-off' | 'send-failed' | 'throttled'
 
 export interface NativeNotifyOutcome {
   /**
@@ -377,7 +377,9 @@ export async function dispatchPluginNativeNotification(
     {
       ...(registeredType ? { actionTypeId: registeredType } : {}),
       ...(input.icon ? { icon: input.icon } : {}),
-      ...(notifyId || activate ? { extra: { ...(notifyId ? { notifyId } : {}), ...(activate ? { activate } : {}) } } : {})
+      ...(notifyId || activate
+        ? { extra: { ...(notifyId ? { notifyId } : {}), ...(activate ? { activate } : {}) } }
+        : {})
     }
   )
 

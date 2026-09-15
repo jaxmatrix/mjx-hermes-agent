@@ -126,9 +126,7 @@ describe('setPluginConnectionSource', () => {
 
     const dispose = setPluginConnectionSource(registry)
 
-    expect(await pluginConnectionSource().connections()).toEqual([
-      { id: 'a', kind: 'ssh', label: 'A', primary: false }
-    ])
+    expect(await pluginConnectionSource().connections()).toEqual([{ id: 'a', kind: 'ssh', label: 'A', primary: false }])
 
     dispose()
 

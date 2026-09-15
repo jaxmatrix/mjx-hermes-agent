@@ -46,7 +46,15 @@ describe('native-notifications dispatch', () => {
     localStorage.clear()
     $nativeNotifyPrefs.set({
       enabled: true,
-      kinds: { approval: true, backgroundDone: true, credits: true, input: true, plugin: true, turnDone: true, turnError: true }
+      kinds: {
+        approval: true,
+        backgroundDone: true,
+        credits: true,
+        input: true,
+        plugin: true,
+        turnDone: true,
+        turnError: true
+      }
     })
   })
   afterEach(() => setBackgrounded(false))
@@ -100,7 +108,15 @@ describe('the plugin notification door', () => {
     localStorage.clear()
     $nativeNotifyPrefs.set({
       enabled: true,
-      kinds: { approval: true, backgroundDone: true, credits: true, input: true, plugin: true, turnDone: true, turnError: true }
+      kinds: {
+        approval: true,
+        backgroundDone: true,
+        credits: true,
+        input: true,
+        plugin: true,
+        turnDone: true,
+        turnError: true
+      }
     })
   })
   afterEach(() => setBackgrounded(false))
@@ -161,7 +177,15 @@ describe('rich plugin notifications', () => {
     setBackgrounded(true)
     $nativeNotifyPrefs.set({
       enabled: true,
-      kinds: { approval: true, backgroundDone: true, credits: true, input: true, plugin: true, turnDone: true, turnError: true }
+      kinds: {
+        approval: true,
+        backgroundDone: true,
+        credits: true,
+        input: true,
+        plugin: true,
+        turnDone: true,
+        turnError: true
+      }
     })
   })
 

@@ -129,7 +129,9 @@ export function ConnectionEditor({
   return (
     <div className="flex min-w-0 flex-col gap-4 p-4">
       <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium" htmlFor="connection-label">{c.fieldLabel}</label>
+        <label className="text-sm font-medium" htmlFor="connection-label">
+          {c.fieldLabel}
+        </label>
         <Input
           disabled={readOnly}
           id="connection-label"
@@ -141,7 +143,9 @@ export function ConnectionEditor({
 
       {isRemoteLike && (
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium" htmlFor="connection-url">{c.fieldUrl}</label>
+          <label className="text-sm font-medium" htmlFor="connection-url">
+            {c.fieldUrl}
+          </label>
           <Input
             disabled={readOnly}
             id="connection-url"
@@ -155,7 +159,9 @@ export function ConnectionEditor({
       {kind === 'ssh' && (
         <>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium" htmlFor="connection-host">{c.fieldHost}</label>
+            <label className="text-sm font-medium" htmlFor="connection-host">
+              {c.fieldHost}
+            </label>
             <Input
               disabled={readOnly}
               id="connection-host"
@@ -165,7 +171,9 @@ export function ConnectionEditor({
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium" htmlFor="connection-remote-profile">{c.fieldRemoteProfile}</label>
+            <label className="text-sm font-medium" htmlFor="connection-remote-profile">
+              {c.fieldRemoteProfile}
+            </label>
             <Input
               disabled={readOnly}
               id="connection-remote-profile"
@@ -179,7 +187,9 @@ export function ConnectionEditor({
 
       {isRemoteLike && (
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium" htmlFor="connection-token">{c.fieldToken}</label>
+          <label className="text-sm font-medium" htmlFor="connection-token">
+            {c.fieldToken}
+          </label>
           <Input
             autoComplete="off"
             disabled={readOnly || !registry.keyringAvailable}
@@ -221,7 +231,12 @@ export function ConnectionEditor({
               <Codicon name="pulse" size="0.9rem" />
               {c.test}
             </Button>
-            <Button disabled={busy} onClick={() => void selectConnection(connection.id, { allowInteractive: true })} size="sm" variant="secondary">
+            <Button
+              disabled={busy}
+              onClick={() => void selectConnection(connection.id, { allowInteractive: true })}
+              size="sm"
+              variant="secondary"
+            >
               {c.connect}
             </Button>
             {registry.primary !== connection.id && (

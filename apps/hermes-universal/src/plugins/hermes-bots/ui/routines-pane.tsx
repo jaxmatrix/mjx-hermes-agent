@@ -90,7 +90,11 @@ export function RoutinesPane() {
       <div className="flex flex-col gap-1">
         <Input onChange={event => setName(event.target.value)} placeholder="Name" value={name} />
         <Input onChange={event => setPrompt(event.target.value)} placeholder="What should it do?" value={prompt} />
-        <Input onChange={event => setSchedule(event.target.value)} placeholder="Schedule (e.g. every 30m)" value={schedule} />
+        <Input
+          onChange={event => setSchedule(event.target.value)}
+          placeholder="Schedule (e.g. every 30m)"
+          value={schedule}
+        />
         <Button
           disabled={!name.trim() || !prompt.trim() || !schedule.trim()}
           onClick={async () => {

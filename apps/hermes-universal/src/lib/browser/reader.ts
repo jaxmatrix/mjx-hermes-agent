@@ -63,9 +63,7 @@ const ARTIFACT_TAB = 'Generated artifact — its content is in the conversation 
  * booting, a just-navigated document and an eval timeout all fall through to
  * the identity answer with a `note` naming the right next step (rule 8).
  */
-export async function readActiveBrowserPage(
-  options: PreviewReadOptions = {}
-): Promise<null | PreviewReadResult> {
+export async function readActiveBrowserPage(options: PreviewReadOptions = {}): Promise<null | PreviewReadResult> {
   const target = $activePreviewTarget.get()
 
   if (!target) {

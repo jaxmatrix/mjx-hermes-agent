@@ -60,7 +60,8 @@ export const registryConnectionSource: PluginConnectionSource = {
         isDefault: agent.isDefault,
         // The `@name-device` handle, so two boxes serving `default` are
         // distinguishable in a plugin's own UI.
-        label: agent.handle === agent.profile ? agent.profile : `${agent.profile} · ${labels.get(agent.connectionId) ?? ''}`,
+        label:
+          agent.handle === agent.profile ? agent.profile : `${agent.profile} · ${labels.get(agent.connectionId) ?? ''}`,
         profile: agent.profile
       })),
       // A source that failed carries its error rather than vanishing: a missing

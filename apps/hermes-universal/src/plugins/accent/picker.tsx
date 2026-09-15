@@ -316,21 +316,21 @@ export function AccentPickerTrigger() {
     <Popover>
       <PopoverTrigger asChild>
         <Tip label="Accent color (dev)">
-        <button
-          className="inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground"
-          type="button"
-        >
-          <span
-            className="size-2.5 shrink-0 rounded-full border border-(--dt-border)"
-            style={{ background: theme.colors.primary }}
-          />
-          {/* Always the hex, never a word: a label that alternated between
+          <button
+            className="inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground"
+            type="button"
+          >
+            <span
+              className="size-2.5 shrink-0 rounded-full border border-(--dt-border)"
+              style={{ background: theme.colors.primary }}
+            />
+            {/* Always the hex, never a word: a label that alternated between
               `accent` and `#rrggbb` changed width on the first drag, which
               reflowed the bar under the cursor. Seven mono characters, always. */}
-          <span className="text-center font-mono tabular-nums" style={{ width: `${HEX_CH}ch` }}>
-            {theme.colors.primary}
-          </span>
-        </button>
+            <span className="text-center font-mono tabular-nums" style={{ width: `${HEX_CH}ch` }}>
+              {theme.colors.primary}
+            </span>
+          </button>
         </Tip>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-auto p-0" side="top">

@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { connect, invoke, onAny, request, close: closeClient } = vi.hoisted(() => ({
+const {
+  connect,
+  invoke,
+  onAny,
+  request,
+  close: closeClient
+} = vi.hoisted(() => ({
   close: vi.fn(),
   connect: vi.fn(async () => {}),
   invoke: vi.fn(),

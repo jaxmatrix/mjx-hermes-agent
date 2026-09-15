@@ -112,9 +112,7 @@ export async function api<T = unknown>({
   const base = connectionId ? connectionBaseResolver?.(connectionId) : conn?.baseUrl
 
   if (!base) {
-    throw new Error(
-      connectionId ? `No gateway registered as ${connectionId}` : 'Not connected to a Hermes backend'
-    )
+    throw new Error(connectionId ? `No gateway registered as ${connectionId}` : 'Not connected to a Hermes backend')
   }
 
   const headers: Record<string, string> = {}

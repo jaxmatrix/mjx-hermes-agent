@@ -545,26 +545,26 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
     const connectionRows = connectionsRegistry.connections.filter(row => row.id !== activeConnectionId)
 
     const sourceGroup: PaletteGroup[] = [
-            {
-              heading: conn.title,
-              items: [
-                ...connectionRows.map(row => ({
-                  icon: Globe,
-                  id: `source-${row.id}`,
-                  keywords: ['gateway', 'source', 'switch', row.kind],
-                  label: `${conn.switchTo(row.label)}`,
-                  run: () => void selectConnection(row.id, { allowInteractive: true })
-                })),
-                {
-                  icon: Globe,
-                  id: 'source-add',
-                  keywords: ['gateway', 'source', 'add', 'new', 'connection'],
-                  label: conn.add,
-                  run: go(`${SETTINGS_ROUTE}/gateway`)
-                }
-              ]
-            }
-          ]
+      {
+        heading: conn.title,
+        items: [
+          ...connectionRows.map(row => ({
+            icon: Globe,
+            id: `source-${row.id}`,
+            keywords: ['gateway', 'source', 'switch', row.kind],
+            label: `${conn.switchTo(row.label)}`,
+            run: () => void selectConnection(row.id, { allowInteractive: true })
+          })),
+          {
+            icon: Globe,
+            id: 'source-add',
+            keywords: ['gateway', 'source', 'add', 'new', 'connection'],
+            label: conn.add,
+            run: go(`${SETTINGS_ROUTE}/gateway`)
+          }
+        ]
+      }
+    ]
 
     // Core destinations come from the registry (app/shell/nav-contrib.ts), not
     // from a hardcoded list here — MJX-52 made the app's own nav contributions,

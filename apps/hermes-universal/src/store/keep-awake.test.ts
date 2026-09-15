@@ -192,7 +192,7 @@ describe('keep-awake leases', () => {
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('set_keep_awake', { on: false }))
   })
 
-  it('is idempotent per disposer — a double release does not drop someone else\'s hold', async () => {
+  it("is idempotent per disposer — a double release does not drop someone else's hold", async () => {
     const first = holdKeepAwake('bot-room')
     holdKeepAwake('bot-room')
 

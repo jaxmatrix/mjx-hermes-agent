@@ -121,9 +121,9 @@ describe('requestForSession', () => {
     $activeProfile.set('work')
     $gatewayState.set('closed')
 
-    const error = (await requestForSession('s1', 'session.resume').catch(
-      (e: unknown) => e
-    )) as InstanceType<typeof SessionRouteError>
+    const error = (await requestForSession('s1', 'session.resume').catch((e: unknown) => e)) as InstanceType<
+      typeof SessionRouteError
+    >
 
     expect(error.scopeKey).toBe('work')
     expect(`${error.message} ${error.scopeKey}`).not.toMatch(/https?:|127\.0\.0\.1|ws:/)

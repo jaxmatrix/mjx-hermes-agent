@@ -35,7 +35,9 @@ const { isSessionNotFoundError, SessionRecoveryAborted, withSessionNotFoundResum
 // The owning-profile lookup is a hook the real `store/session` registers at
 // module init; this stands in for it with the same two fast paths, so the route
 // assertions below still exercise the real router.
-setSessionOwnerResolver(id => knownSessionProfile(id) ?? (sessionProfileIsAmbiguous() ? resolveSessionProfile() : undefined))
+setSessionOwnerResolver(
+  id => knownSessionProfile(id) ?? (sessionProfileIsAmbiguous() ? resolveSessionProfile() : undefined)
+)
 
 const notFound = () => new Error('session not found: dead-runtime')
 

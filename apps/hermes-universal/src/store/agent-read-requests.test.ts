@@ -376,10 +376,7 @@ describe('tour.request', () => {
 
     // Same context argument, for symmetry: a bot session's tour must not be
     // able to take a surface the user is not looking at either.
-    expect(driver).toHaveBeenCalledWith(
-      { action: 'targets', surface: 'app', selector: '.rail' },
-      { sessionId: null }
-    )
+    expect(driver).toHaveBeenCalledWith({ action: 'targets', surface: 'app', selector: '.rail' }, { sessionId: null })
     expect(rpc).toHaveBeenCalledWith('tour.respond', {
       request_id: 't2',
       text: JSON.stringify({ matched: 2, step: 0 })

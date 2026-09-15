@@ -176,7 +176,6 @@ describe('the journaling pass', () => {
   })
 })
 
-
 // ---------------------------------------------------------------------------
 // I2 / I3 (MJXHRM-480): the paint lane is structurally invisible here.
 //
@@ -211,7 +210,10 @@ describe('a painted cold open', () => {
 
     rekeySession(key, 'runtime-painted', {
       busy: false,
-      messages: [user('h1', 'a completely different question'), { id: 'h2', parts: [{ text: 'the real answer', type: 'text' }], role: 'assistant' }],
+      messages: [
+        user('h1', 'a completely different question'),
+        { id: 'h2', parts: [{ text: 'the real answer', type: 'text' }], role: 'assistant' }
+      ],
       runtimeSessionId: 'runtime-painted',
       storedSessionId: storedId
     })

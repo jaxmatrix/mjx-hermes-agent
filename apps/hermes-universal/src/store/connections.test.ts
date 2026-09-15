@@ -29,7 +29,13 @@ import {
   takePendingConnectionHint
 } from './active-connection'
 import { $latchedConnections, __resetConnectionLatches } from './connection-latches'
-import { $connectionsRegistry, $hasMultipleConnections, __testing, lastProfileFor, selectConnection } from './connections'
+import {
+  $connectionsRegistry,
+  $hasMultipleConnections,
+  __testing,
+  lastProfileFor,
+  selectConnection
+} from './connections'
 
 const RESOLVED = {
   connectionId: 'studio',
@@ -83,9 +89,7 @@ beforeEach(() => {
     await dial()
     const hint = takePendingConnectionHint()
 
-    publishActiveConnection(
-      describeConnection({ authMode: 'none', baseUrl: RESOLVED.baseUrl, mode: 'remote' }, hint)
-    )
+    publishActiveConnection(describeConnection({ authMode: 'none', baseUrl: RESOLVED.baseUrl, mode: 'remote' }, hint))
   })
 })
 
@@ -172,11 +176,14 @@ describe('selectConnection', () => {
     // previous connection and we SAY so (the #89622 silence lesson).
     softSwitchGateway.mockImplementation(async () => {})
     publishActiveConnection(
-      describeConnection({ authMode: 'none', baseUrl: 'https://old.test', mode: 'remote' }, {
-        connectionId: 'old',
-        dialConnectionId: 'old',
-        label: 'Old'
-      })
+      describeConnection(
+        { authMode: 'none', baseUrl: 'https://old.test', mode: 'remote' },
+        {
+          connectionId: 'old',
+          dialConnectionId: 'old',
+          label: 'Old'
+        }
+      )
     )
 
     await selectConnection('studio')
@@ -196,7 +203,12 @@ describe('selectConnection', () => {
 
     invoke.mockImplementation(async (command: string, args: { connectionId?: string }) =>
       command === 'connections_resolve'
-        ? { ...RESOLVED, connectionId: args.connectionId, dialConnectionId: args.connectionId, label: args.connectionId }
+        ? {
+            ...RESOLVED,
+            connectionId: args.connectionId,
+            dialConnectionId: args.connectionId,
+            label: args.connectionId
+          }
         : undefined
     )
     // The connect helper takes its hint SYNCHRONOUSLY, exactly as the real ones
@@ -205,9 +217,7 @@ describe('selectConnection', () => {
     connect.mockImplementation(async () => {
       const hint = takePendingConnectionHint()
 
-      publishActiveConnection(
-        describeConnection({ authMode: 'none', baseUrl: RESOLVED.baseUrl, mode: 'remote' }, hint)
-      )
+      publishActiveConnection(describeConnection({ authMode: 'none', baseUrl: RESOLVED.baseUrl, mode: 'remote' }, hint))
     })
     softSwitchGateway.mockImplementation(async (_mode: string, dial: () => Promise<void>) => {
       await dial()

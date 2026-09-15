@@ -205,8 +205,7 @@ const watchPreviewTileMirror = paneMirror<PreviewTarget>({
   // handing it the file glyphs put two disabled buttons and a live `diff` that
   // wrote a mode nothing reads on its strip. Same gate desktop applies (there:
   // console/DevTools glyphs only for a `url` tab).
-  stripTools: path =>
-    isBrowserTab(path) ? browserStripTools() : isArtifactTab(path) ? [] : previewStripTools(path),
+  stripTools: path => (isBrowserTab(path) ? browserStripTools() : isArtifactTab(path) ? [] : previewStripTools(path)),
   render: path => <PreviewTilePane path={path} />,
   // Per-path view mode, caps and dirty flag are dropped by `closePreviewTab`
   // itself, so every door out (the ✕, ⌘W, the close verbs, the rail) forgets.

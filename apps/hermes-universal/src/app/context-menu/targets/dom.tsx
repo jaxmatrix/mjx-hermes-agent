@@ -6,11 +6,7 @@ import {
   saveImageFrom,
   withEditableFocus
 } from '@/app/context-menu/actions'
-import type {
-  ContextMenuItemContext,
-  ContextMenuItemSpec,
-  ContextMenuSection
-} from '@/app/context-menu/registry'
+import type { ContextMenuItemContext, ContextMenuItemSpec, ContextMenuSection } from '@/app/context-menu/registry'
 import { registerContextTarget } from '@/app/context-menu/registry'
 import type { ContextMenuDomTarget } from '@/app/context-menu/target'
 import { isWebUrl, resolveDomTarget } from '@/app/context-menu/target'
@@ -163,9 +159,10 @@ function spellingSection(context: ContextMenuItemContext<ContextMenuDomTarget>):
   }))
 }
 
-function editSection(
-  context: ContextMenuItemContext<ContextMenuDomTarget>
-): { edit: ContextMenuSection; selectAll: ContextMenuSection } {
+function editSection(context: ContextMenuItemContext<ContextMenuDomTarget>): {
+  edit: ContextMenuSection
+  selectAll: ContextMenuSection
+} {
   const { clipboardHasText, data, t } = context
 
   if (!data.editable) {

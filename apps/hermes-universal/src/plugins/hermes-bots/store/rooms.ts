@@ -16,21 +16,9 @@ import { botHandle, groupMemberKey, groupSessionTitle, MAIN_THREAD, newRoomId } 
 import { resolveResponders } from '../model/mentions'
 import type { BotMeta, RoomMemberRef, RoomMembership } from '../model/meta'
 import { buildTurnPrompt, buildUserTurnPrompt } from '../model/prompt'
-import {
-  bumpRoom,
-  disbandTombstone,
-  membershipFor,
-  type Room,
-  roomSizeRefusal,
-  withRoom
-} from '../model/rooms'
+import { bumpRoom, disbandTombstone, membershipFor, type Room, roomSizeRefusal, withRoom } from '../model/rooms'
 import type { RosterRow } from '../model/roster'
-import {
-  buildRoomLog,
-  type MemberTranscript,
-  type RoomLog,
-  watermarkFromMemberSession
-} from '../model/transcript'
+import { buildRoomLog, type MemberTranscript, type RoomLog, watermarkFromMemberSession } from '../model/transcript'
 
 import {
   $rooms,

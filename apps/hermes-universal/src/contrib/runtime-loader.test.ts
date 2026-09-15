@@ -211,8 +211,7 @@ function fakeEntry(key: string, stamp: string): DiskEntry {
     : { defaultEnabled: true, file: `/root/desktop-plugins/${name}/plugin.js`, name, root: 'desktop-plugins', stamp }
 }
 
-const entryKey = (entry: DiskEntry) =>
-  entry.root === 'agent-packages' ? `${PACKAGE_PREFIX}${entry.name}` : entry.name
+const entryKey = (entry: DiskEntry) => (entry.root === 'agent-packages' ? `${PACKAGE_PREFIX}${entry.name}` : entry.name)
 
 function fakeDoor(files: Map<string, FakeFile>, over: Partial<PluginDisk> = {}): PluginDisk {
   return {

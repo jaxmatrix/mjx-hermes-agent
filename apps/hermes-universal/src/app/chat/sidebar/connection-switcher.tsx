@@ -71,7 +71,11 @@ export function ConnectionSwitcher() {
       <PopoverTrigger asChild>
         <Button className="w-full justify-start gap-2 px-2" size="sm" variant="ghost">
           <Codicon className="shrink-0 text-muted-foreground" name="server" size="1rem" />
-          <span className="min-w-0 flex-1 truncate text-start">{pending ? t.settings.connections.connecting(registry.connections.find(row => row.id === pending)?.label ?? '') : label}</span>
+          <span className="min-w-0 flex-1 truncate text-start">
+            {pending
+              ? t.settings.connections.connecting(registry.connections.find(row => row.id === pending)?.label ?? '')
+              : label}
+          </span>
           <Codicon className="shrink-0 text-muted-foreground" name="chevron-down" size="0.9rem" />
         </Button>
       </PopoverTrigger>
@@ -114,9 +118,7 @@ export function ConnectionSwitcher() {
                   size="0.9rem"
                 />
                 <span className="min-w-0 flex-1 truncate">{row.label}</span>
-                {latched[row.id] && (
-                  <Codicon className="shrink-0 text-amber-500" name="warning" size="0.9rem" />
-                )}
+                {latched[row.id] && <Codicon className="shrink-0 text-amber-500" name="warning" size="0.9rem" />}
                 {endpoint && <span className="shrink-0 truncate text-xs text-muted-foreground">{endpoint}</span>}
               </button>
             )

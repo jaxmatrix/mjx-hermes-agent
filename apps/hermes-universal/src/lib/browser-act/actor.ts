@@ -102,10 +102,7 @@ export async function actInGuest(request: ActRequest): Promise<ActResult> {
   try {
     await ensureEngine()
 
-    const raw = await evalInGuest(
-      `JSON.stringify(window.__hermesAct.run(${JSON.stringify(request)}))`,
-      ACT_TIMEOUT_MS
-    )
+    const raw = await evalInGuest(`JSON.stringify(window.__hermesAct.run(${JSON.stringify(request)}))`, ACT_TIMEOUT_MS)
 
     const result = JSON.parse(unwrapJson(raw)) as ActResult
 

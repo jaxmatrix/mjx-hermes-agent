@@ -92,7 +92,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
-const num = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
+const num = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined
 
 function decodeMemberRef(raw: unknown): null | RoomMemberRef {
   if (!isRecord(raw)) {

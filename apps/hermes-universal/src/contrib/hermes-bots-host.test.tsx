@@ -117,8 +117,9 @@ describe('the Bot Mode plugin at the host boundary', () => {
   it('answers @ completions synchronously, and empty before any roster is loaded', async () => {
     register(await loadPlugin())
 
-    const source = registry.getArea(COMPOSER_AREAS.atCompletions).find(entry => entry.id === 'hermes-bots:mention-completions')
-      ?.data as ComposerAtCompletionSource
+    const source = registry
+      .getArea(COMPOSER_AREAS.atCompletions)
+      .find(entry => entry.id === 'hermes-bots:mention-completions')?.data as ComposerAtCompletionSource
 
     // SYNCHRONOUS: this runs on every keystroke past the debounce. A promise
     // here would be a fetch on the composer's hot path.

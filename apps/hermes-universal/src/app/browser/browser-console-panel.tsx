@@ -40,7 +40,10 @@ export function BrowserConsolePanel() {
   const chosen = entries.filter((_, index) => selected.has(index))
 
   return (
-    <div className="flex max-h-[40%] min-h-24 flex-col border-t border-(--ui-stroke-tertiary) bg-(--ui-bg-primary)" data-glass-opaque="">
+    <div
+      className="flex max-h-[40%] min-h-24 flex-col border-t border-(--ui-stroke-tertiary) bg-(--ui-bg-primary)"
+      data-glass-opaque=""
+    >
       <div className="flex items-center gap-1 border-b border-(--ui-stroke-tertiary) px-2 py-1 text-[0.6875rem]">
         <span className="font-medium">{t.preview.console.title}</span>
         <span className="opacity-60">{t.preview.console.messages(entries.length)}</span>
@@ -55,7 +58,9 @@ export function BrowserConsolePanel() {
                 return
               }
 
-              requestComposerInsert(`${t.preview.console.promptHeader}\n\n\`\`\`\n${textOf(rows)}\n\`\`\``, { mode: 'block' })
+              requestComposerInsert(`${t.preview.console.promptHeader}\n\n\`\`\`\n${textOf(rows)}\n\`\`\``, {
+                mode: 'block'
+              })
               notify({ message: t.preview.console.sentMessage(rows.length), title: t.preview.console.sentTitle })
             }}
           />

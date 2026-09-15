@@ -5,7 +5,6 @@ vi.mock('./notifications', () => ({ notify: vi.fn() }))
 import { $mcpInstallRequest, requestMcpInstallFromDeepLink } from './mcp-deeplink-install'
 import { notify } from './notifications'
 
-
 beforeEach(() => {
   $mcpInstallRequest.set(null)
   vi.mocked(notify).mockClear()

@@ -20,13 +20,7 @@ import { $activeConnection } from '@/store/active-connection'
 import { atom, computed } from '@/store/atom'
 import { isLatched } from '@/store/connection-latches'
 import { notifyError } from '@/store/notifications'
-import {
-  $previewTabs,
-  BROWSER_TAB_PATH,
-  closePreviewTab,
-  isBrowserTab,
-  openBrowserPreviewTab
-} from '@/store/preview'
+import { $previewTabs, BROWSER_TAB_PATH, closePreviewTab, isBrowserTab, openBrowserPreviewTab } from '@/store/preview'
 import { ownsPersistedAppState } from '@/store/windows'
 
 /**
@@ -114,11 +108,7 @@ export const $browserRestoredTab = persistentAtom<null | PersistedTab>('hermes.b
  * the user's logins and password manager, and an in-app browser that does not
  * is a downgrade for most links.
  */
-export const $openLinksInApp = persistentAtom(
-  'hermes.browser.openLinksInApp',
-  !matchesCoarsePointer(),
-  Codecs.bool
-)
+export const $openLinksInApp = persistentAtom('hermes.browser.openLinksInApp', !matchesCoarsePointer(), Codecs.bool)
 
 export const $browserConsoleOpen = persistentAtom('hermes.browser.consoleOpen', false, Codecs.bool)
 

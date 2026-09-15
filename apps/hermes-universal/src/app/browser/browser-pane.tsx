@@ -29,7 +29,12 @@ import {
   markGuestOpen,
   takePendingNavigation
 } from '@/store/browser'
-import { $browserConsole, appendBrowserConsole, drainBrowserConsole, isModuleMimeFailure } from '@/store/browser-console'
+import {
+  $browserConsole,
+  appendBrowserConsole,
+  drainBrowserConsole,
+  isModuleMimeFailure
+} from '@/store/browser-console'
 import { $guestOccluded } from '@/store/browser-occlusion'
 import { notify, notifyError } from '@/store/notifications'
 import { $activeStoredSessionId } from '@/store/session'
@@ -430,7 +435,10 @@ function Refusal({ notes, url }: { notes: string[]; url?: string }) {
 
   return (
     <div
-      className={cn('flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-xs', IS_MOBILE && 'px-6')}
+      className={cn(
+        'flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-xs',
+        IS_MOBILE && 'px-6'
+      )}
       data-glass-opaque=""
     >
       <Codicon name="globe" size="1rem" />

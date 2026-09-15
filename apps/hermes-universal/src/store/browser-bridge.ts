@@ -9,7 +9,13 @@ import {
   registerPreviewActor,
   registerPreviewReader
 } from '@/store/agent-read-requests'
-import { $browserState, $browserSupported, closeInAppBrowser, ensureBrowserCapabilities, openInAppBrowser } from '@/store/browser'
+import {
+  $browserState,
+  $browserSupported,
+  closeInAppBrowser,
+  ensureBrowserCapabilities,
+  openInAppBrowser
+} from '@/store/browser'
 import { appendBrowserConsole } from '@/store/browser-console'
 import { $chatBubbles } from '@/store/chat-bubbles'
 import { addGatewayEventListener } from '@/store/gateway'
