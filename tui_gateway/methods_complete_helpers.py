@@ -103,6 +103,45 @@ def _fuzzy_basename_rank(name: str, query: str) -> tuple[int, int] | None:
     return (4, len(name)) if all(any(c == q for c in it) for q in ql) else None
 
 
+def _fuzzy_rank_paths(root: str, query: str) -> list[tuple[tuple[int, int], str, str, bool]]:
+    """Every path under ``root`` that matches ``query``, as ``(rank, rel, basename, is_dir)`` best-first.
+
+    The one fuzzy ranker: ``complete.path``'s bare ``@name`` completions and the dashboard's
+    ``GET /api/fs/search`` both read it, so the TUI and the file explorer cannot disagree about
+    what matches. ``rel`` is ``/``-separated and relative to ``root``; ties break folders-first,
+    then shorter path, then lexicographically."""
+    ranked: list[tuple[tuple[int, int], str, str, bool]] = []
+    walked_dirs: set[str] = set()
+    seen: set[str] = set()
+    want_hidden = query.startswith(".")
+
+    def _consider(rel: str, name: str, is_dir: bool) -> None:
+        if rel in seen or (name.startswith(".") and not want_hidden):
+            return
+        if (rank := _fuzzy_basename_rank(name, query)) is not None:
+            seen.add(rel)
+            ranked.append((rank, rel, name, is_dir))
+
+    # Seed with root's immediate children: `_list_repo_files` is capped at _FUZZY_CACHE_MAX_FILES
+    # and the non-git fallback walk can burn the whole budget on one deep subtree.
+    with contextlib.suppress(OSError):
+        for entry in os.listdir(root):
+            if entry not in _FUZZY_FALLBACK_EXCLUDES:
+                _consider(entry, entry, os.path.isdir(os.path.join(root, entry)))
+    for rel in _list_repo_files(root):
+        _consider(rel, os.path.basename(rel), False)
+        # Rank each ancestor dir too — a folder with no name-matching file inside is otherwise invisible.
+        parent = os.path.dirname(rel)
+        while parent and parent not in walked_dirs:
+            walked_dirs.add(parent)
+            _consider(parent, os.path.basename(parent), True)
+            parent = os.path.dirname(parent)
+
+    # Same rank tier: folders first, so `@Desktop` leads with the folder.
+    ranked.sort(key=lambda r: (r[0], not r[3], len(r[1]), r[1]))
+    return ranked
+
+
 def _abs_completion_prefix_exists(path_part: str) -> bool:
     """True when ``path_part`` reads sensibly as an absolute path (parent exists and a
     partially-typed final segment matches an entry): decides `@/foo` = `/foo` vs cwd `foo`."""

@@ -51,6 +51,17 @@ interface AuxTaskCopy {
 
 export interface Translations {
   common: {
+    fileDownload: {
+      saved: string
+      failed: string
+      notFound: string
+      forbidden: string
+      tooLarge: string
+      unauthorized: string
+      noGateway: string
+      unreachable: string
+      writeFailed: string
+    }
     apply: string
     back: string
     save: string
@@ -137,6 +148,13 @@ export interface Translations {
     revealExplorer: string
     revealFileManager: string
     revealInSidebar: string
+    download: string
+    /** Menu action: download, but choose the destination in a save dialog. */
+    saveAs: string
+    /** Folder-only menu row: make this the working directory (and the tree's
+     *  root, which follows it). */
+    openFolderHere: string
+    setAsProjectFolder: string
     actions: string
     copyPath: string
     copyRelativePath: string
@@ -147,6 +165,19 @@ export interface Translations {
     deleteTitle: (name: string) => string
     deleteBody: string
     pathCopied: string
+  }
+
+  /** The "move this chat here, or only new ones?" question a folder pick asks
+   *  (store/explorer-path). */
+  explorerPath: {
+    title: string
+    body: string
+    moveChat: string
+    newChatsOnly: string
+    /** Why a folder pick did nothing: the focused chat is mid-turn, and both
+     *  `session.cwd.set` and `session.workspace.move` refuse there. */
+    busy: string
+    moveFailed: string
   }
 
   notifications: {
@@ -867,6 +898,9 @@ export interface Translations {
       saveFailed: string
       connectingTitle: string
       reconnectingTo: (target: string) => string
+      /** Shown once the supervisor has STOPPED retrying, in place of the spinner. */
+      connectStoppedTitle: string
+      connectStoppedTo: (target: string) => string
       useDifferentGateway: string
       startOver: string
     }
@@ -1877,6 +1911,7 @@ export interface Translations {
     chat: string
     copyUrl: string
     copyPath: string
+    download: (name: string) => string
   }
 
   sidebar: {
@@ -1898,7 +1933,6 @@ export interface Translations {
     allPinned: string
     shiftClickHint: string
     noWorkspace: string
-    noProject: string
     projectEmpty: string
     noSessions: string
     /** The sidebar header's filter/view menu. */
@@ -2588,6 +2622,9 @@ export interface Translations {
     loadingFiles: string
     filterFiles: string
     filterNoMatches: string
+    searchFiles: string
+    searchNoMatches: string
+    goHome: string
     terminalHide: string
     terminalConnecting: string
     terminalReconnecting: string
@@ -2643,7 +2680,8 @@ export interface Translations {
 
   mobileWorkspace: {
     backToChat: string
-    noProject: string
+    /** Title shown in the bar while the Workspace panel is open. */
+    menu: string
     tabsAria: string
     review: string
     files: string
@@ -3127,6 +3165,38 @@ export interface Translations {
   /** The system tray's menu (desktop). Native copy, so it is PUSHED down from
    *  `store/tray.ts` — `src-tauri/src/tray.rs` builds the menu with English
    *  literals and cannot read this catalog. */
+  /** The titlebar downloads tray. A gateway file or
+   *  folder being written to this device, wherever in the app it was asked for. */
+  downloads: {
+    /** Tray button label + dropdown heading. */
+    title: string
+    /** Tooltip while transfers are in flight. */
+    inProgress: (count: number) => string
+    /** Row action: stop a transfer that has not finished. */
+    cancel: string
+    /** Row action: select the finished file in the OS file manager. */
+    reveal: string
+    /** Row action: hand the finished file to the OS. */
+    open: string
+    /** Row action: take a finished row out of the list. */
+    dismiss: string
+    /** Menu action: take every finished row out at once. */
+    clearFinished: string
+    /** Panel body when nothing has been downloaded this session. */
+    empty: string
+    /** Menu action on a directory: download it as a zip. */
+    downloadFolder: string
+    /** Byte counter under the bar, e.g. "12.4 MB of 240 MB". */
+    ofTotal: (received: string, total: string) => string
+    /** One string per `DownloadStatus`. */
+    status: {
+      queued: string
+      running: string
+      done: string
+      cancelled: string
+      failed: string
+    }
+  }
   tray: {
     show: string
     /** Summon the HUD from the tray — the only route to it on a machine where

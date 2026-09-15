@@ -21,7 +21,7 @@
 //! as `InvokeResponseBody::Raw`, which reaches JS as an `ArrayBuffer` — no
 //! encode, no parse, no per-element copy.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -292,8 +292,10 @@ pub fn redact_secret(message: String, secret: &str) -> String {
     message.replace(secret, "***")
 }
 
-/// Which gateway bases may have their RFC 8252 bearer attached to a request, and
-/// which origins have already been checked and found to have none.
+/// Which gateway bases may have their RFC 8252 bearer attached to a request,
+/// which origins have already been checked and found to have none, and the
+/// token set for each — held in memory so the OS keyring is not read again for
+/// every single request.
 ///
 /// This registry is the whole guard against leaking the credential to a third
 /// party: a request is authenticated only when its URL sits *under* a base we
@@ -301,9 +303,14 @@ pub fn redact_secret(message: String, secret: &str) -> String {
 /// The `checked` half only keeps the origin fallback in
 /// [`TransportState::bearer_base_for_url`] from hitting the OS keyring once per
 /// request to some unrelated host.
+///
+/// The cached set lives INSIDE `known` rather than in a map beside it so the two
+/// cannot drift: a base that is authenticated and a base whose token we hold are
+/// the same fact, and a cache that outlived its registration would attach a
+/// bearer the guard above had already withdrawn.
 #[derive(Default)]
 struct BearerBases {
-    known: BTreeSet<String>,
+    known: BTreeMap<String, crate::oauth::native::NativeTokenSet>,
     checked: BTreeSet<String>,
 }
 
@@ -440,14 +447,33 @@ impl TransportState {
         &self.cookies
     }
 
-    /// Record that `base` holds a native (bearer) session, so requests under it
-    /// are authenticated with it. Called by oauth.rs whenever a token set is
-    /// written to, or found in, the keyring.
-    pub fn register_bearer_base(&self, base: &str) {
+    /// Record that `base` holds a native (bearer) session — so requests under it
+    /// are authenticated with it — and keep its token set in memory.
+    ///
+    /// Called by oauth.rs whenever a token set is written to, or read out of,
+    /// the keyring. Holding the set here is what stops a keyring read happening
+    /// on every outbound request. The keyring stays the system of record: this
+    /// is a read-through cache of what it last told us, never a substitute for
+    /// it, and both `note_no_bearer_base` and `forget_bearer_base` drop it.
+    ///
+    /// There is deliberately no way to register a base WITHOUT its tokens. The
+    /// two are one fact — "this gateway is authenticated, and here is what with"
+    /// — and splitting them is how a cache drifts out of step with the guard
+    /// that decides who may receive the credential.
+    pub fn cache_bearer_tokens(&self, base: &str, tokens: crate::oauth::native::NativeTokenSet) {
         if let Ok(mut bases) = self.bearer_bases.lock() {
             bases.checked.remove(base);
-            bases.known.insert(base.to_string());
+            bases.known.insert(base.to_string(), tokens);
         }
+    }
+
+    /// The cached token set for `base`, if one is in memory.
+    ///
+    /// `None` covers both "not authenticated" and "authenticated but not cached
+    /// yet"; the caller answers either by going to the keyring, so they do not
+    /// need telling apart here.
+    pub fn cached_bearer_tokens(&self, base: &str) -> Option<crate::oauth::native::NativeTokenSet> {
+        self.bearer_bases.lock().ok()?.known.get(base).cloned()
     }
 
     /// Record that `base` has no native session, so the origin fallback below
@@ -477,7 +503,7 @@ impl TransportState {
     /// Otherwise the URL's ORIGIN is offered once, so a session left in the
     /// keyring by a previous run is found on the first request of a new one
     /// rather than only after the webview happens to call `oauth_status`. The
-    /// caller answers that offer by calling `register_bearer_base` or
+    /// caller answers that offer by calling `cache_bearer_tokens` or
     /// `note_no_bearer_base`, and the origin is never offered again.
     ///
     /// That one-shot offer is confined to the gateway's own path namespaces —
@@ -493,7 +519,7 @@ impl TransportState {
         // `https://host/hermes` wins over a bare `https://host`.
         if let Some(base) = bases
             .known
-            .iter()
+            .keys()
             .rev()
             .find(|base| url_is_under(url, base))
         {
@@ -622,10 +648,25 @@ fn caller_set_authorization(headers: &HashMap<String, String>) -> bool {
         .any(|key| key.eq_ignore_ascii_case("authorization"))
 }
 
+/// Should a 401 be replayed after forcing a rotation?
+///
+/// Yes whenever the credential we would send is not the one that was just
+/// refused — and "no credential at all" is a different credential. That arm is
+/// the one mobile depends on: a refresh that fails drops the stored session
+/// (`oauth::ensure_native_tokens`) and returns `None`, and replaying WITHOUT the
+/// dead bearer is what lets the gated middleware finally read the cookie session
+/// it refuses to look at while an invalid bearer is present.
+///
+/// No when the rotation handed back the same token, because that is the one case
+/// where the replay is guaranteed to be refused identically.
+fn bearer_retry_warranted(sent: Option<&str>, rotated: Option<&str>) -> bool {
+    rotated != sent
+}
+
 /// Attach the gateway bearer, if we hold one. Split out so the "the header is
 /// actually on the request" invariant is testable without a network or a
 /// keyring: `RequestBuilder::build` produces the request without sending it.
-fn apply_gateway_bearer(
+pub(crate) fn apply_gateway_bearer(
     builder: reqwest::RequestBuilder,
     bearer: Option<&str>,
 ) -> reqwest::RequestBuilder {
@@ -732,7 +773,7 @@ fn upload_lost_to_redirect(req: &HttpReq, final_url: &reqwest::Url) -> bool {
 /// The caller wins for the same reason `caller_set_authorization` exists: an MCP
 /// or marketplace panel talking to a third-party service with its own key must
 /// not have it overwritten by a credential meant for somewhere else.
-fn apply_connection_auth(
+pub(crate) fn apply_connection_auth(
     mut builder: reqwest::RequestBuilder,
     caller_headers: &HashMap<String, String>,
     auth: Option<&ConnectionAuth>,
@@ -840,11 +881,27 @@ pub async fn http_request(
     // try exactly once more — this is the retry that used to live in the JS
     // ws-ticket mint. Replaying is safe for any method: a 401 means the gateway
     // rejected the request before acting on it.
+    //
+    // The retry fires whenever the credential CHANGED, and "changed to nothing"
+    // counts. A refresh that FAILS is the case that matters on mobile: coming back
+    // from the background the access token is past its skew, the refresh runs, and
+    // if the refresh token has itself expired or rotated away `ensure_native_tokens`
+    // drops the stored set and returns None. Requiring `rotated.is_some()` skipped
+    // the replay in exactly that case and handed the raw 401 back to the ws-ticket
+    // mint, which phrases it as "Session expired — sign in again".
+    //
+    // That 401 is not the truth about the session. The gated middleware
+    // short-circuits on a presented-but-invalid bearer and answers 401 WITHOUT
+    // reading the session cookies, so a live cookie session is invisible on that
+    // request. `clear_native_tokens` has already forgotten the base, so the replay
+    // below carries no Authorization header at all and the gateway finally falls
+    // through to the cookie session it was never allowed to see. The connection's
+    // own static credential (`connection`) rides along unchanged either way.
     if resp.status() == reqwest::StatusCode::UNAUTHORIZED && bearer.is_some() {
         if let Some(base) = &auth_base {
             let rotated = crate::oauth::gateway_bearer(&app, state.inner(), base, true).await;
 
-            if rotated.is_some() && rotated != bearer {
+            if bearer_retry_warranted(bearer.as_deref(), rotated.as_deref()) {
                 resp = send_http(
                     &state.http,
                     &method,
@@ -1488,8 +1545,9 @@ pub fn cookies_export(state: State<'_, TransportState>) -> Result<String, String
 ///   2. A parse failure is LOGGED rather than swallowed — a session that stopped
 ///      surviving restarts is otherwise invisible, and a keyring blob that stops
 ///      decrypting is exactly the shape that failure takes.
-///   3. A payload that parses to zero live cookies never replaces a jar that
-///      already holds some.
+///   3. A jar that already holds a live session is never replaced at all — not
+///      even by a payload that parses cleanly. See the check itself for why the
+///      live jar is the more trustworthy of the two.
 ///
 /// The JS layer (lib/session-persist) guards (1) too; this is the boundary, and
 /// the command is callable regardless of what that layer does.
@@ -1511,13 +1569,79 @@ pub fn cookies_import(state: State<'_, TransportState>, json: String) -> Result<
         .lock()
         .map_err(|_| "cookie jar poisoned".to_string())?;
 
-    if loaded.iter_unexpired().next().is_none() && store.iter_unexpired().next().is_some() {
-        log::warn!("[transport] stored cookie jar held no live cookies; keeping the live jar");
+    // A live jar always wins, whatever the stored one holds.
+    //
+    // This used to refuse only when the STORED blob was empty, which left the
+    // worse case open: a stale-but-unexpired snapshot clobbering a jar that had
+    // since been rotated forward. The import is a boot-time rehydrate and the jar
+    // is empty then, so in the normal path nothing changes — but a webview that
+    // reloads while the Rust process survives (an Android activity recreation, a
+    // dev reload) runs this against a jar that is AHEAD of the keyring, and
+    // replacing it there hands the gateway credentials it has already rotated
+    // away. Against a provider with refresh-token reuse detection that reads as an
+    // attack and revokes the session outright.
+    //
+    // This is still the ONE shared jar (MJXHRM-526 splits it per connection), so
+    // "live" means live for any gateway; the rule is the same once it is split.
+    if store.iter_unexpired().next().is_some() {
+        log::info!("[transport] the live cookie jar already holds a session; keeping it");
         return Ok(());
     }
 
     *store = loaded;
     Ok(())
+}
+
+/// Drop every cookie the shared jar would send to `base`. Sign-out only.
+///
+/// `POST /auth/logout` normally clears the session by answering with max-age=0
+/// `Set-Cookie` headers, which reqwest applies to this jar in the same round
+/// trip. That covers the happy path and nothing else: a sign-out with no network,
+/// or against a gateway that is down, leaves the live session cookie sitting in
+/// the jar. It would then be exported to the keyring by the next background
+/// flush, and a user who deliberately signed out would find themselves signed
+/// back in on the following launch. So the jar is cleared locally too, whatever
+/// the logout POST did.
+///
+/// Scoped to ONE gateway, not the whole jar. The jar is still shared by every
+/// registered connection (MJXHRM-446; MJXHRM-526 splits it), so emptying it
+/// wholesale would sign the user out of every other cookie-backed source as a
+/// side effect of signing out of this one.
+#[tauri::command]
+pub fn cookies_clear(state: State<'_, TransportState>, base: String) -> Result<(), String> {
+    let url = reqwest::Url::parse(&base).map_err(|e| format!("invalid gateway URL: {e}"))?;
+    let mut store = state
+        .cookies()
+        .lock()
+        .map_err(|_| "cookie jar poisoned".to_string())?;
+
+    clear_cookies_for(&mut store, &url);
+    Ok(())
+}
+
+/// Remove every cookie, expired or not, whose domain matches `url`'s host.
+///
+/// Domain, not domain-and-path: a gateway mounted under a path prefix still owns
+/// the cookies it set on `/`, and a cookie scoped to a sub-path of this host is
+/// this host's cookie all the same. A cookie shared with another gateway through
+/// a parent `Domain=` attribute goes too — it is sent to this gateway, so it is
+/// part of the session being signed out.
+fn clear_cookies_for(store: &mut cookie_store::CookieStore, url: &reqwest::Url) {
+    let doomed: Vec<(String, String, String)> = store
+        .iter_any()
+        .filter(|cookie| cookie.domain.matches(url))
+        .map(|cookie| {
+            (
+                String::from(&cookie.domain),
+                String::from(&cookie.path),
+                cookie.name().to_string(),
+            )
+        })
+        .collect();
+
+    for (domain, path, name) in doomed {
+        store.remove(&domain, &path, &name);
+    }
 }
 
 #[cfg(test)]
@@ -1527,11 +1651,12 @@ mod tests {
     use tauri::ipc::{Channel, InvokeResponseBody};
 
     use super::{
-        apply_connection_auth, apply_gateway_bearer, apply_ws_token, caller_set_authorization,
-        forget_socket, pump_reader, redact_bearer, redact_error, redact_message, redact_secret,
-        redact_url, safe_upload_filename, send_binary_frame, take_window_sockets, upload_form,
-        upload_lost_to_redirect, visible_response_headers, ws_upgrade_headers, ConnectionAuth,
-        HashMap, HttpReq, HttpUpload, Message, ReaderSink, SocketHandle, TransportState,
+        apply_connection_auth, apply_gateway_bearer, apply_ws_token, bearer_retry_warranted,
+        caller_set_authorization, clear_cookies_for, forget_socket, pump_reader, redact_bearer,
+        redact_error, redact_message, redact_secret, redact_url, safe_upload_filename,
+        send_binary_frame, take_window_sockets, upload_form, upload_lost_to_redirect,
+        visible_response_headers, ws_upgrade_headers, ConnectionAuth, HashMap, HttpReq, HttpUpload,
+        Message, ReaderSink, SocketHandle, TransportState,
     };
 
     /// A registry entry shaped exactly like a live one: a writer task parked on
@@ -1763,6 +1888,57 @@ mod tests {
             .is_none());
     }
 
+    // ── signing out of one gateway ───────────────────────────────────────────
+
+    /// The per-connection rule, rather than a whole-jar clear: signing out of one
+    /// gateway must not sign the user out of another source sharing the jar.
+    #[test]
+    fn clearing_one_gateway_keeps_every_other_gateways_cookies() {
+        let a = reqwest::Url::parse("https://gw-a.example.com/").unwrap();
+        let b = reqwest::Url::parse("https://gw-b.example.com/").unwrap();
+        let mut store = cookie_store::CookieStore::default();
+
+        store
+            .parse("hermes_session_rt=a-rt; Path=/; Max-Age=3600", &a)
+            .unwrap();
+        store
+            .parse("hermes_session_at=a-at; Path=/api; Max-Age=3600", &a)
+            .unwrap();
+        store
+            .parse("hermes_session_rt=b-rt; Path=/; Max-Age=3600", &b)
+            .unwrap();
+
+        clear_cookies_for(&mut store, &a);
+
+        assert_eq!(store.iter_any().filter(|c| c.domain.matches(&a)).count(), 0);
+        let left: Vec<String> = store.iter_any().map(|c| c.value().to_string()).collect();
+        assert_eq!(left, vec!["b-rt".to_string()]);
+    }
+
+    // ── replaying a 401 after a forced rotation ──────────────────────────────
+
+    /// The mobile bug this exists for: the forced refresh FAILS because the
+    /// refresh token has itself expired, and `gateway_bearer` returns None. The
+    /// replay still has to happen — without the dead bearer — or a live cookie
+    /// session reads as "Session expired — sign in again".
+    #[test]
+    fn replays_without_a_bearer_when_the_refresh_failed_outright() {
+        assert!(bearer_retry_warranted(Some("at-dead"), None));
+    }
+
+    /// The ordinary case: the rotation produced a different token.
+    #[test]
+    fn replays_with_the_rotated_bearer_when_one_was_minted() {
+        assert!(bearer_retry_warranted(Some("at-old"), Some("at-new")));
+    }
+
+    /// The one case that must NOT replay: the gateway just refused this exact
+    /// token, and sending it again buys a second identical 401.
+    #[test]
+    fn does_not_replay_a_token_the_gateway_already_refused() {
+        assert!(!bearer_retry_warranted(Some("at-1"), Some("at-1")));
+    }
+
     #[test]
     fn a_caller_supplied_authorization_is_detected_in_any_casing() {
         // The MCP and marketplace panels reach third-party services with their
@@ -1782,7 +1958,7 @@ mod tests {
     #[test]
     fn the_bearer_is_offered_only_to_urls_under_a_known_gateway_base() {
         let state = TransportState::new();
-        state.register_bearer_base("https://gw.example.com");
+        state.cache_bearer_tokens("https://gw.example.com", some_tokens());
 
         assert_eq!(
             state.bearer_base_for_url("https://gw.example.com/api/auth/ws-ticket"),
@@ -1800,13 +1976,26 @@ mod tests {
         );
     }
 
+    /// A throwaway token set. These tests are about which base a URL routes to,
+    /// not about the credential, so the contents never matter — only that
+    /// registering a base now requires one.
+    fn some_tokens() -> crate::oauth::native::NativeTokenSet {
+        crate::oauth::native::NativeTokenSet {
+            access_token: "at".to_string(),
+            refresh_token: "rt".to_string(),
+            expires_at: i64::MAX,
+            provider: String::new(),
+            user_id: String::new(),
+        }
+    }
+
     #[test]
     fn a_path_prefixed_base_beats_the_bare_origin() {
         // `https://host/hermes` is a legal gateway base and no amount of URL
         // parsing recovers it — only the registry knows.
         let state = TransportState::new();
-        state.register_bearer_base("https://host");
-        state.register_bearer_base("https://host/hermes");
+        state.cache_bearer_tokens("https://host", some_tokens());
+        state.cache_bearer_tokens("https://host/hermes", some_tokens());
 
         assert_eq!(
             state.bearer_base_for_url("https://host/hermes/api/status"),
@@ -1838,6 +2027,79 @@ mod tests {
         );
     }
 
+    /// The whole point of the cache: a second request for the same base answers
+    /// from memory. On macOS every keyring read is an ACL check, so before this
+    /// each request was a candidate for a password dialog.
+    #[test]
+    fn a_cached_token_set_is_served_without_the_keyring() {
+        let state = TransportState::new();
+
+        assert_eq!(state.cached_bearer_tokens("https://gw.example.com"), None);
+
+        state.cache_bearer_tokens("https://gw.example.com", some_tokens());
+
+        assert_eq!(
+            state.cached_bearer_tokens("https://gw.example.com"),
+            Some(some_tokens())
+        );
+    }
+
+    /// A cached set must never outlive the registration that authorized it.
+    /// Signing out drops both, or the next request would attach a bearer to a
+    /// gateway the user just signed out of.
+    #[test]
+    fn signing_out_drops_the_cached_token_set() {
+        let state = TransportState::new();
+        state.cache_bearer_tokens("https://gw.example.com", some_tokens());
+
+        state.forget_bearer_base("https://gw.example.com");
+
+        assert_eq!(state.cached_bearer_tokens("https://gw.example.com"), None);
+    }
+
+    /// The other eviction path. `note_no_bearer_base` is "the keyring has nothing
+    /// for this base", which cannot coexist with a cached set for it.
+    #[test]
+    fn noting_no_session_drops_the_cached_token_set() {
+        let state = TransportState::new();
+        state.cache_bearer_tokens("https://gw.example.com", some_tokens());
+
+        state.note_no_bearer_base("https://gw.example.com");
+
+        assert_eq!(state.cached_bearer_tokens("https://gw.example.com"), None);
+    }
+
+    /// A rotation replaces the set rather than being ignored, so the 401 path
+    /// cannot be served the token the gateway just refused.
+    #[test]
+    fn caching_again_replaces_the_previous_set() {
+        let state = TransportState::new();
+        state.cache_bearer_tokens("https://gw.example.com", some_tokens());
+
+        let rotated = crate::oauth::native::NativeTokenSet {
+            access_token: "at-rotated".to_string(),
+            ..some_tokens()
+        };
+        state.cache_bearer_tokens("https://gw.example.com", rotated.clone());
+
+        assert_eq!(
+            state.cached_bearer_tokens("https://gw.example.com"),
+            Some(rotated)
+        );
+    }
+
+    /// One gateway's credential must never be served for another.
+    #[test]
+    fn a_cached_set_is_scoped_to_its_own_base() {
+        let state = TransportState::new();
+        state.cache_bearer_tokens("https://gw.example.com", some_tokens());
+
+        assert_eq!(
+            state.cached_bearer_tokens("https://other.example.com"),
+            None
+        );
+    }
+
     #[test]
     fn a_url_outside_the_gateway_namespaces_never_reaches_the_keyring() {
         // Not a trust boundary — the registry is. This only keeps a third-party
@@ -1856,7 +2118,7 @@ mod tests {
         // A user who signs straight back in must not be stuck bearer-less until
         // something happens to probe the gateway again.
         let state = TransportState::new();
-        state.register_bearer_base("https://gw.example.com");
+        state.cache_bearer_tokens("https://gw.example.com", some_tokens());
         state.forget_bearer_base("https://gw.example.com");
 
         assert_eq!(
@@ -1870,7 +2132,7 @@ mod tests {
         // alone never records a check, so a sign-out that only dropped the
         // KNOWN half would look fine here and strand that user bearer-less.
         state.note_no_bearer_base("https://gw.example.com");
-        state.register_bearer_base("https://gw.example.com");
+        state.cache_bearer_tokens("https://gw.example.com", some_tokens());
         state.forget_bearer_base("https://gw.example.com");
 
         assert_eq!(

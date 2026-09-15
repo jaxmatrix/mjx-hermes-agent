@@ -22,7 +22,7 @@
 //!     call reads the portal cookies back out of that same app-global store.
 //!
 //! This used to carry a `FIXME(E4)` claiming `cookies_for_url()` returns an empty Vec on
-//! Android. That was the wry `RustWebView.getCookies` null bug, now patched in `build.rs`
+//! Android. That was the wry `RustWebView.getCookies` null bug, now patched in Gradle's `BuildTask.kt`
 //! — the same read is what makes the Android gateway OAuth poll work today.
 
 #[cfg(desktop)]
@@ -41,8 +41,9 @@ use tokio::sync::oneshot;
 
 use crate::transport::TransportState;
 
-#[cfg(desktop)]
-const PORTAL_WINDOW_LABEL: &str = "hermes-portal";
+/// The portal sign-in window (desktop only, like `oauth::OAUTH_WINDOW_LABEL`).
+/// Unconditional for the same reason: `lib.rs`'s credential gate matches on it.
+pub(crate) const PORTAL_WINDOW_LABEL: &str = "hermes-portal";
 const DEFAULT_PORTAL: &str = "https://portal.nousresearch.com";
 
 /// How long the silent SSO may stay silent before the hidden portal window is
@@ -186,7 +187,15 @@ pub async fn portal_login(app: AppHandle, webview: WebviewWindow) -> Result<Port
     // Shared with `oauth_login` and held for the whole command: both drive the SAME
     // webview, so a portal sign-in overlapping a gateway sign-in strands the user on a
     // login page exactly as two gateway sign-ins would. See `oauth::SIGN_IN_IN_FLIGHT`.
-    let _lease = crate::oauth::claim_sign_in(webview.label())?;
+    let Some(_lease) = crate::oauth::claim_sign_in(webview.label()) else {
+        // Unlike `oauth_login`, the portal sign-in has no resume marker for a loser
+        // to corrupt, and it is always user-driven — so saying so plainly is the
+        // right answer here rather than a silent no-op.
+        return Err(
+            "A sign-in is already in progress. Finish or cancel it before starting another."
+                .to_string(),
+        );
+    };
 
     let base = portal_base();
     let login_url =

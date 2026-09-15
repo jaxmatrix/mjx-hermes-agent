@@ -4,6 +4,17 @@ import type { Translations } from './types'
 
 export const zh: Translations = {
   common: {
+    fileDownload: {
+      saved: '文件已保存',
+      failed: '下载失败',
+      notFound: '该文件已不在网关上。',
+      forbidden: '网关不提供该文件。',
+      tooLarge: '该文件过大，无法下载。',
+      unauthorized: '会话已过期，请重新连接后重试。',
+      noGateway: '尚未连接到网关。',
+      unreachable: '无法连接到网关。',
+      writeFailed: '无法将文件写入磁盘。'
+    },
     apply: '应用',
     back: '返回',
     save: '保存',
@@ -86,6 +97,10 @@ export const zh: Translations = {
     revealExplorer: '在文件资源管理器中显示',
     revealFileManager: '打开所在文件夹',
     revealInSidebar: '在文件树中显示',
+    download: '下载',
+    saveAs: '另存为…',
+    openFolderHere: '在此打开文件夹',
+    setAsProjectFolder: '设为项目文件夹',
     actions: '文件操作',
     copyPath: '复制路径',
     copyRelativePath: '复制相对路径',
@@ -96,6 +111,14 @@ export const zh: Translations = {
     deleteTitle: name => `删除 ${name}？`,
     deleteBody: '将移至废纸篓，你可以从那里恢复。',
     pathCopied: '已复制路径'
+  },
+  explorerPath: {
+    title: '在此文件夹中工作？',
+    body: '可以把这个对话移到这里，也可以保持不动、只让新对话从这里开始。',
+    moveChat: '移动此对话',
+    newChatsOnly: '仅新对话',
+    busy: '此对话正在进行中 — 请等它结束后再更改文件夹。',
+    moveFailed: '无法将此对话移动到该文件夹。'
   },
 
   notifications: {
@@ -1152,6 +1175,8 @@ export const zh: Translations = {
       saveFailed: '无法保存网关设置',
       connectingTitle: '正在连接 Hermes',
       reconnectingTo: target => `正在重新连接到 ${target}…`,
+      connectStoppedTitle: '无法连接',
+      connectStoppedTo: target => `已停止尝试连接 ${target}。`,
       useDifferentGateway: '使用其他网关',
       startOver: '重新开始'
     },
@@ -2346,7 +2371,8 @@ export const zh: Translations = {
     kindLink: '链接',
     chat: '对话',
     copyUrl: '复制 URL',
-    copyPath: '复制路径'
+    copyPath: '复制路径',
+    download: name => `下载 ${name}`
   },
 
   sidebar: {
@@ -2373,7 +2399,6 @@ export const zh: Translations = {
     allPinned: '这里的全部已置顶。取消置顶某个对话即可在最近中显示。',
     shiftClickHint: 'Shift+ 单击对话以置顶 · 拖动以重新排序',
     noWorkspace: '无工作区',
-    noProject: '无项目',
     projectEmpty: '暂无会话',
     noSessions: '暂无会话',
     filters: {
@@ -3102,6 +3127,9 @@ export const zh: Translations = {
   },
 
   rightSidebar: {
+    searchFiles: '搜索文件',
+    searchNoMatches: '没有匹配的文件',
+    goHome: '前往主目录',
     aria: '右侧边栏',
     panelsAria: '右侧边栏面板',
     files: '文件系统',
@@ -3189,7 +3217,7 @@ export const zh: Translations = {
 
   mobileWorkspace: {
     backToChat: '对话',
-    noProject: '未打开项目',
+    menu: '菜单',
     tabsAria: '工作区分区',
     review: '审阅',
     files: '文件',
@@ -3687,6 +3715,25 @@ export const zh: Translations = {
     zoneCount: count => `${count} 个区域`
   },
 
+  downloads: {
+    title: '下载',
+    inProgress: (count: number) => `${count} 项下载进行中`,
+    cancel: '取消下载',
+    reveal: '在文件夹中显示',
+    open: '打开',
+    dismiss: '从列表移除',
+    clearFinished: '清除已完成',
+    empty: '暂无下载',
+    downloadFolder: '将文件夹下载为 zip',
+    ofTotal: (received: string, total: string) => `${received} / ${total}`,
+    status: {
+      queued: '排队中',
+      running: '正在下载…',
+      done: '已保存',
+      cancelled: '已取消',
+      failed: '失败'
+    }
+  },
   tray: {
     show: '显示 Hermes',
     hud: '打开 HUD',

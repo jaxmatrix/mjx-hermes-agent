@@ -9,21 +9,18 @@ import { shellChromeSurface } from './cva/tokens'
  * MobileChromeBar CVA (MJXHRM-311).
  * One phone top bar — chat, Workspace, windowable surfaces share height/gutter/safe-area.
  */
-export const mobileChromeBarVariants = cva(
-  cn('shrink-0 border-b', shellChromeSurface),
-  {
-    variants: {
-      density: {
-        /** Default phone chrome — 48px control row below notch. */
-        mobile: '',
-        compact: ''
-      }
-    },
-    defaultVariants: {
-      density: 'mobile'
+export const mobileChromeBarVariants = cva(cn('shrink-0 border-b', shellChromeSurface), {
+  variants: {
+    density: {
+      /** Default phone chrome — 48px control row below notch. */
+      mobile: '',
+      compact: ''
     }
+  },
+  defaultVariants: {
+    density: 'mobile'
   }
-)
+})
 
 export const mobileChromeBarRowVariants = cva('flex items-center gap-1 px-2', {
   variants: {
@@ -79,7 +76,10 @@ export function MobileChromeBar({
       data-slot="mobile-chrome-bar"
       style={{ paddingTop: 'var(--safe-area-inset-top)' }}
     >
-      <div className={mobileChromeBarRowVariants({ density })}>
+      {/* `data-top-bar`: a drawer opened from this bar starts at its bottom
+          edge rather than at the control's, so it reads as coming out from
+          under the bar. See `topBarBottom` in components/ui/top-drawer. */}
+      <div className={mobileChromeBarRowVariants({ density })} data-top-bar>
         {left != null ? <div className={mobileChromeBarSlotVariants({ slot: 'left' })}>{left}</div> : left}
         <div className={mobileChromeBarSlotVariants({ slot: 'center' })}>{center}</div>
         {right != null ? <div className={mobileChromeBarSlotVariants({ slot: 'right' })}>{right}</div> : right}

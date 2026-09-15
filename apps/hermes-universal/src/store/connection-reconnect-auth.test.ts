@@ -12,6 +12,7 @@ vi.mock('@/lib/auth', () => ({
   oauthLogin: vi.fn().mockResolvedValue(undefined),
   oauthLogout: vi.fn().mockResolvedValue(undefined),
   oauthStatus: vi.fn().mockResolvedValue({ signedIn: true }),
+  oauthStatusIsUnknown: (s: { reachable?: boolean }) => s?.reachable === false,
   fetchAuthProviders: vi.fn().mockResolvedValue([]),
   portalLogout: vi.fn().mockResolvedValue(undefined),
   portalAgentSignIn: vi.fn().mockResolvedValue({ connected: true, baseUrl: 'https://a1' })
@@ -23,6 +24,7 @@ vi.mock('@/store/gateway', async () => {
     addGatewayEventListener: () => () => {},
     connectGateway: vi.fn().mockResolvedValue(undefined),
     closeGateway: vi.fn(),
+    lastGatewayCloseCode: vi.fn(() => undefined),
     $gatewayState: atom('idle')
   }
 })
@@ -31,7 +33,13 @@ vi.mock('@/lib/secure-store', () => ({
   loadSecrets: vi.fn().mockResolvedValue(null),
   clearSecrets: vi.fn().mockResolvedValue(undefined)
 }))
-vi.mock('@/lib/session-persist', () => ({ persistSessionCookies: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('@/lib/session-persist', () => ({
+  clearSessionJar: vi.fn().mockResolvedValue(undefined),
+  forgetPersistedSessionCookies: vi.fn(),
+  persistSessionCookies: vi.fn().mockResolvedValue(undefined),
+  resumeSessionCookiePersistence: vi.fn(),
+  suspendSessionCookiePersistence: vi.fn()
+}))
 vi.mock('@/store/local-backend', () => ({
   spawnLocalBackend: vi.fn(),
   stopLocalBackend: vi.fn().mockResolvedValue(undefined)
@@ -51,8 +59,7 @@ const oauthProvider = { name: 'nous', display_name: 'Nous', supports_password: f
 // whichever finishes last strands the user there. That is a real device failure (two
 // `oauth_login` calls 122 ms apart), not a theoretical race.
 describe('auto-reconnect — who may drive an interactive sign-in', () => {
-  const reauthRequired = () =>
-    Object.assign(new Error('Session expired — sign in again'), { needsOauthLogin: true })
+  const reauthRequired = () => Object.assign(new Error('Session expired — sign in again'), { needsOauthLogin: true })
 
   // The store instance the current test is driving, so afterEach can stand its supervisor
   // down. `vi.resetModules()` hands the NEXT test a fresh store but neither stops the
@@ -137,12 +144,18 @@ describe('auto-reconnect — who may drive an interactive sign-in', () => {
     expect(conn.$connectionError.get()).toContain('Session expired')
   })
 
-  it('still re-auths silently on desktop, where the sign-in returns', async () => {
-    const { auth, gateway } = await arrange(false, remote)
+  // Desktop used to be carved out here on the grounds that a separate sign-in
+  // window cannot strand anyone. True — but it still means a login window appears
+  // on its own while the user is doing something else, and the rule is that an
+  // interactive sign-in only ever happens because a person asked for one. So
+  // desktop stands down exactly like mobile and surfaces the same CTA.
+  it('stands down on desktop too, rather than opening a window nobody asked for', async () => {
+    const { auth, conn, gateway } = await arrange(false, remote)
 
     await dropSocket(gateway)
 
-    expect(auth.oauthLogin).toHaveBeenCalled()
+    expect(auth.oauthLogin).not.toHaveBeenCalled()
+    expect(conn.$connectionError.get()).toContain('Session expired')
   })
 
   // Cloud re-auths through `portalAgentSignIn`, which on mobile is the silent reqwest
@@ -155,5 +168,130 @@ describe('auto-reconnect — who may drive an interactive sign-in', () => {
 
     expect(auth.portalAgentSignIn).toHaveBeenCalled()
     expect(auth.oauthLogin).not.toHaveBeenCalled()
+  })
+
+  // ── the retry budget ─────────────────────────────────────────────────────
+  //
+  // Auth and network failures get deliberately different policies, and the two
+  // tests below are the pair that pins that apart. Collapsing them would be a
+  // regression in one direction or the other: capping network retries makes a
+  // phone that spent a minute in a lift give up permanently, while NOT capping
+  // auth retries leaves a genuinely expired session spinning forever behind a
+  // screen with no way out.
+
+  /** Let the ladder run long enough for many jittered attempts (cap is 15s). */
+  const runLadder = async () => vi.advanceTimersByTimeAsync(300_000)
+
+  it('stops re-dialling once the auth budget is spent', async () => {
+    // Desktop: the mobile branch stands down on the FIRST auth failure for its own
+    // reasons, so the budget is only observable where the supervisor is allowed to
+    // keep trying.
+    const { conn, gateway } = await arrange(false, remote)
+
+    await dropSocket(gateway)
+    await runLadder()
+
+    const settled = vi.mocked(gateway.connectGateway).mock.calls.length
+
+    await runLadder()
+
+    // Not merely "few attempts" — no FURTHER attempts. That is the difference
+    // between a bounded ladder and a slow one.
+    expect(vi.mocked(gateway.connectGateway).mock.calls.length).toBe(settled)
+    expect(conn.$connectionError.get()).toContain('Session expired')
+  })
+
+  it('keeps re-dialling a network failure past the auth budget', async () => {
+    const { gateway } = await arrange(false, remote)
+
+    // A refused connection, not a refused credential. This one really does resolve
+    // on its own — a gateway mid-restart, wifi coming back — so the ladder must
+    // outlive three attempts.
+    vi.mocked(gateway.connectGateway).mockRejectedValue(new Error('Network request failed'))
+
+    await dropSocket(gateway)
+    await runLadder()
+
+    const settled = vi.mocked(gateway.connectGateway).mock.calls.length
+
+    expect(settled).toBeGreaterThan(3)
+
+    await runLadder()
+
+    expect(vi.mocked(gateway.connectGateway).mock.calls.length).toBeGreaterThan(settled)
+  })
+
+  // The cap ends a spinner; it must not end the session. Coming back to the app is
+  // fresh user intent and buys a fresh budget — otherwise a stood-down session
+  // would stay dead until the app was relaunched, which is the very failure this
+  // whole change exists to remove.
+  // Per-connection latches (MJXHRM-446 / P-23) outrank the refund: a source the
+  // loop stood down for a changed host key stays down until the user verifies it,
+  // however often the app is foregrounded.
+  it('does not wake a connection latched on a changed host key', async () => {
+    const { conn, gateway } = await arrange(false, remote)
+    const latches = await import('@/store/connection-latches')
+    const { $activeConnection } = await import('@/store/active-connection')
+
+    await dropSocket(gateway)
+    await runLadder()
+
+    const key = $activeConnection.get()?.connectionId ?? 'http://gw.example.com'
+
+    latches.$latchedConnections.set({ [key]: 'host-key-changed' })
+
+    const settled = vi.mocked(gateway.connectGateway).mock.calls.length
+
+    conn.wakeReconnect()
+    await runLadder()
+
+    expect(vi.mocked(gateway.connectGateway).mock.calls.length).toBe(settled)
+  })
+
+  // Per-connection (MJXHRM-446): the escalation clock that survives a flap must not
+  // survive a SOURCE switch, or a gateway that failed for a minute makes the next
+  // source publish its error on its very first transient failure.
+  it('starts a fresh escalation clock after a gateway switch', async () => {
+    const { conn, gateway } = await arrange(false, remote)
+
+    vi.mocked(gateway.connectGateway).mockRejectedValue(new Error('Network request failed'))
+
+    await dropSocket(gateway)
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(conn.$connectionError.get()).toContain('Network request failed')
+
+    // Switch sources the way softSwitchGateway does: stand the old loop down, then
+    // DIAL the new source. The dial is what re-arms the supervisor
+    // (`armReconnect` clears `intentionalClose`); without it no later drop could
+    // start a loop at all, and this test could not fail.
+    conn.beginGatewaySwitch()
+    await vi.advanceTimersByTimeAsync(20_000)
+    vi.mocked(gateway.connectGateway).mockResolvedValueOnce(undefined)
+    await conn.connect({ url: 'gw2.example.com' })
+    conn.endGatewaySwitch()
+    gateway.$gatewayState.set('idle')
+
+    // The new source now drops once, transiently.
+    vi.mocked(gateway.connectGateway).mockRejectedValue(new Error('Network request failed'))
+    await dropSocket(gateway)
+
+    expect(conn.$connectionPhase.get()).not.toBe('ready')
+    // One quick failure on the new source is not yet an error worth publishing.
+    expect(conn.$connectionError.get()).toBeNull()
+  })
+
+  it('refunds the budget when the user brings the app back', async () => {
+    const { conn, gateway } = await arrange(false, remote)
+
+    await dropSocket(gateway)
+    await runLadder()
+
+    const settled = vi.mocked(gateway.connectGateway).mock.calls.length
+
+    conn.wakeReconnect()
+    await runLadder()
+
+    expect(vi.mocked(gateway.connectGateway).mock.calls.length).toBeGreaterThan(settled)
   })
 })

@@ -156,6 +156,19 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "proce
 # "dedupe" them — 0.4 changed its API and 0.2 is what this crate's code targets.
 getrandom = "0.2"
 
+# The sealed credential vault (secrets/vault.rs). Both are already in the tree —
+# russh's `ssh-cipher` pulls aes-gcm 0.11 and zeroize — so naming them directly
+# adds no crate to the lockfile.
+#
+# 0.11 is the post-`hybrid-array` API line: `Nonce<Aes256Gcm>` is an `Array`,
+# `KeyInit::new_from_slice` takes a byte slice, and `Aead::encrypt` takes a
+# `Payload` when there is AAD. default-features would add the crate's own
+# `getrandom` (the 0.3 major); randomness here comes from `getrandom = "0.2"`
+# above, which is what the rest of this crate targets.
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+# Wipes the vault key and every decrypted body on drop.
+zeroize = { version = "1", features = ["alloc"] }
+
 # --- SSH gateway transport (MJX-55) -------------------------------------------
 # A pure-Rust SSH client, NOT a shell-out to the system `ssh` binary the way the
 # Electron desktop app does it. That is deliberate: it makes SSH gateway mode work
@@ -179,7 +192,24 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"] 
 # for its extension check without hand-rolling a decoder.
 percent-encoding = "2"
 # rustls so we don't need OpenSSL/NDK-cross OpenSSL on the Android build.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies", "multipart"] }
+#
+# BOTH root sources, deliberately in step with tokio-tungstenite below —
+# `rustls-tls` alone expands to `rustls-tls-webpki-roots`, i.e. the bundled
+# Mozilla set and nothing else, so HTTP did NOT honor the OS trust store while
+# the WEBSOCKET did. One hostname, two verdicts: `wss://` connected and every
+# REST call to the same gateway failed the handshake. That asymmetry bites any
+# self-signed or corporate-MITM gateway, not just a dev box with a local CA.
+#
+# The two sources are additive rather than exclusive — reqwest builds ONE
+# `RootCertStore` and extends it with webpki roots and then native certs
+# (async_impl/client.rs) — and both default to on once their feature is
+# enabled, so no `ClientBuilder` call is needed at the construction sites in
+# transport.rs. Android keeps working for the same reason spelled out below:
+# its empty native store yields zero valid and zero invalid certs, which skips
+# reqwest's "zero valid certificates" error, and webpki still fills the store.
+# `rustls-native-certs` was already in the lockfile via tokio-tungstenite, so
+# this pulls in no new dependency and no second crypto provider.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "json", "cookies", "multipart"] }
 # Enable BOTH root sources: native-roots so desktop honors the OS trust store (corporate
 # / self-signed CAs), AND webpki-roots as the fallback. Android exposes no file-based
 # native cert store, so native-roots alone fails at the wss:// handshake with "no native
@@ -255,10 +285,23 @@ flacenc = "0.4"
 # array, ~4x bloat).
 base64 = "0.22"
 
+[dev-dependencies]
+# Scratch directories for the vault's file-format tests. Already transitive.
+tempfile = "3"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Route Rust `log::` output to stderr on desktop — the third of the three logger
+# entries in this file, and the last platform that had none. Its absence hid a
+# real bug: macOS could not write to the keychain at all, and the one line that
+# said so (`store_native_tokens` failing inside the RFC 8252 sign-in) was a
+# `log::warn!` on a platform where nothing consumed `log::`.
+#
+# `default-features = false` drops regex/colour/humantime; the level still comes
+# from RUST_LOG, and `run()` sets a default so a plain launch is not silent.
+env_logger = { version = "0.11", default-features = false }
 # Local shell PTY for the right-pane terminal (pty.rs, desktop-only). Cross-platform
 # PTY: Unix openpty / Windows ConPTY. Gated OFF the mobile targets — a phone has no
 # local shell, the right pane isn't shown there, and this keeps it out of the NDK build.
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 portable-pty = "0.9"
 # System-sleep inhibitor behind the keep-awake toggle (keep_awake.rs, desktop-only):
 # macOS IOPMAssertion, Windows SetThreadExecutionState, Linux systemd-inhibit over
@@ -367,9 +410,33 @@ webkit2gtk = { version = "2.0", features = ["v2_8"] }
 window-vibrancy = "0.6"
 # The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
 # plugin that used to wrap them — see the keyring-core note under [dependencies].
-# `protected` selects the Protected Data keychain. Required on iOS (the crate
-# errors without it) and used on macOS too, so both Apple targets store alike.
-apple-native-keyring-store = { version = "1.0", features = ["protected"] }
+#
+# `keychain` — the file-based login keychain — is where macOS stores, NOT the
+# `protected` Protected Data store the iOS block below selects. The two Apple
+# targets deliberately do not store alike, because only one of them has a
+# provisioning profile.
+#
+# The Protected Data keychain writes with `kSecUseDataProtectionKeychain`, which
+# on macOS requires the process to carry a keychain access group — granted by a
+# `keychain-access-groups`/`application-identifier` entitlement, which only a
+# provisioning profile supplies. This bundle has neither (there is no
+# `bundle.macOS` section in tauri.conf.json, and `tauri dev` runs a bare binary),
+# so every write returned `errSecMissingEntitlement (-34018)`. Nothing surfaced
+# it: `protected::Store::new()` is infallible, so the store reported itself
+# available and only the writes failed. The visible symptom was an RFC 8252
+# sign-in that completed and left the app signed out, because the token set
+# could not reach the keyring (`oauth.rs::store_native_tokens`).
+#
+# What this store HOLDS on macOS is one login-keychain item,
+# `hermes/vaultKey/password`, the key that seals `secrets.vault` in the app data
+# dir; every credential lives in that file (src/secrets/vault.rs explains why:
+# per-item, per-direction ACL checks, each a password dialog on an unsigned
+# build).
+#
+# `protected` stays enabled on macOS for READING only: `secrets/store.rs` still
+# consults it as a legacy source, so a credential an earlier build did manage to
+# store there is adopted into the login keychain instead of being orphaned.
+apple-native-keyring-store = { version = "1.0", features = ["keychain", "protected"] }
 core-graphics = "0.25"
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
@@ -385,6 +452,19 @@ window-vibrancy = "0.6"
 # The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
 # plugin that used to wrap them — see the keyring-core note under [dependencies].
 windows-native-keyring-store = "1.1"
+# WinRT projections for the Windows Hello gate (secrets/gate.rs). NOT the same
+# crate as `windows-sys` below and not interchangeable with it: `windows-sys` is
+# raw FFI with no WinRT support, and `UserConsentVerifier` is a WinRT class, so
+# `use windows::Security::Credentials::UI::...` cannot resolve against it — the
+# gate's Windows arm was uncompilable, not just untested.
+#
+# 0.61 rather than 0.62: that version is already in the tree, so this adds no
+# crate. `Foundation` supplies IAsyncOperation, which every call goes through
+# via `.get()`.
+windows = { version = "0.61", features = [
+  "Foundation",
+  "Security_Credentials_UI",
+] }
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",
@@ -409,6 +489,9 @@ windows-sys = { version = "0.61", features = [
 [target.'cfg(target_os = "ios")'.dependencies]
 # The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
 # plugin that used to wrap them — see the keyring-core note under [dependencies].
+# `protected` is REQUIRED here — the crate `compile_error!`s on iOS without it,
+# and iOS has a provisioning profile so the entitlement macOS lacks is present.
+# Do not "unify" this with the macOS block above; see the note there.
 apple-native-keyring-store = { version = "1.0", features = ["protected"] }
 oslog = { version = "0.2.0", default-features = false, features = ["logger"] }
 
@@ -456,3 +539,16 @@ objc2-local-authentication = { version = "0.3.2", default-features = false, feat
   "LAError",
   "LAPublicDefines",
 ] }
+
+# Vendored tao with a single upstream-confirmed fix. tao 0.35.3 returns a dangling
+# UISceneConfiguration from `application:configurationForConnectingSceneSession:`
+# (see vendor/tao-0.35.3/src/platform_impl/ios/view.rs), which segfaults every
+# optimized iOS build at launch because Info.ios.plist sets
+# UIApplicationSupportsMultipleScenes. tao 0.36.0 carries the same fix, but
+# tauri-runtime-wry 2.11.4 (the newest 2.x) requires ^0.35.0 and cannot take it,
+# 0.35.3 is the last 0.35 release, and `[patch]` replaces a source, not a version,
+# so 0.36.0 is not reachable this way either.
+# REMOVE this patch, and the vendored tree, once tauri-runtime-wry requires tao
+# 0.36 (checked against the crates.io index on 2026-09-15: still ^0.35.0).
+[patch.crates-io]
+tao = { path = "vendor/tao-0.35.3" }

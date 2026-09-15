@@ -221,7 +221,7 @@ export function ConnectionEditor({
               <Codicon name="pulse" size="0.9rem" />
               {c.test}
             </Button>
-            <Button disabled={busy} onClick={() => void selectConnection(connection.id)} size="sm" variant="secondary">
+            <Button disabled={busy} onClick={() => void selectConnection(connection.id, { allowInteractive: true })} size="sm" variant="secondary">
               {c.connect}
             </Button>
             {registry.primary !== connection.id && (

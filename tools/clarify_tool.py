@@ -239,7 +239,12 @@ CLARIFY_SCHEMA = {
     "name": "clarify",
     "description": (
         "Ask the user one or more questions when you need a decision, "
-        "clarification, or feedback before proceeding. Pass every question "
+        "clarification, or feedback before proceeding. WHEN TO ASK: only when "
+        "the answer is genuinely the user's to give — a decision you cannot "
+        "resolve from the request, the files, or a sensible default — and "
+        "guessing wrong would cost real work or be hard to undo; otherwise "
+        "take the obvious option, name it as an assumption, and keep going. "
+        "Pass every question "
         f"in `questions` (1-{MAX_QUESTIONS} entries) — a single question is a "
         "one-entry array, and several INDEPENDENT questions belong in ONE "
         "call (one form beats a chain of clarify calls; if one answer would "
@@ -251,9 +256,12 @@ CLARIFY_SCHEMA = {
         "enumerated inside the question text (choices render as pickable "
         "rows; options written into the question are dead prose the user "
         "can't click). Result: {responses: [...]} in question order (plus "
-        "timed_out=true if the user stopped part-way). Prefer deciding "
-        "low-stakes questions yourself; don't use this for dangerous-command "
-        "confirmation (the terminal tool handles that)."
+        "timed_out=true if the user stopped part-way); if the user doesn't "
+        "answer, proceed on your stated assumptions rather than asking again. "
+        "Do NOT ask what the conversation, the files, or the project's docs "
+        "already answer; permission to begin work you were already asked to "
+        "do; something already settled; or confirmation of dangerous commands "
+        "(the terminal tool handles that)."
     ),
     "parameters": {
         "type": "object",

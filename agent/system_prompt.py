@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from agent.prompt_builder import (
     DEFAULT_AGENT_IDENTITY, EXECUTION_GUIDANCE_MODELS, GOOGLE_MODEL_OPERATIONAL_GUIDANCE,
     HERMES_AGENT_HELP_GUIDANCE, HERMES_AGENT_HELP_GUIDANCE_NO_SKILLS, KANBAN_GUIDANCE,
-    PARALLEL_TOOL_CALL_GUIDANCE, PLATFORM_HINTS, SESSION_SEARCH_GUIDANCE,
+    INTENT_CLARIFICATION_GUIDANCE, PARALLEL_TOOL_CALL_GUIDANCE, PLATFORM_HINTS, SESSION_SEARCH_GUIDANCE,
     SKILLS_GUIDANCE, STEER_CHANNEL_NOTE, TASK_COMPLETION_GUIDANCE, TELEGRAM_RICH_MESSAGES_HINT,
     TOOL_USE_ENFORCEMENT_GUIDANCE, TOOL_USE_ENFORCEMENT_MODELS, drain_truncation_warnings,
 )
@@ -494,6 +494,17 @@ def _identity_parts(agent: Any, ctx_len: Optional[int]) -> Tuple[List[str], bool
     return ([_soul_content], True) if _soul_content else ([DEFAULT_AGENT_IDENTITY], False)
 
 
+def _wants_intent_clarification(agent: Any) -> bool:
+    """``agent.intent_clarification_guidance`` (default on), and only where it can be obeyed: the block
+    says to ask through ``clarify``, so it needs that tool in the schema (naming a missing tool invites a
+    hallucinated call), and never for a kanban worker — clarify ships in the default toolset, but
+    KANBAN_GUIDANCE forbids calling it headless. The worker test mirrors ``_tool_guidance_block``'s:
+    the resolved ``_kanban_worker_guidance``, or ``kanban_show`` loaded on a path that bypassed init."""
+    names = agent.valid_tool_names or ()
+    kanban_worker = bool(getattr(agent, "_kanban_worker_guidance", None)) or "kanban_show" in names
+    return bool(getattr(agent, "_intent_clarification_guidance", True)) and "clarify" in names and not kanban_worker
+
+
 def _guidance_parts(agent: Any) -> List[str]:
     """Universal + tool-aware + model-gated guidance blocks, each gated by its config.yaml key."""
     parts: List[str] = []
@@ -504,6 +515,8 @@ def _guidance_parts(agent: Any) -> List[str]:
                 ("_parallel_tool_call_guidance", PARALLEL_TOOL_CALL_GUIDANCE),
             ) if getattr(agent, flag, True)
         ]
+    if _wants_intent_clarification(agent):
+        parts.append(INTENT_CLARIFICATION_GUIDANCE)
     parts.append(_tool_guidance_block(agent))  # None/empty entries are dropped by _join_tier
     if not agent.valid_tool_names:
         return parts

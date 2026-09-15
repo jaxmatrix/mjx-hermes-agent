@@ -99,36 +99,10 @@ def _plugin_reference_items(pfx: str, qval: str) -> list[dict] | None:
 
 
 def _fuzzy_basename_items(root: str, path_part: str, prefix_tag: str) -> list[dict]:
-    """Cmd-P style fuzzy basename search for a bare `@name`; path-ish queries take the listing path."""
-    ranked: list[tuple[tuple[int, int], str, str, bool]] = []
-    walked_dirs: set[str] = set()
-    seen: set[str] = set()
-    want_hidden = path_part.startswith(".")
+    """Cmd-P style fuzzy basename search for a bare `@name`; path-ish queries take the listing path.
 
-    def _consider(rel: str, name: str, is_dir: bool) -> None:
-        if rel in seen or (name.startswith(".") and not want_hidden):
-            return
-        if (rank := _fuzzy_basename_rank(name, path_part)) is not None:
-            seen.add(rel)
-            ranked.append((rank, rel, name, is_dir))
-
-    # Seed with root's immediate children: `_list_repo_files` is capped at _FUZZY_CACHE_MAX_FILES
-    # and the non-git fallback walk can burn the whole budget on one deep subtree.
-    with contextlib.suppress(OSError):
-        for entry in os.listdir(root):
-            if entry not in _FUZZY_FALLBACK_EXCLUDES:
-                _consider(entry, entry, os.path.isdir(os.path.join(root, entry)))
-    for rel in _list_repo_files(root):
-        _consider(rel, os.path.basename(rel), False)
-        # Rank each ancestor dir too — a folder with no name-matching file inside is otherwise invisible.
-        parent = os.path.dirname(rel)
-        while parent and parent not in walked_dirs:
-            walked_dirs.add(parent)
-            _consider(parent, os.path.basename(parent), True)
-            parent = os.path.dirname(parent)
-
-    # Same rank tier: folders first, so `@Desktop` leads with the folder.
-    ranked.sort(key=lambda r: (r[0], not r[3], len(r[1]), r[1]))
+    The ranking itself is `_fuzzy_rank_paths`, shared with the dashboard's `GET /api/fs/search`."""
+    ranked = _fuzzy_rank_paths(root, path_part)
     tag = prefix_tag or "file"
     return [
         _item(

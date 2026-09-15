@@ -1,5 +1,7 @@
+import { isGatewayReauthRequired, isGatewaySignInBusy, isGatewaySignInRequired } from '@/gateway'
 import { oauthStatus } from '@/lib/auth'
 import { loadString, removeKey, saveString } from '@/lib/persist'
+import { reconnectBackoffDelayMs } from '@/lib/reconnect-backoff'
 import { clearTranscriptTails } from '@/lib/transcript-tail-cache'
 import { atom } from '@/store/atom'
 import { forgetBrowserForGatewaySwitch } from '@/store/browser'
@@ -28,6 +30,17 @@ import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
 // gateway" behaviour across all three modes.
 
 const TARGET_KEY = 'hermes.connection.last'
+
+/**
+ * How many times the boot restore re-dials before giving up on the connect screen.
+ *
+ * Bounded for the same reason the supervisor's auth budget is (store/connection.ts):
+ * a restore that can never succeed must end somewhere the user can act, not in a
+ * permanent spinner. Three attempts with full-jitter backoff covers the launch-time
+ * transients — radio not up, DNS unsettled, gateway mid-restart — without making a
+ * genuinely unreachable gateway take noticeably longer to report.
+ */
+const MAX_RESTORE_ATTEMPTS = 3
 
 /** The last successful connection, enough to re-dial it. Non-secret only —
  *  token/password live in the OS keyring, the session cookie jar in Rust. */
@@ -160,6 +173,19 @@ export function takePendingOAuth(): PendingOAuth | null {
   }
 }
 
+/**
+ * Discard a queued OAuth resume without consuming it as one.
+ *
+ * Separate from `takePendingOAuth` because the two mean opposite things at the
+ * call site: `take` is "I am the resume, hand me the intent", this is "there is
+ * nothing left to resume TO". Sign-out needs the second — a marker left behind by
+ * a sign-in the user has since abandoned would otherwise fire on some later
+ * launch and drive a connect to a gateway they just left.
+ */
+export function clearPendingOAuth(): void {
+  removeKey(PENDING_OAUTH_KEY)
+}
+
 /** Whether an OAuth resume is queued — read synchronously to seed `$restoring`. */
 export function hasPendingOAuth(): boolean {
   return Boolean(loadString(PENDING_OAUTH_KEY))
@@ -186,6 +212,11 @@ export function takePendingPortal(): boolean {
   removeKey(PENDING_PORTAL_KEY)
 
   return Boolean(raw)
+}
+
+/** Discard a queued portal resume. See {@link clearPendingOAuth}. */
+export function clearPendingPortal(): void {
+  removeKey(PENDING_PORTAL_KEY)
 }
 
 /** Whether a restorable connection exists — read synchronously at module load so
@@ -258,7 +289,13 @@ export async function dialSavedTarget(target: GatewayTarget, interactive = false
       url: target.url,
       username: target.username || undefined,
       token: saved?.token || undefined,
-      password: saved?.password || undefined
+      password: saved?.password || undefined,
+      // `interactive` finally reaches the remote branch. It used to stop at the
+      // ssh arm above, which made this function's own "non-interactive by
+      // default" contract a fiction: a boot restore of a signed-out gateway went
+      // straight through `connect` into `beginOAuthLogin` and navigated the
+      // webview to a login page nobody had asked for.
+      allowInteractive: interactive
     })
   }
 }
@@ -340,12 +377,48 @@ export async function autoRestoreConnection(): Promise<void> {
 
   // Reopen into the saved mode so a failed restore lands on the right connect
   // surface — dialSavedTarget commits it.
-  try {
-    await dialSavedTarget(target)
-  } catch {
-    // connect*/connectLocal/connectCloud already set $connectionError + phase; the
-    // connect screen takes over once $restoring clears below.
-  } finally {
-    $restoring.set(false)
+  //
+  // Bounded ladder rather than a single shot. One transient failure at launch used
+  // to be terminal: the dial's catch nulls `$connection`, so the reconnect
+  // supervisor (which requires a live connection) never armed, and with
+  // `$hasConnected` false on a fresh process MobileController fell through to the
+  // CONNECT screen — indistinguishable from being signed out, even though tapping
+  // Connect immediately afterwards worked. A phone has plenty of ways to fail the
+  // first dial and none of them mean the session is gone: the radio may not be up
+  // microseconds after launch, DNS may not have settled, the gateway may be mid
+  // restart.
+  //
+  // `$restoring` is held true across the whole ladder so the user watches the
+  // connecting screen — which reveals the inline configurator once
+  // `$connectionError` is published — instead of the connect picker.
+  for (let attempt = 0; attempt < MAX_RESTORE_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, reconnectBackoffDelayMs(attempt - 1)))
+    }
+
+    try {
+      await dialSavedTarget(target)
+      $restoring.set(false)
+
+      return
+    } catch (err) {
+      // A refused CREDENTIAL is not transient — asking again cannot change the
+      // answer — so it spends the ladder immediately rather than sitting behind
+      // three backoffs the user has to watch. Everything else (refused, timeout,
+      // DNS, a gateway still coming up) is exactly what the retries are for.
+      //
+      // `isGatewaySignInRequired` joins it for the same reason and one more: it
+      // means we deliberately declined to open a login page, and retrying would
+      // just decline twice more. Before this, a signed-out restore fell into the
+      // generic arm and drove THREE interactive sign-ins inside one second —
+      // which is what the device log shows as "refusing a second sign-in".
+      if (isGatewayReauthRequired(err) || isGatewaySignInRequired(err) || isGatewaySignInBusy(err)) {
+        break
+      }
+      // connect*/connectLocal/connectCloud already set $connectionError + phase; the
+      // connect screen takes over once $restoring clears below.
+    }
   }
+
+  $restoring.set(false)
 }

@@ -4,6 +4,17 @@ import { defineLocale } from './define-locale'
 
 export const zhHant = defineLocale({
   common: {
+    fileDownload: {
+      saved: '檔案已儲存',
+      failed: '下載失敗',
+      notFound: '該檔案已不在閘道上。',
+      forbidden: '閘道不提供該檔案。',
+      tooLarge: '該檔案過大，無法下載。',
+      unauthorized: '工作階段已過期，請重新連線後再試。',
+      noGateway: '尚未連線到閘道。',
+      unreachable: '無法連線到閘道。',
+      writeFailed: '無法將檔案寫入磁碟。'
+    },
     apply: '套用',
     back: '返回',
     save: '儲存',
@@ -162,6 +173,10 @@ export const zhHant = defineLocale({
     revealExplorer: '在檔案總管中顯示',
     revealFileManager: '開啟所在資料夾',
     revealInSidebar: '在檔案樹中顯示',
+    download: '下載',
+    saveAs: '另存新檔…',
+    openFolderHere: '在此開啟資料夾',
+    setAsProjectFolder: '設為專案資料夾',
     copyPath: '複製路徑',
     copyRelativePath: '複製相對路徑',
     rename: '重新命名…',
@@ -171,6 +186,14 @@ export const zhHant = defineLocale({
     deleteTitle: name => `刪除 ${name}？`,
     deleteBody: '將移至垃圾桶，你可以從那裡還原。',
     pathCopied: '已複製路徑'
+  },
+  explorerPath: {
+    title: '在此資料夾中工作？',
+    body: '可以把這個對話移到這裡，也可以維持不動、只讓新對話從這裡開始。',
+    moveChat: '移動此對話',
+    newChatsOnly: '僅新對話',
+    busy: '此對話正在進行中 — 請等它結束後再變更資料夾。',
+    moveFailed: '無法將此對話移動到該資料夾。'
   },
 
   notifications: {
@@ -1022,6 +1045,8 @@ export const zhHant = defineLocale({
       saveFailed: '無法儲存閘道設定',
       connectingTitle: '正在連線 Hermes',
       reconnectingTo: target => `正在重新連線至 ${target}…`,
+      connectStoppedTitle: '無法連線',
+      connectStoppedTo: target => `已停止嘗試連線 ${target}。`,
       useDifferentGateway: '使用其他閘道',
       startOver: '重新開始'
     },
@@ -1970,7 +1995,8 @@ export const zhHant = defineLocale({
     kindLink: '連結',
     chat: '聊天',
     copyUrl: '複製 URL',
-    copyPath: '複製路徑'
+    copyPath: '複製路徑',
+    download: name => `下載 ${name}`
   },
 
   sidebar: {
@@ -1997,7 +2023,6 @@ export const zhHant = defineLocale({
     allPinned: '這裡的全部已釘選。取消釘選某個聊天即可在最近中顯示。',
     shiftClickHint: 'Shift + 點擊聊天以釘選 · 拖曳以重新排序',
     noWorkspace: '無工作區',
-    noProject: '無專案',
     projectEmpty: '尚無工作階段',
     noSessions: '尚無工作階段',
     filters: {
@@ -2688,6 +2713,9 @@ export const zhHant = defineLocale({
   },
 
   rightSidebar: {
+    searchFiles: '搜尋檔案',
+    searchNoMatches: '沒有符合的檔案',
+    goHome: '前往主資料夾',
     aria: '右側邊欄',
     panelsAria: '右側邊欄面板',
     files: '檔案系統',
@@ -3195,6 +3223,25 @@ export const zhHant = defineLocale({
     zoneCount: count => `${count} 個區域`
   },
 
+  downloads: {
+    title: '下載',
+    inProgress: (count: number) => `${count} 項下載進行中`,
+    cancel: '取消下載',
+    reveal: '在資料夾中顯示',
+    open: '開啟',
+    dismiss: '從清單移除',
+    clearFinished: '清除已完成',
+    empty: '尚無下載',
+    downloadFolder: '將資料夾下載為 zip',
+    ofTotal: (received: string, total: string) => `${received} / ${total}`,
+    status: {
+      queued: '排隊中',
+      running: '正在下載…',
+      done: '已儲存',
+      cancelled: '已取消',
+      failed: '失敗'
+    }
+  },
   tray: {
     show: '顯示 Hermes',
     hud: '開啟 HUD',
@@ -3323,5 +3370,9 @@ export const zhHant = defineLocale({
       email: '電子郵件',
       github_comment: 'GitHub 留言'
     }
+  },
+
+  mobileWorkspace: {
+    menu: '選單'
   }
 })

@@ -387,6 +387,25 @@ PARALLEL_TOOL_CALL_GUIDANCE = (
     "read a file before you can patch it). When in doubt and the calls are independent, batch them."
 )
 
+# Intent clarification, injected only when ``clarify`` is loaded (a live user can answer) and never
+# for kanban workers (headless; KANBAN_GUIDANCE forbids clarify). A resolvability test rather than a
+# confidence test — models judge "can I get this from the request, the files or a default?" far
+# better than "am I uncertain?" — and it suppresses as much as it prompts: batched questions, a
+# small cap, banned question shapes, and "otherwise name the assumption and proceed" so "don't
+# ask" never becomes silent guessing. Static text in the cached stable band; keep it short.
+INTENT_CLARIFICATION_GUIDANCE = (
+    "# Understand the request before you act\n"
+    "Before acting, state your working hypothesis of the request in one line: the goal, the scope "
+    "you'll touch, and any assumptions you're filling in.\n"
+    "Ask only when the answer is genuinely the user's to give — a decision you cannot resolve from "
+    "the request, the files, or a sensible default — and when guessing wrong would cost real work or "
+    "be hard to undo. Otherwise take the obvious option, name it as an assumption, and proceed.\n"
+    "When you do ask, ask everything at once: one to three specific questions in a single `clarify` "
+    "call, each with concrete `choices`, your recommendation first. Never ask what the conversation, "
+    "the files, or the project's docs already answer. Never ask permission to begin. Never ask the "
+    "same thing twice — if the user doesn't answer, proceed on your stated assumptions."
+)
+
 # Execution-discipline guidance for models that abandon partial results, skip prerequisite lookups, answer
 # from memory, or declare "done" unverified. Body is family-agnostic (OPENAI_ prefix reflects origin).
 # Injection gate: system_prompt.py via config.yaml ``agent.execution_guidance`` (auto/true/false/list).

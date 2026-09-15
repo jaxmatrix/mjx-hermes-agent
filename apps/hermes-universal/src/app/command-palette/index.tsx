@@ -553,7 +553,7 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
                   id: `source-${row.id}`,
                   keywords: ['gateway', 'source', 'switch', row.kind],
                   label: `${conn.switchTo(row.label)}`,
-                  run: () => void selectConnection(row.id)
+                  run: () => void selectConnection(row.id, { allowInteractive: true })
                 })),
                 {
                   icon: Globe,

@@ -10,7 +10,10 @@ vi.mock('@/store/connection', () => ({
   loadSavedLogin: vi.fn().mockResolvedValue({ token: 'T', password: 'P' })
 }))
 
-vi.mock('@/lib/auth', () => ({ oauthStatus: vi.fn().mockResolvedValue({ signedIn: false }) }))
+vi.mock('@/lib/auth', () => ({
+  oauthStatus: vi.fn().mockResolvedValue({ signedIn: false, reachable: true }),
+  oauthStatusIsUnknown: (s: { reachable?: boolean }) => s?.reachable === false
+}))
 vi.mock('@/store/gateway-switch-broadcast', () => ({ broadcastGatewaySwitch: vi.fn() }))
 
 import { oauthStatus } from '@/lib/auth'
@@ -186,6 +189,79 @@ describe('ssh restore', () => {
     expect(connect).not.toHaveBeenCalled()
     expect(connectLocal).not.toHaveBeenCalled()
     expect(connectCloud).not.toHaveBeenCalled()
+    expect($restoring.get()).toBe(false)
+  })
+
+  // ── the retry ladder ─────────────────────────────────────────────────────
+
+  // A phone has plenty of ways to fail the first dial after launch — the radio
+  // may not be up yet, DNS may not have settled, the gateway may be mid-restart —
+  // and none of them mean the session is gone. This used to be a single shot, so
+  // one of those dropped the user on the CONNECT screen looking signed out, even
+  // though tapping Connect a second later worked.
+  it('re-dials a transient failure instead of giving up on the first one', async () => {
+    vi.mocked(connect).mockRejectedValueOnce(new Error('Network request failed'))
+    saveGatewayTarget({ mode: 'remote', url: 'https://gw.example.com' })
+
+    await autoRestoreConnection()
+
+    expect(connect).toHaveBeenCalledTimes(2)
+    expect($restoring.get()).toBe(false)
+  })
+
+  // Bounded, so a gateway that is never coming back ends somewhere the user can
+  // act rather than in a permanent spinner.
+  it('gives up after the attempt budget and hands over to the connect screen', async () => {
+    vi.mocked(connect).mockRejectedValue(new Error('Network request failed'))
+    saveGatewayTarget({ mode: 'remote', url: 'https://gw.example.com' })
+
+    await autoRestoreConnection()
+
+    expect(connect).toHaveBeenCalledTimes(3)
+    expect($restoring.get()).toBe(false)
+  })
+
+  // A refused CREDENTIAL is not transient — asking again cannot change the answer
+  // — so it must not sit behind three backoffs the user has to watch before the
+  // sign-in affordance appears.
+  it('spends the ladder immediately when a sign-in is required', async () => {
+    const needsSignIn = Object.assign(new Error('Sign in to https://gw.example.com to continue'), {
+      needsInteractiveSignIn: true
+    })
+
+    vi.mocked(connect).mockRejectedValue(needsSignIn)
+    saveGatewayTarget({ mode: 'remote', url: 'https://gw.example.com' })
+
+    await autoRestoreConnection()
+
+    // Once, not three times. Retrying cannot conjure a credential, and each
+    // retry used to be another interactive sign-in — three of them inside one
+    // second, which is what the device log records as "refusing a second
+    // sign-in for webview \"main\"".
+    expect(connect).toHaveBeenCalledTimes(1)
+    expect($restoring.get()).toBe(false)
+  })
+
+  // The restore must never be the thing that opens a login page.
+  it('never asks the boot dial to open a login page', async () => {
+    saveGatewayTarget({ mode: 'remote', url: 'https://gw.example.com' })
+
+    await autoRestoreConnection()
+
+    expect(connect).toHaveBeenCalledWith(expect.objectContaining({ allowInteractive: false }))
+  })
+
+  it('spends the ladder immediately when the credential is refused', async () => {
+    const expired = Object.assign(new Error('Session expired — sign in again'), {
+      needsOauthLogin: true
+    })
+
+    vi.mocked(connect).mockRejectedValue(expired)
+    saveGatewayTarget({ mode: 'remote', url: 'https://gw.example.com' })
+
+    await autoRestoreConnection()
+
+    expect(connect).toHaveBeenCalledTimes(1)
     expect($restoring.get()).toBe(false)
   })
 })

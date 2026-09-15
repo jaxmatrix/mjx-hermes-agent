@@ -18,11 +18,12 @@ import {
 } from 'react'
 
 import { ArtifactCard } from '@/components/assistant-ui/artifact-card'
+import { CodeFence } from '@/components/chat/code-fence'
 import { ExpandableBlock } from '@/components/chat/expandable-block'
-import { chunkByLines, SyntaxHighlighter } from '@/components/chat/shiki-highlighter'
 import { ZoomableImage } from '@/components/chat/zoomable-image'
 import { ErrorBoundary } from '@/components/error-boundary'
 import { detectArtifact } from '@/lib/artifact-detect'
+import { chunkByLines } from '@/lib/code-budget'
 import { normalizeExternalUrl, openExternalLink, PrettyLink } from '@/lib/external-link'
 import { createMemoizedMathPlugin, KATEX_HTML_TAG } from '@/lib/katex-memo'
 import { parseMarkdownIntoBlocksCached } from '@/lib/markdown-blocks'
@@ -40,7 +41,7 @@ import { isMediaStreamUrl } from '@/lib/media-stream'
 import { sessionRefFromMarkdownHref } from '@/lib/session-refs'
 import { parseTranscriptDirective } from '@/lib/transcript-directives'
 import { cn } from '@/lib/utils'
-import { span } from '@/observability'
+import { noteCommitCause, span } from '@/observability'
 
 import { SessionRefLink } from './directive-content'
 import { detectEmbed, extractAlert, MarkdownAlert, RichCodeBlock, UrlEmbed } from './embeds'
@@ -64,9 +65,9 @@ import { paragraphPlainText, TranscriptDirectiveLeaf, useIsClaimedDirective } fr
 const mathPlugin = createMemoizedMathPlugin({ singleDollarTextMath: true })
 
 // NO `plugins.code` — deliberately, and the reason is not obvious enough to
-// rediscover by accident. Shiki here comes from ONE place: the
-// `SyntaxHighlighter` slot in `MARKDOWN_COMPONENTS` below, which reaches
-// `react-shiki` through `lazy(() => import('./shiki-block'))`.
+// rediscover by accident. Fences here render through ONE place: the
+// `SyntaxHighlighter` slot in `MARKDOWN_COMPONENTS` below, which hands off to
+// `CodeFence` — a component that owns its own DOM and computes its own colours.
 //
 // Supplying a `SyntaxHighlighter` component makes
 // `@assistant-ui/react-streamdown` install its code adapter — see
@@ -89,7 +90,8 @@ const mathPlugin = createMemoizedMathPlugin({ singleDollarTextMath: true })
 //
 // If a future change removes the `SyntaxHighlighter` slot, streamdown's own
 // code block comes back — and THEN it needs a code plugin, or fences render
-// unhighlighted. Re-add both together or neither.
+// unhighlighted. Re-add both together or neither. It would also hand the
+// fence's DOM back to a library, which is the thing the iOS fence collapse was about.
 const MARKDOWN_PLUGINS = { math: mathPlugin }
 
 // Renderer for the single node katex-memo emits per equation. See that file for
@@ -266,19 +268,24 @@ function OpenMediaButton({ kind, path }: { kind: 'audio' | 'video'; path: string
 // load failures) fall back to a download link. Ported from desktop's
 // MediaAttachment; audio/video resolve to the `hermes-media://` streaming URL
 // (see lib/media-stream.ts) with a one-shot data-URL retry behind them.
-function MediaAttachment({ path }: { path: string }) {
+function MediaAttachment({ label, path }: { label?: string; path: string }) {
   const [src, setSrc] = useState('')
   const [failed, setFailed] = useState(false)
   const [triedFallback, setTriedFallback] = useState(false)
   const { open, openFailed } = useOpenMediaFile(path)
   const kind = mediaKind(path)
-  const name = mediaName(path)
+  // The label the agent wrote (`[Q3 report](/work/q3.pdf)`) beats a filename —
+  // it is the only place that wording survives, since this component replaces
+  // the link entirely. `renderMediaTags` supplies its own generated label, so
+  // a `MEDIA:` marker reads exactly as it did before.
+  const name = label?.trim() || mediaName(path)
 
   /**
    * The stream URL can legitimately fail where the data URL still works: a
    * hosted gateway confines `/api/files/download` to its managed root while
-   * `/api/fs/read-data-url` is unconfined, files over 100 MB are refused, and an
-   * older gateway may not serve the endpoint at all. Try the data URL once
+   * `/api/fs/read-data-url` is unconfined, and an older gateway may not serve
+   * the endpoint at all. (The data URL has the tighter size cap of the two —
+   * 16 MB against 100 MB — so it is a fallback, not a superset.) Try it once
    * before surfacing the "Open …" fallback.
    */
   const handleMediaError = () => {
@@ -312,6 +319,11 @@ function MediaAttachment({ path }: { path: string }) {
     void resolveMediaDisplaySrc(path)
       .then(value => {
         if (!cancelled) {
+          // Same height change as the markdown-image path below, and the one a
+          // capture actually caught: a contact sheet's twelve slides arrive
+          // through HERE, not through `MarkdownImageContent`, so stamping only
+          // that one left every image swap in the trace unlabelled.
+          noteCommitCause(`media:${mediaName(path)}`)
           setSrc(value)
         }
       })
@@ -379,7 +391,7 @@ function MarkdownLink({ children, className, href, ...props }: ComponentProps<'a
   const mediaPath = mediaPathFromMarkdownHref(href)
 
   if (mediaPath) {
-    return <MediaAttachment path={mediaPath} />
+    return <MediaAttachment label={childrenToText(children)} path={mediaPath} />
   }
 
   // An `@session:` ref the agent wrote, rewritten to a fragment href by
@@ -487,6 +499,11 @@ function MarkdownImageContent({ className, src, alt, ...props }: ComponentProps<
     void resolveMediaDisplaySrc(rawSrc)
       .then(value => {
         if (!cancelled) {
+          // A one-line placeholder becoming a full-size image is a height
+          // change, and a chat open fires a dozen of them at once — so the
+          // commit it schedules says so, and a capture can tell an image swap
+          // apart from the transcript backfill happening in the same window.
+          noteCommitCause(`media:${mediaName(rawSrc)}`)
           setResolvedSrc(value)
         }
       })
@@ -641,7 +658,7 @@ function MarkdownSyntaxHighlighter(props: SyntaxHighlighterProps) {
   return (
     <RichCodeBlock
       code={props.code}
-      fallback={<SyntaxHighlighter {...props} defer={isStreaming} />}
+      fallback={<CodeFence code={props.code} language={props.language} streaming={isStreaming} />}
       language={props.language}
       streaming={isStreaming}
     />

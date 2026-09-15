@@ -4,6 +4,17 @@ import { defineLocale } from './define-locale'
 
 export const ja = defineLocale({
   common: {
+    fileDownload: {
+      saved: 'ファイルを保存しました',
+      failed: 'ダウンロードに失敗しました',
+      notFound: 'そのファイルはゲートウェイに存在しません。',
+      forbidden: 'ゲートウェイはそのファイルを提供しません。',
+      tooLarge: 'そのファイルは大きすぎてダウンロードできません。',
+      unauthorized: 'セッションの有効期限が切れました。再接続してください。',
+      noGateway: 'ゲートウェイに接続していません。',
+      unreachable: 'ゲートウェイに接続できませんでした。',
+      writeFailed: 'ファイルをディスクに書き込めませんでした。'
+    },
     apply: '適用',
     back: '戻る',
     save: '保存',
@@ -167,6 +178,10 @@ export const ja = defineLocale({
     revealExplorer: 'エクスプローラーで表示',
     revealFileManager: '格納フォルダーを開く',
     revealInSidebar: 'ファイルツリーで表示',
+    download: 'ダウンロード',
+    saveAs: '名前を付けて保存…',
+    openFolderHere: 'このフォルダーを開く',
+    setAsProjectFolder: 'プロジェクトフォルダーに設定',
     copyPath: 'パスをコピー',
     copyRelativePath: '相対パスをコピー',
     rename: '名前を変更…',
@@ -176,6 +191,14 @@ export const ja = defineLocale({
     deleteTitle: name => `${name} を削除しますか？`,
     deleteBody: 'ゴミ箱に移動します。そこから復元できます。',
     pathCopied: 'パスをコピーしました'
+  },
+  explorerPath: {
+    title: 'このフォルダーで作業しますか？',
+    body: 'このチャットをここへ移動できます。移動せずに、新しいチャットだけをここで開始することもできます。',
+    moveChat: 'このチャットを移動',
+    newChatsOnly: '新しいチャットのみ',
+    busy: 'このチャットはターンの実行中です。完了してからフォルダーを変更してください。',
+    moveFailed: 'このチャットをそのフォルダーへ移動できませんでした。'
   },
 
   notifications: {
@@ -1064,6 +1087,8 @@ export const ja = defineLocale({
       saveFailed: 'ゲートウェイ設定を保存できませんでした',
       connectingTitle: 'Hermes に接続しています',
       reconnectingTo: target => `${target} に再接続しています…`,
+      connectStoppedTitle: '接続できませんでした',
+      connectStoppedTo: target => `${target} への接続を中止しました。`,
       useDifferentGateway: '別のゲートウェイを使用',
       startOver: 'やり直す'
     },
@@ -2044,7 +2069,8 @@ export const ja = defineLocale({
     kindLink: 'リンク',
     chat: 'チャット',
     copyUrl: 'URL をコピー',
-    copyPath: 'パスをコピー'
+    copyPath: 'パスをコピー',
+    download: name => `${name} をダウンロード`
   },
 
   sidebar: {
@@ -2071,7 +2097,6 @@ export const ja = defineLocale({
     allPinned: 'ここにあるものはすべてピン留めされています。チャットのピン留めを解除すると最近のものに表示されます。',
     shiftClickHint: 'Shift クリックでピン留め · ドラッグで並べ替え',
     noWorkspace: 'ワークスペースなし',
-    noProject: 'プロジェクトなし',
     projectEmpty: 'セッションはまだありません',
     noSessions: 'セッションはまだありません',
     filters: {
@@ -2784,6 +2809,9 @@ export const ja = defineLocale({
   },
 
   rightSidebar: {
+    searchFiles: 'ファイルを検索',
+    searchNoMatches: '一致するファイルはありません',
+    goHome: 'ホームフォルダーへ移動',
     aria: '右サイドバー',
     panelsAria: '右サイドバーパネル',
     files: 'ファイルシステム',
@@ -3330,6 +3358,25 @@ export const ja = defineLocale({
     zoneCount: count => `${count} 個のゾーン`
   },
 
+  downloads: {
+    title: 'ダウンロード',
+    inProgress: (count: number) => `${count} 件のダウンロードを実行中`,
+    cancel: 'ダウンロードをキャンセル',
+    reveal: 'フォルダーに表示',
+    open: '開く',
+    dismiss: 'リストから削除',
+    clearFinished: '完了分を消去',
+    empty: 'ダウンロードはまだありません',
+    downloadFolder: 'フォルダーを ZIP でダウンロード',
+    ofTotal: (received: string, total: string) => `${total} 中 ${received}`,
+    status: {
+      queued: '待機中',
+      running: 'ダウンロード中…',
+      done: '保存しました',
+      cancelled: 'キャンセルしました',
+      failed: '失敗しました'
+    }
+  },
   tray: {
     show: 'Hermes を表示',
     hud: 'HUD を開く',
@@ -3468,5 +3515,9 @@ export const ja = defineLocale({
       email: 'メール',
       github_comment: 'GitHub コメント'
     }
+  },
+
+  mobileWorkspace: {
+    menu: 'メニュー'
   }
 })

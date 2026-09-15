@@ -1,6 +1,8 @@
 import { readDesktopFileDataUrl } from '@/lib/desktop-fs'
 import { filePathFromMediaPath, isFileMediaPath, isInlineMediaSrc, mediaName } from '@/lib/media-format'
 import { canStreamMedia, mediaStreamUrl } from '@/lib/media-stream'
+import { IS_TAURI } from '@/lib/platform'
+import { isRecording, recordSpan } from '@/observability'
 import { $connection } from '@/store/connection'
 
 // Media resolver for the universal (Tauri) client. Ported from
@@ -39,6 +41,29 @@ export {
   mediaPathFromMarkdownHref
 } from '@/lib/media-format'
 
+/**
+ * How many media resolves are in flight right now.
+ *
+ * Every image in a transcript resolves through here, and each one is a HEIGHT
+ * CHANGE waiting to happen: the placeholder is one line of text and the resolved
+ * image is however tall it is. Opening one code-heavy chat fired twelve of these
+ * within a millisecond of each other, and the transcript stepped twelve times as
+ * they landed.
+ *
+ * So the transcript's reveal gate (thread/list.tsx) waits on this: a stable
+ * scroll height while a dozen images are still in flight is not a settled
+ * transcript, it is a transcript that has not been told yet.
+ *
+ * A count rather than a store: the gate polls it once a frame from a
+ * `requestAnimationFrame` loop it already runs, and a nanostores atom here would
+ * put a subscriber notification on a path that fires per image per chat open.
+ */
+let mediaInFlight = 0
+
+export function pendingMediaCount(): number {
+  return mediaInFlight
+}
+
 // Resolve a media path to a src the webview can display. Inline sources
 // (http(s):/data:) pass through; gateway-local file paths are fetched over the
 // authenticated Rust transport and returned as a data URL.
@@ -53,7 +78,22 @@ export async function resolveMediaDisplaySrc(path: string): Promise<string> {
     return mediaStreamUrl(path)
   }
 
-  return gatewayMediaDataUrl(path)
+  mediaInFlight += 1
+
+  const startedAt = performance.now()
+
+  try {
+    return await gatewayMediaDataUrl(path)
+  } finally {
+    mediaInFlight -= 1
+
+    if (isRecording()) {
+      // Named by basename, not the full path: a gateway path is long, often
+      // identifying, and the only question this span answers is "which of the
+      // twelve was still in flight when the transcript settled".
+      recordSpan('media.resolve', startedAt, performance.now(), { file: mediaName(path) })
+    }
+  }
 }
 
 // Resolve a media path to a URL the OS shell / download can use. Gateway-local
@@ -83,10 +123,54 @@ export async function gatewayMediaDataUrl(path: string): Promise<string> {
   return readDesktopFileDataUrl(filePathFromMediaPath(path))
 }
 
-// Fetch gateway-local bytes over the fs bridge and hand them to the webview as
-// a browser download (the file lives on the gateway, so there's no local path
-// to open directly).
-export async function downloadGatewayMediaFile(path: string): Promise<void> {
+/**
+ * Save a gateway file to disk.
+ *
+ * The bytes never enter the webview: Rust fetches `/api/files/download` over
+ * the authenticated transport and writes the file itself. That is what makes
+ * this work at all —
+ *
+ *  * a raw download URL can't authenticate from the webview under a gated
+ *    gateway (no `?token=` outside token mode, and the `SameSite=Lax` session
+ *    cookie never rides on a cross-site subresource);
+ *  * the previous route read the file as a `data:` URL and `fetch`ed it, which
+ *    the app CSP (`connect-src 'self' ipc:`) blocks outright;
+ *  * `/api/fs/read-data-url` also caps at 16 MB, and this route now has no cap
+ *    at all;
+ *  * and the `<a download>` it ended in is not honoured by the mobile webview.
+ *
+ * **This is now a thin wrapper over `downloadPath` in `store/downloads.ts`**,
+ * which is where the contract lives: the transfer streams in the background,
+ * reports progress to the titlebar tray, and can be cancelled. The consequence
+ * for callers is that resolving no longer means "the file is on disk" — it
+ * means "the download is queued and the tray owns it from here", so a gateway
+ * failure surfaces in the tray rather than as a rejection here. New call sites
+ * should import `downloadPath` directly and keep the id it returns; this name
+ * stays for the transcript's `useOpenMediaFile`, whose whole interaction is one
+ * click with nothing to keep.
+ *
+ * Resolves to `false` when nothing was queued — there is no save dialog on
+ * this path any more, so in practice that means a destination that could not
+ * be resolved.
+ *
+ * Off Tauri (plain-web dev, vitest) there is no native side, so it falls back
+ * to the blob route — which is fine there: a browser has no CSP of ours and
+ * honours `<a download>`. That branch still rejects on failure, because there
+ * is no tray in a browser tab to report into.
+ */
+export async function downloadGatewayMediaFile(path: string): Promise<boolean> {
+  if (!IS_TAURI) {
+    await browserDownloadFallback(path)
+
+    return true
+  }
+
+  const { downloadPath } = await import('@/store/downloads')
+
+  return (await downloadPath(path)) !== null
+}
+
+async function browserDownloadFallback(path: string): Promise<void> {
   const dataUrl = await gatewayMediaDataUrl(path)
 
   if (!dataUrl) {

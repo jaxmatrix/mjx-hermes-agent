@@ -23,6 +23,7 @@ import type {
   DefaultCwdResult,
   ElevenLabsVoicesResponse,
   EnvVarInfo,
+  FsSearchResult,
   FsWriteResult,
   GitRootResult,
   HermesConfig,
@@ -1731,6 +1732,22 @@ export function runDebugShare(): Promise<DebugShareResponse> {
 // ── Remote workspace filesystem ─────────────────────────────────────────────
 export function readDir(path: string): Promise<ReadDirResult> {
   return api<ReadDirResult>({ ...profileScoped(), path: `/api/fs/list?path=${encodeURIComponent(path)}` })
+}
+
+/**
+ * Fuzzy basename search under `path` — the file tree's docked search bar.
+ *
+ * ADDITIVE ROUTE: a gateway that predates it 404s here,
+ * so callers MUST feature-detect, and MUST do it on the body rather than the
+ * status — this route answers 200 with `entries` for everything it can be
+ * asked, a missing directory included. `store/file-search.ts` owns that
+ * degradation; nothing else should call this directly.
+ */
+export function searchDir(path: string, q: string, limit: number): Promise<FsSearchResult> {
+  return api<FsSearchResult>({
+    ...profileScoped(),
+    path: `/api/fs/search?path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`
+  })
 }
 
 export function readFileText(path: string): Promise<ReadFileTextResult> {

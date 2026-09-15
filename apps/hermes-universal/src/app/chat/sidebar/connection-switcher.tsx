@@ -59,7 +59,7 @@ export function ConnectionSwitcher() {
     setPending(id)
 
     try {
-      await selectConnection(id)
+      await selectConnection(id, { allowInteractive: true })
     } finally {
       setPending(null)
       setOpen(false)

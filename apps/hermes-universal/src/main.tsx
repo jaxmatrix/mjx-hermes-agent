@@ -61,14 +61,31 @@ import { registerBrowserContributions } from './app/browser/context-target'
 import { installContextMenuBridge } from './app/context-menu/bridge'
 import { installBrowserBridge } from './store/browser-bridge'
 import { initializeConnectionsRegistry, startConnectionsWatcher } from './store/connections'
+import { initDownloadSync } from './store/downloads'
 import { installNotificationActivation } from './store/plugin-notify-handlers'
 import { installTourDriver } from './store/tour-bridge'
 import { installWindowBelowReader } from './store/window-below'
+import { initWorkspaceProfileSync } from './store/workspace-events'
 
 // And the reader that gives `window.read.request` something to say. Installed at
 // boot, next to the responder it feeds, because the first turn can ask before
 // any component has mounted (MJXHRM-213).
 installWindowBelowReader()
+// Downloads are app-global but the transfer runs in whichever WebView started
+// it, so every OTHER window has to be told or its tray is blank for a file that
+// is very much being written to this device. Armed here rather than at the
+// store's module scope: the tray lives in the titlebar, so a module-scope
+// subscription would be established by anything that merely imports that graph
+// — every window, and every test that renders a shell. A store that is imported
+// should hold state, not start listening.
+initDownloadSync()
+// `/api/fs/default-cwd` answers inside the active profile's scope — that
+// profile's active project folder, else its `terminal.cwd`, else the gateway
+// default — so `$workspaceCwd` / `$workspaceHome` are per-profile values that a
+// profile switch would leave describing a workspace the app no longer talks to.
+// Armed at boot rather than by the file tree, because the statusbar cwd segment,
+// the terminal's initial directory and the review base read the same atoms.
+initWorkspaceProfileSync()
 // Same contract for `tour.request` (MJXHRM-473): the frame parks a blocked tool,
 // so the driver has to be registered before the first turn rather than when some
 // component happens to mount. driver.js itself stays off this path — the driver
@@ -112,8 +129,10 @@ import { RouterNavBridge } from './lib/router-nav-bridge'
 import { initSafeAreaInsets } from './lib/safe-area'
 import { restoreSessionCookies } from './lib/session-persist'
 import { installObservability } from './observability/install'
+import { initAppLifecycle } from './store/app-lifecycle'
 import { initBackgroundMode } from './store/background-mode'
 import { resumePortalSignIn } from './store/cloud'
+import { initConnectionLifecycle } from './store/connection'
 import { initDataUrlReadMax } from './store/data-url-read-max'
 import { autoRestoreConnection } from './store/gateway-restore'
 import { initKeepAwake } from './store/keep-awake'
@@ -125,6 +144,16 @@ import { ThemeProvider } from './themes'
 // than before it. Recording is off by default, so this is a no-op until someone
 // asks for it — see src/observability/index.ts.
 installObservability()
+
+// App foreground/background, installed BEFORE the restore so the first edge after
+// launch is already being listened for. On a phone the socket always dies while the
+// app is away and the process is eventually killed outright (neither platform grants
+// this app any background execution), so the return trip is where the session is
+// actually saved or lost: coming back wakes a backed-off reconnect and refunds the
+// auth retry budget, and going away snapshots the cookie jar while there is still a
+// process to do it.
+initAppLifecycle()
+initConnectionLifecycle()
 
 // Rehydrate a persisted gateway/cloud session into the Rust cookie jar (R2b), THEN
 // auto-reconnect to the last-used gateway (D8). Cookies first so a cookie-backed
