@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type * as Hermes from '@/hermes'
 import { I18nProvider } from '@/i18n'
-import type * as GatewayRpc from '@/lib/gateway-rpc'
 import type * as McpServers from '@/lib/mcp-servers'
 import type * as Notifications from '@/store/notifications'
 
@@ -22,13 +21,20 @@ vi.mock('@assistant-ui/react', async importActual => {
   return { ...actual, useAuiState: () => aui.messageRunning }
 })
 
-// Partial mocks: only the network/IPC seams are replaced, so the card's own
-// branching (which action, catalog vs directory, rollback) stays under test.
-vi.mock('@/lib/gateway-rpc', async importActual => {
-  const actual = await importActual<typeof GatewayRpc>()
+// The card answers its server request now (MJXHRM-520) instead of calling the
+// retired `mcp.setup.respond` method. The spy records the DECODED outcome so the
+// assertions below still read as "what did the card decide" rather than "what
+// JSON did it stringify" — and decoding is itself a check that the answer went
+// out as `ValueResult`'s `value`, which is the key the backend reads.
+const answered = vi.hoisted(() => ({ outcome: vi.fn(), settled: true }))
 
-  return { ...actual, respondMcpSetup: vi.fn().mockResolvedValue({ status: 'ok' }) }
-})
+vi.mock('@/store/server-requests', () => ({
+  respondToServerRequest: (id: string, result: Record<string, unknown>) => {
+    answered.outcome(id, JSON.parse(String(result.value)) as unknown)
+
+    return answered.settled
+  }
+}))
 
 vi.mock('@/store/gateway', async () => {
   const { atom } = await import('@/store/atom')
@@ -81,7 +87,6 @@ import {
   installMcpCatalogEntry,
   setMcpServerEnabled
 } from '@/hermes'
-import { respondMcpSetup } from '@/lib/gateway-rpc'
 import { removeMcpServerEntry, writeMcpServerEntry } from '@/lib/mcp-servers'
 import { requestGateway } from '@/store/gateway'
 import { notifyError } from '@/store/notifications'
@@ -90,7 +95,7 @@ import { seedActiveSession } from '@/test-sessions'
 
 import { McpSetupTool } from './mcp-setup-tool'
 
-const respond = vi.mocked(respondMcpSetup)
+const respond = answered.outcome
 
 afterEach(() => {
   cleanup()

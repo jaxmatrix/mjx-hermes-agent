@@ -1,36 +1,28 @@
 /**
- * End-to-end for the agent-driven tour (MJXHRM-473): a real `tour.request`
- * frame off the gateway stream, through `store/agent-read-requests.ts`, into
- * the driver this module registers, into the REAL `lib/tour` engine, and back
- * out as the `tour.respond` payload the tool reads.
+ * End-to-end for the agent-driven tour (MJXHRM-473): a real `tour` server
+ * request, through `store/agent-read-requests.ts`, into the driver this module
+ * registers, into the REAL `lib/tour` engine, and back out as the answer the
+ * tool reads.
  *
  * Nothing about `lib/tour` is mocked on purpose. The half worth asserting here
- * is the seam — that the wire frame's `action`/`step_index`/`surface` reach the
+ * is the seam — that the request's `action`/`step_index`/`surface` reach the
  * engine as the right action, that the answer is the shaped JSON the tool
  * parses rather than the empty string that reads as "no GUI window answered",
  * and that importing the engine (driver.js + two stylesheets) actually
  * resolves. `lib/tour/engine.test.ts` covers the engine's own behaviour against
  * a recording fake.
+ *
+ * The frame is a REQUEST now, not a `tour.request` event (MJXHRM-520), and the
+ * answer is that request's response rather than a `tour.respond` call — there is
+ * no such method on the backend any more. Tours are answered on every platform
+ * including Android and iOS, which is why nothing here gates on desktop.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// vi.hoisted, not a bare `let`: agent-read-requests registers its listener at
-// IMPORT time, so the mock factory runs before a normal binding is initialised.
-const stream = vi.hoisted(() => ({ route: null as ((event: { payload?: unknown; type: string }) => void) | null }))
+import type { ServerRequest, ServerRequestParams } from '@/gateway'
 
 const windows = vi.hoisted(() => ({ owns: true }))
-
-vi.mock('@/store/gateway', () => ({
-  addGatewayEventListener: (listener: (event: { payload?: unknown; type: string }) => void) => {
-    stream.route = listener
-
-    return () => {
-      stream.route = null
-    }
-  },
-  requestGateway: vi.fn().mockResolvedValue({ status: 'ok' })
-}))
 
 vi.mock('@/store/windows', () => ({
   isSecondaryWindow: () => !windows.owns,
@@ -49,14 +41,32 @@ vi.mock('@/store/pane-focus', () => ({
   }
 }))
 
-import { requestGateway } from '@/store/gateway'
+// The bridge module also owns `terminal.read`; nothing here exercises it, and a
+// real xterm buffer has no place on this path.
+vi.mock('@/app/right-pane/terminal/buffer', () => ({ readActiveTerminal: () => null }))
 
-import { __resetAgentReadRequests } from './agent-read-requests'
+import { __resetAgentReadRequests, answerAgentBridgeRequest } from './agent-read-requests'
 import { installTourDriver } from './tour-bridge'
 
-const rpc = vi.mocked(requestGateway)
+// The REAL engine is the point of this file, and the first request in it pays
+// for `import('@/lib/tour')` — the engine, driver.js and two stylesheets, all
+// through vitest's transform. That import, plus the keep-alive MutationObserver
+// the engine leaves running between cases, routinely takes a case past the 5s
+// default on a cold machine (each case passes comfortably on its own). The
+// budget is raised rather than the engine mocked: what this file exists to
+// prove is that the wire reaches the real engine and comes back shaped.
+vi.setConfig({ testTimeout: 30_000 })
 
-const send = (payload: Record<string, unknown>) => stream.route?.({ payload, type: 'tour.request' })
+let respond = vi.fn()
+
+/** Drive one `tour` request through the bridge, as the channel would. */
+function send(params: ServerRequestParams): void {
+  respond = vi.fn()
+
+  const request: ServerRequest = { fail: vi.fn(), id: 'srq-tour', method: 'tour', params, respond }
+
+  answerAgentBridgeRequest(request, null)
+}
 
 /** Wait for the answer rather than for a fixed delay: the first request in the
  *  file pays for the dynamic `import('@/lib/tour')` — engine, driver.js and two
@@ -64,7 +74,7 @@ const send = (payload: Record<string, unknown>) => stream.route?.({ payload, typ
  *  worth hard-coding, and a sleep tuned to it would go flaky on a cold machine. */
 async function settle(): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt++) {
-    if (rpc.mock.calls.some(([method]) => method === 'tour.respond')) {
+    if (respond.mock.calls.length > 0) {
       return
     }
 
@@ -72,13 +82,13 @@ async function settle(): Promise<void> {
   }
 }
 
-/** The `text` of the single `tour.respond` sent so far, parsed. */
+/** The answer this request was settled with, parsed. */
 function answer(): Record<string, unknown> {
-  const call = rpc.mock.calls.find(([method]) => method === 'tour.respond')
+  const call = respond.mock.calls[0]
 
-  expect(call, 'no tour.respond was sent').toBeDefined()
+  expect(call, 'the tour request was never answered').toBeDefined()
 
-  const text = (call?.[1] as { text: string }).text
+  const text = (call?.[0] as { value: string }).value
 
   expect(text, 'answered with the empty string, which the tool reads as "no GUI window answered"').not.toBe('')
 
@@ -91,8 +101,6 @@ beforeEach(() => {
   windows.owns = true
   panes.revealed = []
   __resetAgentReadRequests()
-  rpc.mockClear()
-  rpc.mockResolvedValue({ status: 'ok' })
 
   document.body.innerHTML = `
     <nav data-tour="sidebar" aria-label="Sessions"><button id="new-chat" aria-label="New chat">New</button></nav>
@@ -120,9 +128,9 @@ afterEach(async () => {
   __resetAgentReadRequests()
 })
 
-describe('tour.request → the app-surface engine', () => {
+describe('tour request → the app-surface engine', () => {
   it('answers `targets` with the durable data-tour handles', async () => {
-    send({ action: 'targets', request_id: 't-targets' })
+    send({ action: 'targets' })
     await settle()
 
     const result = answer()
@@ -139,7 +147,7 @@ describe('tour.request → the app-surface engine', () => {
   })
 
   it('names the selector that did not match, and offers the re-scan', async () => {
-    send({ action: 'show', request_id: 't-bad', selector: '[data-tour="no-such-thing"]' })
+    send({ action: 'show', selector: '[data-tour="no-such-thing"]' })
     await settle()
 
     const result = answer()
@@ -154,7 +162,6 @@ describe('tour.request → the app-surface engine', () => {
   it('maps step_index onto the step the tour opens at, and reveals its pane', async () => {
     send({
       action: 'start',
-      request_id: 't-start',
       step_index: 1,
       steps: [
         { selector: '[data-tour="sidebar"]', title: 'Sessions' },
@@ -172,7 +179,7 @@ describe('tour.request → the app-surface engine', () => {
   })
 
   it('refuses the preview surface rather than touring the app chrome', async () => {
-    send({ action: 'targets', request_id: 't-preview', surface: 'preview' })
+    send({ action: 'targets', surface: 'preview' })
     await settle()
 
     const result = answer()
@@ -185,7 +192,7 @@ describe('tour.request → the app-surface engine', () => {
   })
 
   it('reports an unknown verb instead of silently stopping', async () => {
-    send({ action: 'teleport', request_id: 't-verb' })
+    send({ action: 'teleport' })
     await settle()
 
     const result = answer()
@@ -194,21 +201,13 @@ describe('tour.request → the app-surface engine', () => {
     expect(result.error).toContain('teleport')
   })
 
-  it('drops an expired request instead of answering it late', async () => {
-    send({ action: 'targets', request_id: 't-expire' })
-    stream.route?.({ payload: { request_id: 't-expire' }, type: 'tour.expire' })
-    await settle()
-
-    expect(rpc.mock.calls.filter(([method]) => method === 'tour.respond')).toEqual([])
-  })
-
   it('leaves the negative default in place in a window that owns no layout', async () => {
     unregister()
     __resetAgentReadRequests()
     windows.owns = false
     unregister = installTourDriver()
 
-    send({ action: 'targets', request_id: 't-tile' })
+    send({ action: 'targets' })
     await settle()
 
     const result = answer()

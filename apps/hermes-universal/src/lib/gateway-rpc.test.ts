@@ -32,11 +32,6 @@ import {
   pollMcpServerOAuth,
   reactToMessage,
   removeMcpServer,
-  respondMcpSetup,
-  respondPreviewAct,
-  respondPreviewRead,
-  respondTour,
-  respondWindowRead,
   setMcpServerApiKey,
   setProfileAsset,
   setSessionCwd,
@@ -98,26 +93,12 @@ describe('message.react', () => {
   })
 })
 
-describe('preview/window read respond', () => {
-  it('answers a preview read with request_id + text', async () => {
-    rpc.mockResolvedValue({ status: 'ok' })
-
-    await expect(respondPreviewRead('req-1', '{"text":"hi"}')).resolves.toEqual({ status: 'ok' })
-    expect(rpc).toHaveBeenCalledWith('preview.read.respond', { request_id: 'req-1', text: '{"text":"hi"}' })
-  })
-
-  it('answers a window read on its own method', async () => {
-    await respondWindowRead('req-2', '')
-
-    expect(rpc).toHaveBeenCalledWith('window.read.respond', { request_id: 'req-2', text: '' })
-  })
-
-  it('treats an expired answer as a normal result, not a rejection', async () => {
-    rpc.mockResolvedValue({ status: 'expired' })
-
-    await expect(respondWindowRead('req-3', '{}')).resolves.toEqual({ status: 'expired' })
-  })
-})
+// The `preview/window read respond` suite is GONE with the helpers it pinned
+// (MJXHRM-520). It asserted the frames of `preview.read.respond` and
+// `window.read.respond` — methods the backend no longer implements, so every
+// call it made would now come back -32601. The GUI bridges answer on the
+// request's own response frame instead; `store/agent-read-requests.test.ts`
+// pins those answers.
 
 describe('session.cwd.set', () => {
   it('sends the RUNTIME session_id, not a stored key', async () => {
@@ -356,28 +337,11 @@ describe('mcp.servers.*', () => {
   })
 })
 
-describe('the responder family', () => {
-  // `_respond(rid, params, "result", ...)` — every sibling responder reads
-  // `text`, and this one does not. Sending `text` here is a silent no-answer
-  // that leaves the setup tool blocked for its full ten minutes.
-  it('answers mcp.setup.respond under `result`, not `text`', async () => {
-    await respondMcpSetup('req-1', { status: 'installed', server: 'notion' })
-
-    expect(rpc).toHaveBeenCalledWith('mcp.setup.respond', {
-      request_id: 'req-1',
-      result: JSON.stringify({ status: 'installed', server: 'notion' })
-    })
-    expect(sentParams()).not.toHaveProperty('text')
-  })
-
-  it('answers preview.act.respond and tour.respond under `text`', async () => {
-    await respondPreviewAct('req-2', '{"url":"about:blank"}')
-    await respondTour('req-3', '{"matched":0}')
-
-    expect(rpc.mock.calls[0]).toEqual(['preview.act.respond', { request_id: 'req-2', text: '{"url":"about:blank"}' }])
-    expect(rpc.mock.calls[1]).toEqual(['tour.respond', { request_id: 'req-3', text: '{"matched":0}' }])
-  })
-})
+// `the responder family` suite is GONE for the same reason (MJXHRM-520). The
+// `result`-vs-`text` payload-key trap it existed to catch cannot recur: there is
+// no `mcp.setup.respond` method left to send the wrong key to, and the card's
+// outcome now rides back as `ValueResult`'s `value` on the request's own
+// response — asserted in `components/assistant-ui/mcp-setup-tool.test.tsx`.
 
 describe('profiles.*', () => {
   it('asks for the cheap roster without the per-profile state.db reads', async () => {

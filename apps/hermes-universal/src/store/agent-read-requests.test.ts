@@ -1,89 +1,89 @@
 /**
- * These frames park a running agent tool for 30-45s, so the property that
- * matters is not "we answer well" but "we ALWAYS answer" — including with no
- * reader registered, and when the reader throws.
+ * These requests park a running agent tool until this client answers, so the
+ * property that matters is not "we answer well" but "we ALWAYS answer" —
+ * including with no reader registered, and when the reader throws.
+ *
+ * They arrive as server→client requests now (MJXHRM-520), so the test drives
+ * `answerAgentBridgeRequest` with a request whose `respond` is a spy, rather
+ * than pushing a `*.request` event and watching for a `*.respond` RPC. The
+ * methods those RPCs named no longer exist on the backend.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// vi.hoisted, not a bare `let`: the module under test registers its listener at
-// IMPORT time, so the mock factory runs before a normal top-level binding is
-// initialised.
-const stream = vi.hoisted(() => ({ route: null as ((event: { payload?: unknown; type: string }) => void) | null }))
+import type { ServerRequest, ServerRequestParams } from '@/gateway'
 
 const terminal = vi.hoisted(() => ({ read: vi.fn<(options: unknown) => unknown>() }))
 
 vi.mock('@/app/right-pane/terminal/buffer', () => ({ readActiveTerminal: terminal.read }))
 
-vi.mock('@/store/gateway', () => ({
-  addGatewayEventListener: (listener: (event: { payload?: unknown; type: string }) => void) => {
-    stream.route = listener
-
-    return () => {
-      stream.route = null
-    }
-  },
-  requestGateway: vi.fn().mockResolvedValue({ status: 'ok' })
-}))
-
-import { requestGateway } from '@/store/gateway'
-
 import {
   __resetAgentReadRequests,
+  answerAgentBridgeRequest,
   registerPreviewActor,
   registerPreviewReader,
   registerTourDriver,
   registerWindowBelowReader
 } from './agent-read-requests'
 
-const rpc = vi.mocked(requestGateway)
+/** A server request with spies for the two ways it can be settled. */
+function makeRequest(method: string, params: ServerRequestParams = {}) {
+  const respond = vi.fn()
+  const fail = vi.fn()
+  const request: ServerRequest = { fail, id: `srq-${method}`, method, params, respond }
 
-const send = (type: string, payload: Record<string, unknown>, sessionId?: string) =>
-  stream.route?.({ type, payload, ...(sessionId ? { session_id: sessionId } : {}) })
+  return { fail, request, respond }
+}
 
-/** The responder answers off a promise chain, so let the microtasks drain. */
+/** The single `value` this request was answered with. */
+const answeredValue = (respond: ReturnType<typeof vi.fn>): string =>
+  (respond.mock.calls[0]?.[0] as { value: string }).value
+
+/** The handlers answer off a promise chain, so let the microtasks drain. */
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
 
 beforeEach(() => {
   __resetAgentReadRequests()
-  rpc.mockClear()
-  rpc.mockResolvedValue({ status: 'ok' })
   terminal.read.mockReset()
   terminal.read.mockReturnValue(null)
 })
 
 afterEach(() => __resetAgentReadRequests())
 
-describe('preview.read.request', () => {
+describe('preview.read', () => {
   it('answers empty when nothing is registered, rather than stalling the tool', async () => {
-    send('preview.read.request', { request_id: 'r1' })
+    const { request, respond } = makeRequest('preview.read')
+
+    expect(answerAgentBridgeRequest(request, null)).toBe(true)
     await settle()
 
-    expect(rpc).toHaveBeenCalledWith('preview.read.respond', { request_id: 'r1', text: '' })
+    expect(respond).toHaveBeenCalledWith({ value: '' })
   })
 
   it('serialises the reader result as JSON and forwards the tool windowing', async () => {
     const reader = vi.fn().mockResolvedValue({ text: 'hello', title: 'Docs' })
+
     registerPreviewReader(reader)
 
-    send('preview.read.request', { request_id: 'r2', start: 10, count: 200 })
+    const { request, respond } = makeRequest('preview.read', { count: 200, start: 10 })
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
-    expect(reader).toHaveBeenCalledWith({ start: 10, count: 200 })
-    expect(rpc).toHaveBeenCalledWith('preview.read.respond', {
-      request_id: 'r2',
-      text: '{"text":"hello","title":"Docs"}'
-    })
+    expect(reader).toHaveBeenCalledWith({ count: 200, start: 10 })
+    expect(respond).toHaveBeenCalledWith({ value: '{"text":"hello","title":"Docs"}' })
   })
 
-  it('passes undefined windowing through when the tool asked for the whole page', async () => {
+  // The tool sends bare ints or nothing at all; a non-numeric value must not
+  // reach the reader as a window it would then clamp against.
+  it('drops a non-numeric window instead of forwarding it', async () => {
     const reader = vi.fn().mockReturnValue(null)
-    registerPreviewReader(reader)
 
-    send('preview.read.request', { request_id: 'r3' })
+    registerPreviewReader(reader)
+    answerAgentBridgeRequest(makeRequest('preview.read', { count: null, start: 'top' }).request, null)
     await settle()
 
-    expect(reader).toHaveBeenCalledWith({ start: undefined, count: undefined })
+    expect(reader).toHaveBeenCalledWith({ count: undefined, start: undefined })
   })
 
   it('answers empty when the reader throws (a surface still booting)', async () => {
@@ -91,127 +91,75 @@ describe('preview.read.request', () => {
       throw new Error('webview not ready')
     })
 
-    send('preview.read.request', { request_id: 'r4' })
+    const { request, respond } = makeRequest('preview.read')
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
-    expect(rpc).toHaveBeenCalledWith('preview.read.respond', { request_id: 'r4', text: '' })
-  })
-
-  it('ignores a frame with no request_id — there is nothing to answer', async () => {
-    send('preview.read.request', {})
-    await settle()
-
-    expect(rpc).not.toHaveBeenCalled()
+    expect(respond).toHaveBeenCalledWith({ value: '' })
   })
 })
 
-// --- terminal.read (MJXHRM-472) --------------------------------------------
-//
 // The one blocking bridge universal can actually SATISFY today: it owns a real
-// PTY terminal. Unlike the other four it has no registry seam — the reader is
+// PTY terminal. Unlike the others it has no registry seam — the reader is
 // resolved per-read from the active tab, so there is nothing to register.
+describe('terminal.read', () => {
+  it('answers empty when no terminal is mounted, rather than blocking the tool', async () => {
+    const { request, respond } = makeRequest('terminal.read')
 
-describe('terminal.read.request', () => {
-  it('answers empty when no terminal is mounted, rather than blocking the tool for 30s', async () => {
-    send('terminal.read.request', { request_id: 'x1' })
+    answerAgentBridgeRequest(request, null)
     await settle()
 
-    expect(rpc).toHaveBeenCalledWith('terminal.read.respond', { request_id: 'x1', text: '' })
+    expect(respond).toHaveBeenCalledWith({ value: '' })
   })
 
   it('serialises the active terminal and forwards the tool windowing', async () => {
-    const result = {
-      cursor_row: 2,
-      end: 3,
-      start: 0,
-      text: 'ok',
-      total_lines: 3,
-      viewport_rows: 3
-    }
+    const result = { cursor_row: 2, end: 3, start: 0, text: 'ok', total_lines: 3, viewport_rows: 3 }
 
     terminal.read.mockReturnValue(result)
-    send('terminal.read.request', { count: 200, request_id: 'x2', start: 10 })
+
+    const { request, respond } = makeRequest('terminal.read', { count: 200, start: 10 })
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
     expect(terminal.read).toHaveBeenCalledWith({ count: 200, start: 10 })
-    expect(rpc).toHaveBeenCalledWith('terminal.read.respond', { request_id: 'x2', text: JSON.stringify(result) })
-  })
-
-  // The tool sends bare ints or nothing at all; a non-numeric value must not
-  // reach the reader as a window it would then clamp against.
-  it('drops a non-numeric window instead of forwarding it', async () => {
-    terminal.read.mockReturnValue({ text: '' })
-    send('terminal.read.request', { count: null, request_id: 'x3', start: 'top' })
-    await settle()
-
-    expect(terminal.read).toHaveBeenCalledWith({ count: undefined, start: undefined })
-  })
-
-  // `terminal.read.request` is in the gateway's expire allowlist
-  // (tui_gateway/server.py), so this frame arrives and was previously dropped.
-  it('drops a request the gateway already expired', async () => {
-    let release: (value: unknown) => void = () => {}
-
-    terminal.read.mockReturnValue(new Promise(resolve => (release = resolve)))
-    send('terminal.read.request', { request_id: 'x4' })
-    send('terminal.read.expire', { request_id: 'x4' })
-    release({ text: 'late' })
-    await settle()
-
-    expect(rpc).not.toHaveBeenCalled()
+    expect(respond).toHaveBeenCalledWith({ value: JSON.stringify(result) })
   })
 
   it('answers empty when the reader throws — a broken pane must not stall the agent', async () => {
     terminal.read.mockImplementation(() => {
       throw new Error('xterm gone')
     })
-    send('terminal.read.request', { request_id: 'x5' })
+
+    const { request, respond } = makeRequest('terminal.read')
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
-    expect(rpc).toHaveBeenCalledWith('terminal.read.respond', { request_id: 'x5', text: '' })
+    expect(respond).toHaveBeenCalledWith({ value: '' })
   })
 })
 
-describe('window.read.request', () => {
-  it('answers on its own method, empty when the platform cannot enumerate windows', async () => {
-    send('window.read.request', { request_id: 'w1' })
+describe('window.read', () => {
+  it('answers empty when the platform cannot enumerate windows', async () => {
+    const { request, respond } = makeRequest('window.read')
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
-    expect(rpc).toHaveBeenCalledWith('window.read.respond', { request_id: 'w1', text: '' })
+    expect(respond).toHaveBeenCalledWith({ value: '' })
   })
 
   it('serialises a registered reader answer', async () => {
     registerWindowBelowReader(() => ({ platform: 'linux', window: { app: 'Firefox' } }))
 
-    send('window.read.request', { request_id: 'w2' })
+    const { request, respond } = makeRequest('window.read')
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
-    expect(rpc).toHaveBeenCalledWith('window.read.respond', {
-      request_id: 'w2',
-      text: '{"platform":"linux","window":{"app":"Firefox"}}'
-    })
-  })
-})
-
-describe('expiry', () => {
-  it('drops a request the tool already gave up on instead of answering into the void', async () => {
-    let release: (value: unknown) => void = () => {}
-    registerPreviewReader(() => new Promise(resolve => void (release = resolve)))
-
-    send('preview.read.request', { request_id: 'r5' })
-    send('preview.read.expire', { request_id: 'r5' })
-    release({ text: 'too late' })
-    await settle()
-
-    expect(rpc).not.toHaveBeenCalled()
-  })
-
-  it('leaves an unrelated in-flight request alone', async () => {
-    send('window.read.expire', { request_id: 'other' })
-    send('window.read.request', { request_id: 'w3' })
-    await settle()
-
-    expect(rpc).toHaveBeenCalledWith('window.read.respond', { request_id: 'w3', text: '' })
+    expect(respond).toHaveBeenCalledWith({ value: '{"platform":"linux","window":{"app":"Firefox"}}' })
   })
 })
 
@@ -220,41 +168,32 @@ describe('reader registration', () => {
     const first = vi.fn().mockReturnValue({ a: 1 })
     const dispose = registerPreviewReader(first)
     const second = vi.fn().mockReturnValue({ b: 2 })
-    registerPreviewReader(second)
 
+    registerPreviewReader(second)
     dispose()
-    send('preview.read.request', { request_id: 'r6' })
+
+    const { request, respond } = makeRequest('preview.read')
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
     expect(second).toHaveBeenCalled()
-    expect(rpc).toHaveBeenCalledWith('preview.read.respond', { request_id: 'r6', text: '{"b":2}' })
+    expect(respond).toHaveBeenCalledWith({ value: '{"b":2}' })
   })
 })
 
-// --- preview.act / tour (MJXHRM-444) ---------------------------------------
-//
-// The 08-20 additions join the same blocking family. Both are already in the
-// gateway's `_block` expire allowlist, so their frames — request AND expire —
-// arrive today and had no listener at all: the agent's drive_preview and tour
-// tools sat blocked for their full timeout on every call.
-
-describe('preview.act.request', () => {
-  // NOT an empty answer (MJXHRM-472). `drive_preview_tool.py` renders an empty
-  // one as "The action timed out, or no GUI window answered. Open a page with
-  // open_preview first." — a lie on a client with no browser pane, and an
-  // invitation to retry. The shaped refusal passes through the tool verbatim.
+/**
+ * The DRIVE pair answers "unregistered" differently from the READ trio
+ * (MJXHRM-472), and that asymmetry is the thing under test here.
+ */
+describe('preview.act', () => {
   it('answers a shaped refusal when no actor is registered, not an empty string', async () => {
-    send('preview.act.request', { request_id: 'a1', action: 'click', selector: '#go' })
+    const { request, respond } = makeRequest('preview.act', { action: 'click', selector: '#go' })
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
-    expect(rpc).toHaveBeenCalledTimes(1)
-
-    const [method, params] = rpc.mock.calls[0]
-
-    expect(method).toBe('preview.act.respond')
-    expect((params as { request_id: string }).request_id).toBe('a1')
-
-    const answer = JSON.parse((params as { text: string }).text) as { error: string; success: boolean }
+    const answer = JSON.parse(answeredValue(respond)) as { error: string; success: boolean }
 
     expect(answer.success).toBe(false)
     // Assert the fact only THIS branch can state: nothing happened to a page,
@@ -264,54 +203,43 @@ describe('preview.act.request', () => {
     expect(answer.error).toContain('Nothing was clicked or typed')
   })
 
-  // MJXHRM-447. Dropping the ctx argument turns this red, and with it the only
-  // way an actor can refuse to act in a session the user is not looking at.
-  it('hands the actor the session id from the event ENVELOPE', async () => {
+  it('hands the actor the whole tool call minus the envelope, plus the session ctx', async () => {
     const actor = vi.fn().mockReturnValue({ url: 'about:blank' })
 
     registerPreviewActor(actor)
-    send('preview.act.request', { request_id: 'a9', action: 'click', ref: 'btn-x' }, 'sess-7')
-    await settle()
 
-    expect(actor).toHaveBeenCalledWith({ action: 'click', ref: 'btn-x' }, { sessionId: 'sess-7' })
-  })
-
-  // The payload IS the tool call. Forwarding it wholesale is what lets a verb
-  // or argument added backend-side reach a registered actor with no change here
-  // — so the actor must receive the arguments, and NOT the envelope key.
-  it('hands the actor the whole tool call minus the envelope', async () => {
-    const actor = vi.fn().mockReturnValue({ url: 'about:blank' })
-
-    registerPreviewActor(actor)
-    send('preview.act.request', { request_id: 'a2', action: 'type', selector: '#q', text: 'hi', submit: true })
-    await settle()
-
-    // MJXHRM-447: the second argument is the request CONTEXT. The session id
-    // lives on the event envelope, not in the payload, so without it an actor
-    // cannot tell whose session asked and cannot apply the
-    // "only in the session the user is looking at" rule at all.
-    expect(actor).toHaveBeenCalledWith(
-      { action: 'type', selector: '#q', text: 'hi', submit: true },
-      { sessionId: null }
-    )
-    expect(rpc).toHaveBeenCalledWith('preview.act.respond', {
-      request_id: 'a2',
-      text: JSON.stringify({ url: 'about:blank' })
+    const { request, respond } = makeRequest('preview.act', {
+      action: 'type',
+      selector: '#q',
+      session_id: 'sess-7',
+      submit: true,
+      text: 'hi'
     })
+
+    answerAgentBridgeRequest(request, 'sess-7')
+    await settle()
+
+    expect(actor).toHaveBeenCalledWith(
+      { action: 'type', selector: '#q', submit: true, text: 'hi' },
+      { sessionId: 'sess-7' }
+    )
+    expect(respond).toHaveBeenCalledWith({ value: JSON.stringify({ url: 'about:blank' }) })
   })
 
   // A throwing actor reports ITS error, not the unsupported text: the surface
   // exists, it just failed. Desktop's bridge answers the same shape.
-  it('answers the actor\u2019s own error when it throws — a broken surface must not become a stalled agent', async () => {
+  it('answers the actor’s own error when it throws', async () => {
     registerPreviewActor(() => {
       throw new Error('no preview mounted')
     })
-    send('preview.act.request', { request_id: 'a3', action: 'click' })
+
+    const { request, respond } = makeRequest('preview.act', { action: 'click' })
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
-    expect(rpc).toHaveBeenCalledWith('preview.act.respond', {
-      request_id: 'a3',
-      text: JSON.stringify({ error: 'no preview mounted', success: false })
+    expect(respond).toHaveBeenCalledWith({
+      value: JSON.stringify({ error: 'no preview mounted', success: false })
     })
   })
 
@@ -319,48 +247,44 @@ describe('preview.act.request', () => {
   // refusal rather than the empty string the tool misreads as a timeout.
   it('answers the refusal when a registered actor resolves to null', async () => {
     registerPreviewActor(() => null)
-    send('preview.act.request', { request_id: 'a5', action: 'click', selector: '#go' })
+
+    const { request, respond } = makeRequest('preview.act', { action: 'click', selector: '#go' })
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
-    const answer = JSON.parse((rpc.mock.calls[0][1] as { text: string }).text) as { success: boolean }
-
-    expect(answer.success).toBe(false)
+    expect((JSON.parse(answeredValue(respond)) as { success: boolean }).success).toBe(false)
   })
 
-  it('drops a request the gateway already expired instead of answering a tool that gave up', async () => {
-    let release: (value: unknown) => void = () => {}
+  /**
+   * Every mounted WebView sees the same request, so the window that is not
+   * looking at the named session must stay SILENT — answering would race the
+   * window that owns the surface. Silent means: claimed (so the channel does not
+   * answer -32601 on its behalf) but not answered.
+   */
+  it('stays silent in a window that is not looking at the named session', async () => {
+    const actor = vi.fn().mockReturnValue({ url: 'about:blank' })
 
-    registerPreviewActor(() => new Promise(resolve => (release = resolve)))
-    send('preview.act.request', { request_id: 'a4', action: 'click' })
-    send('preview.act.expire', { request_id: 'a4' })
-    release({ url: 'late' })
+    registerPreviewActor(actor)
+
+    const { request, respond } = makeRequest('preview.act', { action: 'click', session_id: 'sess-7' })
+
+    expect(answerAgentBridgeRequest(request, 'sess-OTHER')).toBe(true)
     await settle()
 
-    expect(rpc).not.toHaveBeenCalled()
-  })
-
-  it('ignores a frame with no request id — there is nothing to answer', async () => {
-    registerPreviewActor(() => ({ url: 'x' }))
-    send('preview.act.request', { action: 'click' })
-    await settle()
-
-    expect(rpc).not.toHaveBeenCalled()
+    expect(actor).not.toHaveBeenCalled()
+    expect(respond).not.toHaveBeenCalled()
   })
 })
 
-describe('tour.request', () => {
-  // Same reasoning as preview.act: `tour_tool.py` turns an empty answer into
-  // "The tour request timed out, or no GUI window answered", which reads as a
-  // transient fault the model should retry. MJXHRM-473 registers a real driver;
-  // until then this is the honest answer.
+describe('tour', () => {
   it('answers a shaped refusal when no driver is registered, not an empty string', async () => {
-    send('tour.request', { request_id: 't1', action: 'start' })
+    const { request, respond } = makeRequest('tour', { action: 'start' })
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
-    const answer = JSON.parse((rpc.mock.calls[0][1] as { text: string }).text) as {
-      error: string
-      success: boolean
-    }
+    const answer = JSON.parse(answeredValue(respond)) as { error: string; success: boolean }
 
     expect(answer.success).toBe(false)
     expect(answer.error).toContain('cannot run guided tours')
@@ -371,35 +295,16 @@ describe('tour.request', () => {
     const driver = vi.fn().mockResolvedValue({ matched: 2, step: 0 })
 
     registerTourDriver(driver)
-    send('tour.request', { request_id: 't2', action: 'targets', surface: 'app', selector: '.rail' })
+
+    const { request, respond } = makeRequest('tour', { action: 'targets', selector: '.rail', surface: 'app' })
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
-    // Same context argument, for symmetry: a bot session's tour must not be
-    // able to take a surface the user is not looking at either.
-    expect(driver).toHaveBeenCalledWith(
-      { action: 'targets', surface: 'app', selector: '.rail' },
-      { sessionId: null }
-    )
-    expect(rpc).toHaveBeenCalledWith('tour.respond', {
-      request_id: 't2',
-      text: JSON.stringify({ matched: 2, step: 0 })
-    })
+    expect(driver).toHaveBeenCalledWith({ action: 'targets', selector: '.rail', surface: 'app' }, { sessionId: null })
+    expect(respond).toHaveBeenCalledWith({ value: JSON.stringify({ matched: 2, step: 0 }) })
   })
 
-  it('drops a request the gateway already expired', async () => {
-    let release: (value: unknown) => void = () => {}
-
-    registerTourDriver(() => new Promise(resolve => (release = resolve)))
-    send('tour.request', { request_id: 't3', action: 'next' })
-    send('tour.expire', { request_id: 't3' })
-    release({ step: 1 })
-    await settle()
-
-    expect(rpc).not.toHaveBeenCalled()
-  })
-
-  // Both registrars hand back an unregister; a stale one must not tear down a
-  // reader that replaced it.
   it('unregisters idempotently, without clobbering a replacement', async () => {
     const first = vi.fn().mockReturnValue({ from: 'first' })
     const unregisterFirst = registerTourDriver(first)
@@ -408,10 +313,22 @@ describe('tour.request', () => {
     registerTourDriver(second)
     unregisterFirst()
 
-    send('tour.request', { request_id: 't4', action: 'show' })
+    const { request, respond } = makeRequest('tour', { action: 'show' })
+
+    answerAgentBridgeRequest(request, null)
     await settle()
 
     expect(second).toHaveBeenCalled()
-    expect(rpc).toHaveBeenCalledWith('tour.respond', { request_id: 't4', text: JSON.stringify({ from: 'second' }) })
+    expect(respond).toHaveBeenCalledWith({ value: JSON.stringify({ from: 'second' }) })
+  })
+})
+
+describe('methods this module does not own', () => {
+  // Declining is what makes the channel answer -32601 in the same tick. Claiming
+  // a card method here would swallow it and leave the agent parked.
+  it('declines the card and vault methods', () => {
+    for (const method of ['approval', 'clarify', 'mcp.setup', 'secret', 'sudo', 'vault.code']) {
+      expect(answerAgentBridgeRequest(makeRequest(method).request, null)).toBe(false)
+    }
   })
 })

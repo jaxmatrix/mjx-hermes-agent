@@ -33,19 +33,15 @@ import { coerceThinkingText } from '@/lib/chat-runtime'
 import { type GatewayToolPayload, toolIdFromPayload } from '@/lib/chat-tool-parts'
 import { playCompletionSound } from '@/lib/completion-sound'
 import { resolveGatewayEventSessionId } from '@/lib/gateway-events'
-import { triggerHaptic } from '@/lib/haptics'
 import { queryClient } from '@/lib/query-client'
 import { invalidateSlashCompletions } from '@/lib/slash-completion-cache'
 import { type DeltaChannel, flushDeltas, queueDelta, setStreamBatchSink } from '@/lib/stream-batch'
-import { prettyName } from '@/lib/text'
 import { stopSpeaking } from '@/lib/tts'
 import { $activeConnectionId } from '@/store/active-connection'
 import { type AgentNoticePayload, clearAgentNotice, nativeNoticeInput, showAgentNotice } from '@/store/agent-notices'
 import { reconcileApprovalModeForProfile } from '@/store/approval-mode'
-import { ackApprovalReceived, readApprovalPayload } from '@/store/approvals'
 import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block'
 import { noteMissedSteer } from '@/store/chat'
-import { normalizeQuestions, readChoices, readLockedAnswers } from '@/store/clarify'
 import { routeCompactionEvent } from '@/store/compaction'
 import { addGatewayEventListener, requestGateway } from '@/store/gateway'
 import {
@@ -58,28 +54,19 @@ import {
   type PetChangeMeta,
   setChangeEventsAvailable
 } from '@/store/live-sync'
-import { readMcpSetupRequest } from '@/store/mcp-setup'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notify } from '@/store/notifications'
 import { applyBridgeLayoutPreset, revealBridgePane } from '@/store/pane-focus'
 import { flashPetActivity, setPetActivity } from '@/store/pet'
 import { $activeGatewayProfile } from '@/store/profile'
-import {
-  clearAllPrompts,
-  clearSessionClarify,
-  clearSessionMcpSetup,
-  clearSessionSecret,
-  clearSessionSudo,
-  sessionAwaitingInput,
-  sessionMcpSetupRequest,
-  sessionSecretRequest,
-  sessionSudoRequest,
-  setSessionApproval,
-  setSessionClarify,
-  setSessionMcpSetup,
-  setSessionSecret,
-  setSessionSudo
-} from '@/store/prompts'
+// `clearSessionClarify` / `clearSessionMcpSetup` survive the prompt-event
+// deletion on purpose: they are called from `tool.complete`, which is the
+// terminal event a clarify or setup card shares across ALL its endings —
+// answered, timed out, or released by an interrupt. Only the answered path
+// clears the request itself, so without them an interrupted turn leaves a
+// phantom prompt that `$activeSessionAwaitingInput` keeps calling "parked on
+// the user", which is what makes Esc refuse to interrupt.
+import { clearAllPrompts, clearSessionClarify, clearSessionMcpSetup } from '@/store/prompts'
 import { applyReactionEvent } from '@/store/reactions'
 import { EMPTY_USAGE, reduceSessionState } from '@/store/session-reducer'
 import {
@@ -401,172 +388,16 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
   flushDeltas(key)
 
-  // --- Per-session blocking prompts ----------------------------------------
+  // The per-session blocking prompts USED to be folded here, from
+  // `approval.request` / `clarify.request` / `mcp.setup.request` /
+  // `sudo.request` / `secret.request` and their `*.expire` twins. None of those
+  // events exists any more (MJXHRM-520): the backend raises every one of them
+  // as a server→client REQUEST and withdraws it with `request.cancel`, so the
+  // cases below were unreachable against a contract-compliant gateway — which
+  // is why a live approval never reached this client at all. The whole family
+  // now lives in `store/server-request-router.ts`, where the id that answers it
+  // is in scope.
   switch (event.type) {
-    case 'approval.request': {
-      // One reader for the event and for the `approval.pending` /
-      // `pending_approval` replays — they are the same payload
-      // (`_approval_request_payload`), and a client that parsed them
-      // differently would answer a replayed approval with a different
-      // request_id than the live one.
-      const approval = readApprovalPayload(payload)
-
-      setSessionApproval(key, approval)
-      // Session-scoped: `approval.received` resolves through `_sess()`, so it
-      // needs the runtime id the gateway knows, which is this event's session.
-      void ackApprovalReceived(key, approval.requestId)
-      dispatchNativeNotification({
-        kind: 'approval',
-        title: translateNow('notifications.native.approvalTitle'),
-        body: coerceText(payload.command) || coerceText(payload.description),
-        sessionId: key
-      })
-      void triggerHaptic('warning')
-
-      break
-    }
-
-    case 'clarify.request': {
-      // The gateway sends `question` + `choices` — NOT `prompt`; the other keys
-      // are tolerated only as a fallback.
-      const requestId = coerceText(payload.request_id)
-      // A BATCH clarify (2–5 independent questions, `tools/clarify_tool.py`)
-      // carries `questions[]` and NO top-level `question` at all. Testing only
-      // for `question` dropped the whole event on the floor: nothing wrote the
-      // prompt store, nothing ever called `clarify.respond`, and the agent sat
-      // in the backend's `_block` for the full clarify deadline with the UI
-      // showing a contentless "needs input" dot. The tool advertises the batch
-      // form in its schema on EVERY session, so any model could hang any turn.
-      const questions = normalizeQuestions(payload.questions)
-      const question = coerceText(payload.question) || coerceText(payload.prompt) || coerceText(payload.message)
-
-      if (requestId && (question || questions.length > 0)) {
-        // Normalized here, not in the panel: this is the PRIMARY source for the
-        // choice list (`tool.start` ships no args), so a blank / multi-line /
-        // 4KB entry from a sloppy tool call would reach the renderer unguarded.
-        setSessionClarify(
-          key,
-          questions.length > 0
-            ? {
-                requestId,
-                question: '',
-                choices: null,
-                questions,
-                // Present only on a resume replay of a partly-answered batch
-                // (`_pending_clarify_request_payload`), never on a live event.
-                lockedAnswers: readLockedAnswers(payload.answers)
-              }
-            : {
-                requestId,
-                question,
-                choices: readChoices('gateway', question, payload.choices),
-                ...(payload.multi_select === true ? { multiSelect: true } : {})
-              }
-        )
-        dispatchNativeNotification({
-          kind: 'input',
-          title: translateNow('notifications.native.inputTitle'),
-          body: questions.length > 0 ? questions.map(entry => entry.question).join(' · ') : question,
-          sessionId: key
-        })
-        void triggerHaptic('warning')
-      }
-
-      break
-    }
-
-    // Shape-gated like `clarify.request` above: the payload is
-    // `{server, action, reason, request_id}` (`_block("mcp.setup.request", …)`),
-    // and a frame missing either identifier is unrenderable rather than
-    // half-renderable — see `readMcpSetupRequest`.
-    case 'mcp.setup.request': {
-      const request = readMcpSetupRequest(payload)
-
-      if (request) {
-        setSessionMcpSetup(key, request)
-        dispatchNativeNotification({
-          kind: 'input',
-          title: translateNow('notifications.native.inputTitle'),
-          body: request.reason || prettyName(request.server),
-          sessionId: key
-        })
-        void triggerHaptic('warning')
-      }
-
-      break
-    }
-
-    case 'sudo.request':
-      setSessionSudo(key, {
-        requestId: coerceText(payload.request_id),
-        prompt: coerceText(payload.prompt) || coerceText(payload.command) || 'Enter your sudo password'
-      })
-
-      break
-
-    case 'secret.request':
-      setSessionSecret(key, {
-        requestId: coerceText(payload.request_id),
-        envVar: coerceText(payload.env_var),
-        prompt: coerceText(payload.prompt) || coerceText(payload.message)
-      })
-
-      break
-    // The gateway TELLS us when a blocking prompt dies. `_block()` emits
-    // `<name>.expire` for every request type whose responder is `allow_expired`
-    // (`tui_gateway/server.py`) the moment its wait gives up and the tool is
-    // handed an empty answer. Nothing here consumed it, so the bar sat there
-    // over a tool that had already been cancelled — and, worse,
-    // `$activeSessionAwaitingInput` kept calling the turn "parked on the user",
-    // which is exactly what makes Esc refuse to interrupt (see the clarify clear
-    // on `tool.complete` below, which fixed the same thing one prompt over).
-    //
-    // Matched on request_id so a SECOND prompt that arrived while the first was
-    // expiring is never torn down with it. `sudo.request` / `secret.request` are
-    // the only two of the six expiring types with a UI here; `clarify.expire` is
-    // deliberately NOT handled — `tool.complete` already clears that request,
-    // and dropping it out from under a live inline panel would strand it on its
-    // loading spinner in the one case the event exists for (a reconnect that ate
-    // `tool.complete`), where the panel today still routes a late answer into
-    // the composer.
-    case 'secret.expire': {
-      const requestId = coerceText(payload.request_id)
-
-      if (requestId && sessionSecretRequest(key).get()?.requestId === requestId) {
-        clearSessionSecret(key)
-      }
-
-      break
-    }
-
-    case 'sudo.expire': {
-      const requestId = coerceText(payload.request_id)
-
-      if (requestId && sessionSudoRequest(key).get()?.requestId === requestId) {
-        clearSessionSudo(key)
-      }
-
-      break
-    }
-
-    // Unlike `clarify.expire` (deliberately unhandled — see above), this one IS
-    // consumed. The reasoning that keeps a clarify panel alive on its spinner
-    // does not transfer: a clarify's late answer still routes somewhere useful
-    // (the composer drafts it as a follow-up), whereas an expired setup card can
-    // only offer to install a server the agent has already given up waiting for,
-    // and every button on it would run a real install against a tool that has
-    // already returned `unanswered`. Ten minutes is also long enough that the
-    // `tool.complete` clear below can be a long way off on a slow reconnect.
-    case 'mcp.setup.expire': {
-      const requestId = coerceText(payload.request_id)
-
-      if (requestId && sessionMcpSetupRequest(key).get()?.requestId === requestId) {
-        clearSessionMcpSetup(key)
-      }
-
-      break
-    }
-
     case 'message.start':
       // A fresh turn on this session optimistically clears its billing wall; if
       // credits are still exhausted the next failure re-raises it.
@@ -880,34 +711,11 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
       break
 
-    case 'approval.request':
-
-    case 'clarify.request':
-
-    case 'mcp.setup.request':
-
-    case 'secret.request':
-
-    case 'sudo.request':
-      setPetActivity({ awaitingInput: true }) // pet: waiting pose (blocked on user)
-
-      break
-
-    case 'mcp.setup.expire':
-
-    case 'secret.expire':
-
-    case 'sudo.expire':
-      // The waiting pose is set by the four `*.request` events above and dropped
-      // when one is ANSWERED (`clearAwaitingInputPose` in store/chat.ts). A
-      // prompt that died unanswered took its bar with it a moment ago, so the
-      // pet would otherwise keep waiting for input nobody will ever give. Guard
-      // on the aggregate: this session may still have another prompt open.
-      if (!sessionAwaitingInput(key).get()) {
-        setPetActivity({ awaitingInput: false })
-      }
-
-      break
+    // The pet's waiting pose used to be driven from the `*.request` / `*.expire`
+    // events here. Those events are gone (MJXHRM-520) — a blocking prompt is a
+    // server→client request now — so the pose is set where the request arrives
+    // and cleared where it is answered or withdrawn, both in
+    // `store/server-request-router.ts`.
 
     case 'error':
       // pet: crying pose, auto-decaying back to normal after 5s.

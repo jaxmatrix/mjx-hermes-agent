@@ -16,10 +16,16 @@ import './store/event-router'
 // Likewise: every WebView must be listening for another WebView's gateway switch
 // before it dials, or it keeps serving the gateway the user just moved off.
 import './store/gateway-switch-sync'
-// Likewise again: `preview.read.request` / `window.read.request` park a running
-// agent tool until the client answers, so the responder has to be listening
-// before the first turn — see store/agent-read-requests.ts.
-import './store/agent-read-requests'
+// Likewise again, and for a stricter reason: a server→client REQUEST parks the
+// agent thread in `server_requests.send()` until this client answers it
+// (MJXHRM-520) — every approval, clarify, sudo, secret and MCP-setup prompt, and
+// the GUI bridges behind read_terminal / read_window_below / tour. The router
+// self-registers with the gateway, so this import IS the wiring, and it has to
+// happen before the first turn or the first prompt of the session goes
+// unanswered until its deadline. It pulls store/agent-read-requests.ts in with
+// it (that module no longer listens on its own — it is delegated to, not
+// subscribed).
+import './store/server-request-router'
 // And its non-blocking sibling: `agent.terminal.output` arrives for every
 // `terminal(background=true)` run whether or not any pane is mounted, and it is
 // only ever sent once — nothing replays it — so the buffer has to exist before

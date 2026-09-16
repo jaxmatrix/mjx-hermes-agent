@@ -3,10 +3,12 @@ import { useState } from 'react'
 import { RequestBar, RequestBarActions, RequestBarDescription } from '@/app/chat/request-bar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useI18n } from '@/i18n'
 import { respondSudo, type SudoRequest } from '@/store/chat'
 import { notify, notifyError } from '@/store/notifications'
 
-export function SudoBar({ request, sessionKey }: { request: SudoRequest; sessionKey: string }) {
+export function SudoBar({ request: _request, sessionKey }: { request: SudoRequest; sessionKey: string }) {
+  const { t } = useI18n()
   const [password, setPassword] = useState('')
   // The bar stays until the gateway has the answer (MJXHRM-418): a swallowed
   // rejection used to tear it down while the sudo prompt was still blocking the
@@ -17,10 +19,9 @@ export function SudoBar({ request, sessionKey }: { request: SudoRequest; session
     setSending(true)
 
     try {
-      // `sudo.respond` is `allow_expired`: once the tool's own wait has given up
-      // the gateway takes the password and drops it on the floor, answering
-      // `{"status": "expired"}`. Say so — the command it was for is already
-      // cancelled, and a bar that just vanishes reads as "password accepted".
+      // `expired` means the request was already withdrawn: the command it was
+      // for is cancelled, so a bar that just vanishes would read as "password
+      // accepted".
       if ((await respondSudo(value, sessionKey)) === 'expired') {
         notify({
           kind: 'warning',
@@ -42,7 +43,15 @@ export function SudoBar({ request, sessionKey }: { request: SudoRequest; session
 
   return (
     <RequestBar title="Sudo password required">
-      <RequestBarDescription>{request.prompt}</RequestBarDescription>
+      {/*
+        The description is LOCAL copy now (MJXHRM-520). The `sudo` server
+        request carries `EmptyRequestParams` — the session id and nothing else —
+        so the shell's own prompt text that the retired `sudo.request` event used
+        to forward no longer exists on the wire. `prompts.sudoDesc` already ships
+        in all five locales, so this says the one thing worth saying here: where
+        the password goes.
+      */}
+      <RequestBarDescription>{t.prompts.sudoDesc}</RequestBarDescription>
       <Input
         autoFocus
         onChange={e => setPassword(e.target.value)}

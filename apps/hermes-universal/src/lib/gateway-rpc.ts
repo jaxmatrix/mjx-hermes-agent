@@ -87,35 +87,13 @@ export function reactToMessage(params: {
   })
 }
 
-// --- preview.read / terminal.read / window.read respond --------------------
-
-/** `expired` means the tool's bounded wait already timed out — the answer was
- *  accepted and discarded, which is not an error (the gateway passes
- *  `allow_expired=True` precisely so a slow renderer doesn't get a 4009). */
-export interface AgentReadRespondResult {
-  status: 'expired' | 'ok'
-}
-
-/** Answer a `preview.read.request` (the agent's read_preview tool). `text` is a
- *  JSON string of the active preview tab's contents; empty means nothing open. */
-export function respondPreviewRead(requestId: string, text: string): Promise<AgentReadRespondResult> {
-  return requestGateway<AgentReadRespondResult>('preview.read.respond', { request_id: requestId, text })
-}
-
-/** Answer a `terminal.read.request` (the agent's read_terminal tool). `text` is
- *  a JSON string of the active terminal's serialized buffer; empty means no
- *  terminal is mounted, which the tool reports as "No in-app terminal is open".
- *  See app/right-pane/terminal/buffer.ts for the serializer. */
-export function respondTerminalRead(requestId: string, text: string): Promise<AgentReadRespondResult> {
-  return requestGateway<AgentReadRespondResult>('terminal.read.respond', { request_id: requestId, text })
-}
-
-/** Answer a `window.read.request` (the agent's read_window_below tool). `text`
- *  is a JSON string describing the OS window under the app; empty means
- *  unavailable. See store/agent-read-requests.ts, which owns the frame half. */
-export function respondWindowRead(requestId: string, text: string): Promise<AgentReadRespondResult> {
-  return requestGateway<AgentReadRespondResult>('window.read.respond', { request_id: requestId, text })
-}
+// The `preview.read.respond` / `terminal.read.respond` / `window.read.respond`
+// helpers lived here and are GONE (MJXHRM-520). The backend implements no such
+// methods any more — grep `tui_gateway/` and there is no handler for any of
+// them — so every one of these calls would have come back `-32601`. The GUI
+// bridges are server→client REQUESTS now and are answered with a JSON-RPC
+// response on the request's own id, which is why there is no client→server
+// method left to wrap: see `store/agent-read-requests.ts`.
 
 // --- session.cwd.set -------------------------------------------------------
 
@@ -644,50 +622,13 @@ export function pollMcpServerOAuth(params: {
   })
 }
 
-// --- mcp.setup.respond -----------------------------------------------------
+// `mcp.setup.respond`, `preview.act.respond` and `tour.respond` lived here and
+// are GONE for the same reason as the read trio above (MJXHRM-520): the backend
+// implements none of them. The `result`-vs-`text` payload-key trap the
+// `mcp.setup.respond` helper documented went with it — the declared result for
+// `mcp.setup` is `ValueResult`, so the outcome rides back as `{value}` on the
+// request's own response frame.
 
-/** The outcome of an MCP setup card, as the `setup_mcp` tool wants to read it. */
-export interface McpSetupOutcome {
-  detail?: string
-  server?: string
-  status: string
-  tools?: string[]
-}
-
-/**
- * Answer an MCP setup consent card.
- *
- * Note the payload key is `result`, not the `text` its sibling responders use
- * (`methods_prompt.py` `_respond(rid, params, "result", …)`) — sending `text`
- * here is a silent no-answer. Like the other responders it is `allow_expired`,
- * so a late answer resolves as `expired` rather than raising: the setup tool
- * waits ten minutes and an OAuth round-trip can outlive that.
- */
-export function respondMcpSetup(requestId: string, outcome: McpSetupOutcome): Promise<AgentReadRespondResult> {
-  return requestGateway<AgentReadRespondResult>('mcp.setup.respond', {
-    request_id: requestId,
-    result: JSON.stringify(outcome)
-  })
-}
-
-// --- preview.act.respond / tour.respond ------------------------------------
-
-/**
- * Answer a `preview.act.request` (the agent's drive_preview tool). `text` is a
- * JSON string of the interaction's outcome — what it acted on, the live
- * url/title, and a refreshed element inventory.
- *
- * `allow_expired`, like every responder in this family: a settle-and-rescan
- * routinely loses the race with the tool's bounded wait, and that answers
- * `expired`, which is not an error.
- */
-export function respondPreviewAct(requestId: string, text: string): Promise<AgentReadRespondResult> {
-  return requestGateway<AgentReadRespondResult>('preview.act.respond', { request_id: requestId, text })
-}
-
-/** Answer a `tour.request` (the agent's tour tool). `text` is a JSON string:
- *  matched targets, the active step, or an error naming the bad selector.
- *  `allow_expired` — driver.js injection into a slow page can outlive the wait. */
 /**
  * Ask the agent to restart whatever should be serving a preview URL
  * (MJXHRM-447).
@@ -716,10 +657,6 @@ export async function requestPreviewRestart(params: {
   }
 
   return answer.task_id
-}
-
-export function respondTour(requestId: string, text: string): Promise<AgentReadRespondResult> {
-  return requestGateway<AgentReadRespondResult>('tour.respond', { request_id: requestId, text })
 }
 
 // --- profiles.* ------------------------------------------------------------

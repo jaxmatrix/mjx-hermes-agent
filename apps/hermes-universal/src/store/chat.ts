@@ -55,6 +55,7 @@ import {
   sessionSudoRequest,
   type SudoRequest
 } from '@/store/prompts'
+import { respondToServerRequest } from '@/store/server-requests'
 import {
   $activeSessionKey,
   $sessionStates,
@@ -1692,6 +1693,18 @@ export async function respondApproval(
   key = $activeSessionKey.get()
 ): Promise<PromptRespondOutcome> {
   const slice = $sessionStates.get()[key]
+  // THE approval that is on screen. Two answer paths, because an approval can
+  // reach this client two ways (MJXHRM-520, correction C1):
+  //
+  //  - as a server→client REQUEST, which is how a LIVE approval arrives now.
+  //    Answering is a response on that request's id, so it needs no session and
+  //    cannot be resolved against the wrong queue entry.
+  //  - as a `pending_approval` on a resume, or an `approval.pending` poll, which
+  //    is how one raised while this client's transport was detached surfaces.
+  //    There is no request in hand then, so the `approval.respond` RPC below is
+  //    the only way to answer — and it is still implemented precisely because
+  //    of this case.
+  const serverRequestId = sessionApprovalRequest(key).get()?.serverRequestId
   // A slice with no runtime id has nothing the gateway can resolve — `_sess()`
   // answers an empty `session_id` with the same "session not found" it gives a
   // dead one, which is exactly what the old swallow was hiding.
@@ -1701,6 +1714,27 @@ export async function respondApproval(
   // `approval.request` overwrites the session's slot) — so a session holding
   // two different commands approved the one the user was not looking at.
   const requestId = sessionApprovalRequest(key).get()?.requestId
+
+  if (serverRequestId) {
+    const delivered = respondToServerRequest(serverRequestId, { choice })
+
+    clearSessionApproval(key)
+    clearAwaitingInputPose(key)
+
+    // The queue can hold more than one and nothing re-emits the rest, exactly as
+    // on the RPC path below.
+    try {
+      await replayPendingApproval(live, key)
+    } catch {
+      // The next request (or a resume) will surface it.
+    }
+
+    // False means nothing was open under that id: the approval had already been
+    // withdrawn (timeout, /stop, or another surface answered it), so the command
+    // it guarded is already blocked and this choice changed nothing.
+    return delivered ? 'delivered' : 'expired'
+  }
+
   // Lazily, like every other recovery call site here — `store/session-recovery`
   // imports back into the session store (see the note on `sessionRecovery`).
   const { withSessionNotFoundResume } = await sessionRecovery()
@@ -1757,11 +1791,13 @@ export async function respondApproval(
  * fails, so the user can retry instead of losing the (still-blocked) prompt.
  * Throws on failure.
  *
- * `clarify.respond` is `allow_expired` on the backend (`_respond` in
- * `tui_gateway/server.py`), which means a request the 5-minute timeout already
- * popped answers `{"status": "expired"}` — an RPC SUCCESS that delivered
- * nothing. Reporting that as a normal send is how an answer disappears with the
- * UI saying it went through, so the outcome comes back to the caller.
+ * The answer is the RESPONSE to the server request that asked (MJXHRM-520), not
+ * the removed `clarify.respond` method. `expired` now means the channel had
+ * nothing open under that id — the question was withdrawn by `request.cancel`,
+ * timed out, or another surface answered it — which is the same thing the old
+ * `{"status": "expired"}` reported and is reported to the caller for the same
+ * reason: letting the UI say an answer went through when it went nowhere is how
+ * an answer disappears.
  */
 export async function respondClarify(answer: string, key = $activeSessionKey.get()): Promise<PromptRespondOutcome> {
   const req = sessionClarifyRequest(key).get()
@@ -1770,24 +1806,26 @@ export async function respondClarify(answer: string, key = $activeSessionKey.get
     return 'gone'
   }
 
-  const result = await requestGateway<{ status?: string }>('clarify.respond', {
-    request_id: req.requestId,
-    answer
-  })
+  // A BATCH cancelled with an empty answer is cancel-ALL, and `ClarifyResult`
+  // spells that as a response carrying NEITHER `answer` nor `answers`. Sending
+  // `{answer: ''}` for a batch would instead read as one blank answer to a
+  // question set the user meant to dismiss entirely.
+  const isBatch = (req.questions?.length ?? 0) > 0
+  const delivered = respondToServerRequest(req.requestId, isBatch && !answer ? {} : { answer })
 
-  // Only drop the request once the gateway has it; `tool.complete` lands next
-  // and swaps the inline panel to its settled Q&A view. An expired request is
-  // equally finished — nothing will ever answer it — so it clears too.
+  // Drop the request either way; `tool.complete` lands next and swaps the inline
+  // panel to its settled Q&A view. A withdrawn request is equally finished —
+  // nothing will ever answer it — so it clears too.
   if (sessionClarifyRequest(key).get()?.requestId === req.requestId) {
     clearSessionClarify(key)
     clearAwaitingInputPose(key)
   }
 
-  return result?.status === 'expired' ? 'expired' : 'delivered'
+  return delivered ? 'delivered' : 'expired'
 }
 
-/** The gateway's answer to a per-question batch lock (`_respond` in
- *  `tui_gateway/server.py`): the qids still unanswered after this one. */
+/** The gateway's answer to a per-question batch lock (`clarify.lock`): the qids
+ *  still unanswered after this one. */
 export interface ClarifyBatchLockResult {
   outcome: PromptRespondOutcome
   remaining: string[]
@@ -1801,10 +1839,16 @@ export const CLARIFY_UNKNOWN_QUESTION_CODE = 4002
  * Lock the answers of a BATCH clarify, one `question_id` at a time.
  *
  * Sequential on purpose, never `Promise.all`: the gateway completes the batch
- * on the lock that empties `remaining` (`ev.set()` in `_respond`), so the last
- * lock releases the agent — and a reordered burst would complete the batch
- * with an earlier answer still in flight, handing the tool a blank for a
- * question the user did answer.
+ * on the lock that empties `remaining`, so the last lock releases the agent —
+ * and a reordered burst would complete the batch with an earlier answer still
+ * in flight, handing the tool a blank for a question the user did answer.
+ *
+ * The locks go through the `clarify.lock` RPC rather than the request's own
+ * response (MJXHRM-520): a per-question lock is not the ANSWER to the request,
+ * it is an update to the answer set the backend is accumulating, and the
+ * backend resolves the request itself when the last one lands. That is also why
+ * nothing here writes a response frame — doing both would answer the request
+ * twice.
  *
  * The request is cleared only once the gateway says nothing remains. A partial
  * failure therefore leaves the card up with the locks it did land, which is
@@ -1825,7 +1869,7 @@ export async function respondClarifyBatch(
   let expired = false
 
   for (const lock of locks) {
-    const result = await requestGateway<{ remaining?: unknown; status?: string }>('clarify.respond', {
+    const result = await requestGateway<{ remaining?: unknown; status?: string }>('clarify.lock', {
       request_id: req.requestId,
       question_id: lock.questionId,
       answer: lock.answer
@@ -1855,10 +1899,15 @@ export async function respondClarifyBatch(
 /**
  * Answer the pending sudo password prompt.
  *
- * `sudo.respond` is `allow_expired`, so a password sent after the tool's own
- * wait gave up answers `{"status": "expired"}` — a success that delivered
- * nothing and left the command cancelled. The caller gets that back so the bar
- * can say the password went nowhere instead of vanishing like it worked.
+ * The password goes back as the request's RESPONSE (MJXHRM-520) under `value`,
+ * the `ValueResult` shape every one-string prompt shares. `expired` means the
+ * channel had nothing open under that id — the prompt was withdrawn and the
+ * command it guarded is already cancelled — so the bar can say the password
+ * went nowhere instead of vanishing like it worked.
+ *
+ * The value is a CREDENTIAL. It goes straight into the response frame and is
+ * never written to a store, the crash journal, or a trace attribute (the
+ * outbound span records the frame's method and size only, never its body).
  */
 export async function respondSudo(password: string, key = $activeSessionKey.get()): Promise<PromptRespondOutcome> {
   const req = sessionSudoRequest(key).get()
@@ -1867,10 +1916,7 @@ export async function respondSudo(password: string, key = $activeSessionKey.get(
     return 'gone'
   }
 
-  const result = await requestGateway<{ status?: string }>('sudo.respond', {
-    request_id: req.requestId,
-    password
-  })
+  const delivered = respondToServerRequest(req.requestId, { value: password })
 
   // Same guard `respondClarify` uses: a `tool.complete` racing this answer may
   // already have swapped the request out, and clearing then would drop a
@@ -1880,11 +1926,11 @@ export async function respondSudo(password: string, key = $activeSessionKey.get(
     clearAwaitingInputPose(key)
   }
 
-  return result?.status === 'expired' ? 'expired' : 'delivered'
+  return delivered ? 'delivered' : 'expired'
 }
 
-/** Answer the pending secret prompt. `expired` for the same reason as
- *  `respondSudo`: `secret.respond` is `allow_expired` too. */
+/** Answer the pending secret prompt. Same `ValueResult` shape and the same
+ *  credential-handling rule as {@link respondSudo}. */
 export async function respondSecret(value: string, key = $activeSessionKey.get()): Promise<PromptRespondOutcome> {
   const req = sessionSecretRequest(key).get()
 
@@ -1892,17 +1938,14 @@ export async function respondSecret(value: string, key = $activeSessionKey.get()
     return 'gone'
   }
 
-  const result = await requestGateway<{ status?: string }>('secret.respond', {
-    request_id: req.requestId,
-    value
-  })
+  const delivered = respondToServerRequest(req.requestId, { value })
 
   if (sessionSecretRequest(key).get()?.requestId === req.requestId) {
     clearSessionSecret(key)
     clearAwaitingInputPose(key)
   }
 
-  return result?.status === 'expired' ? 'expired' : 'delivered'
+  return delivered ? 'delivered' : 'expired'
 }
 
 /** The pet reflects what the USER is looking at, so answering a background

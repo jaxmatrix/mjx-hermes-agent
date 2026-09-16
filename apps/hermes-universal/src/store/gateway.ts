@@ -1,5 +1,11 @@
 import { emitGatewayEvent } from '@/contrib/events'
-import { type ConnectionState, type GatewayEvent, JsonRpcGatewayClient, type WebSocketLike } from '@/gateway'
+import {
+  type ConnectionState,
+  type GatewayEvent,
+  JsonRpcGatewayClient,
+  type ServerRequestHandler,
+  type WebSocketLike
+} from '@/gateway'
 import type { HermesGateway } from '@/hermes'
 import { atom } from '@/store/atom'
 import { type Connection, resolveWsUrl } from '@/store/gateway-config'
@@ -18,6 +24,21 @@ export function addGatewayEventListener(listener: (event: GatewayEvent) => void)
 
   return () => {
     extraEventListeners.delete(listener)
+  }
+}
+
+// Server→client request handlers (MJXHRM-520). Registered by PUSH for the same
+// reason the event listeners are: `store/server-request-router.ts` reaches the
+// prompt and session stores, and a static import of that graph from here
+// reorders module init and trips the `@/hermes` `_apiProfile` TDZ cycle.
+const serverRequestHandlers = new Set<ServerRequestHandler>()
+
+/** Add a server→client request handler. Returns a disposer. */
+export function addServerRequestHandler(handler: ServerRequestHandler): () => void {
+  serverRequestHandlers.add(handler)
+
+  return () => {
+    serverRequestHandlers.delete(handler)
   }
 }
 
@@ -111,6 +132,21 @@ function createClient(): JsonRpcGatewayClient {
     for (const listener of extraEventListeners) {
       listener(event)
     }
+  })
+
+  // The backend asking US something, with an agent thread parked on the answer
+  // (MJXHRM-520). Handlers are tried in registration order until one accepts;
+  // returning false for an unclaimed request is what makes the channel answer
+  // -32601 in the same tick, so a method universal cannot do fails the tool
+  // FAST instead of waiting out its deadline.
+  next.onRequest(request => {
+    for (const handler of serverRequestHandlers) {
+      if (handler(request) !== false) {
+        return true
+      }
+    }
+
+    return false
   })
 
   return next

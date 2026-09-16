@@ -16,21 +16,10 @@
  * model not to retry. So every way the card can go away has to answer.
  */
 
-import type { GatewayEvent } from '@/gateway'
-import { coerceText } from '@/lib/chat-messages'
-import { type McpSetupOutcome, respondMcpSetup } from '@/lib/gateway-rpc'
 import { clearAwaitingInputPose } from '@/store/chat'
 import { notifyError } from '@/store/notifications'
-import {
-  clearSessionMcpSetup,
-  type McpSetupAction,
-  type McpSetupRequest,
-  sessionMcpSetupRequest,
-  setSessionMcpSetup
-} from '@/store/prompts'
-import { reduceSessionState } from '@/store/session-reducer'
-import { updateSession } from '@/store/session-state-types'
-import type { SessionResumeResponse } from '@/types/hermes'
+import { clearSessionMcpSetup, type McpSetupAction, sessionMcpSetupRequest } from '@/store/prompts'
+import { respondToServerRequest } from '@/store/server-requests'
 
 /**
  * Coerce the wire's `action` into the closed set the card can render.
@@ -47,25 +36,11 @@ export function readMcpSetupAction(value: unknown): McpSetupAction {
   return value === 'enable' || value === 'authorize' ? value : 'install'
 }
 
-/** Read a `mcp.setup.request` payload into a request, or null if unrenderable. */
-export function readMcpSetupRequest(payload: Record<string, unknown>): McpSetupRequest | null {
-  // Trimmed, and the reducer's row guard trims identically: `coerceText` only
-  // coerces, so a whitespace-only `server` is truthy and would render a card
-  // asking the user to consent to installing "   ".
-  const requestId = coerceText(payload.request_id).trim()
-  const server = coerceText(payload.server).trim()
-
-  // Both halves are load-bearing and neither has a fallback: without the id
-  // nothing can ever answer, and without a server name the card would ask the
-  // user to consent to installing "". The tool requires `server` before it ever
-  // calls the callback, so this can only be a version skew — declining to
-  // render lets the 600s timeout report `unanswered`, which is at least true.
-  if (!requestId || !server) {
-    return null
-  }
-
-  return { action: readMcpSetupAction(payload.action), reason: coerceText(payload.reason), requestId, server }
-}
+// `readMcpSetupRequest` is GONE (MJXHRM-520). It read a `request_id` out of the
+// event payload, and the card's identity is now the SERVER REQUEST's own id —
+// there is no id in `McpSetupRequestParams` to read. `store/server-request-
+// router.ts` builds the request from the params it was handed, which is the one
+// place that has both the id and the params.
 
 /** Is an MCP setup card parked on this session right now? Imperative, for the composer. */
 export const hasMcpSetupRequest = (key: null | string | undefined): boolean =>
@@ -86,9 +61,18 @@ export const hasMcpSetupRequest = (key: null | string | undefined): boolean =>
  * a real, blank outcome.
  *
  * Cleared FIRST so a second Enter can't answer twice, and never rejects: this is
- * fire-and-forget beside the real send. But not silent either (MJXHRM-418) — a
- * skip that did not land puts the card BACK and says so, because with the card
- * torn down nothing else could ever answer it.
+ * fire-and-forget beside the real send.
+ *
+ * MJXHRM-418's guarantee survives, inverted by the request wire (MJXHRM-520).
+ * The old skip could fail IN TRANSIT — an RPC rejection — and had to put the
+ * card back, because the agent was still parked for its ten minutes. A response
+ * frame cannot fail that way: it is written to the socket the request arrived
+ * on, and a write into a dead generation is swallowed because the backend
+ * re-delivers or withdraws the request itself. The only failure left is that
+ * nothing is open under that id, which means the card was ALREADY withdrawn and
+ * the tool has already returned — so restoring it would strand an unanswerable
+ * card offering to install a server nothing is waiting on. It stays cleared,
+ * and the user is told instead of it vanishing silently.
  */
 export async function skipMcpSetupRequest(key: null | string | undefined): Promise<boolean> {
   const request = key ? sessionMcpSetupRequest(key).get() : null
@@ -100,16 +84,19 @@ export async function skipMcpSetupRequest(key: null | string | undefined): Promi
   clearSessionMcpSetup(key)
   clearAwaitingInputPose(key)
 
-  try {
-    await respondMcpSetup(request.requestId, { server: request.server, status: 'declined' })
-  } catch (error) {
-    // Only if nothing newer has taken the slot — restoring over a fresh request
-    // would make THAT one unanswerable.
-    if (!sessionMcpSetupRequest(key).get()) {
-      setSessionMcpSetup(key, request)
-    }
-
-    notifyError(error, 'The MCP setup card could not be dismissed — answer it to unblock the agent')
+  // `ValueResult` — the declared result for `mcp.setup` — carries the outcome as
+  // a JSON string under `value`. The old `mcp.setup.respond` method put it under
+  // `result` instead, and that method is gone; sending the wrong key here would
+  // be a silent no-answer, which for this card means a ten-minute stall.
+  if (
+    !respondToServerRequest(request.requestId, {
+      value: JSON.stringify({ server: request.server, status: 'declined' })
+    })
+  ) {
+    notifyError(
+      new Error('that setup card was already withdrawn'),
+      'The MCP setup card could not be dismissed — it had already expired'
+    )
   }
 
   return true
@@ -119,45 +106,18 @@ export async function skipMcpSetupRequest(key: null | string | undefined): Promi
  *  a timeout and is never sent by a client. */
 export type McpSetupStatus = 'authorized' | 'declined' | 'enabled' | 'error' | 'installed'
 
-/** Narrow `McpSetupOutcome` (whose `status` is a bare string on the 444 helper)
- *  to what this client actually produces. */
-export interface McpSetupClientOutcome extends McpSetupOutcome {
+/** What the card sends back. `detail`/`tools` ride along for the tool's report. */
+export interface McpSetupClientOutcome {
+  detail?: string
   server: string
   status: McpSetupStatus
+  tools?: string[]
 }
 
-/**
- * Put back the setup card a resumed session is still parked on.
- *
- * `mcp.setup.request` is emitted ONCE with no replay buffer, and a parked turn
- * is not in the committed transcript — so a client that cold-opens (or reloads
- * into) a waiting session has neither the server name nor the `request_id` it
- * must answer with, and the agent stays in `_block` for the full ten minutes.
- * The gateway describes the parked prompt on `session.resume` as
- * `pending_prompt: {event, payload}` (`_session_pending_prompt`), which is
- * generic across every blocking bridge — this is the `mcp.setup.request` arm of
- * the same replay `applyResumedClarify` performs for clarify.
- *
- * Idempotent by construction: the store entry is a replace and the reducer
- * upserts its row under the same `request_id`, so a session that still holds a
- * live card from before the reconnect keeps ONE.
- */
-export function applyResumedMcpSetup(key: string, resumed: Pick<SessionResumeResponse, 'pending_prompt'>): void {
-  const pending = resumed.pending_prompt
-
-  if (!pending || pending.event !== 'mcp.setup.request') {
-    return
-  }
-
-  const payload = (pending.payload ?? {}) as Record<string, unknown>
-  const request = readMcpSetupRequest(payload)
-
-  if (!request) {
-    return
-  }
-
-  setSessionMcpSetup(key, request)
-  updateSession(key, state =>
-    reduceSessionState(state, { type: 'mcp.setup.request' } as GatewayEvent, payload as Record<string, unknown>)
-  )
-}
+// `applyResumedMcpSetup` lived here and is GONE (MJXHRM-520), for the same
+// reason as `applyResumedClarify` next door: it read `session.resume`'s
+// `pending_prompt`, which the merged backend no longer sends, so it had been a
+// silent no-op — a cold-opened parked session rebuilt neither the card nor the
+// row while `setup_mcp` sat in its TEN MINUTE block. Still-open cards now come
+// back as `open_requests` on the resume result and re-enter through the request
+// router, rebuilding both halves via the same path a live request takes.

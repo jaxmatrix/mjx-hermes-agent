@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ToolCallPart } from '@/lib/chat-messages'
 import {
-  applyResumedClarify,
   bareChoice,
   hasClarifyRequest,
   matchClarifyRequest,
@@ -14,8 +12,8 @@ import {
   skipClarifyRequest
 } from '@/store/clarify'
 import { clearAllPrompts, sessionClarifyRequest, setSessionClarify } from '@/store/prompts'
-import { reduceSessionState } from '@/store/session-reducer'
-import { $sessionStates, emptySessionState, publishSessionState } from '@/store/session-state-types'
+import { rememberServerRequest, resetServerRequestsForTests } from '@/store/server-requests'
+import { $sessionStates } from '@/store/session-state-types'
 
 vi.mock('@/store/gateway', () => ({
   $gatewayState: { get: () => 'open', subscribe: () => () => {} },
@@ -29,6 +27,7 @@ const { notifyError } = await import('@/store/notifications')
 
 beforeEach(() => {
   clearAllPrompts()
+  resetServerRequestsForTests()
   $sessionStates.set({})
   vi.mocked(requestGateway).mockClear()
   vi.mocked(requestGateway).mockResolvedValue({})
@@ -86,49 +85,49 @@ describe('readChoices', () => {
 })
 
 describe('skipClarifyRequest', () => {
-  it('answers empty and clears the request', async () => {
-    setSessionClarify('s1', { requestId: 'req-1', question: 'q', choices: null })
+  /** Park a clarify whose server request is genuinely open, as the router does. */
+  const park = (requestId: string) => {
+    const respond = vi.fn()
+
+    rememberServerRequest({ fail: vi.fn(), id: requestId, method: 'clarify', params: {}, respond })
+    setSessionClarify('s1', { choices: null, question: 'q', requestId })
+
+    return respond
+  }
+
+  it('answers the request with the skip value and clears the card', async () => {
+    const respond = park('req-1')
 
     expect(hasClarifyRequest('s1')).toBe(true)
     expect(await skipClarifyRequest('s1')).toBe(true)
 
-    expect(requestGateway).toHaveBeenCalledWith('clarify.respond', { request_id: 'req-1', answer: '' })
+    // '' is the clarify tool's own "skipped" answer. A response carrying NO
+    // answer would mean cancel-all, which is a different instruction.
+    expect(respond).toHaveBeenCalledWith({ answer: '' })
     expect(sessionClarifyRequest('s1').get()).toBeNull()
   })
 
-  // A failed skip must never swallow the message the user was actually sending,
-  // so it still RESOLVES — but it must not vanish either (MJXHRM-418). The agent
-  // is still parked in `_block`, and a clarify configured with a timeout <= 0
-  // waits there forever, so a torn-down card is a permanently wedged session.
-  // The question comes back and says so.
-  it('restores the question and surfaces the failure when the RPC fails', async () => {
-    vi.mocked(requestGateway).mockRejectedValueOnce(new Error('socket down'))
-    setSessionClarify('s1', { requestId: 'req-2', question: 'q', choices: null })
+  /**
+   * MJXHRM-418 inverted by the request wire. The old skip could fail IN TRANSIT
+   * — an RPC rejection — and the card had to come back, because the agent was
+   * still parked. A response frame cannot fail that way: the only failure left
+   * is that nothing is open under that id, which means the question was already
+   * withdrawn and the agent has moved on. Putting the card back THEN would
+   * strand an unanswerable prompt on screen, so it stays cleared and the user is
+   * told instead.
+   */
+  it('says so when the question had already been withdrawn, and does not put it back', async () => {
+    setSessionClarify('s1', { choices: null, question: 'q', requestId: 'never-opened' })
 
     expect(await skipClarifyRequest('s1')).toBe(true)
-    expect(sessionClarifyRequest('s1').get()).toMatchObject({ requestId: 'req-2' })
     expect(notifyError).toHaveBeenCalled()
-  })
-
-  // …unless a NEWER question has taken the slot while the failed skip was in
-  // flight. Restoring over it would make that one unanswerable.
-  it('does not restore over a question that arrived while the skip was failing', async () => {
-    setSessionClarify('s1', { requestId: 'req-3', question: 'q', choices: null })
-    vi.mocked(requestGateway).mockImplementationOnce(async () => {
-      setSessionClarify('s1', { requestId: 'req-4', question: 'newer', choices: null })
-
-      throw new Error('socket down')
-    })
-
-    await skipClarifyRequest('s1')
-
-    expect(sessionClarifyRequest('s1').get()).toMatchObject({ requestId: 'req-4' })
+    expect(sessionClarifyRequest('s1').get()).toBeNull()
   })
 
   it('is a no-op with nothing parked', async () => {
     expect(await skipClarifyRequest('s1')).toBe(false)
     expect(await skipClarifyRequest(null)).toBe(false)
-    expect(requestGateway).not.toHaveBeenCalled()
+    expect(notifyError).not.toHaveBeenCalled()
   })
 })
 
@@ -155,77 +154,12 @@ describe('matchClarifyRequest', () => {
   })
 })
 
-const toolParts = (key: string): ToolCallPart[] =>
-  ($sessionStates.get()[key]?.messages ?? []).flatMap(message =>
-    message.parts.filter((part): part is ToolCallPart => part.type === 'tool-call')
-  )
-
-/**
- * MJXHRM-362. `clarify.request` is emitted ONCE and never buffered, and a turn
- * parked in the backend's `_block` is in no committed transcript — so a client
- * that cold-opens a waiting session had neither the question nor the
- * `request_id`, and the agent stayed parked until its timeout with nothing on
- * screen but a "needs input" dot. The gateway now describes the parked prompt on
- * `session.resume` (`_session_pending_prompt`), and this puts it back.
- */
-describe('applyResumedClarify', () => {
-  const pending = (payload: Record<string, unknown>, event = 'clarify.request') => ({
-    pending_prompt: { event, payload }
-  })
-
-  beforeEach(() => {
-    publishSessionState('s1', { ...emptySessionState('stored-1'), busy: true })
-  })
-
-  it('rebuilds both the answerable request and the transcript row', () => {
-    applyResumedClarify('s1', pending({ request_id: 'req-1', question: 'Which branch?', choices: ['main', 'dev'] }))
-
-    expect(sessionClarifyRequest('s1').get()).toEqual({
-      requestId: 'req-1',
-      question: 'Which branch?',
-      choices: ['main', 'dev']
-    })
-    expect(toolParts('s1')).toEqual([
-      expect.objectContaining({
-        toolCallId: 'req-1',
-        toolName: 'clarify',
-        args: { choices: ['main', 'dev'], question: 'Which branch?' }
-      })
-    ])
-    expect($sessionStates.get().s1?.needsInput).toBe(true)
-  })
-
-  // A WARM reconnect still holds the card it built from the live event. The
-  // replay must upsert onto it, not stack a second one.
-  it('leaves one card when the session already showed the same clarify', () => {
-    const payload = { request_id: 'req-1', question: 'Which branch?', choices: ['main'] }
-
-    publishSessionState(
-      's1',
-      reduceSessionState($sessionStates.get().s1!, { type: 'clarify.request' } as never, payload)
-    )
-
-    applyResumedClarify('s1', pending(payload))
-
-    expect(toolParts('s1')).toHaveLength(1)
-  })
-
-  it('ignores a prompt that is not a clarify', () => {
-    applyResumedClarify('s1', pending({ request_id: 'req-1', prompt: 'password:' }, 'sudo.request'))
-
-    expect(sessionClarifyRequest('s1').get()).toBeNull()
-    expect(toolParts('s1')).toEqual([])
-  })
-
-  it('ignores a session with no prompt parked, and a malformed one', () => {
-    applyResumedClarify('s1', {})
-    applyResumedClarify('s1', { pending_prompt: null })
-    applyResumedClarify('s1', pending({ request_id: 'req-1' }))
-
-    expect(sessionClarifyRequest('s1').get()).toBeNull()
-    expect(toolParts('s1')).toEqual([])
-  })
-})
+// The `applyResumedClarify` suite lived here and is GONE with the function
+// (MJXHRM-520). Every case in it fed a `pending_prompt` the merged backend no
+// longer sends, so the suite could only ever have proved that dead code still
+// behaved — the defect it was written for (MJXHRM-362) is now handled by
+// `open_requests` re-delivery through the request router, and is covered by
+// `store/server-request-router.test.ts` against a REPLAYED request instead.
 
 /**
  * MJXHRM-458. There is no `recommended` field on the wire: the backend appends
@@ -294,49 +228,8 @@ describe('readLockedAnswers', () => {
   })
 })
 
-/**
- * The resume half of MJXHRM-458: `clarify.request` is emitted once and never
- * buffered, so a client that cold-opens a session parked on a BATCH had no
- * questions, no request_id, and — uniquely to batches — no record of the
- * answers it had already locked before the disconnect.
- */
-describe('applyResumedClarify (batch)', () => {
-  const pending = (payload: Record<string, unknown>) => ({ pending_prompt: { event: 'clarify.request', payload } })
-
-  beforeEach(() => {
-    publishSessionState('s1', { ...emptySessionState('stored-1'), busy: true })
-  })
-
-  it('rebuilds a batch with the answers already locked', () => {
-    applyResumedClarify(
-      's1',
-      pending({
-        request_id: 'req-1',
-        questions: [
-          { qid: 'q0', question: 'Drink?', choices: ['Coffee', 'Tea'] },
-          { qid: 'q1', question: 'Time?', choices: ['Morning'] }
-        ],
-        answers: { q0: 'Tea' }
-      })
-    )
-
-    expect(sessionClarifyRequest('s1').get()).toEqual({
-      requestId: 'req-1',
-      question: '',
-      choices: null,
-      questions: [
-        { qid: 'q0', question: 'Drink?', choices: ['Coffee', 'Tea'], multiSelect: false },
-        { qid: 'q1', question: 'Time?', choices: ['Morning'], multiSelect: false }
-      ],
-      lockedAnswers: { q0: 'Tea' }
-    })
-    expect(toolParts('s1')).toHaveLength(1)
-  })
-
-  it('ignores a batch with nothing answerable in it', () => {
-    applyResumedClarify('s1', pending({ request_id: 'req-1', questions: [{ question: 'no qid' }] }))
-
-    expect(sessionClarifyRequest('s1').get()).toBeNull()
-    expect(toolParts('s1')).toEqual([])
-  })
-})
+// The batch arm of the same retired suite (MJXHRM-520). The property it
+// protected — a batch coming back with the answers the server had already
+// locked — is preserved: `lockedAnswers` is still read, from `params.answers`
+// on a REPLAYED clarify request, and is covered against that wire in
+// `store/server-request-router.test.ts`.

@@ -564,21 +564,14 @@ export interface SessionResumeResponse {
   info?: SessionRuntimeInfo
   message_count: number
   messages: SessionMessage[]
-  /** The blocking prompt this session is parked on RIGHT NOW, shaped as the
-   *  event that raised it (`_session_pending_prompt` in tui_gateway/server.py).
-   *  The gateway emits a `clarify.request` / `sudo.request` / `secret.request`
-   *  exactly once and keeps no replay buffer, and a parked turn is not in the
-   *  committed transcript either — so on a cold open this is the ONLY record of
-   *  the question, its choices and the `request_id` an answer must carry.
-   *  Without it the agent stays in the backend's `_block` until its timeout
-   *  while the client can show nothing but a contentless "needs input" dot. */
-  pending_prompt?: null | {
-    event: string
-    payload: Record<string, unknown>
-  }
+  // `pending_prompt` is GONE (MJXHRM-520). The merged backend stopped sending
+  // it, so the two readers that keyed off it had silently become no-ops. A
+  // session parked on a blocking prompt now reports it as an `open_requests`
+  // entry on this same result, which the shared channel re-delivers to the
+  // request router — see `store/server-request-router.ts`.
   /** The gateway approval still queued for this session. Approvals do NOT go
-   *  through `_block`, so `pending_prompt` can never carry one: they queue in
-   *  `tools/approval`'s `_gateway_queues` and this is their only replay. */
+   *  through `_block`, so they were never in `pending_prompt` either: they queue
+   *  in `tools/approval`'s `_gateway_queues` and this is their only replay. */
   pending_approval?: null | PendingApprovalPayload
   queued?: null | {
     user?: string

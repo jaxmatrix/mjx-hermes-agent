@@ -17,6 +17,15 @@ export interface ApprovalRequest {
   // different commands answered the wrong one. Optional: a legacy gateway
   // omits it, and FIFO is still the right fallback there.
   requestId?: string
+  // The SERVER REQUEST this approval arrived on, when it arrived as one
+  // (MJXHRM-520). Approvals are the one prompt with two ids and two answer
+  // paths: `requestId` above is the approval QUEUE's id, which
+  // `approval.respond` / `approval.received` key on, while this is the
+  // JSON-RPC correlation the card answers over when the backend asked through
+  // `server_requests`. Absent when the approval came from a `pending_approval`
+  // resume or an `approval.pending` poll instead, which is exactly when the
+  // RPC path is still the only way to answer.
+  serverRequestId?: string
   // Gateway-restricted choice set (e.g. a tirith warning drops `always`), and the
   // smart-deny flag that implies `['once', 'deny']`. Both optional — the backend
   // omits them on a plain approval. Mirrors desktop's ApprovalRequest.
@@ -44,9 +53,13 @@ export interface ClarifyRequest {
   lockedAnswers?: Record<string, string>
 }
 // Sudo is a password-entry flow (not an allow/deny choice).
+//
+// No `prompt`: the `sudo` server request takes `EmptyRequestParams` — the
+// backend sends nothing but the session id (MJXHRM-520). The old
+// `sudo.request` event carried the shell's own prompt text; nothing does now,
+// so the bar supplies its own description.
 export interface SudoRequest {
   requestId: string
-  prompt: string
 }
 export interface SecretRequest {
   requestId: string

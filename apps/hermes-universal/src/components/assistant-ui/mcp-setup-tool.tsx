@@ -21,7 +21,6 @@ import {
 } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { openExternalLink } from '@/lib/external-link'
-import { respondMcpSetup } from '@/lib/gateway-rpc'
 import { triggerHaptic } from '@/lib/haptics'
 import { AlertCircle, CheckCircle2, Loader2 } from '@/lib/icons'
 import { brandFor, brandGlyphStyle } from '@/lib/mcp-brands'
@@ -35,6 +34,7 @@ import { requestGateway } from '@/store/gateway'
 import { type McpSetupClientOutcome, type McpSetupStatus, readMcpSetupAction } from '@/store/mcp-setup'
 import { notifyError } from '@/store/notifications'
 import { clearSessionMcpSetup, type McpSetupAction, sessionMcpSetupRequest } from '@/store/prompts'
+import { respondToServerRequest } from '@/store/server-requests'
 import { invalidateMcpSuggestionIndex } from '@/store/suggestion-providers/mcp'
 import type { McpCatalogEntry } from '@/types/hermes'
 
@@ -247,12 +247,14 @@ function McpSetupPending({ args }: ToolCallMessagePartProps) {
         invalidateMcpSuggestionIndex()
       }
 
-      try {
-        await respondMcpSetup(request.requestId, outcome)
-        // tool.complete lands next → McpSetupSettled.
-      } catch (error) {
-        notifyError(error, copy.sendFailed)
+      // The outcome rides back as the RESPONSE to the server request that raised
+      // this card (MJXHRM-520), JSON-encoded under `value` — the `ValueResult`
+      // shape. The retired `mcp.setup.respond` method put it under `result`
+      // instead, and the backend implements neither key any more.
+      if (!respondToServerRequest(request.requestId, { value: JSON.stringify(outcome) })) {
+        notifyError(new Error('that setup request was already withdrawn'), copy.sendFailed)
       }
+      // tool.complete lands next → McpSetupSettled.
     },
     [copy.reloadFailed, copy.sendFailed, request, sessionKey]
   )

@@ -13,14 +13,9 @@
  * none of which the panel can recover from once rendered.
  */
 
-import type { GatewayEvent } from '@/gateway'
-import { coerceText } from '@/lib/chat-messages'
-import { requestGateway } from '@/store/gateway'
 import { notifyError } from '@/store/notifications'
-import { clearSessionClarify, sessionClarifyRequest, setSessionClarify } from '@/store/prompts'
-import { reduceSessionState } from '@/store/session-reducer'
-import { updateSession } from '@/store/session-state-types'
-import type { SessionResumeResponse } from '@/types/hermes'
+import { clearSessionClarify, sessionClarifyRequest } from '@/store/prompts'
+import { respondToServerRequest } from '@/store/server-requests'
 
 /** Longest a choice may be and still read as a button label rather than prose. */
 const MAX_CHOICE_LENGTH = 200
@@ -182,63 +177,17 @@ export function matchClarifyRequest<T extends { question: string }>(
   return rowQuestion && request.question && rowQuestion !== request.question ? null : request
 }
 
-/**
- * Put back the clarify a resumed session is still parked on.
- *
- * `clarify.request` is emitted ONCE, with no replay buffer, and a parked turn is
- * not in the committed transcript — so a client that cold-opens (or reloads
- * into) a waiting session has neither the question nor the `request_id`, and the
- * agent stays in the backend's `_block` until its timeout. The gateway now
- * describes the parked prompt on `session.resume`
- * (`_session_pending_prompt`); replaying it through THE SAME reducer case the
- * live event uses is what rebuilds both halves — the store entry the panel
- * answers from, and the synthetic tool row it mounts on.
- *
- * Idempotent by construction: the store entry is a replace, and the reducer
- * upserts its row (correlating on `question`), so a session that still holds a
- * live clarify from before the reconnect keeps ONE card.
- */
-export function applyResumedClarify(key: string, resumed: Pick<SessionResumeResponse, 'pending_prompt'>): void {
-  const pending = resumed.pending_prompt
-
-  if (!pending || pending.event !== 'clarify.request') {
-    return
-  }
-
-  const payload = pending.payload ?? {}
-  const requestId = coerceText(payload.request_id)
-  const questions = normalizeQuestions(payload.questions)
-  const question = coerceText(payload.question)
-
-  if (!requestId || (!question && questions.length === 0)) {
-    return
-  }
-
-  setSessionClarify(
-    key,
-    questions.length > 0
-      ? {
-          requestId,
-          // A batch carries no top-level question; the card reads `questions`.
-          question: '',
-          choices: null,
-          questions,
-          // The half a batch resume has that a live batch event does not: the
-          // answers already locked server-side, so the card comes back with its
-          // ✓s instead of presenting settled questions as unanswered.
-          lockedAnswers: readLockedAnswers(payload.answers)
-        }
-      : {
-          requestId,
-          question,
-          choices: readChoices('gateway', question, payload.choices),
-          ...(payload.multi_select === true ? { multiSelect: true } : {})
-        }
-  )
-  updateSession(key, state =>
-    reduceSessionState(state, { type: 'clarify.request' } as GatewayEvent, payload as Record<string, unknown>)
-  )
-}
+// `applyResumedClarify` lived here and is GONE (MJXHRM-520). It read
+// `session.resume`'s `pending_prompt`, a field the merged backend no longer
+// sends — grep `tui_gateway/` and there is nothing — so it had silently been a
+// no-op: a cold-opened parked session rebuilt neither the clarify row nor the
+// store entry, and the agent waited out its timeout with a contentless "needs
+// input" dot on screen. The replacement is not a fixed version of it but a
+// different mechanism entirely: the backend re-delivers still-open questions as
+// `open_requests` on the resume/activate/events.since result, and the shared
+// channel hands each one back to the request router with `replayed: true`. That
+// path rebuilds both halves through the same code a live request takes, which
+// is why there is nothing left to do here.
 
 /** Is a clarify parked on this session right now? Imperative, for the composer. */
 export const hasClarifyRequest = (key: null | string | undefined): boolean =>
@@ -261,6 +210,16 @@ export const hasClarifyRequest = (key: null | string | undefined): boolean =>
  * torn down there is nothing left that could ever answer it — the same dead end
  * the optimistic responders had, minus the five-minute floor. So a skip that
  * did not land puts the question BACK and says so, and the next Enter retries it.
+ *
+ * The answer now goes back as the RESPONSE to the server request that asked
+ * (MJXHRM-520) rather than through the removed `clarify.respond` method, so it
+ * cannot fail in transit the way an RPC could: it is written to the socket the
+ * question arrived on, and the shared channel swallows a write into a dead
+ * generation because the backend re-delivers or withdraws the request itself.
+ * What CAN happen is that there is nothing open under that id any more — the
+ * prompt expired, or another surface answered it — and that is the case worth
+ * telling the user about, because the card they were looking at is gone and the
+ * agent moved on without their answer.
  */
 export async function skipClarifyRequest(key: null | string | undefined): Promise<boolean> {
   const request = key ? sessionClarifyRequest(key).get() : null
@@ -271,16 +230,11 @@ export async function skipClarifyRequest(key: null | string | undefined): Promis
 
   clearSessionClarify(key)
 
-  try {
-    await requestGateway('clarify.respond', { request_id: request.requestId, answer: '' })
-  } catch (error) {
-    // Only if nothing newer has taken the slot in the meantime — restoring over
-    // a fresh question would make THAT one unanswerable.
-    if (!sessionClarifyRequest(key).get()) {
-      setSessionClarify(key, request)
-    }
-
-    notifyError(error, 'The question could not be skipped — answer it to unblock the agent')
+  if (!respondToServerRequest(request.requestId, { answer: '' })) {
+    notifyError(
+      new Error('that question was already withdrawn'),
+      'The question could not be skipped — it had already expired'
+    )
   }
 
   return true

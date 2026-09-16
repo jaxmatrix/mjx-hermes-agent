@@ -18,33 +18,22 @@ vi.mock('@/store/pet', async importActual => {
   return { ...actual, setPetActivity: vi.fn() }
 })
 
-import type { ToolCallPart } from '@/lib/chat-messages'
 import { requestGateway } from '@/store/gateway'
-import {
-  applyResumedMcpSetup,
-  hasMcpSetupRequest,
-  readMcpSetupAction,
-  readMcpSetupRequest,
-  skipMcpSetupRequest
-} from '@/store/mcp-setup'
+import { hasMcpSetupRequest, readMcpSetupAction, skipMcpSetupRequest } from '@/store/mcp-setup'
 import { notifyError } from '@/store/notifications'
 import type * as Pet from '@/store/pet'
 import { setPetActivity } from '@/store/pet'
 import { clearAllPrompts, sessionMcpSetupRequest, setSessionMcpSetup } from '@/store/prompts'
+import { rememberServerRequest, resetServerRequestsForTests } from '@/store/server-requests'
 import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
-import type { SessionResumeResponse } from '@/types/hermes'
 
 const rpc = vi.mocked(requestGateway)
 
 const REQUEST = { action: 'install' as const, reason: 'To read the ticket', requestId: 'req-1', server: 'linear' }
 
-const toolParts = (key: string): ToolCallPart[] =>
-  ($sessionStates.get()[key]?.messages ?? []).flatMap(message =>
-    message.parts.filter((part): part is ToolCallPart => part.type === 'tool-call')
-  )
-
 beforeEach(() => {
   clearAllPrompts()
+  resetServerRequestsForTests()
   $sessionStates.set({})
   $activeSessionKey.set('s1')
   rpc.mockReset()
@@ -69,68 +58,55 @@ describe('readMcpSetupAction', () => {
   })
 })
 
-describe('readMcpSetupRequest', () => {
-  it('reads the wire payload the gateway emits', () => {
-    expect(readMcpSetupRequest({ action: 'authorize', reason: 'why', request_id: 'req-1', server: 'linear' })).toEqual({
-      action: 'authorize',
-      reason: 'why',
-      requestId: 'req-1',
-      server: 'linear'
-    })
-  })
-
-  it('tolerates a missing reason — the agent need not give one', () => {
-    expect(readMcpSetupRequest({ request_id: 'req-1', server: 'linear' })).toEqual({
-      action: 'install',
-      reason: '',
-      requestId: 'req-1',
-      server: 'linear'
-    })
-  })
-
-  it('refuses a payload nothing could answer or name', () => {
-    expect(readMcpSetupRequest({ server: 'linear' })).toBeNull()
-    expect(readMcpSetupRequest({ request_id: 'req-1' })).toBeNull()
-    expect(readMcpSetupRequest({ request_id: 'req-1', server: '   ' })).toBeNull()
-  })
-})
+// The `readMcpSetupRequest` suite is GONE with the function (MJXHRM-520): the
+// card's identity is the server request's own id now, and `McpSetupRequestParams`
+// carries no `request_id` for a reader to find. The equivalent guard — a card
+// with no server name is unrenderable and must be answered rather than shown —
+// now lives on the router and is covered in `store/server-request-router.test.ts`.
 
 describe('skipMcpSetupRequest', () => {
-  it('answers declined with the request id of the card that raised it', async () => {
-    setSessionMcpSetup('s1', REQUEST)
+  /** Park a card whose server request is genuinely open, as the router does. */
+  const park = (requestId = 'req-1') => {
+    const respond = vi.fn()
+
+    rememberServerRequest({ fail: vi.fn(), id: requestId, method: 'mcp.setup', params: {}, respond })
+    setSessionMcpSetup('s1', { ...REQUEST, requestId })
+
+    return respond
+  }
+
+  it('answers declined on the request the card was raised by', async () => {
+    const respond = park()
 
     await expect(skipMcpSetupRequest('s1')).resolves.toBe(true)
 
-    expect(rpc).toHaveBeenCalledWith('mcp.setup.respond', {
-      request_id: 'req-1',
-      result: JSON.stringify({ server: 'linear', status: 'declined' })
-    })
+    // `ValueResult`: the outcome is JSON under `value`. The retired
+    // `mcp.setup.respond` used `result`, and sending the wrong key was a silent
+    // no-answer worth ten minutes of a dead turn.
+    expect(respond).toHaveBeenCalledWith({ value: JSON.stringify({ server: 'linear', status: 'declined' }) })
   })
 
   // `declined` and an empty answer are NOT interchangeable at the tool boundary:
   // empty is what a timeout produces, and the tool reports that as `unanswered`.
   it('never sends an empty result', async () => {
-    setSessionMcpSetup('s1', REQUEST)
+    const respond = park()
+
     await skipMcpSetupRequest('s1')
 
-    const [, params] = rpc.mock.calls[0]!
+    const { value } = respond.mock.calls[0]![0] as { value: string }
 
-    expect(JSON.parse(String((params as { result: string }).result)).status).toBe('declined')
+    expect(JSON.parse(value).status).toBe('declined')
   })
 
-  it('clears the card before the RPC settles so a second Enter cannot answer twice', async () => {
-    setSessionMcpSetup('s1', REQUEST)
+  it('clears the card so a second Enter cannot answer twice', async () => {
+    const respond = park()
 
-    let release = () => {}
-    rpc.mockImplementation(() => new Promise(resolve => (release = () => resolve({ status: 'ok' }))))
-
-    const pending = skipMcpSetupRequest('s1')
+    await skipMcpSetupRequest('s1')
 
     expect(sessionMcpSetupRequest('s1').get()).toBeNull()
-
-    release()
-    await pending
-    expect(rpc).toHaveBeenCalledTimes(1)
+    // The second skip finds nothing parked and must not reach the wire again.
+    await skipMcpSetupRequest('s1')
+    expect(respond).toHaveBeenCalledTimes(1)
   })
 
   // The pet's "waiting on you" pose is set by the request and, without this,
@@ -149,81 +125,30 @@ describe('skipMcpSetupRequest', () => {
     expect(rpc).not.toHaveBeenCalled()
   })
 
-  // MJXHRM-418: with the card torn down nothing else could ever answer, and
-  // "the tool times out on its own" costs ten minutes of a dead turn.
-  it('puts the card back and says so when the skip does not land', async () => {
+  /**
+   * MJXHRM-418 inverted by the request wire. The old skip could fail IN TRANSIT
+   * — an RPC rejection — and had to put the card back, because the agent was
+   * still parked for its ten minutes. A response frame cannot fail that way: the
+   * only failure left is that nothing is open under that id, which means the
+   * card was already withdrawn and the tool has already returned. Restoring it
+   * THEN would leave an unanswerable card offering to install a server nothing
+   * is waiting on, so it stays cleared and the user is told.
+   */
+  it('says so when the card had already been withdrawn, and does not put it back', async () => {
     setSessionMcpSetup('s1', REQUEST)
-    rpc.mockRejectedValue(new Error('socket closed'))
 
     await expect(skipMcpSetupRequest('s1')).resolves.toBe(true)
 
-    expect(sessionMcpSetupRequest('s1').get()).toEqual(REQUEST)
+    expect(sessionMcpSetupRequest('s1').get()).toBeNull()
     expect(notifyError).toHaveBeenCalled()
   })
-
-  // Restoring over a fresh request would make THAT one unanswerable.
-  it('does not restore over a request that arrived meanwhile', async () => {
-    setSessionMcpSetup('s1', REQUEST)
-    rpc.mockImplementation(async () => {
-      setSessionMcpSetup('s1', { ...REQUEST, requestId: 'req-2', server: 'notion' })
-
-      throw new Error('socket closed')
-    })
-
-    await skipMcpSetupRequest('s1')
-
-    expect(sessionMcpSetupRequest('s1').get()?.requestId).toBe('req-2')
-  })
 })
 
-describe('applyResumedMcpSetup', () => {
-  const resumed = (pending: unknown): Pick<SessionResumeResponse, 'pending_prompt'> =>
-    ({ pending_prompt: pending }) as Pick<SessionResumeResponse, 'pending_prompt'>
-
-  it('rebuilds both halves of a card the cold open never saw', () => {
-    applyResumedMcpSetup(
-      's1',
-      resumed({
-        event: 'mcp.setup.request',
-        payload: { action: 'install', reason: 'why', request_id: 'req-1', server: 'linear' }
-      })
-    )
-
-    expect(sessionMcpSetupRequest('s1').get()?.requestId).toBe('req-1')
-    expect(toolParts('s1')).toEqual([expect.objectContaining({ toolCallId: 'req-1', toolName: 'setup_mcp' })])
-  })
-
-  // The replay is an upsert: a card that survived the disconnect stays ONE card,
-  // not two Install buttons answering the same blocking request.
-  it('is idempotent', () => {
-    const payload = { action: 'install', reason: 'why', request_id: 'req-1', server: 'linear' }
-
-    applyResumedMcpSetup('s1', resumed({ event: 'mcp.setup.request', payload }))
-    applyResumedMcpSetup('s1', resumed({ event: 'mcp.setup.request', payload }))
-
-    expect(toolParts('s1')).toHaveLength(1)
-  })
-
-  // `pending_prompt` is generic across every blocking bridge, so the event name
-  // is the only thing separating a parked clarify from a parked setup card.
-  it('ignores a prompt that is not an mcp setup', () => {
-    applyResumedMcpSetup(
-      's1',
-      resumed({ event: 'clarify.request', payload: { request_id: 'req-1', question: 'Which branch?' } })
-    )
-    applyResumedMcpSetup('s1', resumed(null))
-
-    expect(sessionMcpSetupRequest('s1').get()).toBeNull()
-    expect(toolParts('s1')).toEqual([])
-  })
-
-  it('ignores a parked prompt nothing could answer', () => {
-    applyResumedMcpSetup('s1', resumed({ event: 'mcp.setup.request', payload: { server: 'linear' } }))
-
-    expect(sessionMcpSetupRequest('s1').get()).toBeNull()
-    expect(toolParts('s1')).toEqual([])
-  })
-})
+// The `applyResumedMcpSetup` suite is GONE with the function (MJXHRM-520). Its
+// fixtures were all `pending_prompt` payloads, a field the merged backend no
+// longer sends — so the suite proved only that dead code still behaved. A card
+// still open after a reconnect now returns as an `open_requests` entry and is
+// re-delivered to the request router, which is where its coverage lives.
 
 describe('hasMcpSetupRequest', () => {
   it('reports what is parked on that session key only', () => {

@@ -36,9 +36,7 @@ import { isLiveTailRow, reconcileLiveTail } from '@/lib/live-tail'
 import { appendLiveSessionProjection } from '@/lib/session-history'
 import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { applyResumedApproval } from '@/store/approvals'
-import { applyResumedClarify } from '@/store/clarify'
 import { $gatewayState } from '@/store/gateway'
-import { applyResumedMcpSetup } from '@/store/mcp-setup'
 import { requestForSession } from '@/store/session-request-router'
 import {
   $sessionStates,
@@ -662,8 +660,13 @@ export const resumedTurnIsLive = (resumed: SessionResumeResponse): boolean =>
  * written without it (MJXHRM-362).
  */
 export function adoptResumedTurn(key: string, resumed: SessionResumeResponse): TurnReconciliation {
-  applyResumedClarify(key, resumed)
-  applyResumedMcpSetup(key, resumed)
+  // Only the approval replay is left here. A parked clarify / MCP-setup card
+  // comes back as an `open_requests` entry on the resume RESULT and is
+  // re-delivered by the shared channel to the request router (MJXHRM-520); the
+  // two `pending_prompt` readers that used to sit beside this line had been
+  // dead since the backend stopped sending that field. Approvals still need
+  // this path because they never enter `_block` at all — they queue in
+  // `tools/approval`, and `pending_approval` is their only replay.
   applyResumedApproval(key, resumed)
 
   return applyTurnReconciliation(key, planTurnReconciliation(getInflightTurn(key), remoteTurnSnapshot(resumed)))
@@ -821,13 +824,12 @@ export async function reconcileSessionTurn(key: string): Promise<TurnReconciliat
       reconcileSessionTail(live, resumed)
     }
 
-    // After the tail, so the row lands on the reconciled tail rather than one
-    // `reconcileSessionTail` is about to rebuild. Unconditional: a prompt still
-    // in the gateway's `_pending` means the agent IS parked, whatever the plan
-    // concluded about the turn — and the replay is an upsert, so a card that
-    // survived the disconnect stays one card.
-    applyResumedClarify(live, resumed)
-    applyResumedMcpSetup(live, resumed)
+    // After the tail, so the bar lands on the reconciled tail rather than one
+    // `reconcileSessionTail` is about to rebuild. Unconditional: an approval
+    // still queued means the agent IS parked, whatever the plan concluded about
+    // the turn — and the replay is a replace, so a bar that survived the
+    // disconnect stays one bar. The clarify / MCP-setup replays that used to be
+    // here ride `open_requests` now (MJXHRM-520).
     applyResumedApproval(live, resumed)
 
     return plan
