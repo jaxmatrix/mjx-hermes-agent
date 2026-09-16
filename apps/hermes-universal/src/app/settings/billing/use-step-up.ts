@@ -83,8 +83,12 @@ export function useStepUpFlow() {
     setPhase('waiting')
 
     offRef.current =
-      gateway?.on<StepUpVerificationPayload>('billing.step_up.verification', event => {
-        const payload = event.payload
+      gateway?.on('billing.step_up.verification', event => {
+        // The shared client's `on` is keyed on the EVENT NAME, not the payload
+        // type (MJXHRM-530), so the payload is narrowed here instead of through
+        // a type argument. The field guards below are unchanged and still do
+        // the real checking — this only names the shape they check.
+        const payload = event.payload as StepUpVerificationPayload | undefined
         const url = typeof payload?.verification_url === 'string' ? payload.verification_url : null
 
         if (!url) {

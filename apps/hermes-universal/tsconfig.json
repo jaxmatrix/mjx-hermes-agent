@@ -11,11 +11,17 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "paths": { "@/*": ["./src/*"], "@hermes/plugin-sdk": ["./src/sdk/index.ts"] },
+    "paths": {
+      "@/*": ["./src/*"],
+      "@hermes/plugin-sdk": ["./src/sdk/index.ts"],
+      "@hermes/shared": ["../shared/src/index.ts"],
+      "@hermes/shared/gateway-events": ["../shared/src/gateway-events.ts"],
+      "@hermes/shared/json-rpc-channel": ["../shared/src/json-rpc-channel.ts"]
+    },
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "../../packages/hermes-sample-plugins"]
+  "include": ["src", "../shared/src", "../../packages/hermes-sample-plugins"]
 }

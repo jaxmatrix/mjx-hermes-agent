@@ -67,10 +67,7 @@ const listeners = new Map<string, Set<(event: GatewayEvent) => void>>()
  * unregister. It exists because a secondary's events have to go SOMEWHERE and
  * rule 7 says the default is nowhere.
  */
-export function addConnectionEventListener(
-  connectionId: string,
-  handler: (event: GatewayEvent) => void
-): () => void {
+export function addConnectionEventListener(connectionId: string, handler: (event: GatewayEvent) => void): () => void {
   const held = listeners.get(connectionId) ?? new Set()
 
   held.add(handler)
@@ -177,6 +174,15 @@ export async function leaseSecondary(scopeKey: string, connectionId: string): Pr
   }
 
   const client = new JsonRpcGatewayClient({
+    // Explicitly OFF, not inherited (MJXHRM-530). Reconnect replay exists for
+    // the socket that owns a session's event stream: it re-asks
+    // `session.events.since` for every session it holds a watermark for. A
+    // secondary is not that socket — it is a request-only lease that gets
+    // idle-reaped, and its events are fanned to `deliver(connectionId, event)`
+    // where anything unclaimed is dropped (rule 7). Leaving replay on would
+    // have each lease issue catch-up RPCs on re-open for sessions it does not
+    // own, against a backend that is not the active one.
+    replay: false,
     socketFactory: (url: string) => new TauriWebSocket(url, { connectionId }) as unknown as WebSocketLike
   })
 

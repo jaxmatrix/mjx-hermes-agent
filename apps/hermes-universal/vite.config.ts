@@ -244,6 +244,12 @@ export default defineConfig(({ command }) => ({
       // runtime-loaded one gets the same object through sdk/runtime.ts's blob
       // shims. Same alias desktop's vite.config.ts declares.
       '@hermes/plugin-sdk': fileURLToPath(new URL('./src/sdk/index.ts', import.meta.url)),
+      // The shared gateway client + generated contract (MJXHRM-530). Universal
+      // consumes the package directly now instead of vendoring a copy of the
+      // client; apps/desktop aliases the same key to the same directory. A
+      // directory target also covers the subpath specifiers
+      // (`@hermes/shared/json-rpc-channel`), so one entry is enough.
+      '@hermes/shared': fileURLToPath(new URL('../shared/src', import.meta.url)),
       // React MUST be a singleton: sdk/runtime.ts hands plugins the app's own
       // React namespace, and a second copy reaching the bundle would break every
       // plugin hook with an unhelpful "invalid hook call".

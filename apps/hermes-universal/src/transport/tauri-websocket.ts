@@ -32,6 +32,20 @@ export class TauriWebSocket {
 
   readyState = 0
 
+  /**
+   * The transport's own reason for the last `error` it dispatched.
+   *
+   * The shared client rejects `connect()` with a generic "WebSocket connection
+   * failed" — it is written against a browser `WebSocket`, whose error event
+   * carries no detail. This socket is not that: the real connection lives in
+   * Rust, so the failure arrives as a tungstenite message that says WHAT went
+   * wrong ("HTTP error: 403", a TLS failure, a refused upgrade). Recording it
+   * here is what lets `connectGateway` rethrow with the real reason instead of
+   * the generic one (MJXHRM-530) — the diagnostic universal had before the
+   * client was swapped, kept without changing apps/shared.
+   */
+  lastErrorDetail: string | undefined
+
   private readonly id = crypto.randomUUID()
   private readonly url: string
   private readonly origin?: string
@@ -88,7 +102,8 @@ export class TauriWebSocket {
         void invoke('ws_send', { id: this.id, text }).catch(() => undefined)
       }
     } catch (err) {
-      this.dispatch('error', { message: err instanceof Error ? err.message : String(err) })
+      this.lastErrorDetail = err instanceof Error ? err.message : String(err)
+      this.dispatch('error', { message: this.lastErrorDetail })
       this.readyState = this.CLOSED
       this.dispatch('close', {})
       this.teardown()
@@ -130,7 +145,8 @@ export class TauriWebSocket {
       }
 
       case 'error':
-        this.dispatch('error', { message: String(payload) })
+        this.lastErrorDetail = String(payload)
+        this.dispatch('error', { message: this.lastErrorDetail })
 
         break
     }
