@@ -26,7 +26,20 @@ export function localBackendStatus(): Promise<LocalBackendStatus> {
   return invoke<LocalBackendStatus>('local_backend_status')
 }
 
-/** Stop the running local backend (kills the child). Best-effort. */
+/**
+ * Release the active connection's hold on the local backend. The child keeps
+ * running while a background tunnel still holds it (MJXHRM-592). Best-effort.
+ */
 export function stopLocalBackend(): Promise<void> {
   return invoke<void>('local_backend_stop')
+}
+
+/** Kill the child whoever holds it — quitting the app. Best-effort. */
+export function killLocalBackend(): Promise<void> {
+  return invoke<void>('local_backend_kill')
+}
+
+/** "Restart as <profile>": respawn the child in place; its tunnel leases reconnect. */
+export function restartLocalBackend(profile?: string | null): Promise<LocalBackend> {
+  return invoke<LocalBackend>('local_backend_restart', { profile: profile ?? null })
 }

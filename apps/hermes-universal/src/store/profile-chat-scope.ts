@@ -1,7 +1,10 @@
+import { $activeConnection } from '@/store/active-connection'
 import { $connection, connectLocal, connectSsh } from '@/store/connection'
 import { loadGatewayTarget } from '@/store/gateway-restore'
 import { $gatewayMode } from '@/store/gateway-switch'
+import { restartLocalBackend } from '@/store/local-backend'
 import { notify } from '@/store/notifications'
+import { disconnectSsh } from '@/store/ssh-backend'
 
 /**
  * What happens to the LIVE CHAT when the app's profile changes — said out loud.
@@ -45,12 +48,27 @@ export function announceProfileChatScope(target: null | string): void {
       mode === 'ssh'
         ? () => {
             const saved = loadGatewayTarget()
+            const previousProfile = $connection.get()?.profile ?? null
+            const dialConnectionId = $activeConnection.get()?.dialConnectionId ?? null
 
             if (saved?.ssh) {
+              // A new profile is a new scope. The old scope's ACTIVE hold goes
+              // once the new one is up, or its tunnel is never released.
               void connectSsh({ ...saved.ssh, profile: target }, { interactive: true })
+                .then(() => {
+                  if (previousProfile !== target) {
+                    return disconnectSsh(previousProfile, dialConnectionId)
+                  }
+                })
+                .catch(() => {})
             }
           }
-        : () => void connectLocal(target)
+        : // The one respawn of a running local child (MJXHRM-592): a plain
+          // connect adopts it whatever profile it was launched as.
+          () =>
+            void restartLocalBackend(target)
+              .then(() => connectLocal(target))
+              .catch(() => {})
 
     notify({
       kind: 'info',

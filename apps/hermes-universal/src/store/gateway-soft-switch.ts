@@ -1,6 +1,7 @@
 import { translateNow } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 import { clearTranscriptTails } from '@/lib/transcript-tail-cache'
+import { $activeConnection } from '@/store/active-connection'
 import { clearArtifactRegistry } from '@/store/artifacts'
 import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import { resetChat } from '@/store/chat'
@@ -37,6 +38,7 @@ import {
 import { resetSessionPinMirror } from '@/store/session-pin-sync'
 import { clearAllSessionStates, resetTileRuntimeBindings } from '@/store/session-states'
 import { resetArchivedSessionsForBackendSwitch } from '@/store/sidebar-archive'
+import { disconnectSsh } from '@/store/ssh-backend'
 import { resetSystemStatusForBackendSwitch } from '@/store/system-status'
 import { clearTranscriptPaint } from '@/store/transcript-paint'
 import { resetWorkspaceCwd } from '@/store/workspace-events'
@@ -270,9 +272,17 @@ export async function softSwitchGateway(mode: GatewayMode, dial: () => Promise<v
   wipeSessionListsForGatewaySwitch()
 
   try {
-    // Leaving a local-spawned backend: stop the child, or it outlives the switch.
-    if ($connection.get()?.mode === 'local') {
+    // Leaving a local or SSH backend releases the ACTIVE hold only: a background
+    // tunnel lease keeps it up, and nothing else does (MJXHRM-592). SSH used to
+    // release nothing, so its tunnel leaked until the same scope was dialled.
+    const leaving = $connection.get()
+
+    if (leaving?.mode === 'local') {
       await stopLocalBackend().catch(() => {})
+    }
+
+    if (leaving?.mode === 'ssh') {
+      await disconnectSsh(leaving.profile ?? null, $activeConnection.get()?.dialConnectionId ?? null).catch(() => {})
     }
 
     closeGateway()

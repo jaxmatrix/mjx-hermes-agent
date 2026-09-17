@@ -17,7 +17,11 @@ vi.mock('@/store/gateway-restore', () => ({
   loadGatewayTarget: vi.fn().mockReturnValue(null)
 }))
 vi.mock('@/store/notifications', () => ({ notify: vi.fn(), notifyError: vi.fn() }))
-vi.mock('@/store/local-backend', () => ({ stopLocalBackend: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('@/store/local-backend', () => ({
+  killLocalBackend: vi.fn().mockResolvedValue(undefined),
+  stopLocalBackend: vi.fn().mockResolvedValue(undefined)
+}))
+vi.mock('@/store/ssh-backend', () => ({ disconnectSsh: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@/store/chat', () => ({ resetChat: vi.fn() }))
 vi.mock('@/store/cron', () => ({ setCronJobs: vi.fn() }))
 vi.mock('@/store/workspace-events', () => ({ resetWorkspaceCwd: vi.fn() }))
@@ -63,13 +67,14 @@ vi.mock('@/store/session', async () => {
 })
 
 import { readTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
+import { $activeConnection } from '@/store/active-connection'
 import { resetChat } from '@/store/chat'
 import { resetRepoStatusForBackendSwitch } from '@/store/coding-status'
 import { $connection, beginGatewaySwitch, disconnect, endGatewaySwitch } from '@/store/connection'
 import { closeGateway } from '@/store/gateway'
 import type { Connection } from '@/store/gateway-config'
 import { dialSavedTarget, type GatewayTarget, loadGatewayTarget } from '@/store/gateway-restore'
-import { stopLocalBackend } from '@/store/local-backend'
+import { killLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import { notify, notifyError } from '@/store/notifications'
 import { $projectTree } from '@/store/project-scope'
 import { resetPullRequestsForBackendSwitch } from '@/store/pull-requests'
@@ -86,6 +91,7 @@ import {
   refreshSessions
 } from '@/store/session'
 import { clearAllSessionStates } from '@/store/session-states'
+import { disconnectSsh } from '@/store/ssh-backend'
 import type { SessionInfo } from '@/types/hermes'
 
 import { artifactsForSession, openArtifact, upsertArtifact } from './artifacts'
@@ -97,7 +103,7 @@ import { $dirtyPreviewPaths, setPreviewDirty } from './preview-edit'
 // Only the fields the wipe / switch actually read.
 const session = { id: 's1' } as unknown as SessionInfo
 
-const connectionOn = (mode: 'cloud' | 'local' | 'remote'): Connection =>
+const connectionOn = (mode: 'cloud' | 'local' | 'remote' | 'ssh'): Connection =>
   ({ authMode: 'none', baseUrl: 'http://gateway.test', mode }) as Connection
 
 beforeEach(() => {
@@ -292,11 +298,31 @@ describe('gateway soft switch', () => {
     )
   })
 
+  it('releases the ssh tunnel it is leaving, and never hard-kills a local child', async () => {
+    $connection.set({ ...connectionOn('ssh'), profile: 'work' })
+    $activeConnection.set({ dialConnectionId: 'box' } as never)
+    await softSwitchGateway('remote', vi.fn().mockResolvedValue(undefined))
+
+    expect(disconnectSsh).toHaveBeenCalledWith('work', 'box')
+    expect(vi.mocked(disconnectSsh).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(closeGateway).mock.invocationCallOrder[0]
+    )
+
+    $activeConnection.set(null)
+    $connection.set(connectionOn('local'))
+    await softSwitchGateway('remote', vi.fn().mockResolvedValue(undefined))
+
+    // A release, not the kill: a background tunnel may still be riding it.
+    expect(stopLocalBackend).toHaveBeenCalledOnce()
+    expect(killLocalBackend).not.toHaveBeenCalled()
+  })
+
   it('leaves a remote backend alone', async () => {
     $connection.set(connectionOn('remote'))
     await softSwitchGateway('cloud', vi.fn().mockResolvedValue(undefined))
 
     expect(stopLocalBackend).not.toHaveBeenCalled()
+    expect(disconnectSsh).not.toHaveBeenCalled()
   })
 
   it('refreshes the session lists off the new gateway', async () => {

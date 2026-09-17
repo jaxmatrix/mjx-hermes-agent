@@ -14,7 +14,7 @@ import { IS_ANDROID, IS_DESKTOP, IS_IOS, IS_TAURI } from '@/lib/platform'
 import { navigateTo } from '@/lib/route-nav'
 import { type SurfaceGrant } from '@/lib/surface'
 import { backgroundCloseAction, commitBackgroundMode, requestBackgroundClosePrompt } from '@/store/background-mode'
-import { stopLocalBackend } from '@/store/local-backend'
+import { killLocalBackend } from '@/store/local-backend'
 import { notifyError } from '@/store/notifications'
 
 // Ported from desktop `store/windows.ts`. Desktop opens native windows through an
@@ -852,7 +852,9 @@ async function hideForBackgroundMode(answering: boolean): Promise<void> {
  */
 async function quitTheApp(): Promise<void> {
   await commitBackgroundMode(false)
-  await stopLocalBackend().catch(() => {})
+  // The hard stop: a background tunnel lease must not keep the child alive
+  // past the app.
+  await killLocalBackend().catch(() => {})
 
   try {
     await invoke('quit_app')
