@@ -176,7 +176,7 @@ pub struct SshResolvedHost {
 }
 
 /// A connect attempt in flight, and the channels its prompts arrive on.
-struct Attempt {
+pub(crate) struct Attempt {
     cancel: tokio_util::sync::CancellationToken,
     /// Pending questions, keyed by prompt id, awaiting `ssh_answer_prompt`.
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
@@ -335,34 +335,75 @@ fn resolve_target(
     Ok((target, user, credentials))
 }
 
-/// Build the prompt plumbing for one attempt, and register it so
-/// `ssh_answer_prompt` / `ssh_trust_host_key` can route answers back.
-async fn arm_prompts(
-    app: &AppHandle,
-    state: &SshState,
-    attempt_id: &str,
-    interactive: bool,
-) -> (Box<dyn Prompter>, Arc<HostKeyPolicy>, Arc<Attempt>) {
+/// Register an attempt the moment its dial begins, so `ssh_cancel` and a
+/// superseding dial can reach it through every step before the session opens —
+/// the supersede drain, the credential read and the unlock gate included.
+///
+/// An attempt already registered under the same id is the same logical dial
+/// being replaced, so it is cancelled rather than silently displaced.
+pub(crate) async fn begin_attempt(state: &SshState, attempt_id: &str) -> Arc<Attempt> {
     let attempt = Arc::new(Attempt {
         cancel: tokio_util::sync::CancellationToken::new(),
         pending: Arc::new(Mutex::new(HashMap::new())),
         pending_host_key: Arc::new(Mutex::new(None)),
     });
 
-    state
+    let displaced = state
         .attempts
         .lock()
         .await
         .insert(attempt_id.to_string(), Arc::clone(&attempt));
 
+    if let Some(displaced) = displaced {
+        displaced.cancel.cancel();
+    }
+
+    attempt
+}
+
+/// Forget an attempt once its dial is over — only this one, never a newer
+/// attempt that took the id.
+async fn end_attempt(state: &SshState, attempt_id: &str, attempt: &Arc<Attempt>) {
+    let mut attempts = state.attempts.lock().await;
+
+    if attempts
+        .get(attempt_id)
+        .is_some_and(|held| Arc::ptr_eq(held, attempt))
+    {
+        attempts.remove(attempt_id);
+    }
+}
+
+/// Cancel the attempt registered under `attempt_id`, unless it is `own`.
+async fn cancel_in(state: &SshState, attempt_id: &str, own: Option<&Arc<Attempt>>) {
+    let mut attempts = state.attempts.lock().await;
+
+    if attempts
+        .get(attempt_id)
+        .is_some_and(|held| own.is_some_and(|own| Arc::ptr_eq(held, own)))
+    {
+        return;
+    }
+
+    if let Some(attempt) = attempts.remove(attempt_id) {
+        attempt.cancel.cancel();
+    }
+}
+
+/// Build the prompt plumbing for a registered attempt, so `ssh_answer_prompt`
+/// and `ssh_trust_host_key` can route answers back.
+fn arm_prompts(
+    app: &AppHandle,
+    attempt_id: &str,
+    attempt: &Arc<Attempt>,
+    interactive: bool,
+) -> (Box<dyn Prompter>, Arc<HostKeyPolicy>) {
+    let attempt = Arc::clone(attempt);
+
     if !interactive {
         // A boot restore has no UI to answer with. Trust-on-first-use still
         // applies (that is what desktop did), but nothing may block on a person.
-        return (
-            Box::new(NoPrompter),
-            Arc::new(HostKeyPolicy::AcceptNew),
-            attempt,
-        );
+        return (Box::new(NoPrompter), Arc::new(HostKeyPolicy::AcceptNew));
     }
 
     let (prompt_tx, prompt_rx) = mpsc::channel::<PromptRequest>(4);
@@ -384,7 +425,6 @@ async fn arm_prompts(
     (
         Box::new(ChannelPrompter::new(prompt_tx)),
         Arc::new(HostKeyPolicy::Ask(host_key_tx)),
-        attempt,
     )
 }
 
@@ -491,8 +531,8 @@ pub async fn ssh_test(
     credentials.passphrase = auth::nonempty(config.passphrase.clone());
     credentials.password = auth::nonempty(config.password.clone());
 
-    let (prompter, policy, _attempt) =
-        arm_prompts(&app, &state, &attempt_id, config.interactive).await;
+    let attempt = begin_attempt(&state, &attempt_id).await;
+    let (prompter, policy) = arm_prompts(&app, &attempt_id, &attempt, config.interactive);
     let known_hosts_path = known_hosts_path(&app)?;
 
     reporter.step(SshStep::Connecting);
@@ -530,7 +570,7 @@ pub async fn ssh_test(
     }
     .await;
 
-    state.attempts.lock().await.remove(&attempt_id);
+    end_attempt(&state, &attempt_id, &attempt).await;
 
     let (platform, arch) = result?;
 
@@ -578,8 +618,8 @@ pub async fn ssh_install(
     credentials.passphrase = auth::nonempty(config.passphrase.clone());
     credentials.password = auth::nonempty(config.password.clone());
 
-    let (prompter, policy, _attempt) =
-        arm_prompts(&app, &state, &attempt_id, config.interactive).await;
+    let attempt = begin_attempt(&state, &attempt_id).await;
+    let (prompter, policy) = arm_prompts(&app, &attempt_id, &attempt, config.interactive);
     let known_hosts_path = known_hosts_path(&app)?;
 
     let options = ConnectOptions {
@@ -602,7 +642,7 @@ pub async fn ssh_install(
     }
     .await;
 
-    state.attempts.lock().await.remove(&attempt_id);
+    end_attempt(&state, &attempt_id, &attempt).await;
 
     match result {
         Ok(_) => Ok(()),
@@ -756,9 +796,7 @@ pub async fn ssh_trust_host_key(
 /// Abandon an in-flight attempt.
 #[tauri::command]
 pub async fn ssh_cancel(state: State<'_, SshState>, attempt_id: String) -> Result<(), SshError> {
-    if let Some(attempt) = state.attempts.lock().await.remove(&attempt_id) {
-        attempt.cancel.cancel();
-    }
+    cancel_in(&state, &attempt_id, None).await;
 
     Ok(())
 }
@@ -963,18 +1001,41 @@ pub async fn ssh_connect(
         Hold::Dial(dial) => dial,
     };
 
-    crate::tunnels::prepare(&app, &mut dial, SlotKind::Ssh).await;
+    // Registered before the supersede drain, so a cancel during it is heard.
+    let attempt = begin_attempt(&state, &attempt_id).await;
 
-    // A REGISTERED connection's credentials live under keyring accounts the
-    // webview cannot name, so Rust reads them here rather than being handed them
-    // (rule 4 — a PEM stops crossing IPC). The legacy owner sends no id and
-    // keeps passing its arguments, so its dial is unchanged.
-    let stored = registered
-        .as_deref()
-        .and_then(|id| crate::connections::ssh_credentials(&app, id))
-        .unwrap_or_default();
+    let result = match race_cancel(
+        &attempt.cancel,
+        crate::tunnels::prepare(&app, &mut dial, SlotKind::Ssh, Some(&attempt)),
+    )
+    .await
+    {
+        None => Err(cancelled_error()),
+        Some(()) => {
+            // A REGISTERED connection's credentials live under keyring accounts
+            // the webview cannot name, so Rust reads them here rather than being
+            // handed them (rule 4 — a PEM stops crossing IPC). The legacy owner
+            // sends no id and keeps passing its arguments, so its dial is
+            // unchanged.
+            let stored = registered
+                .as_deref()
+                .and_then(|id| crate::connections::ssh_credentials(&app, id))
+                .unwrap_or_default();
 
-    let result = connect_scope(&app, &state, &attempt_id, &dial.key, config, stored).await;
+            connect_scope(
+                &app,
+                &state,
+                &attempt_id,
+                &attempt,
+                &dial.key,
+                config,
+                stored,
+            )
+            .await
+        }
+    };
+
+    end_attempt(&state, &attempt_id, &attempt).await;
 
     // The legacy owner's reattach token is written by JS for its own dials.
     settle_scope(
@@ -987,6 +1048,13 @@ pub async fn ssh_connect(
         result,
     )
     .await
+}
+
+fn cancelled_error() -> SshError {
+    SshError::new(
+        SshErrorKind::Cancelled,
+        "The connection attempt was cancelled.",
+    )
 }
 
 /// The scope a primary dial lives at: the connection's, never the profile's.
@@ -1050,18 +1118,10 @@ pub(crate) fn identity_for(input: &SshTargetInput) -> Result<(String, String), S
     ))
 }
 
-/// Cancel an in-flight attempt by id, for a dial that is being superseded.
-pub(crate) async fn cancel_attempt(app: &AppHandle, attempt_id: &str) {
-    let attempt = app
-        .state::<SshState>()
-        .attempts
-        .lock()
-        .await
-        .remove(attempt_id);
-
-    if let Some(attempt) = attempt {
-        attempt.cancel.cancel();
-    }
+/// Cancel a superseded dial's attempt by id — never `own`, the dial doing the
+/// superseding.
+pub(crate) async fn cancel_attempt(app: &AppHandle, attempt_id: &str, own: Option<&Arc<Attempt>>) {
+    cancel_in(&app.state::<SshState>(), attempt_id, own).await;
 }
 
 /// Dial a registered SSH connection for a background lease (MJXHRM-592), and
@@ -1072,8 +1132,7 @@ pub(crate) async fn cancel_attempt(app: &AppHandle, attempt_id: &str) {
 /// terminal failure the UI turns into "Needs sign-in".
 pub(crate) async fn dial_tunnel(
     app: &AppHandle,
-    scope: &str,
-    serial: u64,
+    mut dial: crate::tunnels::Dial,
     connection_id: &str,
     installation_id: Option<String>,
     interactive: bool,
@@ -1081,41 +1140,67 @@ pub(crate) async fn dial_tunnel(
 ) {
     use crate::tunnels::{FailureKind, TunnelError, TunnelTarget};
 
-    let failed = |error: TunnelError| crate::tunnels::finish_dial(app, scope, serial, Err(error));
+    let state = app.state::<SshState>();
+    // Registered before anything that waits: the supersede drain, the keyring
+    // read and the unlock gate all race it, so a dismissed prompt or a newer
+    // dial stops this one at any of them.
+    let attempt = begin_attempt(&state, attempt_id).await;
+    let scope = dial.key.clone();
+    let serial = dial.serial;
 
-    let Some(TunnelTarget::Ssh { input, .. }) =
-        crate::connections::tunnel_target(app, connection_id)
-    else {
-        return failed(TunnelError::new(
-            FailureKind::Unavailable,
-            "that SSH connection is no longer registered",
-        ));
-    };
+    let prepared = race_cancel(&attempt.cancel, async {
+        crate::tunnels::prepare(
+            app,
+            &mut dial,
+            crate::tunnels::SlotKind::Ssh,
+            Some(&attempt),
+        )
+        .await;
 
-    let is_locked = |error: &crate::secrets::SecretsError| {
-        error.kind == crate::secrets::error::SecretsErrorKind::Locked
-    };
+        let Some(TunnelTarget::Ssh { input, .. }) =
+            crate::connections::tunnel_target(app, connection_id)
+        else {
+            return Err(TunnelError::new(
+                FailureKind::Unavailable,
+                "that SSH connection is no longer registered",
+            ));
+        };
 
-    let stored = match crate::connections::try_ssh_credentials(app, connection_id) {
-        Err(error) if is_locked(&error) && interactive => {
-            if let Err(refused) =
-                crate::secrets::gate::unlock("Hermes needs your stored SSH credentials".to_string())
-                    .await
-            {
-                return failed(TunnelError::new(FailureKind::Cancelled, refused.message));
+        let is_locked = |error: &crate::secrets::SecretsError| {
+            error.kind == crate::secrets::error::SecretsErrorKind::Locked
+        };
+
+        let stored = match crate::connections::try_ssh_credentials(app, connection_id) {
+            Err(error) if is_locked(&error) && interactive => {
+                crate::secrets::gate::unlock(
+                    "Hermes needs your stored SSH credentials".to_string(),
+                )
+                .await
+                .map_err(|refused| TunnelError::new(FailureKind::Cancelled, refused.message))?;
+
+                crate::connections::try_ssh_credentials(app, connection_id)
+                    .map_err(|error| TunnelError::new(FailureKind::Locked, error.message))?
             }
-
-            match crate::connections::try_ssh_credentials(app, connection_id) {
-                Ok(stored) => stored,
-                Err(error) => return failed(TunnelError::new(FailureKind::Locked, error.message)),
+            Err(error) if is_locked(&error) => {
+                return Err(TunnelError::new(FailureKind::Locked, error.message))
             }
+            other => other.ok().flatten(),
         }
-        Err(error) if is_locked(&error) => {
-            return failed(TunnelError::new(FailureKind::Locked, error.message))
+        .unwrap_or_default();
+
+        Ok((input, stored))
+    })
+    .await
+    .unwrap_or_else(|| Err(TunnelError::from_ssh(&cancelled_error())));
+
+    let (input, stored) = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            end_attempt(&state, attempt_id, &attempt).await;
+
+            return crate::tunnels::finish_dial(app, &scope, serial, Err(error));
         }
-        other => other.ok().flatten(),
-    }
-    .unwrap_or_default();
+    };
 
     let config = SshConnectConfig {
         target: input,
@@ -1125,11 +1210,12 @@ pub(crate) async fn dial_tunnel(
         ..Default::default()
     };
 
-    let state = app.state::<SshState>();
-    let result = connect_scope(app, &state, attempt_id, scope, config, stored).await;
+    let result = connect_scope(app, &state, attempt_id, &attempt, &scope, config, stored).await;
+
+    end_attempt(&state, attempt_id, &attempt).await;
 
     // Nothing in JS saw this dial, so Rust remembers the token for every row.
-    let _ = settle_scope(app, &state, scope, serial, connection_id, true, result).await;
+    let _ = settle_scope(app, &state, &scope, serial, connection_id, true, result).await;
 }
 
 /// What a dial built, before it is installed.
@@ -1145,10 +1231,12 @@ async fn connect_scope(
     app: &AppHandle,
     state: &SshState,
     attempt_id: &str,
+    attempt: &Arc<Attempt>,
     scope: &str,
     mut config: SshConnectConfig,
     stored: crate::connections::SshCredentials,
 ) -> Result<Established, SshError> {
+    let _ = state;
     let reporter = ProgressReporter::new(app.clone(), attempt_id);
 
     let installation_id = config.installation_id.as_deref().ok_or_else(|| {
@@ -1173,7 +1261,7 @@ async fn connect_scope(
     // there; filling it here keeps that one reader unchanged.
     config.reuse_token = auth::nonempty(config.reuse_token.clone()).or(stored.reuse_token);
 
-    let (prompter, policy, attempt) = arm_prompts(app, state, attempt_id, config.interactive).await;
+    let (prompter, policy) = arm_prompts(app, attempt_id, attempt, config.interactive);
     let host_label = target.label();
     let remote_hermes_path = target.remote_hermes_path.clone();
 
@@ -1214,8 +1302,6 @@ async fn connect_scope(
         }
     })
     .await;
-
-    state.attempts.lock().await.remove(attempt_id);
 
     match result {
         Ok((session, (mut connection, forward))) => {
@@ -1352,19 +1438,26 @@ async fn settle_scope(
     Ok(connection)
 }
 
-/// Run `work` unless the attempt is cancelled first.
+/// Run `work` unless the attempt is cancelled first (`None`).
+async fn race_cancel<T>(
+    cancel: &tokio_util::sync::CancellationToken,
+    work: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::select! {
+        biased;
+        () = cancel.cancelled() => None,
+        result = work => Some(result),
+    }
+}
+
+/// `race_cancel` for a step that already fails with an `SshError`.
 async fn unless_cancelled<T>(
     cancel: &tokio_util::sync::CancellationToken,
     work: impl std::future::Future<Output = Result<T, SshError>>,
 ) -> Result<T, SshError> {
-    tokio::select! {
-        biased;
-        () = cancel.cancelled() => Err(SshError::new(
-            SshErrorKind::Cancelled,
-            "The connection attempt was cancelled.",
-        )),
-        result = work => result,
-    }
+    race_cancel(cancel, work)
+        .await
+        .unwrap_or_else(|| Err(cancelled_error()))
 }
 
 /// The lifecycle proper, once a session is open.
@@ -1986,6 +2079,35 @@ mod tests {
             command.contains(r#"--profile '\''default'\'' serve --isolated"#),
             "{command}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_cancel_before_the_session_opens_still_stops_the_dial() {
+        let state = SshState::default();
+        let attempt = begin_attempt(&state, "a1").await;
+
+        // `ssh_cancel` lands while the dial is still draining its predecessor
+        // or waiting on the unlock gate.
+        cancel_in(&state, "a1", None).await;
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            race_cancel(&attempt.cancel, std::future::pending::<()>()),
+        )
+        .await
+        .expect("a cancelled attempt stops waiting");
+
+        assert!(outcome.is_none());
+
+        // A superseding dial never cancels itself, and ends only its own attempt.
+        let own = begin_attempt(&state, "a2").await;
+
+        cancel_attempt_in_place(&state, "a2", &own).await;
+        assert!(!own.cancel.is_cancelled());
+    }
+
+    async fn cancel_attempt_in_place(state: &SshState, id: &str, own: &Arc<Attempt>) {
+        cancel_in(state, id, Some(own)).await;
     }
 
     #[tokio::test]

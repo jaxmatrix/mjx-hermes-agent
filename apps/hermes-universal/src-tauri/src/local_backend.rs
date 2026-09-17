@@ -487,7 +487,7 @@ pub async fn local_backend_spawn(
             crate::tunnels::wait(rx).await.map_err(|e| e.message)?;
         }
         Hold::Dial(mut dial) => {
-            crate::tunnels::prepare(&app, &mut dial, SlotKind::Local).await;
+            crate::tunnels::prepare(&app, &mut dial, SlotKind::Local, None).await;
 
             return imp::respawn(&app, &state, dial.serial)
                 .await
@@ -513,7 +513,7 @@ pub async fn local_backend_restart(
         return local_backend_spawn(app, state, None).await;
     };
 
-    crate::tunnels::prepare(&app, &mut dial, SlotKind::Local).await;
+    crate::tunnels::prepare(&app, &mut dial, SlotKind::Local, None).await;
 
     imp::respawn(&app, &state, dial.serial)
         .await

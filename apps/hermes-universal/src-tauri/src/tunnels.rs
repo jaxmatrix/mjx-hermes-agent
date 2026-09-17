@@ -937,10 +937,15 @@ fn hold_for(app: &AppHandle, inner: &mut Inner, key: String, action: Action) -> 
 
 /// Wait out a superseded dial, and drop a retargeted slot's old resources,
 /// before running this one.
-pub(crate) async fn prepare(app: &AppHandle, dial: &mut Dial, kind: SlotKind) {
+pub(crate) async fn prepare(
+    app: &AppHandle,
+    dial: &mut Dial,
+    kind: SlotKind,
+    own_attempt: Option<&Arc<crate::ssh::Attempt>>,
+) {
     if let Some((previous, drained)) = dial.previous.take() {
         if kind == SlotKind::Ssh {
-            crate::ssh::cancel_attempt(app, &previous.attempt_id).await;
+            crate::ssh::cancel_attempt(app, &previous.attempt_id, own_attempt).await;
         }
 
         if let Some(mut drained) = drained {
@@ -1234,14 +1239,12 @@ async fn run(
     interactive: bool,
     attempt_id: &str,
 ) {
-    prepare(app, &mut dial, spec.kind).await;
-
     match spec.kind {
+        // The SSH dial prepares itself, racing the drain against its cancel.
         SlotKind::Ssh => {
             crate::ssh::dial_tunnel(
                 app,
-                &dial.key,
-                dial.serial,
+                dial,
                 &spec.connection_id,
                 installation_id,
                 interactive,
@@ -1249,7 +1252,10 @@ async fn run(
             )
             .await
         }
-        SlotKind::Local => crate::local_backend::dial_tunnel(app, dial.serial).await,
+        SlotKind::Local => {
+            prepare(app, &mut dial, spec.kind, None).await;
+            crate::local_backend::dial_tunnel(app, dial.serial).await
+        }
     }
 }
 
