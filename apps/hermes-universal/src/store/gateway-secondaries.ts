@@ -70,7 +70,10 @@ const listeners = new Map<string, Set<(event: GatewayEvent) => void>>()
  * unregister. It exists because a secondary's events have to go SOMEWHERE and
  * rule 7 says the default is nowhere.
  */
-export function addConnectionEventListener(connectionId: string, handler: (event: GatewayEvent) => void): () => void {
+export function addConnectionEventListener(
+  connectionId: string,
+  handler: (event: GatewayEvent) => void
+): () => void {
   const held = listeners.get(connectionId) ?? new Set()
 
   held.add(handler)
