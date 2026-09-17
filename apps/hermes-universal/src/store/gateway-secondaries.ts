@@ -65,8 +65,9 @@ interface Secondary {
 }
 
 const live = new Map<string, Secondary>()
-/** Opens in flight, so concurrent leases on one scope share one open. */
-const opening = new Map<string, Promise<Secondary>>()
+/** Opens in flight, so concurrent leases on one scope share one open — only
+ *  while no switch has invalidated it (its revision is still current). */
+const opening = new Map<string, { promise: Promise<Secondary>; revision: number }>()
 /** Bumped by `closeAllSecondaries`: an open that began before it is stale. */
 let openRevision = 0
 /** The newest switch that has settled: nothing it closed stays parked. */
@@ -199,7 +200,9 @@ function evictLeastRecentlyUsed(): void {
  * Single-flight per scope (MJXHRM-592): a second lease while the first is
  * still opening — a cold SSH dial takes 45–90 s — shares that open instead of
  * starting its own and overwriting the first. Upstream's in-flight-by-key shape
- * (`apps/desktop/src/store/managed-updates.ts`).
+ * (`apps/desktop/src/store/managed-updates.ts`). An open a switch has since
+ * invalidated is never shared: it can only end in `switching`, so a lease after
+ * the switch starts its own (upstream `backend-connection-state.ts`).
  */
 export async function leaseSecondary(scopeKey: string, connectionId: string): Promise<SecondaryLease> {
   const existing = live.get(scopeKey)
@@ -210,17 +213,18 @@ export async function leaseSecondary(scopeKey: string, connectionId: string): Pr
     return leaseFor(existing)
   }
 
-  let open = opening.get(scopeKey)
+  const pending = opening.get(scopeKey)
+  let open = pending?.revision === openRevision ? pending.promise : null
 
   if (!open) {
-    const started = openSecondary(scopeKey, connectionId).finally(() => {
+    const started = openSecondary(scopeKey, connectionId, openRevision).finally(() => {
       // Only this open's entry: a later open may already sit at the key.
-      if (opening.get(scopeKey) === started) {
+      if (opening.get(scopeKey)?.promise === started) {
         opening.delete(scopeKey)
       }
     })
 
-    opening.set(scopeKey, started)
+    opening.set(scopeKey, { promise: started, revision: openRevision })
     open = started
   }
 
@@ -231,8 +235,7 @@ export async function leaseSecondary(scopeKey: string, connectionId: string): Pr
   return leaseFor(secondary)
 }
 
-async function openSecondary(scopeKey: string, connectionId: string): Promise<Secondary> {
-  const revision = openRevision
+async function openSecondary(scopeKey: string, connectionId: string, revision: number): Promise<Secondary> {
   // A switch during the open: whatever it built goes, and the caller hears the
   // same answer a routed request gets mid-switch.
   const switched = () => revision !== openRevision

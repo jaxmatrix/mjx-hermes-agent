@@ -329,6 +329,48 @@ describe('opening a secondary', () => {
     expect(__testing.parkedCount()).toBe(0)
   })
 
+  it('never shares an open that a switch has since invalidated', async () => {
+    const first = deferred<ReturnType<typeof fakeTunnel>['lease']>()
+    const second = deferred<ReturnType<typeof fakeTunnel>['lease']>()
+    const stale = fakeTunnel()
+    const fresh = fakeTunnel()
+
+    invoke.mockResolvedValue({ kind: 'ssh' })
+    acquireTunnel.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+
+    const before = leaseSecondary('conn:ssh1::default', 'ssh1')
+
+    await vi.waitFor(() => expect(acquireTunnel).toHaveBeenCalledTimes(1))
+
+    // The switch begins and settles while that open is still dialling.
+    releaseParkedTunnels(closeAllSecondaries())
+
+    const after = leaseSecondary('conn:ssh1::default', 'ssh1')
+
+    // Its own open, not the one the switch invalidated.
+    await vi.waitFor(() => expect(acquireTunnel).toHaveBeenCalledTimes(2))
+    expect(invoke).toHaveBeenCalledTimes(2)
+
+    first.resolve(stale.lease)
+    await expect(before).rejects.toMatchObject({ kind: 'switching' })
+    expect(stale.release).toHaveBeenCalledTimes(1)
+
+    // The stale open ending leaves the current one in place to be shared.
+    const joined = leaseSecondary('conn:ssh1::default', 'ssh1')
+
+    expect(invoke).toHaveBeenCalledTimes(2)
+
+    second.resolve(fresh.lease)
+
+    const [one, two] = await Promise.all([after, joined])
+
+    expect(connect).toHaveBeenCalledTimes(1)
+    expect(__testing.liveScopeKeys()).toEqual(['conn:ssh1::default'])
+    await expect(one.request('session.list')).resolves.toBe('ok')
+    await expect(two.request('session.list')).resolves.toBe('ok')
+    expect(fresh.release).not.toHaveBeenCalled()
+  })
+
   it('leaves no open behind a test reset', async () => {
     const resolved = deferred<{ kind: string }>()
 
