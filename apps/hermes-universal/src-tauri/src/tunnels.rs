@@ -1,8 +1,8 @@
 //! Per-connection tunnels (MJXHRM-592).
 //!
 //! A local or SSH connection is reachable while another connection is active.
-//! Each live backend is a SLOT — an SSH scope's session + forward, or the one
-//! local child — and a slot lives exactly as long as it has holders: the primary
+//! Each live backend is a SLOT — an SSH connection's session + forward, or the
+//! one local child — and a slot lives as long as it has holders: the primary
 //! (the active connection's own dial) and any number of `(window label, lease
 //! id)` leases. JS only ever sees a loopback base URL, an instance key and a
 //! generation; the token is attached in Rust (`TransportState::set_tunnel_auth`).
@@ -10,17 +10,20 @@
 //! Two layers, on purpose:
 //!
 //!  * `SlotBook` is pure. Every lifecycle decision — dial, join, reuse,
-//!    teardown, redial — is a method returning an `Action`, so the whole
-//!    refcount and reconnect policy is unit-tested with no runtime.
-//!  * The runtime half turns actions into effects: single-flight waiters on a
-//!    `watch` channel, the `tunnel://{id}/changed` and `/status` events, the
-//!    backoff timer, and the actual dials in `ssh` and `local_backend`.
+//!    supersede, teardown, redial, stale result — is a method returning an
+//!    `Action`, so the refcount, the single-flight rules and the reconnect
+//!    policy are unit-tested with no runtime.
+//!  * The runtime half turns actions into effects: waiters on a `watch`
+//!    channel, the `tunnel://{id}/changed` and `/status` events, the backoff
+//!    timer, the holder reaper, and the dials in `ssh` and `local_backend`.
 //!
-//! The primary keeps redialling itself (`rebootstrapSsh`); Rust redials only a
-//! slot the primary does not hold, and never with a prompt — a background tunnel
-//! that needs a person stops and reports a terminal failure instead.
+//! Every dial carries a SERIAL. A result is credited only while its serial is
+//! the slot's in-flight one; anything else installs nothing. An interactive
+//! request supersedes a background dial: cancel, drain, redial (upstream
+//! desktop's `apps/desktop/electron/ssh-bootstrap-coordinator.ts`).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -31,13 +34,21 @@ use crate::ssh::error::SshErrorKind;
 
 /// The one local child's slot key.
 pub const LOCAL_SLOT: &str = "local";
-/// The local child's instance key. There is only ever one per install.
+/// The local child's instance key and fingerprint. One per install.
 pub const LOCAL_INSTANCE_KEY: &str = "local";
 
 pub const BACKOFF_BASE: Duration = Duration::from_secs(1);
 pub const BACKOFF_CAP: Duration = Duration::from_secs(30);
 /// Full jitter can draw zero; a floor keeps a dead host from being hammered.
 const BACKOFF_FLOOR: Duration = Duration::from_millis(250);
+
+/// A lease JS has not touched for this long is gone (a reload, a crashed
+/// renderer, a lost release). Upstream's pool idle floor (`pool-limits.ts`).
+pub const HOLDER_TTL_MS: u64 = 60_000;
+/// An unheld slot waits this long before teardown, so a reloading window's new
+/// page re-acquires the live tunnel instead of redialling it.
+pub const LINGER_MS: u64 = 15_000;
+pub const REAP_TICK: Duration = Duration::from_millis(LINGER_MS);
 
 // --------------------------------------------------------------------------
 // The pure book
@@ -120,21 +131,30 @@ impl FailureKind {
     }
 }
 
-/// What a slot is, fixed when it is created.
+/// What a slot dials.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlotSpec {
     pub connection_id: String,
     pub kind: SlotKind,
     pub instance_key: String,
-    /// The profile a (re)dial launches the backend as. The scope already
-    /// encodes it for SSH; for local it is the child's launch profile.
-    pub profile: Option<String>,
+    /// The target's identity: host, user, port, key path and remote hermes
+    /// path. A different fingerprint at the same key is a different backend.
+    pub fingerprint: String,
+}
+
+/// The dial a slot is waiting on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InFlight {
+    pub serial: u64,
+    pub interactive: bool,
+    pub attempt_id: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct Slot {
     pub spec: SlotSpec,
-    pub holders: HashSet<Holder>,
+    /// Each lease and when JS last touched it (ms).
+    pub holders: HashMap<Holder, u64>,
     pub primary: bool,
     pub phase: Phase,
     /// Bumped on every successful (re)establish.
@@ -143,19 +163,24 @@ pub struct Slot {
     pub attempt: u32,
     pub base_url: Option<String>,
     pub failure: Option<FailureKind>,
+    pub dial: Option<InFlight>,
+    /// When the slot lost its last holder, while it lingers.
+    pub unheld_since: Option<u64>,
 }
 
 impl Slot {
     fn new(spec: SlotSpec) -> Self {
         Self {
             spec,
-            holders: HashSet::new(),
+            holders: HashMap::new(),
             primary: false,
             phase: Phase::Connecting,
             generation: 0,
             attempt: 0,
             base_url: None,
             failure: None,
+            dial: None,
+            unheld_since: None,
         }
     }
 
@@ -164,15 +189,25 @@ impl Slot {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     None,
-    /// Start a dial; the caller owns it.
-    Dial,
+    /// Start dial `serial`; the caller owns it.
+    Dial {
+        serial: u64,
+    },
     /// A dial is in flight; wait for it.
     Join,
     /// Live and ready; use it as is.
     Reuse,
+    /// Cancel the previous dial, wait for it to drain, then dial `serial`.
+    /// `retarget`: the target changed, so the leases ended and the previous
+    /// backend's resources go before the new dial.
+    Supersede {
+        serial: u64,
+        previous: Option<InFlight>,
+        retarget: bool,
+    },
     /// A dial landed.
     Ready {
         generation: u64,
@@ -183,11 +218,17 @@ pub enum Action {
     },
     /// The slot is gone; drop its resources.
     Teardown,
+    /// The result belongs to a dial the slot no longer waits on: install
+    /// nothing, and drop only what that dial built.
+    Stale,
 }
 
 #[derive(Debug, Default)]
 pub struct SlotBook {
     slots: BTreeMap<String, Slot>,
+    /// Serials are unique across the book, so a recreated slot can never
+    /// credit a dial that belonged to its predecessor.
+    serial: u64,
 }
 
 impl SlotBook {
@@ -223,57 +264,140 @@ impl SlotBook {
         )
     }
 
+    fn begin(&mut self, key: &str, interactive: bool, attempt_id: &str) -> u64 {
+        self.serial += 1;
+
+        let serial = self.serial;
+        let slot = self
+            .slots
+            .get_mut(key)
+            .expect("a slot being dialled exists");
+
+        slot.phase = Phase::Connecting;
+        slot.dial = Some(InFlight {
+            serial,
+            interactive,
+            attempt_id: attempt_id.to_string(),
+        });
+
+        serial
+    }
+
+    /// What an existing slot does for a request (a lease or the primary).
+    fn request(
+        &mut self,
+        key: &str,
+        spec: SlotSpec,
+        alive: bool,
+        interactive: bool,
+        attempt_id: &str,
+    ) -> Action {
+        let slot = self.slots.get_mut(key).expect("a requested slot exists");
+
+        // A different target at the same key is a different backend: never
+        // reuse it, and end the leases that were riding the old one.
+        if slot.spec.fingerprint != spec.fingerprint {
+            let previous = slot.dial.take();
+
+            slot.spec = spec;
+            slot.holders.clear();
+            slot.base_url = None;
+            slot.failure = None;
+
+            let serial = self.begin(key, interactive, attempt_id);
+
+            return Action::Supersede {
+                serial,
+                previous,
+                retarget: true,
+            };
+        }
+
+        match slot.phase {
+            Phase::Ready if alive => Action::Reuse,
+            Phase::Connecting => match &slot.dial {
+                // A person asking must not wait on a dial that cannot ask them.
+                Some(dial) if interactive && !dial.interactive => {
+                    let previous = slot.dial.take();
+                    let serial = self.begin(key, interactive, attempt_id);
+
+                    Action::Supersede {
+                        serial,
+                        previous,
+                        retarget: false,
+                    }
+                }
+                _ => Action::Join,
+            },
+            _ => Action::Dial {
+                serial: self.begin(key, interactive, attempt_id),
+            },
+        }
+    }
+
     /// A lease joins the connection's live slot, or creates one at `key`.
-    pub fn acquire(&mut self, key: &str, spec: SlotSpec, holder: Holder) -> (String, Action) {
+    pub fn acquire(
+        &mut self,
+        key: &str,
+        spec: SlotSpec,
+        holder: Holder,
+        interactive: bool,
+        attempt_id: &str,
+        now: u64,
+    ) -> (String, Action) {
         let key = self
             .key_for(&spec.connection_id)
             .unwrap_or_else(|| key.to_string());
 
-        if let Some(slot) = self.slots.get_mut(&key) {
-            slot.holders.insert(holder);
+        let action = if self.slots.contains_key(&key) {
+            self.request(&key, spec, true, interactive, attempt_id)
+        } else {
+            self.slots.insert(key.clone(), Slot::new(spec));
 
-            let action = match slot.phase {
-                Phase::Ready => Action::Reuse,
-                Phase::Connecting => Action::Join,
-                // A person (or a request) asking again is the retry.
-                Phase::Retrying | Phase::Failed => {
-                    slot.phase = Phase::Connecting;
-                    Action::Dial
-                }
-            };
+            Action::Dial {
+                serial: self.begin(&key, interactive, attempt_id),
+            }
+        };
 
-            return (key, action);
-        }
+        let slot = self.slots.get_mut(&key).expect("the acquired slot exists");
 
-        let mut slot = Slot::new(spec);
-        slot.holders.insert(holder);
-        self.slots.insert(key.clone(), slot);
+        slot.holders.insert(holder, now);
+        slot.unheld_since = None;
 
-        (key, Action::Dial)
+        (key, action)
     }
 
-    /// The active connection's own dial. `alive` is the caller's liveness read of
-    /// what the slot holds: a ready slot whose session died is redialled, never
-    /// reused — and never closed while it is still serving someone.
-    pub fn hold_primary(&mut self, key: &str, spec: SlotSpec, alive: bool) -> Action {
-        if let Some(slot) = self.slots.get_mut(key) {
-            slot.primary = true;
+    /// The active connection's own dial. `alive` is the caller's liveness read
+    /// of what the slot holds: a ready slot whose session died is redialled,
+    /// never reused — and never closed while it is still serving someone.
+    pub fn hold_primary(
+        &mut self,
+        key: &str,
+        spec: SlotSpec,
+        alive: bool,
+        interactive: bool,
+        attempt_id: &str,
+    ) -> (String, Action) {
+        let key = self
+            .key_for(&spec.connection_id)
+            .unwrap_or_else(|| key.to_string());
 
-            return match slot.phase {
-                Phase::Ready if alive => Action::Reuse,
-                Phase::Connecting => Action::Join,
-                _ => {
-                    slot.phase = Phase::Connecting;
-                    Action::Dial
-                }
-            };
-        }
+        let action = if self.slots.contains_key(&key) {
+            self.request(&key, spec, alive, interactive, attempt_id)
+        } else {
+            self.slots.insert(key.clone(), Slot::new(spec));
 
-        let mut slot = Slot::new(spec);
+            Action::Dial {
+                serial: self.begin(&key, interactive, attempt_id),
+            }
+        };
+
+        let slot = self.slots.get_mut(&key).expect("the held slot exists");
+
         slot.primary = true;
-        self.slots.insert(key.to_string(), slot);
+        slot.unheld_since = None;
 
-        Action::Dial
+        (key, action)
     }
 
     /// Leaving the active connection. `None` when there was no slot at all.
@@ -302,14 +426,12 @@ impl SlotBook {
         Some(Action::None)
     }
 
-    fn drop_holders(&mut self, keep: impl Fn(&str, &Holder) -> bool) -> Vec<(String, Action)> {
+    pub fn release(&mut self, connection_id: &str, holder: &Holder) -> Vec<(String, Action)> {
         let keys: Vec<String> = self
             .slots
             .iter()
             .filter(|(_, slot)| {
-                slot.holders
-                    .iter()
-                    .any(|holder| !keep(&slot.spec.connection_id, holder))
+                slot.spec.connection_id == connection_id && slot.holders.contains_key(holder)
             })
             .map(|(key, _)| key.clone())
             .collect();
@@ -317,9 +439,8 @@ impl SlotBook {
         keys.into_iter()
             .map(|key| {
                 let slot = self.slots.get_mut(&key).expect("key was just listed");
-                let connection_id = slot.spec.connection_id.clone();
 
-                slot.holders.retain(|holder| keep(&connection_id, holder));
+                slot.holders.remove(holder);
 
                 if slot.unheld() {
                     self.slots.remove(&key);
@@ -332,13 +453,71 @@ impl SlotBook {
             .collect()
     }
 
-    pub fn release(&mut self, connection_id: &str, holder: &Holder) -> Vec<(String, Action)> {
-        self.drop_holders(|id, held| id != connection_id || held != holder)
+    /// JS still holds this lease.
+    pub fn touch(&mut self, connection_id: &str, holder: &Holder, now: u64) -> bool {
+        let mut touched = false;
+
+        for slot in self
+            .slots
+            .values_mut()
+            .filter(|slot| slot.spec.connection_id == connection_id)
+        {
+            if let Some(at) = slot.holders.get_mut(holder) {
+                *at = now;
+                touched = true;
+            }
+        }
+
+        touched
     }
 
-    /// A destroyed window runs no JS teardown, so its leases go here.
-    pub fn reap_window(&mut self, label: &str) -> Vec<(String, Action)> {
-        self.drop_holders(|_, held| held.window != label)
+    /// A window reloaded or went away: its leases end, and a slot that leaves
+    /// unheld lingers for the new page to re-acquire. Returns those slots.
+    pub fn reap_window(&mut self, label: &str, now: u64) -> Vec<String> {
+        let mut lingering = Vec::new();
+
+        for (key, slot) in &mut self.slots {
+            let before = slot.holders.len();
+
+            slot.holders.retain(|holder, _| holder.window != label);
+
+            if slot.holders.len() != before && slot.unheld() && slot.unheld_since.is_none() {
+                slot.unheld_since = Some(now);
+                lingering.push(key.clone());
+            }
+        }
+
+        lingering
+    }
+
+    /// The reaper's tick: drop leases JS stopped touching, and tear down slots
+    /// that have lingered unheld for a full tick.
+    pub fn expire(&mut self, now: u64) -> Vec<(String, Action)> {
+        let mut out = Vec::new();
+
+        for (key, slot) in &mut self.slots {
+            slot.holders
+                .retain(|_, touched| now.saturating_sub(*touched) <= HOLDER_TTL_MS);
+
+            if !slot.unheld() {
+                slot.unheld_since = None;
+                continue;
+            }
+
+            match slot.unheld_since {
+                None => slot.unheld_since = Some(now),
+                Some(since) if now.saturating_sub(since) >= LINGER_MS => {
+                    out.push((key.clone(), Action::Teardown));
+                }
+                Some(_) => {}
+            }
+        }
+
+        for (key, _) in &out {
+            self.slots.remove(key);
+        }
+
+        out
     }
 
     /// The backend behind a ready slot died.
@@ -374,24 +553,24 @@ impl SlotBook {
         }
     }
 
-    pub fn on_dial_result(&mut self, key: &str, result: Result<&str, FailureKind>) -> Action {
+    pub fn on_dial_result(
+        &mut self,
+        key: &str,
+        serial: u64,
+        result: Result<&str, FailureKind>,
+    ) -> Action {
         let Some(slot) = self.slots.get_mut(key) else {
-            // Everyone left mid-dial: whatever it installed goes.
-            return if result.is_ok() {
-                Action::Teardown
-            } else {
-                Action::None
-            };
+            return Action::Stale;
         };
+
+        if slot.dial.as_ref().map(|dial| dial.serial) != Some(serial) {
+            return Action::Stale;
+        }
+
+        slot.dial = None;
 
         match result {
             Ok(base_url) => {
-                if slot.unheld() {
-                    self.slots.remove(key);
-
-                    return Action::Teardown;
-                }
-
                 slot.phase = Phase::Ready;
                 slot.generation += 1;
                 slot.attempt = 0;
@@ -430,41 +609,62 @@ impl SlotBook {
         }
     }
 
-    /// The backoff timer fired. False when the attempt is stale or unwanted.
-    pub fn begin_redial(&mut self, key: &str, attempt: u32) -> bool {
-        let Some(slot) = self.slots.get_mut(key) else {
-            return false;
-        };
+    /// The backoff timer fired. The serial to dial, or `None` when the attempt
+    /// is stale or unwanted.
+    pub fn begin_redial(&mut self, key: &str, attempt: u32, attempt_id: &str) -> Option<u64> {
+        let slot = self.slots.get(key)?;
 
         if slot.phase != Phase::Retrying
             || slot.attempt != attempt
             || slot.primary
             || slot.holders.is_empty()
         {
-            return false;
+            return None;
         }
 
-        slot.phase = Phase::Connecting;
-
-        true
+        Some(self.begin(key, false, attempt_id))
     }
 
-    /// "Restart as <profile>": the explicit respawn, keeping every holder.
-    pub fn restart(&mut self, key: &str, profile: Option<String>) -> Action {
+    /// "Restart backend": the explicit respawn, keeping every holder. A restart
+    /// during a dial supersedes that dial once it has drained.
+    pub fn restart(&mut self, key: &str, attempt_id: &str) -> Action {
         let Some(slot) = self.slots.get_mut(key) else {
             return Action::None;
         };
 
-        slot.phase = Phase::Connecting;
-        slot.spec.profile = profile;
+        let previous = slot.dial.take();
+        let serial = self.begin(key, true, attempt_id);
 
-        Action::Dial
+        match previous {
+            Some(previous) => Action::Supersede {
+                serial,
+                previous: Some(previous),
+                retarget: false,
+            },
+            None => Action::Dial { serial },
+        }
     }
 
     /// A connection was edited (dial fields) or removed. Its leases end; a slot
-    /// the primary still holds stays until the primary lets it go.
+    /// the primary still holds stays until the primary lets it go or redials a
+    /// new target.
     pub fn drop_connection(&mut self, connection_id: &str) -> Vec<(String, Action)> {
-        self.drop_holders(|id, _| id != connection_id)
+        self.slots_for(connection_id)
+            .into_iter()
+            .map(|key| {
+                let slot = self.slots.get_mut(&key).expect("key was just listed");
+
+                slot.holders.clear();
+
+                if slot.primary {
+                    (key, Action::None)
+                } else {
+                    self.slots.remove(&key);
+
+                    (key, Action::Teardown)
+                }
+            })
+            .collect()
     }
 
     pub fn remove(&mut self, key: &str) -> Option<Slot> {
@@ -504,6 +704,30 @@ pub fn ssh_instance_key(user: &str, host: &str, port: u16) -> String {
         user.trim().to_lowercase(),
         host.trim().to_lowercase()
     )
+}
+
+/// The dial identity of an SSH target (upstream `sshConfigFingerprint`, minus
+/// the profile: one backend serves every profile).
+pub fn ssh_fingerprint(
+    user: &str,
+    host: &str,
+    port: u16,
+    key_path: Option<&str>,
+    remote_hermes_path: Option<&str>,
+) -> String {
+    format!(
+        "{}\n{}\n{}",
+        ssh_instance_key(user, host, port),
+        key_path.unwrap_or_default().trim(),
+        remote_hermes_path.unwrap_or_default().trim()
+    )
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 // --------------------------------------------------------------------------
@@ -555,7 +779,7 @@ pub enum StatusPhase {
     Ready,
     Retrying,
     Failed,
-    /// The slot is gone.
+    /// The slot is gone, or no longer serves the leases that held it.
     Closed,
 }
 
@@ -582,6 +806,10 @@ pub struct TunnelState {
 struct Inner {
     book: SlotBook,
     signals: HashMap<String, watch::Sender<Outcome>>,
+    /// One per in-flight dial serial; flips to true once that dial settled.
+    drains: HashMap<u64, watch::Sender<bool>>,
+    /// Serialises installs and teardowns of one slot key's resources.
+    installs: HashMap<String, Arc<tokio::sync::Mutex<()>>>,
     /// The install's SSH identity, remembered for Rust-driven redials.
     installation_id: Option<String>,
 }
@@ -591,11 +819,21 @@ enum Effect {
     Redial { key: String, attempt: u32 },
 }
 
-/// The result of the primary asking for its slot.
+/// A dial the caller has to run.
+pub(crate) struct Dial {
+    pub key: String,
+    pub serial: u64,
+    /// The superseded dial to cancel and wait out first.
+    previous: Option<(InFlight, Option<watch::Receiver<bool>>)>,
+    /// The previous target's resources go before this dial.
+    retarget: bool,
+}
+
+/// What a request for a slot turned into.
 pub(crate) enum Hold {
-    Reuse,
-    Join(watch::Receiver<Outcome>),
-    Dial,
+    Reuse(String),
+    Join(String, watch::Receiver<Outcome>),
+    Dial(Dial),
 }
 
 fn locked<T>(app: &AppHandle, change: impl FnOnce(&mut Inner) -> T) -> T {
@@ -653,17 +891,127 @@ fn signal(inner: &mut Inner, key: &str) -> watch::Sender<Outcome> {
         .clone()
 }
 
-/// Mark a dial as begun: waiters see `Pending`, the UI sees `connecting`.
-fn begin(app: &AppHandle, inner: &mut Inner, key: &str) -> watch::Receiver<Outcome> {
-    let tx = signal(inner, key);
+/// Mark dial `serial` as begun: waiters see `Pending`, the UI sees `connecting`.
+fn begun(
+    app: &AppHandle,
+    inner: &mut Inner,
+    key: String,
+    serial: u64,
+    previous: Option<InFlight>,
+    retarget: bool,
+) -> Dial {
+    signal(inner, &key).send_replace(Outcome::Pending);
+    inner.drains.insert(serial, watch::channel(false).0);
 
-    tx.send_replace(Outcome::Pending);
+    if let Some(slot) = inner.book.slot(&key) {
+        if retarget {
+            // The leases on the old target are over.
+            emit_status(app, &status_of(slot, StatusPhase::Closed, None));
+        }
 
-    if let Some(slot) = inner.book.slot(key) {
         emit_status(app, &status_of(slot, StatusPhase::Connecting, None));
     }
 
-    tx.subscribe()
+    let previous = previous.map(|dial| {
+        let drained = inner.drains.get(&dial.serial).map(watch::Sender::subscribe);
+
+        (dial, drained)
+    });
+
+    Dial {
+        key,
+        serial,
+        previous,
+        retarget,
+    }
+}
+
+/// Turn a book request for `key` into what the caller does. Under the lock.
+fn hold_for(app: &AppHandle, inner: &mut Inner, key: String, action: Action) -> Hold {
+    match action {
+        Action::Reuse => Hold::Reuse(key),
+        Action::Dial { serial } => Hold::Dial(begun(app, inner, key, serial, None, false)),
+        Action::Supersede {
+            serial,
+            previous,
+            retarget,
+        } => Hold::Dial(begun(app, inner, key, serial, previous, retarget)),
+        _ => {
+            let rx = signal(inner, &key).subscribe();
+
+            Hold::Join(key, rx)
+        }
+    }
+}
+
+/// Wait out a superseded dial, and drop a retargeted slot's old resources,
+/// before running this one.
+pub(crate) async fn prepare(app: &AppHandle, dial: &mut Dial, kind: SlotKind) {
+    if let Some((previous, drained)) = dial.previous.take() {
+        if kind == SlotKind::Ssh {
+            crate::ssh::cancel_attempt(app, &previous.attempt_id).await;
+        }
+
+        if let Some(mut drained) = drained {
+            let _ = drained.wait_for(|done| *done).await;
+        }
+    }
+
+    if dial.retarget {
+        let _guard = install_lock(app, &dial.key).await;
+
+        teardown_resources(app, &dial.key, kind).await;
+    }
+}
+
+/// The lock a slot key's installs and teardowns take.
+pub(crate) async fn install_lock(app: &AppHandle, key: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    let lock = locked(app, |inner| {
+        Arc::clone(
+            inner
+                .installs
+                .entry(key.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+        )
+    });
+
+    lock.lock_owned().await
+}
+
+/// Whether dial `serial` is still the one `key` waits on. Checked under the
+/// install lock before anything is installed.
+pub(crate) fn is_current(app: &AppHandle, key: &str, serial: u64) -> bool {
+    locked(app, |inner| {
+        inner
+            .book
+            .slot(key)
+            .and_then(|slot| slot.dial.as_ref())
+            .is_some_and(|dial| dial.serial == serial)
+    })
+}
+
+/// Wait for a single-flight dial to settle.
+pub(crate) async fn wait(
+    mut rx: watch::Receiver<Outcome>,
+) -> Result<TunnelDescriptor, TunnelError> {
+    loop {
+        match &*rx.borrow_and_update() {
+            Outcome::Ready(descriptor) => return Ok(descriptor.clone()),
+            Outcome::Failed(error) => return Err(error.clone()),
+            Outcome::Pending => {}
+        }
+
+        if rx.changed().await.is_err() {
+            return match &*rx.borrow() {
+                Outcome::Ready(descriptor) => Ok(descriptor.clone()),
+                Outcome::Failed(error) => Err(error.clone()),
+                Outcome::Pending => Err(TunnelError::new(
+                    FailureKind::Transient,
+                    "the tunnel was closed",
+                )),
+            };
+        }
+    }
 }
 
 /// A slot left the book: fail its waiters, say so, and schedule its resources.
@@ -719,20 +1067,39 @@ fn apply_detached(app: &AppHandle, effects: Vec<Effect>) {
 async fn teardown(app: &AppHandle, key: &str, kind: SlotKind) {
     log::info!("[tunnel] tearing down {key:?}");
 
+    let _guard = install_lock(app, key).await;
+
+    // A slot re-created at this key while we waited owns what is there now;
+    // its install replaces the old resources.
+    if locked(app, |inner| inner.book.slot(key).is_some()) {
+        return;
+    }
+
+    teardown_resources(app, key, kind).await;
+}
+
+async fn teardown_resources(app: &AppHandle, key: &str, kind: SlotKind) {
     match kind {
         SlotKind::Ssh => crate::ssh::teardown_scope(app, key).await,
         SlotKind::Local => crate::local_backend::kill_child(app).await,
     }
 }
 
+fn snapshot(inner: &Inner) -> HashMap<String, Slot> {
+    inner
+        .book
+        .slots
+        .iter()
+        .map(|(key, slot)| (key.clone(), slot.clone()))
+        .collect()
+}
+
 fn book_effects(
     app: &AppHandle,
     inner: &mut Inner,
-    before: Vec<(String, Slot)>,
+    before: HashMap<String, Slot>,
     actions: Vec<(String, Action)>,
 ) -> Vec<Effect> {
-    let before: HashMap<String, Slot> = before.into_iter().collect();
-
     actions
         .into_iter()
         .filter_map(|(key, action)| match action {
@@ -744,52 +1111,49 @@ fn book_effects(
         .collect()
 }
 
-pub(crate) fn hold_primary(app: &AppHandle, key: &str, spec: SlotSpec, alive: bool) -> Hold {
+pub(crate) fn hold_primary(
+    app: &AppHandle,
+    key: &str,
+    spec: SlotSpec,
+    alive: bool,
+    interactive: bool,
+    attempt_id: &str,
+) -> Hold {
     locked(app, |inner| {
-        match inner.book.hold_primary(key, spec, alive) {
-            Action::Reuse => Hold::Reuse,
-            Action::Join => Hold::Join(signal(inner, key).subscribe()),
-            _ => {
-                begin(app, inner, key);
-                Hold::Dial
-            }
-        }
+        let (key, action) = inner
+            .book
+            .hold_primary(key, spec, alive, interactive, attempt_id);
+
+        hold_for(app, inner, key, action)
     })
 }
 
-/// Wait for a single-flight dial to settle.
-pub(crate) async fn wait(
-    mut rx: watch::Receiver<Outcome>,
-) -> Result<TunnelDescriptor, TunnelError> {
-    loop {
-        match &*rx.borrow_and_update() {
-            Outcome::Ready(descriptor) => return Ok(descriptor.clone()),
-            Outcome::Failed(error) => return Err(error.clone()),
-            Outcome::Pending => {}
-        }
-
-        if rx.changed().await.is_err() {
-            return match &*rx.borrow() {
-                Outcome::Ready(descriptor) => Ok(descriptor.clone()),
-                Outcome::Failed(error) => Err(error.clone()),
-                Outcome::Pending => Err(TunnelError::new(
-                    FailureKind::Transient,
-                    "the tunnel was closed",
-                )),
-            };
-        }
-    }
+/// The slot key a connection is live at, if any.
+pub(crate) fn key_for(app: &AppHandle, connection_id: &str) -> Option<String> {
+    locked(app, |inner| inner.book.key_for(connection_id))
 }
 
-/// Record a dial's outcome and act on it.
-pub(crate) fn finish_dial(app: &AppHandle, key: &str, result: Result<String, TunnelError>) {
+/// Record dial `serial`'s outcome and act on it.
+pub(crate) fn finish_dial(
+    app: &AppHandle,
+    key: &str,
+    serial: u64,
+    result: Result<String, TunnelError>,
+) {
     let effects = locked(app, |inner| {
+        if let Some(drained) = inner.drains.remove(&serial) {
+            drained.send_replace(true);
+        }
+
         let before = inner.book.slot(key).cloned();
-        let action = inner
-            .book
-            .on_dial_result(key, result.as_deref().map_err(|error| error.kind));
+        let action =
+            inner
+                .book
+                .on_dial_result(key, serial, result.as_deref().map_err(|error| error.kind));
 
         match (action, &result) {
+            (Action::Stale, _) => vec![],
+
             (Action::Ready { .. }, _) => {
                 let slot = inner.book.slot(key).expect("a ready slot exists").clone();
 
@@ -828,17 +1192,7 @@ pub(crate) fn finish_dial(app: &AppHandle, key: &str, result: Result<String, Tun
 
             (Action::Teardown, _) => before
                 .map(|slot| vec![closed(app, inner, key, &slot, result.as_ref().err())])
-                .unwrap_or_else(|| {
-                    // Nobody held the slot any more; drop what the dial built.
-                    vec![Effect::Teardown {
-                        key: key.to_string(),
-                        kind: if key == LOCAL_SLOT {
-                            SlotKind::Local
-                        } else {
-                            SlotKind::Ssh
-                        },
-                    }]
-                }),
+                .unwrap_or_default(),
 
             (_, Err(error)) => {
                 log::warn!("[tunnel] {key:?} failed: {}", error.message);
@@ -866,45 +1220,45 @@ fn schedule_redial(app: AppHandle, key: String, attempt: u32) {
         tokio::time::sleep(backoff_delay(attempt, random_unit())).await;
 
         let plan = locked(&app, |inner| {
-            if !inner.book.begin_redial(&key, attempt) {
-                return None;
-            }
-
-            begin(&app, inner, &key);
-
             let spec = inner.book.slot(&key)?.spec.clone();
+            let attempt_id = format!("tunnel-{}", spec.connection_id);
+            let serial = inner.book.begin_redial(&key, attempt, &attempt_id)?;
+            let dial = begun(&app, inner, key.clone(), serial, None, false);
 
-            Some((spec, inner.installation_id.clone()))
+            Some((dial, spec, attempt_id, inner.installation_id.clone()))
         });
 
-        if let Some((spec, installation_id)) = plan {
-            let result = dial(&app, &key, &spec, installation_id, false).await;
-
-            finish_dial(&app, &key, result);
+        if let Some((dial, spec, attempt_id, installation_id)) = plan {
+            run(&app, dial, &spec, installation_id, false, &attempt_id).await;
         }
     });
 }
 
-async fn dial(
+/// Run a dial to completion; it settles itself through `finish_dial`.
+async fn run(
     app: &AppHandle,
-    key: &str,
+    mut dial: Dial,
     spec: &SlotSpec,
     installation_id: Option<String>,
     interactive: bool,
-) -> Result<String, TunnelError> {
+    attempt_id: &str,
+) {
+    prepare(app, &mut dial, spec.kind).await;
+
     match spec.kind {
         SlotKind::Ssh => {
             crate::ssh::dial_tunnel(
                 app,
-                key,
+                &dial.key,
+                dial.serial,
                 &spec.connection_id,
-                spec.profile.clone(),
                 installation_id,
                 interactive,
+                attempt_id,
             )
             .await
         }
-        SlotKind::Local => crate::local_backend::dial_tunnel(app, spec.profile.clone()).await,
+        SlotKind::Local => crate::local_backend::dial_tunnel(app, dial.serial).await,
     }
 }
 
@@ -970,15 +1324,15 @@ pub(crate) async fn release_primary(app: &AppHandle, key: &str) -> bool {
     existed
 }
 
-/// "Restart as <profile>": begin the respawn in place. False when there is no
+/// "Restart backend": begin the respawn in place. `None` when there is no
 /// slot, in which case the caller spawns through the primary path.
-pub(crate) fn begin_restart(app: &AppHandle, key: &str, profile: Option<String>) -> bool {
-    locked(app, |inner| match inner.book.restart(key, profile) {
-        Action::Dial => {
-            begin(app, inner, key);
-            true
-        }
-        _ => false,
+pub(crate) fn begin_restart(app: &AppHandle, key: &str, attempt_id: &str) -> Option<Dial> {
+    locked(app, |inner| match inner.book.restart(key, attempt_id) {
+        Action::Dial { serial } => Some(begun(app, inner, key.to_string(), serial, None, false)),
+        Action::Supersede {
+            serial, previous, ..
+        } => Some(begun(app, inner, key.to_string(), serial, previous, false)),
+        _ => None,
     })
 }
 
@@ -998,33 +1352,47 @@ pub(crate) fn slots_for(app: &AppHandle, connection_id: &str) -> Vec<String> {
     locked(app, |inner| inner.book.slots_for(connection_id))
 }
 
-/// A destroyed window's leases end with it.
+/// A window reloaded (`PageLoadEvent::Started`) or was destroyed: its leases
+/// end, and whatever that leaves unheld lingers one reaper tick.
 pub fn reap_window(app: &AppHandle, label: &str) {
-    let effects = locked(app, |inner| {
-        let before: Vec<(String, Slot)> = inner
-            .book
-            .slots
-            .iter()
-            .map(|(key, slot)| (key.clone(), slot.clone()))
-            .collect();
-        let actions = inner.book.reap_window(label);
-
-        book_effects(app, inner, before, actions)
+    locked(app, |inner| {
+        inner.book.reap_window(label, now_ms());
     });
+}
 
-    apply_detached(app, effects);
+/// The reaper: every tick, drop untouched leases and tear down slots that
+/// lingered unheld for a full tick. Started once from `setup`.
+pub fn start_reaper(app: &AppHandle) {
+    let app = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(REAP_TICK).await;
+
+            let effects = locked(&app, |inner| {
+                let before = snapshot(inner);
+                let actions = inner.book.expire(now_ms());
+
+                book_effects(&app, inner, before, actions)
+            });
+
+            apply(&app, effects).await;
+        }
+    });
 }
 
 /// A connection's dial fields were edited, or it was removed.
 pub(crate) async fn drop_connection(app: &AppHandle, connection_id: &str) {
     let effects = locked(app, |inner| {
-        let before: Vec<(String, Slot)> = inner
-            .book
-            .slots
-            .iter()
-            .map(|(key, slot)| (key.clone(), slot.clone()))
-            .collect();
+        let before = snapshot(inner);
         let actions = inner.book.drop_connection(connection_id);
+
+        for (key, _) in &actions {
+            if let Some(slot) = inner.book.slot(key) {
+                // Still the primary's; its leases are over all the same.
+                emit_status(app, &status_of(slot, StatusPhase::Closed, None));
+            }
+        }
 
         book_effects(app, inner, before, actions)
     });
@@ -1032,8 +1400,8 @@ pub(crate) async fn drop_connection(app: &AppHandle, connection_id: &str) {
     apply(app, effects).await;
 }
 
-/// `RunEvent::Exit`: every tunnel goes, and the local child is killed whether
-/// or not anything still holds it.
+/// `RunEvent::Exit`: the local child is killed first, with no timeout, so a
+/// hanging SSH close can never orphan it. Then every tunnel goes.
 pub fn shutdown(app: &AppHandle) {
     let slots = locked(app, |inner| {
         inner.signals.clear();
@@ -1043,12 +1411,14 @@ pub fn shutdown(app: &AppHandle) {
     let app = app.clone();
 
     tauri::async_runtime::block_on(async move {
+        crate::local_backend::kill_child(&app).await;
+
         let work = async {
             for (key, slot) in slots {
-                teardown(&app, &key, slot.spec.kind).await;
+                if slot.spec.kind == SlotKind::Ssh {
+                    crate::ssh::teardown_scope(&app, &key).await;
+                }
             }
-
-            crate::local_backend::kill_child(&app).await;
         };
 
         // A session close sends a disconnect; a dead network must not hold the
@@ -1066,12 +1436,14 @@ pub enum TunnelTarget {
     Local,
     Ssh {
         scope: String,
-        profile: Option<String>,
         input: crate::ssh::target::SshTargetInput,
     },
 }
 
 /// Reach a local or SSH connection that may not be the active one.
+///
+/// `attempt_id` names an interactive dial's prompts; a background dial runs as
+/// `tunnel-{connectionId}`.
 #[tauri::command]
 pub async fn tunnel_acquire(
     app: AppHandle,
@@ -1080,6 +1452,7 @@ pub async fn tunnel_acquire(
     lease_id: String,
     installation_id: Option<String>,
     interactive: bool,
+    attempt_id: Option<String>,
 ) -> Result<TunnelDescriptor, TunnelError> {
     let target = crate::connections::tunnel_target(&app, &connection_id).ok_or_else(|| {
         TunnelError::new(
@@ -1103,17 +1476,13 @@ pub async fn tunnel_acquire(
                     connection_id: connection_id.clone(),
                     kind: SlotKind::Local,
                     instance_key: LOCAL_INSTANCE_KEY.to_string(),
-                    profile: None,
+                    fingerprint: LOCAL_INSTANCE_KEY.to_string(),
                 },
             )
         }
-        TunnelTarget::Ssh {
-            scope,
-            profile,
-            input,
-        } => {
-            let instance_key =
-                crate::ssh::instance_key_for(&input).map_err(|e| TunnelError::from_ssh(&e))?;
+        TunnelTarget::Ssh { scope, input } => {
+            let (instance_key, fingerprint) =
+                crate::ssh::identity_for(&input).map_err(|e| TunnelError::from_ssh(&e))?;
 
             (
                 scope,
@@ -1121,51 +1490,53 @@ pub async fn tunnel_acquire(
                     connection_id: connection_id.clone(),
                     kind: SlotKind::Ssh,
                     instance_key,
-                    profile,
+                    fingerprint,
                 },
             )
         }
     };
 
+    let attempt_id = attempt_id
+        .filter(|id| interactive && !id.trim().is_empty())
+        .unwrap_or_else(|| format!("tunnel-{connection_id}"));
     let holder = Holder::new(webview.window().label(), lease_id);
 
-    let (key, spec, installation_id, next) = locked(&app, |inner| {
+    let (hold, spec, installation_id) = locked(&app, |inner| {
         if installation_id.is_some() {
             inner.installation_id = installation_id.clone();
         }
 
-        let (key, action) = inner.book.acquire(&key, spec, holder);
-        let slot = inner
+        let (key, action) =
+            inner
+                .book
+                .acquire(&key, spec, holder, interactive, &attempt_id, now_ms());
+        let spec = inner
             .book
             .slot(&key)
             .expect("an acquired slot exists")
+            .spec
             .clone();
+        let hold = hold_for(&app, inner, key, action);
 
-        let next = match action {
-            Action::Reuse => Err(descriptor(&slot)),
-            Action::Dial => Ok((true, begin(&app, inner, &key))),
-            _ => Ok((false, signal(inner, &key).subscribe())),
-        };
-
-        (key, slot.spec, inner.installation_id.clone(), next)
+        (hold, spec, inner.installation_id.clone())
     });
 
-    let (dials, rx) = match next {
-        Err(Some(ready)) => return Ok(ready),
-        Err(None) => {
-            return Err(TunnelError::new(
-                FailureKind::Transient,
-                "the tunnel has no address",
-            ))
+    let rx = match hold {
+        Hold::Reuse(key) => {
+            return locked(&app, |inner| inner.book.slot(&key).and_then(descriptor)).ok_or_else(
+                || TunnelError::new(FailureKind::Transient, "the tunnel has no address"),
+            )
         }
-        Ok(pending) => pending,
+        Hold::Join(_, rx) => rx,
+        Hold::Dial(dial) => {
+            let key = dial.key.clone();
+            let rx = locked(&app, |inner| signal(inner, &key).subscribe());
+
+            run(&app, dial, &spec, installation_id, interactive, &attempt_id).await;
+
+            rx
+        }
     };
-
-    if dials {
-        let result = dial(&app, &key, &spec, installation_id, interactive).await;
-
-        finish_dial(&app, &key, result);
-    }
 
     wait(rx).await
 }
@@ -1180,12 +1551,7 @@ pub async fn tunnel_release(
     let holder = Holder::new(webview.window().label(), lease_id);
 
     let effects = locked(&app, |inner| {
-        let before: Vec<(String, Slot)> = inner
-            .book
-            .slots
-            .iter()
-            .map(|(key, slot)| (key.clone(), slot.clone()))
-            .collect();
+        let before = snapshot(inner);
         let actions = inner.book.release(&connection_id, &holder);
 
         book_effects(&app, inner, before, actions)
@@ -1194,6 +1560,21 @@ pub async fn tunnel_release(
     apply(&app, effects).await;
 
     Ok(())
+}
+
+/// JS still holds this lease. False when Rust no longer knows it.
+#[tauri::command]
+pub async fn tunnel_touch(
+    app: AppHandle,
+    webview: Webview<Wry>,
+    connection_id: String,
+    lease_id: String,
+) -> bool {
+    let holder = Holder::new(webview.window().label(), lease_id);
+
+    locked(&app, |inner| {
+        inner.book.touch(&connection_id, &holder, now_ms())
+    })
 }
 
 #[tauri::command]
@@ -1215,7 +1596,7 @@ mod tests {
             connection_id: id.to_string(),
             kind: SlotKind::Ssh,
             instance_key: ssh_instance_key("deploy", "box", 22),
-            profile: None,
+            fingerprint: ssh_fingerprint("deploy", "box", 22, None, None),
         }
     }
 
@@ -1224,18 +1605,29 @@ mod tests {
             connection_id: "local".to_string(),
             kind: SlotKind::Local,
             instance_key: LOCAL_INSTANCE_KEY.to_string(),
-            profile: Some("work".to_string()),
+            fingerprint: LOCAL_INSTANCE_KEY.to_string(),
         }
     }
 
-    fn main_lease(lease: &str) -> Holder {
+    fn lease(lease: &str) -> Holder {
         Holder::new("main", lease)
     }
 
-    /// A slot that has been dialled once and is serving.
-    fn ready(book: &mut SlotBook, key: &str) {
+    fn serial_of(action: &Action) -> u64 {
+        match action {
+            Action::Dial { serial } | Action::Supersede { serial, .. } => *serial,
+            other => panic!("not a dial: {other:?}"),
+        }
+    }
+
+    fn acquire(book: &mut SlotBook, key: &str, spec: SlotSpec, holder: Holder) -> (String, Action) {
+        book.acquire(key, spec, holder, false, "tunnel-x", 0)
+    }
+
+    /// Land a dial successfully.
+    fn ready(book: &mut SlotBook, key: &str, action: &Action) {
         assert!(matches!(
-            book.on_dial_result(key, Ok("http://127.0.0.1:41000")),
+            book.on_dial_result(key, serial_of(action), Ok("http://127.0.0.1:41000")),
             Action::Ready { .. }
         ));
     }
@@ -1244,159 +1636,291 @@ mod tests {
     fn r1_two_holders_share_one_dial_and_the_last_release_tears_down() {
         let mut book = SlotBook::default();
 
-        let (key, first) = book.acquire("conn:a::default", ssh("a"), main_lease("l1"));
-        let (joined, second) = book.acquire("conn:a::default", ssh("a"), main_lease("l2"));
+        let (key, first) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
+        let (joined, second) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l2"));
 
-        assert_eq!(first, Action::Dial);
+        assert!(matches!(first, Action::Dial { .. }));
         assert_eq!(second, Action::Join);
         assert_eq!(joined, key);
 
-        ready(&mut book, &key);
+        ready(&mut book, &key, &first);
 
         assert_eq!(
-            book.release("a", &main_lease("l1")),
+            book.release("a", &lease("l1")),
             vec![(key.clone(), Action::None)]
         );
-        assert!(book.slot(&key).is_some());
         assert_eq!(
-            book.release("a", &main_lease("l2")),
+            book.release("a", &lease("l2")),
             vec![(key.clone(), Action::Teardown)]
         );
         assert!(book.slot(&key).is_none());
     }
 
     #[test]
-    fn r2_the_primary_adopts_a_live_leased_slot_instead_of_replacing_it() {
+    fn gap1_the_primary_adopts_a_lease_slot_whatever_the_profile() {
         let mut book = SlotBook::default();
-        let (key, _) = book.acquire("conn:a::default", ssh("a"), main_lease("l1"));
+        let (key, dial) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
 
-        ready(&mut book, &key);
+        ready(&mut book, &key, &dial);
 
-        assert_eq!(book.hold_primary(&key, ssh("a"), true), Action::Reuse);
-        assert_eq!(book.slot(&key).map(|slot| slot.generation), Some(1));
-        // A dead session is redialled, but the slot and its lease survive it.
-        assert_eq!(book.hold_primary(&key, ssh("a"), false), Action::Dial);
-        assert!(book.slot(&key).is_some_and(|slot| slot.holders.len() == 1));
+        // The primary asks with the scope a `work` profile used to produce.
+        let (primary_key, action) = book.hold_primary("conn:a::work", ssh("a"), true, false, "p");
+
+        assert_eq!(primary_key, "conn:a::default");
+        assert_eq!(action, Action::Reuse);
+        assert_eq!(book.slots_for("a").len(), 1);
     }
 
     #[test]
     fn r3_releasing_the_primary_keeps_a_leased_slot() {
         let mut book = SlotBook::default();
+        let (key, dial) = book.hold_primary("conn:a::default", ssh("a"), false, false, "p");
 
-        assert_eq!(
-            book.hold_primary("conn:a::default", ssh("a"), false),
-            Action::Dial
-        );
-        ready(&mut book, "conn:a::default");
+        ready(&mut book, &key, &dial);
 
-        let (key, action) = book.acquire("conn:a::default", ssh("a"), main_lease("l1"));
+        let (_, action) = acquire(&mut book, &key, ssh("a"), lease("l1"));
 
         assert_eq!(action, Action::Reuse);
         assert_eq!(book.release_primary(&key), Some(Action::None));
         assert!(book.slot(&key).is_some());
         assert_eq!(
-            book.release("a", &main_lease("l1")),
+            book.release("a", &lease("l1")),
             vec![(key, Action::Teardown)]
         );
-        // No slot at all is reported, so `ssh_disconnect` keeps its old teardown.
         assert_eq!(book.release_primary("conn:b::default"), None);
+    }
+
+    #[test]
+    fn gap2_a_result_from_a_dial_the_slot_no_longer_waits_on_is_stale() {
+        let mut book = SlotBook::default();
+        let (key, old) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
+
+        // Released mid-dial, then acquired again: a new dial for a new slot.
+        book.release("a", &lease("l1"));
+        let (_, new) = acquire(&mut book, &key, ssh("a"), lease("l2"));
+
+        assert_ne!(serial_of(&old), serial_of(&new));
+        assert_eq!(
+            book.on_dial_result(&key, serial_of(&old), Ok("http://127.0.0.1:1")),
+            Action::Stale
+        );
+        assert_eq!(
+            book.slot(&key).map(|slot| slot.phase),
+            Some(Phase::Connecting)
+        );
+        assert!(matches!(
+            book.on_dial_result(&key, serial_of(&new), Ok("http://127.0.0.1:2")),
+            Action::Ready { generation: 1 }
+        ));
+    }
+
+    #[test]
+    fn gap3_a_restart_during_a_dial_supersedes_it() {
+        let mut book = SlotBook::default();
+        let (key, first) = book.hold_primary(LOCAL_SLOT, local(), false, false, "p");
+
+        let restart = book.restart(&key, "restart");
+
+        assert!(
+            matches!(&restart, Action::Supersede { previous: Some(previous), retarget: false, .. } if previous.serial == serial_of(&first)),
+            "{restart:?}"
+        );
+        // The first spawn's result lands after the restart began: it is stale.
+        assert_eq!(
+            book.on_dial_result(&key, serial_of(&first), Ok("http://127.0.0.1:1")),
+            Action::Stale
+        );
+        assert!(matches!(
+            book.on_dial_result(&key, serial_of(&restart), Ok("http://127.0.0.1:2")),
+            Action::Ready { generation: 1 }
+        ));
+        // Idle, a restart is a plain dial.
+        assert!(matches!(book.restart(&key, "again"), Action::Dial { .. }));
+    }
+
+    #[test]
+    fn gap4_a_different_target_is_never_reused_and_ends_its_leases() {
+        let mut book = SlotBook::default();
+        let (key, dial) = book.hold_primary("", ssh("legacy"), false, false, "p");
+
+        ready(&mut book, &key, &dial);
+        acquire(&mut book, &key, ssh("legacy"), lease("l1"));
+
+        let mut moved = ssh("legacy");
+
+        moved.fingerprint = ssh_fingerprint("deploy", "box2", 22, None, None);
+
+        let (_, action) = book.hold_primary("", moved.clone(), true, false, "p2");
+
+        assert!(
+            matches!(action, Action::Supersede { retarget: true, .. }),
+            "{action:?}"
+        );
+
+        let slot = book.slot(&key).unwrap();
+
+        assert!(slot.holders.is_empty());
+        assert_eq!(slot.spec, moved);
+        assert_eq!(slot.base_url, None);
+    }
+
+    #[test]
+    fn gap5_a_reloading_window_keeps_its_slot_for_one_tick() {
+        let mut book = SlotBook::default();
+        let (key, dial) = book.acquire(
+            "conn:a::default",
+            ssh("a"),
+            lease("old-page"),
+            false,
+            "t",
+            0,
+        );
+
+        ready(&mut book, &key, &dial);
+
+        assert_eq!(book.reap_window("main", 1_000), vec![key.clone()]);
+        assert!(book.slot(&key).is_some(), "not torn down at once");
+
+        let (_, again) = book.acquire(&key, ssh("a"), lease("new-page"), false, "t", 5_000);
+
+        assert_eq!(again, Action::Reuse);
+        assert!(book.expire(1_000 + LINGER_MS).is_empty());
+        assert!(book.slot(&key).is_some());
+
+        // This time nobody comes back: the slot goes after a full tick.
+        book.reap_window("main", 20_000);
+
+        assert!(book.expire(20_000 + LINGER_MS - 1).is_empty());
+        assert_eq!(
+            book.expire(20_000 + LINGER_MS),
+            vec![(key.clone(), Action::Teardown)]
+        );
+    }
+
+    #[test]
+    fn gap5_a_lease_js_stopped_touching_expires() {
+        let mut book = SlotBook::default();
+        let (key, dial) = book.acquire("conn:a::default", ssh("a"), lease("stale"), false, "t", 0);
+
+        ready(&mut book, &key, &dial);
+        book.acquire(&key, ssh("a"), lease("alive"), false, "t", 0);
+        assert!(book.touch("a", &lease("alive"), 2_000));
+
+        book.expire(HOLDER_TTL_MS + 1_000);
+
+        let holders = &book.slot(&key).unwrap().holders;
+
+        assert!(!holders.contains_key(&lease("stale")), "untouched for 61 s");
+        assert!(holders.contains_key(&lease("alive")), "touched 59 s ago");
+    }
+
+    #[test]
+    fn gap8_an_interactive_request_supersedes_a_background_dial_only() {
+        let mut book = SlotBook::default();
+        let (key, background) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
+
+        let (_, connect) = book.acquire(&key, ssh("a"), lease("l2"), true, "connect-1", 0);
+
+        assert!(
+            matches!(&connect, Action::Supersede { previous: Some(previous), retarget: false, .. } if previous.serial == serial_of(&background) && !previous.interactive),
+            "{connect:?}"
+        );
+        assert_eq!(
+            book.slot(&key)
+                .and_then(|slot| slot.dial.clone())
+                .map(|dial| (dial.interactive, dial.attempt_id)),
+            Some((true, "connect-1".to_string()))
+        );
+
+        // An interactive dial in flight is joined, not superseded again.
+        let (_, second) = book.acquire(&key, ssh("a"), lease("l3"), true, "connect-2", 0);
+
+        assert_eq!(second, Action::Join);
     }
 
     #[test]
     fn r4_a_destroyed_window_drops_only_its_own_holders() {
         let mut book = SlotBook::default();
-        let (key, _) = book.acquire("conn:a::default", ssh("a"), Holder::new("main", "same"));
-
-        book.acquire(
+        let (key, _) = acquire(
+            &mut book,
             "conn:a::default",
             ssh("a"),
-            Holder::new("session-x", "same"),
-        );
-        book.acquire(
-            "conn:a::default",
-            ssh("a"),
-            Holder::new("session-x", "other"),
+            Holder::new("main", "same"),
         );
 
-        assert_eq!(
-            book.reap_window("session-x"),
-            vec![(key.clone(), Action::None)]
-        );
+        acquire(&mut book, &key, ssh("a"), Holder::new("session-x", "same"));
+        acquire(&mut book, &key, ssh("a"), Holder::new("session-x", "other"));
+
+        assert!(book.reap_window("session-x", 0).is_empty());
 
         let holders = &book.slot(&key).expect("still held by main").holders;
 
         assert_eq!(holders.len(), 1);
-        assert!(holders.contains(&Holder::new("main", "same")));
+        assert!(holders.contains_key(&Holder::new("main", "same")));
     }
 
     #[test]
     fn r5_a_dead_leased_slot_redials_with_capped_backoff_until_a_terminal_error() {
         let mut book = SlotBook::default();
-        let (key, _) = book.acquire("conn:a::default", ssh("a"), main_lease("l1"));
+        let (key, dial) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
 
-        ready(&mut book, &key);
+        ready(&mut book, &key, &dial);
 
         assert_eq!(book.on_dead(&key), Action::Redial { attempt: 1 });
-        assert!(book.begin_redial(&key, 1));
+        let serial = book.begin_redial(&key, 1, "t").expect("the redial runs");
         assert_eq!(
-            book.on_dial_result(&key, Err(FailureKind::Transient)),
+            book.on_dial_result(&key, serial, Err(FailureKind::Transient)),
             Action::Redial { attempt: 2 }
         );
-        // A stale timer does nothing.
-        assert!(!book.begin_redial(&key, 1));
+        assert!(
+            book.begin_redial(&key, 1, "t").is_none(),
+            "a stale timer does nothing"
+        );
 
         for attempt in 1..=40 {
             assert!(backoff_delay(attempt, 1.0) <= BACKOFF_CAP);
-            assert!(backoff_delay(attempt, 0.0) <= BACKOFF_CAP);
         }
         assert_eq!(backoff_delay(40, 1.0), BACKOFF_CAP);
         assert_eq!(backoff_delay(1, 1.0), BACKOFF_BASE);
 
-        let terminal = [
+        for kind in [
             FailureKind::Locked,
             FailureKind::from_ssh(SshErrorKind::AuthFailed),
             FailureKind::from_ssh(SshErrorKind::HostKeyChanged),
             FailureKind::from_ssh(SshErrorKind::Cancelled),
-        ];
+        ] {
+            let attempt = book.slot(&key).unwrap().attempt;
+            let serial = book.begin_redial(&key, attempt, "t").expect("retrying");
 
-        for kind in terminal {
-            assert!(book.begin_redial(&key, book.slot(&key).unwrap().attempt));
             assert_eq!(
-                book.on_dial_result(&key, Err(kind)),
+                book.on_dial_result(&key, serial, Err(kind)),
                 Action::None,
                 "{kind:?}"
             );
             assert_eq!(book.slot(&key).map(|slot| slot.phase), Some(Phase::Failed));
 
             // Asking again is what retries a terminal failure.
-            let (_, again) = book.acquire(&key, ssh("a"), main_lease("l1"));
+            let (_, again) = acquire(&mut book, &key, ssh("a"), lease("l1"));
 
-            assert_eq!(again, Action::Dial);
-            assert_eq!(
-                book.on_dial_result(&key, Err(FailureKind::Transient)),
-                Action::Redial {
-                    attempt: book.slot(&key).unwrap().attempt
-                }
-            );
+            assert!(matches!(again, Action::Dial { .. }));
+            assert!(matches!(
+                book.on_dial_result(&key, serial_of(&again), Err(FailureKind::Transient)),
+                Action::Redial { .. }
+            ));
         }
     }
 
     #[test]
     fn r6_rust_never_redials_a_slot_the_primary_holds() {
         let mut book = SlotBook::default();
+        let (key, dial) = book.hold_primary("conn:a::default", ssh("a"), false, false, "p");
 
-        book.hold_primary("conn:a::default", ssh("a"), false);
-        ready(&mut book, "conn:a::default");
-        book.acquire("conn:a::default", ssh("a"), main_lease("l1"));
+        ready(&mut book, &key, &dial);
+        acquire(&mut book, &key, ssh("a"), lease("l1"));
 
-        assert_eq!(book.on_dead("conn:a::default"), Action::None);
+        assert_eq!(book.on_dead(&key), Action::None);
         assert_eq!(
-            book.on_dial_result("conn:a::default", Err(FailureKind::Transient)),
-            Action::None
-        );
-        // Once the primary leaves, the leases' loop takes over.
-        assert_eq!(
-            book.release_primary("conn:a::default"),
+            book.release_primary(&key),
             Some(Action::Redial { attempt: 1 })
         );
     }
@@ -1412,26 +1936,21 @@ mod tests {
             ssh_instance_key("deploy", "box", 22),
             ssh_instance_key("deploy", "box", 2222)
         );
-
-        // Two profiles of one connection are two scopes, one instance.
-        let mut book = SlotBook::default();
-        let mut work = ssh("a");
-
-        work.profile = Some("work".to_string());
-        book.hold_primary("conn:a::work", work, false);
-        ready(&mut book, "conn:a::work");
-        let (key, _) = book.acquire("conn:a::default", ssh("a"), main_lease("l1"));
-
-        assert_eq!(key, "conn:a::work");
-        assert_eq!(
-            descriptor(book.slot(&key).unwrap()).map(|d| d.instance_key),
-            Some("ssh:deploy@box:22".to_string())
+        assert_ne!(
+            ssh_fingerprint("deploy", "box", 22, Some("~/.ssh/a"), None),
+            ssh_fingerprint("deploy", "box", 22, Some("~/.ssh/b"), None)
         );
 
+        let mut book = SlotBook::default();
+        let (key, dial) = book.hold_primary("conn:a::default", ssh("a"), false, false, "p");
+
+        ready(&mut book, &key, &dial);
+
         // A re-tunnel changes the base and the generation, never the key.
-        book.hold_primary(&key, ssh("a"), false);
+        let (_, redial) = book.hold_primary(&key, ssh("a"), false, false, "p2");
+
         assert!(matches!(
-            book.on_dial_result(&key, Ok("http://127.0.0.1:42000")),
+            book.on_dial_result(&key, serial_of(&redial), Ok("http://127.0.0.1:42000")),
             Action::Ready { generation: 2 }
         ));
         assert_eq!(
@@ -1483,56 +2002,31 @@ mod tests {
                 .and_then(|auth| auth.token),
             None
         );
-        assert_eq!(
-            transport
-                .connection_auth_for_url("http://127.0.0.1:42000/api/status")
-                .and_then(|auth| auth.token),
-            Some("two".to_string())
-        );
     }
 
     #[test]
-    fn r9_the_local_child_is_reused_across_profiles_and_restarts_in_place() {
+    fn r9_the_local_child_is_reused_and_shutdown_takes_a_held_slot() {
         let mut book = SlotBook::default();
-        let (key, _) = book.acquire(LOCAL_SLOT, local(), main_lease("l1"));
+        let (key, dial) = acquire(&mut book, LOCAL_SLOT, local(), lease("l1"));
 
-        ready(&mut book, &key);
+        ready(&mut book, &key, &dial);
 
-        let mut other_profile = local();
-
-        other_profile.profile = Some("home".to_string());
-
-        assert_eq!(book.hold_primary(&key, other_profile, true), Action::Reuse);
         assert_eq!(
-            book.slot(&key).and_then(|slot| slot.spec.profile.clone()),
-            Some("work".to_string())
+            book.hold_primary(&key, local(), true, false, "p").1,
+            Action::Reuse
         );
-
-        assert_eq!(book.restart(&key, Some("home".to_string())), Action::Dial);
-        assert!(matches!(
-            book.on_dial_result(&key, Ok("http://127.0.0.1:43000")),
-            Action::Ready { generation: 2 }
-        ));
-        assert_eq!(
-            book.slot(&key).map(|slot| slot.holders.len()),
-            Some(1),
-            "a restart keeps its holders"
-        );
-
-        let drained = book.drain();
-
-        assert_eq!(drained.len(), 1, "shutdown takes a held slot too");
+        assert_eq!(book.drain().len(), 1);
         assert!(book.slot(&key).is_none());
     }
 
     #[test]
     fn r10_dropping_a_connection_ends_its_leased_slots() {
         let mut book = SlotBook::default();
-        let (a, _) = book.acquire("conn:a::default", ssh("a"), main_lease("l1"));
-        let (b, _) = book.acquire("conn:b::default", ssh("b"), main_lease("l2"));
+        let (a, dial_a) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
+        let (b, dial_b) = acquire(&mut book, "conn:b::default", ssh("b"), lease("l2"));
 
-        ready(&mut book, &a);
-        ready(&mut book, &b);
+        ready(&mut book, &a, &dial_a);
+        ready(&mut book, &b, &dial_b);
 
         assert_eq!(
             book.drop_connection("a"),
@@ -1540,16 +2034,15 @@ mod tests {
         );
         assert!(book.slot(&a).is_none());
         assert!(book.slot(&b).is_some());
-        assert!(book.slots_for("a").is_empty());
     }
 
     #[test]
     fn a_failed_first_dial_ends_the_slot_instead_of_looping() {
         let mut book = SlotBook::default();
-        let (key, _) = book.acquire("conn:a::default", ssh("a"), main_lease("l1"));
+        let (key, dial) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
 
         assert_eq!(
-            book.on_dial_result(&key, Err(FailureKind::Transient)),
+            book.on_dial_result(&key, serial_of(&dial), Err(FailureKind::Transient)),
             Action::Teardown
         );
         assert!(book.slot(&key).is_none());

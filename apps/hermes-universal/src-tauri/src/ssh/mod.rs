@@ -137,6 +137,9 @@ pub struct SshConnection {
     pub ownership_id: String,
     /// `user@host`, for display. The loopback base URL says nothing useful.
     pub host_label: String,
+    /// The scope the session, forward and `ssh://{scope}/disconnected` event
+    /// live under — one per connection, whatever the profile (MJXHRM-592).
+    pub scope: String,
 }
 
 /// The result of a reachability check.
@@ -772,13 +775,22 @@ pub async fn ssh_disconnect(
     profile: Option<String>,
     connection_id: Option<String>,
 ) -> Result<(), SshError> {
-    let scope = registry_scope_of(connection_id.as_deref(), profile.as_deref());
+    // One backend per connection: the profile no longer names a scope.
+    let _ = (state, profile);
+    let registered = connection_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+    let scope = registered
+        .or_else(|| crate::connections::legacy_ssh_connection_id(&app))
+        .and_then(|id| crate::tunnels::key_for(&app, &id))
+        .unwrap_or_else(|| registry_scope_of(connection_id.as_deref(), None));
 
     // Releases the PRIMARY hold only (MJXHRM-592): a scope a background lease
     // still holds keeps its session. A scope the tunnel book never saw is torn
     // down exactly as before.
     if !crate::tunnels::release_primary(&app, &scope).await {
-        let _ = state;
         teardown_scope(&app, &scope).await;
     }
 
@@ -900,7 +912,8 @@ pub async fn ssh_connect(
     attempt_id: String,
     config: SshConnectConfig,
 ) -> Result<SshConnection, SshError> {
-    let scope = registry_scope_of(config.connection_id.as_deref(), config.profile.as_deref());
+    use crate::tunnels::{Hold, SlotKind, SlotSpec};
+
     let registered = config
         .connection_id
         .as_deref()
@@ -911,34 +924,46 @@ pub async fn ssh_connect(
     let slot_connection_id = registered
         .clone()
         .or_else(|| crate::connections::legacy_ssh_connection_id(&app))
-        .unwrap_or_else(|| scope.clone());
+        .unwrap_or_else(|| primary_scope(&config));
 
-    let spec = crate::tunnels::SlotSpec {
+    let (instance_key, fingerprint) = identity_for(&config.target)?;
+    let spec = SlotSpec {
         connection_id: slot_connection_id.clone(),
-        kind: crate::tunnels::SlotKind::Ssh,
-        instance_key: instance_key_for(&config.target)?,
-        profile: config.profile.clone(),
+        kind: SlotKind::Ssh,
+        instance_key,
+        fingerprint,
     };
+    // A live slot of this connection is adopted whatever profile it was dialled
+    // for: one backend serves every profile.
+    let key = crate::tunnels::key_for(&app, &slot_connection_id)
+        .unwrap_or_else(|| primary_scope(&config));
     let alive = state
         .sessions
         .lock()
         .await
-        .get(&scope)
+        .get(&key)
         .is_some_and(|session| session.is_alive());
 
-    // A scope a lease already has up is ADOPTED, never replaced: closing it here
-    // would kill every background client riding it.
-    match crate::tunnels::hold_primary(&app, &scope, spec, alive) {
-        crate::tunnels::Hold::Reuse => return live_connection(&state, &scope).await,
-        crate::tunnels::Hold::Join(rx) => {
+    let mut dial = match crate::tunnels::hold_primary(
+        &app,
+        &key,
+        spec,
+        alive,
+        config.interactive,
+        &attempt_id,
+    ) {
+        Hold::Reuse(key) => return live_connection(&state, &key).await,
+        Hold::Join(key, rx) => {
             crate::tunnels::wait(rx)
                 .await
                 .map_err(|e| SshError::new(ssh_kind_of(e.kind), e.message))?;
 
-            return live_connection(&state, &scope).await;
+            return live_connection(&state, &key).await;
         }
-        crate::tunnels::Hold::Dial => {}
-    }
+        Hold::Dial(dial) => dial,
+    };
+
+    crate::tunnels::prepare(&app, &mut dial, SlotKind::Ssh).await;
 
     // A REGISTERED connection's credentials live under keyring accounts the
     // webview cannot name, so Rust reads them here rather than being handed them
@@ -949,27 +974,32 @@ pub async fn ssh_connect(
         .and_then(|id| crate::connections::ssh_credentials(&app, id))
         .unwrap_or_default();
 
-    let result = connect_scope(
+    let result = connect_scope(&app, &state, &attempt_id, &dial.key, config, stored).await;
+
+    // The legacy owner's reattach token is written by JS for its own dials.
+    settle_scope(
         &app,
         &state,
-        &attempt_id,
-        &scope,
+        &dial.key,
+        dial.serial,
         &slot_connection_id,
-        config,
-        stored,
+        registered.is_some(),
+        result,
     )
-    .await;
+    .await
+}
 
-    crate::tunnels::finish_dial(
-        &app,
-        &scope,
-        result
-            .as_ref()
-            .map(|connection| connection.base_url.clone())
-            .map_err(crate::tunnels::TunnelError::from_ssh),
-    );
+/// The scope a primary dial lives at: the connection's, never the profile's.
+fn primary_scope(config: &SshConnectConfig) -> String {
+    registry_scope_of(config.connection_id.as_deref(), None)
+}
 
-    result
+/// The profile a remote backend is launched as. Always `default`: that is the
+/// backend's unified server, which serves every profile by the `profile`
+/// parameter (`hermes_cli/main_dashboard.py`), so the profile a connection was
+/// opened on is only the one preselected in the UI.
+fn launch_profile(_preselected: Option<&str>) -> &'static str {
+    "default"
 }
 
 /// The SSH kind a tunnel failure came from, for a primary that joined a dial.
@@ -1002,18 +1032,40 @@ async fn live_connection(state: &SshState, scope: &str) -> Result<SshConnection,
         })
 }
 
-/// The instance key of a target, after `~/.ssh/config` has had its say.
-pub(crate) fn instance_key_for(input: &SshTargetInput) -> Result<String, SshError> {
+/// A target's instance key and dial fingerprint, after `~/.ssh/config` has had
+/// its say.
+pub(crate) fn identity_for(input: &SshTargetInput) -> Result<(String, String), SshError> {
     let (target, user, _) = resolve_target(input)?;
+    let port = target.effective_port();
 
-    Ok(crate::tunnels::ssh_instance_key(
-        &user,
-        &target.host,
-        target.effective_port(),
+    Ok((
+        crate::tunnels::ssh_instance_key(&user, &target.host, port),
+        crate::tunnels::ssh_fingerprint(
+            &user,
+            &target.host,
+            port,
+            target.key_path.as_deref(),
+            target.remote_hermes_path.as_deref(),
+        ),
     ))
 }
 
-/// Dial a registered SSH connection for a background lease (MJXHRM-592).
+/// Cancel an in-flight attempt by id, for a dial that is being superseded.
+pub(crate) async fn cancel_attempt(app: &AppHandle, attempt_id: &str) {
+    let attempt = app
+        .state::<SshState>()
+        .attempts
+        .lock()
+        .await
+        .remove(attempt_id);
+
+    if let Some(attempt) = attempt {
+        attempt.cancel.cancel();
+    }
+}
+
+/// Dial a registered SSH connection for a background lease (MJXHRM-592), and
+/// settle the result.
 ///
 /// Everything comes from the registry row and Rust's own keyring reads. Never
 /// prompts unless `interactive`: a locked store or a missing passphrase is a
@@ -1021,79 +1073,82 @@ pub(crate) fn instance_key_for(input: &SshTargetInput) -> Result<String, SshErro
 pub(crate) async fn dial_tunnel(
     app: &AppHandle,
     scope: &str,
+    serial: u64,
     connection_id: &str,
-    profile: Option<String>,
     installation_id: Option<String>,
     interactive: bool,
-) -> Result<String, crate::tunnels::TunnelError> {
+    attempt_id: &str,
+) {
     use crate::tunnels::{FailureKind, TunnelError, TunnelTarget};
+
+    let failed = |error: TunnelError| crate::tunnels::finish_dial(app, scope, serial, Err(error));
 
     let Some(TunnelTarget::Ssh { input, .. }) =
         crate::connections::tunnel_target(app, connection_id)
     else {
-        return Err(TunnelError::new(
+        return failed(TunnelError::new(
             FailureKind::Unavailable,
             "that SSH connection is no longer registered",
         ));
     };
 
-    let locked = |error: crate::secrets::SecretsError| {
+    let is_locked = |error: &crate::secrets::SecretsError| {
         error.kind == crate::secrets::error::SecretsErrorKind::Locked
     };
 
     let stored = match crate::connections::try_ssh_credentials(app, connection_id) {
-        Err(error) if locked(error.clone()) && interactive => {
-            crate::secrets::gate::unlock("Hermes needs your stored SSH credentials".to_string())
-                .await
-                .map_err(|e| TunnelError::new(FailureKind::Cancelled, e.message))?;
+        Err(error) if is_locked(&error) && interactive => {
+            if let Err(refused) =
+                crate::secrets::gate::unlock("Hermes needs your stored SSH credentials".to_string())
+                    .await
+            {
+                return failed(TunnelError::new(FailureKind::Cancelled, refused.message));
+            }
 
-            crate::connections::try_ssh_credentials(app, connection_id)
-                .map_err(|e| TunnelError::new(FailureKind::Locked, e.message))?
+            match crate::connections::try_ssh_credentials(app, connection_id) {
+                Ok(stored) => stored,
+                Err(error) => return failed(TunnelError::new(FailureKind::Locked, error.message)),
+            }
         }
-        Err(error) if locked(error.clone()) => {
-            return Err(TunnelError::new(FailureKind::Locked, error.message))
+        Err(error) if is_locked(&error) => {
+            return failed(TunnelError::new(FailureKind::Locked, error.message))
         }
         other => other.ok().flatten(),
     }
     .unwrap_or_default();
 
-    let dial_connection_id = crate::connections::dial_connection_id_of(app, connection_id);
     let config = SshConnectConfig {
         target: input,
-        profile,
         interactive,
         installation_id,
-        connection_id: dial_connection_id,
+        connection_id: crate::connections::dial_connection_id_of(app, connection_id),
         ..Default::default()
     };
 
     let state = app.state::<SshState>();
+    let result = connect_scope(app, &state, attempt_id, scope, config, stored).await;
 
-    connect_scope(
-        app,
-        &state,
-        &format!("tunnel-{connection_id}"),
-        scope,
-        connection_id,
-        config,
-        stored,
-    )
-    .await
-    .map(|connection| connection.base_url)
-    .map_err(|error| TunnelError::from_ssh(&error))
+    // Nothing in JS saw this dial, so Rust remembers the token for every row.
+    let _ = settle_scope(app, &state, scope, serial, connection_id, true, result).await;
 }
 
-/// Open a session for `scope`, establish or reattach its backend, and install
-/// the result.
+/// What a dial built, before it is installed.
+struct Established {
+    connection: SshConnection,
+    forward: forward::PortForward,
+    session: Arc<SshSession>,
+}
+
+/// Open a session for `scope` and establish or reattach its backend. Installs
+/// nothing: see `settle_scope`.
 async fn connect_scope(
     app: &AppHandle,
     state: &SshState,
     attempt_id: &str,
     scope: &str,
-    auth_connection_id: &str,
     mut config: SshConnectConfig,
     stored: crate::connections::SshCredentials,
-) -> Result<SshConnection, SshError> {
+) -> Result<Established, SshError> {
     let reporter = ProgressReporter::new(app.clone(), attempt_id);
 
     let installation_id = config.installation_id.as_deref().ok_or_else(|| {
@@ -1163,73 +1218,19 @@ async fn connect_scope(
     state.attempts.lock().await.remove(attempt_id);
 
     match result {
-        Ok((session, (connection, forward))) => {
+        Ok((session, (mut connection, forward))) => {
             println!(
                 "[ssh probe] ssh_connect: succeeded, pid={} reused={} base_url={}",
                 connection.pid, connection.reused, connection.base_url
             );
 
-            // A redial replaces a DEAD session for this scope — a live one is
-            // adopted before we get here. The old base's credential goes first,
-            // then its forward (which frees the port), then the session.
-            if let Some(previous) = state
-                .connections
-                .lock()
-                .await
-                .insert(scope.to_string(), connection.clone())
-            {
-                app.state::<crate::transport::TransportState>()
-                    .forget_tunnel_auth(&previous.base_url);
-            }
+            connection.scope = scope.to_string();
 
-            app.state::<crate::transport::TransportState>()
-                .set_tunnel_auth(
-                    &connection.base_url,
-                    crate::transport::ConnectionAuth {
-                        connection_id: auth_connection_id.to_string(),
-                        token: Some(connection.token.clone()),
-                        headers: Vec::new(),
-                    },
-                );
-
-            state
-                .forwards
-                .lock()
-                .await
-                .insert(scope.to_string(), forward);
-
-            if let Some(previous) = state
-                .sessions
-                .lock()
-                .await
-                .insert(scope.to_string(), Arc::clone(&session))
-            {
-                let _ = previous.close().await;
-            }
-
-            // Remember the token this backend is running with, per connection.
-            // Before the registry this was one global `SecretKey::Token`, so an
-            // ssh reattach token clobbered a remote gateway's token and
-            // vice-versa (D-4); a registered connection now writes its own. A
-            // background dial writes the legacy owner's too, or the next
-            // primary dial could not reattach to the backend the lease started.
-            if config.connection_id.is_some() || auth_connection_id != scope {
-                crate::connections::remember_reuse_token(
-                    app,
-                    auth_connection_id,
-                    &connection.token,
-                );
-            }
-
-            // Watch for the tunnel dying, which the WS-level reconnect cannot
-            // recover from on its own.
-            tokio::spawn(watch_session(
-                app.clone(),
-                scope.to_string(),
-                Arc::downgrade(&session),
-            ));
-
-            Ok(connection)
+            Ok(Established {
+                connection,
+                forward,
+                session,
+            })
         }
 
         Err(err) => {
@@ -1241,6 +1242,114 @@ async fn connect_scope(
             Err(err)
         }
     }
+}
+
+/// Install a dial's result if the slot still waits on it, and report it.
+///
+/// Under the slot's install lock, so a teardown or a superseding dial cannot
+/// interleave with the install. A result the slot no longer waits on installs
+/// nothing and closes only what that dial built.
+async fn settle_scope(
+    app: &AppHandle,
+    state: &SshState,
+    scope: &str,
+    serial: u64,
+    auth_connection_id: &str,
+    remember_token: bool,
+    result: Result<Established, SshError>,
+) -> Result<SshConnection, SshError> {
+    use crate::tunnels::{finish_dial, TunnelError};
+
+    let established = match result {
+        Ok(established) => established,
+        Err(err) => {
+            finish_dial(app, scope, serial, Err(TunnelError::from_ssh(&err)));
+
+            return Err(err);
+        }
+    };
+
+    let _guard = crate::tunnels::install_lock(app, scope).await;
+
+    if !crate::tunnels::is_current(app, scope, serial) {
+        let Established {
+            forward, session, ..
+        } = established;
+
+        drop(forward);
+        let _ = session.close().await;
+
+        let err = SshError::new(
+            SshErrorKind::Superseded,
+            "A newer connection attempt replaced this one.",
+        );
+
+        finish_dial(app, scope, serial, Err(TunnelError::from_ssh(&err)));
+
+        return Err(err);
+    }
+
+    let Established {
+        connection,
+        forward,
+        session,
+    } = established;
+    let transport = app.state::<crate::transport::TransportState>();
+
+    // The previous base's credential goes first, then its forward (which frees
+    // the port), then its session. A live session is adopted before any dial,
+    // so what is replaced here is dead, superseded or a different target.
+    if let Some(previous) = state
+        .connections
+        .lock()
+        .await
+        .insert(scope.to_string(), connection.clone())
+    {
+        transport.forget_tunnel_auth(&previous.base_url);
+    }
+
+    transport.set_tunnel_auth(
+        &connection.base_url,
+        crate::transport::ConnectionAuth {
+            connection_id: auth_connection_id.to_string(),
+            token: Some(connection.token.clone()),
+            headers: Vec::new(),
+        },
+    );
+
+    state
+        .forwards
+        .lock()
+        .await
+        .insert(scope.to_string(), forward);
+
+    let previous = state
+        .sessions
+        .lock()
+        .await
+        .insert(scope.to_string(), Arc::clone(&session));
+
+    if let Some(previous) = previous {
+        let _ = previous.close().await;
+    }
+
+    // Remember the token this backend is running with, per connection. Only on
+    // a dial, never on an adopt: one backend per connection has one token.
+    if remember_token {
+        crate::connections::remember_reuse_token(app, auth_connection_id, &connection.token);
+    }
+
+    // Watch for the tunnel dying, which the WS-level reconnect cannot recover
+    // from on its own.
+    tokio::spawn(watch_session(
+        app.clone(),
+        scope.to_string(),
+        Arc::downgrade(&session),
+    ));
+
+    finish_dial(app, scope, serial, Ok(connection.base_url.clone()));
+
+    Ok(connection)
 }
 
 /// Run `work` unless the attempt is cancelled first.
@@ -1279,7 +1388,7 @@ async fn establish(
         windows_runtime.is_some()
     );
 
-    let profile = config.profile.clone().unwrap_or_default();
+    let profile = launch_profile(config.profile.as_deref()).to_string();
     let reuse_token = config.reuse_token.clone().unwrap_or_default();
     let client = reqwest::Client::new();
 
@@ -1362,6 +1471,7 @@ async fn establish(
                             hermes_version,
                             ownership_id: ownership_id.to_string(),
                             host_label: host_label.to_string(),
+                            scope: String::new(),
                         },
                         forward,
                     ));
@@ -1476,6 +1586,7 @@ async fn establish_windows(
                             hermes_version,
                             ownership_id: ownership_id.to_string(),
                             host_label: host_label.to_string(),
+                            scope: String::new(),
                         },
                         forward,
                     ));
@@ -1555,6 +1666,7 @@ async fn establish_windows(
                 hermes_version,
                 ownership_id: ownership_id.to_string(),
                 host_label: host_label.to_string(),
+                scope: String::new(),
             },
             forward,
         )),
@@ -1676,6 +1788,7 @@ async fn spawn_and_attach(
                 hermes_version: hermes_version.to_string(),
                 ownership_id: ownership_id.to_string(),
                 host_label: host_label.to_string(),
+                scope: String::new(),
             },
             forward,
         )),
@@ -1839,6 +1952,41 @@ mod tests {
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOGXTILfYe9/k4y5hfEhEtghgFt9121WP+K8hBJssvoS hermes-ssh-test";
 
     use super::*;
+
+    #[test]
+    fn a_remote_backend_is_one_per_connection_and_launches_as_default() {
+        let config = SshConnectConfig {
+            connection_id: Some("box".to_string()),
+            profile: Some("work".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(primary_scope(&config), "conn:box::default");
+        assert_eq!(
+            primary_scope(&SshConnectConfig {
+                profile: Some("work".to_string()),
+                ..Default::default()
+            }),
+            "",
+            "the legacy owner reattaches its default backend"
+        );
+
+        let launched = launch_profile(config.profile.as_deref());
+        let command = posix_lifecycle::build_spawn_command(
+            "~/.local/bin/hermes",
+            Some(launched),
+            "~/.hermes/ssh.log",
+            None,
+            None,
+        )
+        .expect("builds");
+
+        assert!(
+            // Quoted twice: `shq` for the argument, then again for `sh -c`.
+            command.contains(r#"--profile '\''default'\'' serve --isolated"#),
+            "{command}"
+        );
+    }
 
     #[tokio::test]
     async fn a_cancelled_attempt_stops_the_dial() {

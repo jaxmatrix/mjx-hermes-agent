@@ -359,6 +359,18 @@ pub fn run() {
         // inside the app document — see artifact.rs. Same builder-time
         // registration for the same wry/Linux reason as above.
         .register_asynchronous_uri_scheme_protocol(ARTIFACT_SCHEME, artifact::handle)
+        // A page load starting is a reload (or a first load, which holds
+        // nothing): the old page's tunnel leases are gone with its JS, so they
+        // end here and a slot they alone held lingers one reaper tick for the
+        // new page (MJXHRM-592). Keyed by the webview's own label, so a browser
+        // guest navigating inside a window never touches that window's leases.
+        .on_page_load(|webview, payload| {
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                use tauri::Manager;
+
+                tunnels::reap_window(webview.app_handle(), webview.label());
+            }
+        })
         .setup(|app| {
             // Where the sealed credential vault lives, before anything can ask for a
             // credential: every `secrets_*` command and `gateway_bearer` call arrives
@@ -444,6 +456,7 @@ pub fn run() {
             }
 
             deep_link::setup(app.handle());
+            tunnels::start_reaper(app.handle());
 
             let _ = app;
             Ok(())
@@ -514,6 +527,7 @@ pub fn run() {
             local_backend_kill,
             tunnels::tunnel_acquire,
             tunnels::tunnel_release,
+            tunnels::tunnel_touch,
             tunnels::tunnel_status,
             local_install_detect,
             local_install_start,

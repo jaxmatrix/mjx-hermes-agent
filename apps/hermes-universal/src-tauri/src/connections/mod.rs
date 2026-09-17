@@ -525,25 +525,17 @@ pub fn tunnel_target(app: &AppHandle, connection_id: &str) -> Option<crate::tunn
 
     match row.kind {
         ConnectionKind::Local => Some(crate::tunnels::TunnelTarget::Local),
-        ConnectionKind::Ssh => {
-            let profile = row
-                .remote_profile
-                .clone()
-                .filter(|value| !value.trim().is_empty());
-            let dial_id = dial_connection_id(&registry, &row.id);
-
-            Some(crate::tunnels::TunnelTarget::Ssh {
-                scope: crate::ssh::registry_scope_of(dial_id, profile.as_deref()),
-                profile,
-                input: crate::ssh::target::SshTargetInput {
-                    host: row.host.clone().unwrap_or_default(),
-                    user: row.user.clone(),
-                    port: row.port,
-                    key_path: row.key_path.clone(),
-                    remote_hermes_path: row.remote_hermes_path.clone(),
-                },
-            })
-        }
+        ConnectionKind::Ssh => Some(crate::tunnels::TunnelTarget::Ssh {
+            // One backend per connection, serving every profile by parameter.
+            scope: crate::ssh::registry_scope_of(dial_connection_id(&registry, &row.id), None),
+            input: crate::ssh::target::SshTargetInput {
+                host: row.host.clone().unwrap_or_default(),
+                user: row.user.clone(),
+                port: row.port,
+                key_path: row.key_path.clone(),
+                remote_hermes_path: row.remote_hermes_path.clone(),
+            },
+        }),
         ConnectionKind::Remote | ConnectionKind::Cloud => None,
     }
 }

@@ -128,25 +128,12 @@ mod imp {
     ///
     /// A binary that cannot be started at all is terminal; anything after it
     /// started is worth retrying.
-    async fn start(
-        profile: Option<String>,
-        log: &Arc<BackendLog>,
-    ) -> Result<(Child, LocalBackend), (FailureKind, String)> {
+    async fn start(log: &Arc<BackendLog>) -> Result<(Child, LocalBackend), (FailureKind, String)> {
         let transient = |message: String| (FailureKind::Transient, log.with_tail(message));
         let token = random_token();
         let program = std::env::var("HERMES_BIN").unwrap_or_else(|_| "hermes".to_string());
 
-        let mut args: Vec<String> = vec![
-            "serve".into(),
-            "--host".into(),
-            "127.0.0.1".into(),
-            "--port".into(),
-            "0".into(),
-        ];
-        if let Some(p) = profile.as_deref().filter(|p| !p.is_empty()) {
-            // Profile flag goes before the subcommand, matching the desktop CLI.
-            args.splice(0..0, ["--profile".to_string(), p.to_string()]);
-        }
+        let args = launch_args();
 
         let mut cmd = Command::new(&program);
         cmd.args(&args)
@@ -188,6 +175,25 @@ mod imp {
         Ok((child, backend))
     }
 
+    /// Always `--profile default`: the backend's unified server, which serves
+    /// every profile by the `profile` parameter, so a profile switch never needs
+    /// a respawn. The pin is the backend's own re-exec shape, which keeps the
+    /// sticky active-profile file from choosing the launch profile
+    /// (`hermes_cli/main_dashboard.py`). The flag goes before the subcommand.
+    pub(super) fn launch_args() -> Vec<String> {
+        [
+            "--profile",
+            "default",
+            "serve",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "0",
+        ]
+        .map(String::from)
+        .to_vec()
+    }
+
     /// Read the ready line, draining both streams from the moment of spawn.
     ///
     /// stderr is drained on its own task from the start: a backend that writes
@@ -226,64 +232,91 @@ mod imp {
         Ok(port)
     }
 
-    /// Replace whatever child is held with a fresh one and publish its token
-    /// for leases. The caller reports the outcome to the tunnel book.
+    /// Spawn a child for dial `serial` and install it if the slot still waits
+    /// on that dial; report the outcome to the tunnel book either way.
+    ///
+    /// The child held before is taken out, its credential forgotten and the
+    /// process killed first, so two children never hold one slot and no token
+    /// outlives its port. Installing happens under the slot's install lock, and
+    /// a dial the slot stopped waiting on kills only the child it started.
     pub async fn respawn(
         app: &AppHandle,
         state: &LocalBackendState,
-        profile: Option<String>,
+        serial: u64,
     ) -> Result<LocalBackend, TunnelError> {
-        kill(app, state).await;
+        use crate::tunnels::{finish_dial, install_lock, is_current};
 
-        match start(profile, &state.log).await {
-            Ok((child, backend)) => {
-                let serial = state
-                    .serial
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let superseded = || {
+            TunnelError::new(
+                FailureKind::Transient,
+                "a newer start of the local backend replaced this one",
+            )
+        };
 
-                app.state::<crate::transport::TransportState>()
-                    .set_tunnel_auth(
-                        &backend.base_url,
-                        crate::transport::ConnectionAuth {
-                            connection_id: crate::connections::registry::LOCAL_CONNECTION_ID
-                                .to_string(),
-                            token: Some(backend.token.clone()),
-                            headers: Vec::new(),
-                        },
-                    );
+        {
+            let _guard = install_lock(app, LOCAL_SLOT).await;
 
-                *state.running.lock().await = Some(Running {
-                    child,
-                    backend: backend.clone(),
-                    serial,
-                });
+            if !is_current(app, LOCAL_SLOT, serial) {
+                finish_dial(app, LOCAL_SLOT, serial, Err(superseded()));
 
-                watch_child(app.clone(), serial);
-
-                Ok(backend)
+                return Err(superseded());
             }
-            Err((kind, message)) => Err(TunnelError::new(kind, message)),
+
+            kill(app, state).await;
         }
-    }
 
-    /// `respawn` for the primary's own commands, which report it themselves.
-    pub async fn respawn_reported(
-        app: &AppHandle,
-        state: &LocalBackendState,
-        profile: Option<String>,
-    ) -> Result<LocalBackend, String> {
-        let result = respawn(app, state, profile).await;
+        let (mut child, backend) = match start(&state.log).await {
+            Ok(started) => started,
+            Err((kind, message)) => {
+                let error = TunnelError::new(kind, message);
 
-        crate::tunnels::finish_dial(
-            app,
-            LOCAL_SLOT,
-            result
-                .as_ref()
-                .map(|backend| backend.base_url.clone())
-                .map_err(Clone::clone),
+                finish_dial(app, LOCAL_SLOT, serial, Err(error.clone()));
+
+                return Err(error);
+            }
+        };
+
+        let _guard = install_lock(app, LOCAL_SLOT).await;
+
+        if !is_current(app, LOCAL_SLOT, serial) {
+            let _ = child.start_kill();
+
+            finish_dial(app, LOCAL_SLOT, serial, Err(superseded()));
+
+            return Err(superseded());
+        }
+
+        let spawn = state
+            .serial
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let transport = app.state::<crate::transport::TransportState>();
+        let mut running = state.running.lock().await;
+
+        if let Some(mut previous) = running.take() {
+            transport.forget_tunnel_auth(&previous.backend.base_url);
+            let _ = previous.child.start_kill();
+        }
+
+        transport.set_tunnel_auth(
+            &backend.base_url,
+            crate::transport::ConnectionAuth {
+                connection_id: crate::connections::registry::LOCAL_CONNECTION_ID.to_string(),
+                token: Some(backend.token.clone()),
+                headers: Vec::new(),
+            },
         );
 
-        result.map_err(|error| error.message)
+        *running = Some(Running {
+            child,
+            backend: backend.clone(),
+            serial: spawn,
+        });
+        drop(running);
+
+        watch_child(app.clone(), spawn);
+        finish_dial(app, LOCAL_SLOT, serial, Ok(backend.base_url.clone()));
+
+        Ok(backend)
     }
 
     /// Notice the child exiting on its own and tell the tunnel book.
@@ -408,33 +441,30 @@ pub(crate) async fn kill_child(_app: &tauri::AppHandle) {}
 
 /// Spawn the child for a background lease (MJXHRM-592).
 #[cfg(desktop)]
-pub(crate) async fn dial_tunnel(
-    app: &AppHandle,
-    profile: Option<String>,
-) -> Result<String, TunnelError> {
+pub(crate) async fn dial_tunnel(app: &AppHandle, serial: u64) {
     let state = app.state::<imp::LocalBackendState>();
-
-    imp::respawn(app, &state, profile)
-        .await
-        .map(|backend| backend.base_url)
+    let _ = imp::respawn(app, &state, serial).await;
 }
 
 #[cfg(mobile)]
-pub(crate) async fn dial_tunnel(
-    _app: &tauri::AppHandle,
-    _profile: Option<String>,
-) -> Result<String, crate::tunnels::TunnelError> {
-    Err(crate::tunnels::TunnelError::new(
-        crate::tunnels::FailureKind::UnsupportedPlatform,
-        "unsupported_platform",
-    ))
+pub(crate) async fn dial_tunnel(app: &tauri::AppHandle, serial: u64) {
+    crate::tunnels::finish_dial(
+        app,
+        crate::tunnels::LOCAL_SLOT,
+        serial,
+        Err(crate::tunnels::TunnelError::new(
+            crate::tunnels::FailureKind::UnsupportedPlatform,
+            "unsupported_platform",
+        )),
+    );
 }
 
 /// The active connection's local backend.
 ///
-/// A child that is already running is ADOPTED whatever profile it was launched
-/// as — requests carry their own profile, and a background lease may be riding
-/// it. Only `local_backend_restart` respawns a live child.
+/// A child that is already running is ADOPTED: it is the unified server and
+/// serves every profile, and a background lease may be riding it. `profile` is
+/// the one preselected in the UI; only `local_backend_restart` respawns a live
+/// child.
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn local_backend_spawn(
@@ -442,20 +472,27 @@ pub async fn local_backend_spawn(
     state: tauri::State<'_, imp::LocalBackendState>,
     profile: Option<String>,
 ) -> Result<LocalBackend, String> {
+    let _ = profile;
     let alive = imp::alive(&state).await;
     let spec = SlotSpec {
         connection_id: crate::connections::registry::LOCAL_CONNECTION_ID.to_string(),
         kind: SlotKind::Local,
         instance_key: LOCAL_INSTANCE_KEY.to_string(),
-        profile: profile.clone(),
+        fingerprint: LOCAL_INSTANCE_KEY.to_string(),
     };
 
-    match crate::tunnels::hold_primary(&app, LOCAL_SLOT, spec, alive) {
-        Hold::Reuse => {}
-        Hold::Join(rx) => {
+    match crate::tunnels::hold_primary(&app, LOCAL_SLOT, spec, alive, false, "local-primary") {
+        Hold::Reuse(_) => {}
+        Hold::Join(_, rx) => {
             crate::tunnels::wait(rx).await.map_err(|e| e.message)?;
         }
-        Hold::Dial => return imp::respawn_reported(&app, &state, profile).await,
+        Hold::Dial(mut dial) => {
+            crate::tunnels::prepare(&app, &mut dial, SlotKind::Local).await;
+
+            return imp::respawn(&app, &state, dial.serial)
+                .await
+                .map_err(|e| e.message);
+        }
     }
 
     imp::current(&state)
@@ -463,20 +500,24 @@ pub async fn local_backend_spawn(
         .ok_or_else(|| "the local backend stopped before it could be adopted".to_string())
 }
 
-/// "Restart as <profile>": respawn the child in place. Every lease stays held
-/// and reconnects on `tunnel://local/changed`.
+/// "Restart backend": respawn the child in place. Every lease stays held and
+/// reconnects on `tunnel://local/changed`. A restart during a start supersedes
+/// it once that start has drained.
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn local_backend_restart(
     app: AppHandle,
     state: tauri::State<'_, imp::LocalBackendState>,
-    profile: Option<String>,
 ) -> Result<LocalBackend, String> {
-    if !crate::tunnels::begin_restart(&app, LOCAL_SLOT, profile.clone()) {
-        return local_backend_spawn(app, state, profile).await;
-    }
+    let Some(mut dial) = crate::tunnels::begin_restart(&app, LOCAL_SLOT, "local-restart") else {
+        return local_backend_spawn(app, state, None).await;
+    };
 
-    imp::respawn_reported(&app, &state, profile).await
+    crate::tunnels::prepare(&app, &mut dial, SlotKind::Local).await;
+
+    imp::respawn(&app, &state, dial.serial)
+        .await
+        .map_err(|e| e.message)
 }
 
 #[cfg(desktop)]
@@ -546,7 +587,6 @@ pub async fn local_backend_stop(_state: tauri::State<'_, LocalBackendState>) -> 
 #[tauri::command]
 pub async fn local_backend_restart(
     _state: tauri::State<'_, LocalBackendState>,
-    _profile: Option<String>,
 ) -> Result<LocalBackend, String> {
     Err("unsupported_platform".to_string())
 }
@@ -560,6 +600,14 @@ pub async fn local_backend_kill() -> Result<(), String> {
 #[cfg(all(test, desktop))]
 mod tests {
     use super::imp::parse_ready_port;
+
+    #[test]
+    fn the_local_backend_launches_as_the_unified_default_server() {
+        assert_eq!(
+            super::imp::launch_args().join(" "),
+            "--profile default serve --host 127.0.0.1 --port 0"
+        );
+    }
 
     /// A backend that writes a megabyte to stderr before it is ready must still
     /// be seen as ready: nobody reading stderr blocks it on a full pipe.
