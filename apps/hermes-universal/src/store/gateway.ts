@@ -46,7 +46,7 @@ export async function connectGateway(conn: Connection): Promise<void> {
   // raises GatewayReauthRequiredError when the session is dead.
   const wsUrl = await resolveWsUrl(conn)
 
-  const next = new JsonRpcGatewayClient({
+  const next = new ProfiledGatewayClient({
     socketFactory: (url: string) => new TauriWebSocket(url) as unknown as WebSocketLike
   })
 
@@ -100,7 +100,7 @@ export function requestGateway<T = unknown>(
     return Promise.reject(new Error('Hermes gateway is not connected'))
   }
 
-  return client.request<T>(method, withGatewayProfile(method, params), timeoutMs)
+  return client.request<T>(method, params, timeoutMs)
 }
 
 type GatewayProfileResolver = () => null | string
@@ -132,13 +132,13 @@ export function setGatewayRequestProfile(resolver: GatewayProfileResolver): () =
  * `default`. REST already carries the active profile (`hermes.ts`
  * `apiRequestProfile`); this is the same rule for the socket, and the one the
  * session router applies to a same-connection route. A caller that set
- * `profile` keeps it, and `profile.*` methods are left alone: their profile is
- * the target, not the scope.
+ * `profile` keeps it, and `profiles.*` methods are left alone: their profile is
+ * the target (`profiles.*` is keyed by `name`), not the scope.
  */
 export function withGatewayProfile(method: string, params: Record<string, unknown>): Record<string, unknown> {
   const profile = gatewayProfile()
 
-  if (!profile || method.startsWith('profile.') || Object.hasOwn(params, 'profile')) {
+  if (!profile || method.startsWith('profiles.') || Object.hasOwn(params, 'profile')) {
     return params
   }
 
@@ -151,6 +151,24 @@ export function withGatewayProfile(method: string, params: Record<string, unknow
 // concrete instance is a base JsonRpcGatewayClient (HermesGateway adds no
 // members), so the cast is sound; the socket underneath is the Tauri IPC one.
 // Returns null until connected.
+/**
+ * The primary client (MJXHRM-592). Every call made on it — `requestGateway`,
+ * `getGatewayClient()` and the SDK's `getGateway` alike (`model.options`,
+ * `commands.catalog`, `complete.*`, `llm.oneshot`, `reload.mcp`) — names the
+ * active profile when it names none. A subclass rather than a wrapper at one
+ * call site, so no caller can reach the socket around it.
+ */
+class ProfiledGatewayClient extends JsonRpcGatewayClient {
+  override request<T>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs?: number,
+    signal?: AbortSignal
+  ): Promise<T> {
+    return super.request<T>(method, withGatewayProfile(method, params), timeoutMs, signal)
+  }
+}
+
 export function getGatewayClient(): HermesGateway | null {
   return client as HermesGateway | null
 }

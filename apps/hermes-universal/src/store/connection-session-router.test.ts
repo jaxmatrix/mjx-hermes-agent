@@ -151,9 +151,13 @@ describe('the registry router', () => {
 
     try {
       expect(withGatewayProfile('session.list', {})).toEqual({ profile: 'work' })
-      expect(withGatewayProfile('session.list', { profile: 'home' })).toEqual({ profile: 'home' })
-      // A profile.* method's profile is its target, never the scope.
-      expect(withGatewayProfile('profile.delete', { name: 'old' })).toEqual({ name: 'old' })
+      // A relay names the profile it delivers to; that is never overwritten.
+      expect(withGatewayProfile('bot_relay.deliver', { message: 'hi', profile: 'home' })).toEqual({
+        message: 'hi',
+        profile: 'home'
+      })
+      // `profiles.*` works ON profiles, keyed by `name` (tui_gateway/methods_profiles.py).
+      expect(withGatewayProfile('profiles.list', { include_sessions: true })).toEqual({ include_sessions: true })
     } finally {
       $activeProfile.set(null)
     }
