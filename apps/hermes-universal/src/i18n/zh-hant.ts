@@ -979,6 +979,7 @@ export const zhHant = defineLocale({
       clear: '清除'
     },
     gateway: {
+      sshErrLocked: '請解鎖此裝置，以使用為此閘道儲存的 SSH 憑證。',
       sshInstallTitle: host => `在 ${host} 上安裝 Hermes？`,
       sshInstallBody: 'Hermes 將安裝在該主機的使用者帳戶中，不需要管理員權限。',
       sshInstallCancel: '暫不',

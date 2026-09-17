@@ -1011,6 +1011,7 @@ export const ja = defineLocale({
       clear: 'クリア'
     },
     gateway: {
+      sshErrLocked: 'このゲートウェイに保存された SSH 認証情報を使うには、このデバイスのロックを解除してください。',
       sshInstallTitle: host => `${host} に Hermes をインストールしますか？`,
       sshInstallBody: 'Hermes はそのホストのユーザーアカウント内にインストールされます。管理者権限は不要です。',
       sshInstallCancel: '後で',

@@ -795,6 +795,7 @@ export interface Translations {
       sshPromptTitle: string
       sshErrUnreachable: string
       sshErrAuth: string
+      sshErrLocked: string
       sshErrHostKey: string
       sshErrNotInstalled: string
       /** Offer to install Hermes on the remote host after a failed connect. */

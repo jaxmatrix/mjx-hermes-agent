@@ -916,6 +916,7 @@ export const en: Translations = {
       sshErrUnreachable: 'Could not reach that host over SSH. Check the address, the port, and your network.',
       sshErrAuth:
         'SSH authentication failed. Add your key to ssh-agent, set an IdentityFile in ~/.ssh/config, or supply a key here.',
+      sshErrLocked: 'Unlock this device to use the SSH credentials stored for this gateway.',
       sshErrHostKey:
         'The host key has CHANGED since you last connected. This could be a machine-in-the-middle attack, or the server may have been reinstalled. The connection was refused.',
       sshErrNotInstalled: 'Hermes is not installed on that host. Install it there, or set the Hermes path explicitly.',

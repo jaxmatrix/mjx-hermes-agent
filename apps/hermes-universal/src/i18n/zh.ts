@@ -1070,6 +1070,7 @@ export const zh: Translations = {
       sshPromptTitle: 'SSH 需要凭据',
       sshErrUnreachable: '无法通过 SSH 连接到该主机。请检查地址、端口和网络。',
       sshErrAuth: 'SSH 身份验证失败。请将密钥加入 ssh-agent、在 ~/.ssh/config 中设置 IdentityFile，或在此处提供密钥。',
+      sshErrLocked: '请解锁此设备，以使用为该网关保存的 SSH 凭据。',
       sshErrHostKey: '该主机的密钥自上次连接后已发生变更。这可能是中间人攻击，也可能是服务器被重装。连接已被拒绝。',
       sshErrNotInstalled: '该主机上未安装 Hermes。请在该机器上安装，或显式指定 Hermes 路径。',
       sshInstallTitle: host => `在 ${host} 上安装 Hermes？`,

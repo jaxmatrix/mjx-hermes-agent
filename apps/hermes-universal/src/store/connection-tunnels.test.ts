@@ -36,6 +36,7 @@ vi.mock('@/store/ssh-backend', () => ({
 vi.mock('@/store/windows', () => ({ isActivityWindow: () => false, isSatelliteWindow: () => false }))
 vi.mock('@/transport/http', () => ({ httpRequest }))
 
+import { TRANSLATIONS } from '@/i18n/catalog'
 import { api, setConnectionBaseResolver } from '@/lib/api'
 import { $notifications } from '@/store/notifications'
 
@@ -69,7 +70,9 @@ beforeEach(() => {
   platform.mobile = false
   $notifications.set([])
   answerListeners.clear()
-  invoke.mockImplementation(async (command: string) => (command === 'tunnel_acquire' ? descriptor : undefined))
+  invoke.mockImplementation(async (command: string) =>
+    command === 'tunnel_acquire' ? descriptor : command === 'tunnel_page_epoch' ? 3 : undefined
+  )
 })
 
 afterEach(() => {
@@ -144,6 +147,15 @@ describe('acquireTunnel', () => {
     expect(needsInteraction($tunnelStatus.get().ssh1)).toBe(true)
   })
 
+  // MJXHRM-592: Rust refuses a hold from a page that has reloaded or closed.
+  it('reads the page epoch once and sends it with every acquire', async () => {
+    await acquireTunnel('ssh1')
+    await acquireTunnel('ssh2')
+
+    expect(calls('tunnel_page_epoch')).toHaveLength(1)
+    expect(calls('tunnel_acquire').map(([, args]) => (args as { pageEpoch: number }).pageEpoch)).toEqual([3, 3])
+  })
+
   it('J6: an interactive acquire attaches the prompts before it dials', async () => {
     const detach = vi.fn()
 
@@ -196,7 +208,7 @@ describe('acquireTunnel', () => {
     lease.onClosed(closed)
     await vi.advanceTimersByTimeAsync(60 * 60_000)
 
-    expect(invoke.mock.calls.map(([name]) => name)).toEqual(['tunnel_acquire'])
+    expect(invoke.mock.calls.map(([name]) => name)).toEqual(['tunnel_page_epoch', 'tunnel_acquire'])
     expect(closed).not.toHaveBeenCalled()
   })
 
@@ -309,7 +321,7 @@ describe('acquireTunnel', () => {
       await connectTunnel('ssh1', 'Box')
 
       expect($notifications.get()).toEqual([
-        expect.objectContaining({ detail: 'wrong passphrase', id: 'tunnel-signin:ssh1' })
+        expect.objectContaining({ detail: TRANSLATIONS.en.settings.gateway.sshErrAuth, id: 'tunnel-signin:ssh1' })
       ])
     })
 
@@ -319,6 +331,27 @@ describe('acquireTunnel', () => {
       await connectTunnel('ssh1', 'Box')
 
       expect($notifications.get()).toEqual([expect.objectContaining({ id: 'tunnel-hostkey:ssh1' })])
+    })
+
+    // MJXHRM-592: the configurator's localized words, never Rust's English.
+    it("reports an SSH failure in the configurator's words", async () => {
+      failWith({ kind: 'transient', message: 'Timed out after 30s', sshKind: 'timeout', terminal: false })
+
+      await connectTunnel('ssh1', 'Box')
+
+      expect($notifications.get()).toEqual([
+        expect.objectContaining({ kind: 'error', message: TRANSLATIONS.en.settings.gateway.sshErrTimeout })
+      ])
+    })
+
+    it('says a locked device needs unlocking', async () => {
+      failWith({ kind: 'locked', message: 'unlock this device to use the stored credentials', terminal: true })
+
+      await connectTunnel('ssh1', 'Box')
+
+      expect($notifications.get()).toEqual([
+        expect.objectContaining({ detail: TRANSLATIONS.en.settings.gateway.sshErrLocked, id: 'tunnel-signin:ssh1' })
+      ])
     })
 
     it('reports anything else as an error', async () => {

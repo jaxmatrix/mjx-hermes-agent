@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-import { sshErrorMessage } from '@/app/gateway/ssh-copy'
+import { tunnelErrorMessage } from '@/app/gateway/ssh-copy'
 import { getRuntimeI18nLocale, translateNow, type Translations } from '@/i18n'
 import { TRANSLATIONS } from '@/i18n/catalog'
 import { LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
@@ -58,6 +58,8 @@ export interface TunnelError {
   kind: string
   message: string
   terminal: boolean
+  /** The SSH failure it came from, when there was one; picks localized copy. */
+  sshKind?: string
 }
 
 export interface TunnelLease {
@@ -158,6 +160,19 @@ function subscribe(connectionId: string, entry: Held): Promise<UnlistenFn[]> {
   ]).catch(() => [])
 }
 
+let pageEpoch: null | Promise<null | number> = null
+
+/**
+ * The epoch this page holds tunnels under, read once before its first acquire
+ * (MJXHRM-592). Rust refuses a hold whose page has since reloaded or closed, so
+ * a late command from a gone page cannot leave a hold nothing would ever end.
+ */
+function currentPageEpoch(): Promise<null | number> {
+  pageEpoch ??= invoke<null | number>('tunnel_page_epoch').catch(() => null)
+
+  return pageEpoch
+}
+
 async function dial(
   connectionId: string,
   entry: Held,
@@ -171,14 +186,15 @@ async function dial(
   const detach = attemptId ? await attachSshPrompts(attemptId) : null
 
   try {
-    const installationId = await getInstallationId()
+    const [installationId, pageEpoch] = await Promise.all([getInstallationId(), currentPageEpoch()])
 
     return await invoke<TunnelDescriptor>('tunnel_acquire', {
       attemptId,
       connectionId,
       installationId,
       interactive,
-      leaseId: entry.leaseId
+      leaseId: entry.leaseId,
+      pageEpoch
     })
   } finally {
     detach?.()
@@ -272,7 +288,7 @@ function notifyHostKeyChanged(connectionId: string, label: string, error: unknow
     detail: (error as Partial<TunnelError>).message,
     id: `tunnel-hostkey:${connectionId}`,
     kind: 'error',
-    message: sshErrorMessage(error, gatewayCopy()),
+    message: tunnelErrorMessage(error, gatewayCopy()),
     title: label
   })
 }
@@ -322,9 +338,12 @@ export async function connectTunnel(connectionId: string, label: string): Promis
     if (kind === 'host-key-changed') {
       notifyHostKeyChanged(connectionId, label, error)
     } else if (isTunnelSignInError(error)) {
-      notifySignIn(connectionId, label, sshErrorMessage(error, gatewayCopy()))
+      notifySignIn(connectionId, label, tunnelErrorMessage(error, gatewayCopy()))
     } else {
-      notifyError(sshErrorMessage(error, gatewayCopy()), translateNow('settings.connections.tunnelSignInTitle', label))
+      notifyError(
+        tunnelErrorMessage(error, gatewayCopy()),
+        translateNow('settings.connections.tunnelSignInTitle', label)
+      )
     }
   } finally {
     keep()
@@ -450,6 +469,7 @@ export function connectionBase(rowUrl: null | string | undefined, connectionId: 
 
 export const __testing = {
   reset(): void {
+    pageEpoch = null
     held.clear()
     $tunnelStatus.set({})
   }

@@ -903,6 +903,7 @@ export const ar = defineLocale({
       clear: 'مسح'
     },
     gateway: {
+      sshErrLocked: 'افتح قفل هذا الجهاز لاستخدام بيانات اعتماد SSH المحفوظة لهذه البوابة.',
       sshInstallTitle: host => `تثبيت Hermes على ${host}؟`,
       sshInstallBody: 'سيُثبَّت Hermes داخل حساب المستخدم على ذلك الجهاز. لا حاجة إلى صلاحيات المسؤول.',
       sshInstallCancel: 'ليس الآن',
