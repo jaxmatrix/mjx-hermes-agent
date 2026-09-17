@@ -1,13 +1,22 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-import { translateNow } from '@/i18n'
+import { sshErrorMessage } from '@/app/gateway/ssh-copy'
+import { getRuntimeI18nLocale, translateNow, type Translations } from '@/i18n'
+import { TRANSLATIONS } from '@/i18n/catalog'
 import { LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { IS_MOBILE } from '@/lib/platform'
 import { map } from '@/store/atom'
 import { getInstallationId } from '@/store/installation-id'
 import { dismissNotification, notify, notifyError } from '@/store/notifications'
-import { attachSshPrompts, newAttemptId, onSshProgress, type SshStep } from '@/store/ssh-backend'
+import { keptSshAnswer, type KeptSshAnswer } from '@/store/ssh-answers'
+import {
+  addSshPromptAnswerListener,
+  attachSshPrompts,
+  newAttemptId,
+  onSshProgress,
+  type SshStep
+} from '@/store/ssh-backend'
 import { isActivityWindow, isSatelliteWindow } from '@/store/windows'
 
 /**
@@ -69,16 +78,14 @@ export interface TunnelLease {
 /** Every tunnel this window has heard about, by connection id. */
 export const $tunnelStatus = map<Record<string, TunnelStatus>>({})
 
-/** How often a held lease tells Rust it is still held (Rust drops it after 60 s). */
-export const TOUCH_INTERVAL_MS = 20_000
-
 /** "Needs sign-in": a background tunnel stopped on something only a person can answer. */
 export function needsInteraction(status: null | TunnelStatus | undefined): boolean {
   return status?.phase === 'failed' && status.terminal
 }
 
-/** The failures a Connect can fix: unlock the device, answer a credential, trust a key. */
-const SIGN_IN_KINDS = new Set(['credentials-needed', 'host-key-changed', 'locked'])
+/** The failures a Connect can fix: unlock the device, or answer a credential. A
+ *  CHANGED host key is not one — no policy accepts it — and has its own warning. */
+const SIGN_IN_KINDS = new Set(['credentials-needed', 'locked'])
 
 /** Whether `error` is a tunnel that needs a person to sign in. */
 export function isTunnelSignInError(error: unknown): error is TunnelError {
@@ -100,7 +107,6 @@ interface Held {
   listeners: Set<(descriptor: TunnelDescriptor) => void>
   closedListeners: Set<() => void>
   subscribed: Promise<UnlistenFn[]>
-  toucher: null | ReturnType<typeof setInterval>
 }
 
 const held = new Map<string, Held>()
@@ -152,12 +158,16 @@ function subscribe(connectionId: string, entry: Held): Promise<UnlistenFn[]> {
   ]).catch(() => [])
 }
 
-async function dial(connectionId: string, entry: Held, interactive: boolean): Promise<TunnelDescriptor> {
+async function dial(
+  connectionId: string,
+  entry: Held,
+  interactive: boolean,
+  attemptId: null | string
+): Promise<TunnelDescriptor> {
   await entry.subscribed
 
   // An interactive dial asks under an attempt of its own, attached before the
   // invoke: Rust can ask for a passphrase in the first auth exchange.
-  const attemptId = interactive ? newAttemptId() : null
   const detach = attemptId ? await attachSshPrompts(attemptId) : null
 
   try {
@@ -180,30 +190,8 @@ function drop(connectionId: string, entry: Held): void {
     held.delete(connectionId)
   }
 
-  if (entry.toucher) {
-    clearInterval(entry.toucher)
-    entry.toucher = null
-  }
-
   void entry.subscribed.then(unlisten => unlisten.forEach(stop => stop()))
   void invoke('tunnel_release', { connectionId, leaseId: entry.leaseId }).catch(() => {})
-}
-
-/** Tell Rust the lease is still held, so a reload or a crash cannot leak it. */
-function startTouching(connectionId: string, entry: Held): void {
-  if (entry.toucher) {
-    return
-  }
-
-  entry.toucher = setInterval(() => {
-    void invoke<boolean>('tunnel_touch', { connectionId, leaseId: entry.leaseId })
-      .then(known => {
-        if (known === false) {
-          markClosed(entry)
-        }
-      })
-      .catch(() => {})
-  }, TOUCH_INTERVAL_MS)
 }
 
 function leaseFor(connectionId: string, entry: Held): TunnelLease {
@@ -245,32 +233,112 @@ function signInNotificationId(connectionId: string): string {
   return `tunnel-signin:${connectionId}`
 }
 
+function gatewayCopy(): Translations['settings']['gateway'] {
+  return TRANSLATIONS[getRuntimeI18nLocale()].settings.gateway
+}
+
+function errorKind(error: unknown): string {
+  return typeof error === 'object' && error !== null ? String((error as Partial<TunnelError>).kind) : ''
+}
+
+/** The answers a Connect gives are kept where that connection's dials read them. */
+type TunnelAnswerSaver = (connectionId: string, answer: KeptSshAnswer) => Promise<unknown>
+
+let answerSaver: null | TunnelAnswerSaver = null
+
 /**
- * Say a background tunnel needs sign-in, once per connection (MJXHRM-592).
- *
- * Connect runs the interactive dial and only connects: the action that failed
- * is not re-run, because a rename, a delete or a Bot Mode send must never be
- * replayed on the user's behalf.
+ * Where Connect keeps a passphrase or password answer. A registration hook,
+ * like `setConnectionBaseResolver`: the registry store owns the write and
+ * imports this module, so it registers here instead of being imported.
  */
-function notifySignIn(connectionId: string, label: string): void {
+export function setTunnelAnswerSaver(saver: TunnelAnswerSaver): () => void {
+  const previous = answerSaver
+
+  answerSaver = saver
+
+  return () => {
+    if (answerSaver === saver) {
+      answerSaver = previous
+    }
+  }
+}
+
+/**
+ * A changed host key: no policy accepts one, so there is nothing to Connect.
+ * Says what the configurator says, with Rust's `ssh-keygen -R` guidance.
+ */
+function notifyHostKeyChanged(connectionId: string, label: string, error: unknown): void {
+  notify({
+    detail: (error as Partial<TunnelError>).message,
+    id: `tunnel-hostkey:${connectionId}`,
+    kind: 'error',
+    message: sshErrorMessage(error, gatewayCopy()),
+    title: label
+  })
+}
+
+/** A background acquire failed: say so only when a person can act on it. */
+function notifyBackgroundFailure(connectionId: string, label: string, error: unknown): void {
+  if (errorKind(error) === 'host-key-changed') {
+    notifyHostKeyChanged(connectionId, label, error)
+  } else if (isTunnelSignInError(error)) {
+    notifySignIn(connectionId, label)
+  }
+}
+
+/**
+ * The Connect of a tunnel that needs sign-in (MJXHRM-592).
+ *
+ * Runs the interactive dial and only connects: the action that failed is not
+ * re-run, because a rename, a delete or a Bot Mode send must never be replayed
+ * on the user's behalf. A passphrase or password answered on THIS dial is kept
+ * (the configurator's rules), so the next background dial authenticates.
+ */
+export async function connectTunnel(connectionId: string, label: string): Promise<void> {
+  const attemptId = newAttemptId()
+
+  const keep = addSshPromptAnswerListener((prompt, answer) => {
+    const kept = prompt.attemptId === attemptId ? keptSshAnswer(prompt.kind, answer) : null
+
+    if (kept && answerSaver) {
+      void answerSaver(connectionId, kept).catch(() => {})
+    }
+  })
+
+  try {
+    const lease = await acquireTunnel(connectionId, { attemptId, interactive: true, label })
+
+    // Signed in: the warning has done its job.
+    dismissNotification(signInNotificationId(connectionId))
+    lease.release()
+  } catch (error) {
+    const kind = errorKind(error)
+
+    if (kind === 'cancelled') {
+      // The person dismissed the question. The warning stays for another try.
+      return
+    }
+
+    if (kind === 'host-key-changed') {
+      notifyHostKeyChanged(connectionId, label, error)
+    } else if (isTunnelSignInError(error)) {
+      notifySignIn(connectionId, label, sshErrorMessage(error, gatewayCopy()))
+    } else {
+      notifyError(sshErrorMessage(error, gatewayCopy()), translateNow('settings.connections.tunnelSignInTitle', label))
+    }
+  } finally {
+    keep()
+  }
+}
+
+/** Say a background tunnel needs sign-in, once per connection. */
+function notifySignIn(connectionId: string, label: string, detail?: string): void {
   notify({
     action: {
       label: translateNow('settings.connections.tunnelConnect'),
-      onClick: () => {
-        void acquireTunnel(connectionId, { interactive: true, label })
-          .then(lease => {
-            // Signed in: the warning has done its job. A failed Connect leaves it
-            // up to try again.
-            dismissNotification(signInNotificationId(connectionId))
-            lease.release()
-          })
-          .catch(error => {
-            if (!isTunnelSignInError(error)) {
-              notifyError(error, translateNow('settings.connections.tunnelSignInTitle', label))
-            }
-          })
-      }
+      onClick: () => void connectTunnel(connectionId, label)
     },
+    detail,
     id: signInNotificationId(connectionId),
     kind: 'warning',
     message: translateNow('settings.connections.tunnelSignInMessage'),
@@ -287,7 +355,7 @@ function notifySignIn(connectionId: string, label: string): void {
  */
 export async function acquireTunnel(
   connectionId: string,
-  options: { interactive?: boolean; label?: string } = {}
+  options: { attemptId?: string; interactive?: boolean; label?: string } = {}
 ): Promise<TunnelLease> {
   if (IS_MOBILE && connectionId === LOCAL_CONNECTION_ID) {
     throw tunnelError('unsupported-platform', 'unsupported_platform')
@@ -309,8 +377,7 @@ export async function acquireTunnel(
       leaseId: crypto.randomUUID(),
       listeners: new Set(),
       pending: null,
-      subscribed: Promise.resolve([]),
-      toucher: null
+      subscribed: Promise.resolve([])
     }
 
     created.subscribed = subscribe(connectionId, created)
@@ -325,7 +392,9 @@ export async function acquireTunnel(
   try {
     if (options.interactive || !current.descriptor || current.closed) {
       if (!current.pending || options.interactive) {
-        const pending = dial(connectionId, current, options.interactive === true)
+        const interactive = options.interactive === true
+        const attemptId = interactive ? (options.attemptId ?? newAttemptId()) : null
+        const pending = dial(connectionId, current, interactive, attemptId)
 
         current.pending = pending
         void pending
@@ -347,14 +416,12 @@ export async function acquireTunnel(
       drop(connectionId, current)
     }
 
-    if (!options.interactive && isTunnelSignInError(error)) {
-      notifySignIn(connectionId, options.label ?? connectionId)
+    if (!options.interactive) {
+      notifyBackgroundFailure(connectionId, options.label ?? connectionId, error)
     }
 
     throw error
   }
-
-  startTouching(connectionId, current)
 
   const descriptor = current.descriptor as TunnelDescriptor
 
@@ -383,12 +450,6 @@ export function connectionBase(rowUrl: null | string | undefined, connectionId: 
 
 export const __testing = {
   reset(): void {
-    for (const entry of held.values()) {
-      if (entry.toucher) {
-        clearInterval(entry.toucher)
-      }
-    }
-
     held.clear()
     $tunnelStatus.set({})
   }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { attachSshPrompts, handlers, httpRequest, invoke, platform } = vi.hoisted(() => ({
+const { answerListeners, attachSshPrompts, handlers, httpRequest, invoke, platform } = vi.hoisted(() => ({
+  answerListeners: new Set<(prompt: { attemptId: string; kind: string }, answer: string) => void>(),
   attachSshPrompts: vi.fn(),
   handlers: new Map<string, (event: { payload: unknown }) => void>(),
   httpRequest: vi.fn(),
@@ -23,6 +24,11 @@ vi.mock('@/lib/platform', () => ({
 }))
 vi.mock('@/store/installation-id', () => ({ getInstallationId: vi.fn(async () => 'a'.repeat(32)) }))
 vi.mock('@/store/ssh-backend', () => ({
+  addSshPromptAnswerListener: (listener: (prompt: { attemptId: string; kind: string }, answer: string) => void) => {
+    answerListeners.add(listener)
+
+    return () => answerListeners.delete(listener)
+  },
   attachSshPrompts,
   newAttemptId: () => 'attempt-7',
   onSshProgress: vi.fn(async () => () => {})
@@ -38,8 +44,9 @@ import {
   __testing,
   acquireTunnel,
   connectionBase,
+  connectTunnel,
   needsInteraction,
-  TOUCH_INTERVAL_MS,
+  setTunnelAnswerSaver,
   type TunnelStatus
 } from './connection-tunnels'
 
@@ -60,6 +67,7 @@ beforeEach(() => {
   httpRequest.mockReset()
   platform.mobile = false
   $notifications.set([])
+  answerListeners.clear()
   invoke.mockImplementation(async (command: string) => (command === 'tunnel_acquire' ? descriptor : undefined))
 })
 
@@ -176,32 +184,19 @@ describe('acquireTunnel', () => {
     expect(calls('tunnel_release')).toHaveLength(1)
   })
 
-  it('keeps telling Rust the lease is held, and hears when Rust forgot it', async () => {
+  // MJXHRM-592: a hold never ages out. A hidden, occluded or paused webview's
+  // timers stop without bound, so nothing about a held lease is timer-driven.
+  it('keeps a held lease for an hour without a single timer', async () => {
     vi.useFakeTimers()
 
     const lease = await acquireTunnel('ssh1')
     const closed = vi.fn()
 
     lease.onClosed(closed)
-    await vi.advanceTimersByTimeAsync(TOUCH_INTERVAL_MS)
+    await vi.advanceTimersByTimeAsync(60 * 60_000)
 
-    expect(calls('tunnel_touch')).toEqual([
-      [
-        'tunnel_touch',
-        { connectionId: 'ssh1', leaseId: (calls('tunnel_acquire')[0]?.[1] as { leaseId: string }).leaseId }
-      ]
-    ])
+    expect(invoke.mock.calls.map(([name]) => name)).toEqual(['tunnel_acquire'])
     expect(closed).not.toHaveBeenCalled()
-
-    invoke.mockImplementation(async (command: string) => (command === 'tunnel_touch' ? false : undefined))
-    await vi.advanceTimersByTimeAsync(TOUCH_INTERVAL_MS)
-
-    expect(closed).toHaveBeenCalledTimes(1)
-
-    lease.release()
-    await vi.advanceTimersByTimeAsync(TOUCH_INTERVAL_MS * 2)
-
-    expect(calls('tunnel_touch')).toHaveLength(2)
   })
 
   it('tells its consumers when the tunnel closed or needs sign-in', async () => {
@@ -255,6 +250,29 @@ describe('acquireTunnel', () => {
     expect($notifications.get()).toHaveLength(0)
   })
 
+  // A changed host key is refused under every policy: there is nothing to Connect.
+  it('warns about a changed host key once, with no Connect', async () => {
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'tunnel_acquire') {
+        throw { kind: 'host-key-changed', message: 'remove the old key with ssh-keygen -R box', terminal: true }
+      }
+    })
+
+    await expect(acquireTunnel('ssh1', { label: 'Box' })).rejects.toMatchObject({ kind: 'host-key-changed' })
+    await expect(acquireTunnel('ssh1', { label: 'Box' })).rejects.toMatchObject({ kind: 'host-key-changed' })
+
+    const shown = $notifications.get()
+
+    expect(shown).toHaveLength(1)
+    expect(shown[0]).toMatchObject({
+      detail: 'remove the old key with ssh-keygen -R box',
+      id: 'tunnel-hostkey:ssh1',
+      kind: 'error',
+      title: 'Box'
+    })
+    expect(shown[0]?.action).toBeUndefined()
+  })
+
   it('raises nothing for a failure that retrying can fix', async () => {
     invoke.mockImplementation(async (command: string) => {
       if (command === 'tunnel_acquire') {
@@ -264,6 +282,82 @@ describe('acquireTunnel', () => {
 
     await expect(acquireTunnel('ssh1', { label: 'Box' })).rejects.toMatchObject({ kind: 'transient' })
     expect($notifications.get()).toHaveLength(0)
+  })
+
+  describe('a Connect that fails', () => {
+    const failWith = (error: object) =>
+      invoke.mockImplementation(async (command: string) => {
+        if (command === 'tunnel_acquire') {
+          throw error
+        }
+      })
+
+    it('stays quiet when the person dismissed the question', async () => {
+      failWith({ kind: 'cancelled', message: 'cancelled', terminal: true })
+
+      await connectTunnel('ssh1', 'Box')
+
+      expect($notifications.get()).toHaveLength(0)
+    })
+
+    it('asks for sign-in again, saying why', async () => {
+      failWith({ kind: 'credentials-needed', message: 'wrong passphrase', terminal: true })
+
+      await connectTunnel('ssh1', 'Box')
+
+      expect($notifications.get()).toEqual([
+        expect.objectContaining({ detail: 'wrong passphrase', id: 'tunnel-signin:ssh1' })
+      ])
+    })
+
+    it('raises the host-key warning for a changed key', async () => {
+      failWith({ kind: 'host-key-changed', message: 'ssh-keygen -R box', terminal: true })
+
+      await connectTunnel('ssh1', 'Box')
+
+      expect($notifications.get()).toEqual([expect.objectContaining({ id: 'tunnel-hostkey:ssh1' })])
+    })
+
+    it('reports anything else as an error', async () => {
+      failWith({ kind: 'transient', message: 'unreachable', terminal: false })
+
+      await connectTunnel('ssh1', 'Box')
+
+      expect($notifications.get()).toEqual([expect.objectContaining({ kind: 'error', title: 'Box needs sign-in' })])
+    })
+  })
+
+  describe('an answer given during Connect', () => {
+    it('is kept for this connection when it is a passphrase or password on its own attempt', async () => {
+      const saved: unknown[] = []
+      const off = setTunnelAnswerSaver(async (connectionId, answer) => saved.push([connectionId, answer]))
+
+      let finish = (_value: unknown) => {}
+
+      invoke.mockImplementation((command: string) =>
+        command === 'tunnel_acquire' ? new Promise(resolve => (finish = resolve)) : Promise.resolve(undefined)
+      )
+
+      try {
+        const connecting = connectTunnel('ssh1', 'Box')
+
+        await vi.waitFor(() => expect(calls('tunnel_acquire')).toHaveLength(1))
+
+        for (const listener of answerListeners) {
+          listener({ attemptId: 'attempt-7', kind: 'passphrase' }, 'open sesame')
+          listener({ attemptId: 'attempt-7', kind: 'keyboard-interactive' }, '123456')
+          listener({ attemptId: 'someone-else', kind: 'password' }, 'not ours')
+        }
+
+        finish(descriptor)
+        await connecting
+      } finally {
+        off()
+      }
+
+      expect(saved).toEqual([['ssh1', { passphrase: 'open sesame' }]])
+      expect(answerListeners.size).toBe(0)
+    })
   })
 
   it('lets its hold go when the dial fails', async () => {

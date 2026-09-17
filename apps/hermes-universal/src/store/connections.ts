@@ -8,6 +8,7 @@ import { errorText } from '@/lib/error-text'
 import { statusSupportsNativeFlow } from '@/lib/native-auth-decisions'
 import { loadString, saveString } from '@/lib/persist'
 import { IS_TAURI } from '@/lib/platform'
+import { mergeSshSecrets } from '@/lib/secure-store'
 import {
   $activeConnection,
   type ConnectionDescriptorHint,
@@ -17,12 +18,13 @@ import {
 import { atom, computed } from '@/store/atom'
 import { connect, connectCloud, connectLocal, connectSsh } from '@/store/connection'
 import { isLatched, releaseLatch } from '@/store/connection-latches'
-import { connectionBase } from '@/store/connection-tunnels'
+import { connectionBase, setTunnelAnswerSaver } from '@/store/connection-tunnels'
 import type { AuthMode, Connection, GatewayMode } from '@/store/gateway-config'
 import { loadGatewayTarget } from '@/store/gateway-restore'
 import { softSwitchGateway } from '@/store/gateway-soft-switch'
 import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
 import { notify, notifyError } from '@/store/notifications'
+import type { KeptSshAnswer } from '@/store/ssh-answers'
 
 /**
  * THE REGISTRY, as the webview sees it (MJXHRM-446).
@@ -338,6 +340,41 @@ setConnectionIdResolver(connection => {
 // because `lib/api.ts` is a leaf this module transitively depends on. A local or
 // SSH row has no URL; its live tunnel in this window stands in (MJXHRM-592).
 setConnectionBaseResolver(connectionId => connectionBase(connectionById(connectionId)?.url, connectionId))
+
+/**
+ * Keep an answer a tunnel's Connect was given (MJXHRM-592), where that row's
+ * dials read it: the legacy owner's bare accounts through the configurator's
+ * own write, a registered row's owned accounts through the editor's save. A
+ * secret is not a dial field, so the save recycles nothing.
+ */
+export async function saveTunnelAnswer(connectionId: string, answer: KeptSshAnswer): Promise<void> {
+  const row = connectionById(connectionId)
+
+  if (!row) {
+    return
+  }
+
+  if (row.legacy) {
+    await mergeSshSecrets(answer)
+
+    return
+  }
+
+  await saveConnection({
+    host: row.host,
+    id: row.id,
+    keyPath: row.keyPath,
+    kind: row.kind,
+    label: row.label,
+    port: row.port,
+    remoteHermesPath: row.remoteHermesPath,
+    remoteProfile: row.remoteProfile,
+    user: row.user,
+    ...answer
+  })
+}
+
+setTunnelAnswerSaver(saveTunnelAnswer)
 
 // --------------------------------------------------------------------------
 // Boot + switching

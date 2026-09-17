@@ -73,6 +73,7 @@ import { $gatewayMode, setGatewayMode } from '@/store/gateway-switch'
 import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
 import { stepBackInLocalInstall } from '@/store/local-install'
 import { notify, notifyError } from '@/store/notifications'
+import { keptSshAnswer } from '@/store/ssh-answers'
 import {
   addSshPromptAnswerListener,
   attachSshPrompts,
@@ -567,12 +568,16 @@ export function GatewayConfigurator({
    * credential we were never meant to hold.
    */
   const rememberSshPromptAnswer = (kind: SshPromptEvent['kind'], answer: string) => {
-    if (!answer || kind === 'keyboard-interactive') {
+    // The shared rules (store/ssh-answers): a passphrase or a password, never a
+    // keyboard-interactive code.
+    const kept = keptSshAnswer(kind, answer)
+
+    if (!kept) {
       return
     }
 
-    setSshForm(current => (kind === 'password' ? { ...current, password: answer } : { ...current, passphrase: answer }))
-    void mergeSshSecrets(kind === 'password' ? { password: answer } : { passphrase: answer }).catch(() => {})
+    setSshForm(current => ({ ...current, ...kept }))
+    void mergeSshSecrets(kept).catch(() => {})
   }
 
   // The prompt dialog is the window's (app.tsx); this form only listens, and
