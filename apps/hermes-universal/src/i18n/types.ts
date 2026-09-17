@@ -951,6 +951,14 @@ export interface Translations {
       switchFailed: string
       midDialTitle: string
       midDialMessage: (label: string) => string
+      tunnelSignInTitle: (label: string) => string
+      tunnelSignInMessage: string
+      tunnelConnect: string
+      restartLocalTitle: string
+      restartLocalDescription: (titles: string[], more: number) => string
+      restartLocalConfirm: string
+      profileRestartMessage: (name: string) => string
+      profileRestartAction: string
     }
     keys: {
       loading: string

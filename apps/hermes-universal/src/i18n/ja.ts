@@ -411,7 +411,19 @@ export const ja = defineLocale({
             : 'このゲートウェイの起動に失敗しました。自動では再試行されません。',
       switchFailed: 'ゲートウェイを切り替えられませんでした',
       midDialTitle: 'ゲートウェイは変更されていません',
-      midDialMessage: label => `接続中に ${label} が変更されたため、前のゲートウェイのままです。`
+      midDialMessage: label => `接続中に ${label} が変更されたため、前のゲートウェイのままです。`,
+      tunnelSignInTitle: label => `${label} へのサインインが必要です`,
+      tunnelSignInMessage: 'このゲートウェイに接続するには、サインインが必要です。',
+      tunnelConnect: '接続',
+      restartLocalTitle: 'バックエンドを再起動しますか？',
+      restartLocalDescription: (titles, more) => {
+        const list = [...titles, ...(more > 0 ? [`+${more}`] : [])].join(', ')
+
+        return `作業中: ${list}。再起動するとエージェントは作業の途中で停止し、書き込みが終わっていない作業は失われます。`
+      },
+      restartLocalConfirm: '再起動',
+      profileRestartMessage: name => `${name} を使用中です。バックエンドを再起動して再読み込みしますか？`,
+      profileRestartAction: 'バックエンドを再起動'
     },
     profileScope: {
       appliesTo: '適用先',

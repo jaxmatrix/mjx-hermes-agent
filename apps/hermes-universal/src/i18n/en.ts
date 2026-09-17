@@ -1100,7 +1100,19 @@ export const en: Translations = {
             : 'This gateway failed to start and will not be retried automatically.',
       switchFailed: 'Could not switch gateway',
       midDialTitle: 'Gateway unchanged',
-      midDialMessage: label => `${label} was changed while connecting, so you are still on the previous gateway.`
+      midDialMessage: label => `${label} was changed while connecting, so you are still on the previous gateway.`,
+      tunnelSignInTitle: label => `${label} needs sign-in`,
+      tunnelSignInMessage: 'Hermes needs you to sign in before it can reach this gateway.',
+      tunnelConnect: 'Connect',
+      restartLocalTitle: 'Restart the backend?',
+      restartLocalDescription: (titles, more) => {
+        const list = [...titles, ...(more > 0 ? [`+${more}`] : [])].join(', ')
+
+        return `Still working: ${list}. Restarting stops the agent mid-turn, and any work it has not finished writing is lost.`
+      },
+      restartLocalConfirm: 'Restart',
+      profileRestartMessage: name => `Now using ${name}. Restart the backend to reload it?`,
+      profileRestartAction: 'Restart backend'
     },
     keys: {
       loading: 'Loading API keys and credentials...',

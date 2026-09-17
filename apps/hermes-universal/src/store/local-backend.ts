@@ -39,7 +39,7 @@ export function killLocalBackend(): Promise<void> {
   return invoke<void>('local_backend_kill')
 }
 
-/** "Restart as <profile>": respawn the child in place; its tunnel leases reconnect. */
-export function restartLocalBackend(profile?: string | null): Promise<LocalBackend> {
-  return invoke<LocalBackend>('local_backend_restart', { profile: profile ?? null })
+/** "Restart backend": respawn the child in place; its tunnel leases reconnect. */
+export function restartLocalBackend(): Promise<LocalBackend> {
+  return invoke<LocalBackend>('local_backend_restart')
 }

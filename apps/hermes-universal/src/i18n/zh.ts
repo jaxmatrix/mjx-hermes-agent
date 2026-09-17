@@ -1249,7 +1249,19 @@ export const zh: Translations = {
             : '该网关启动失败，不会自动重试。',
       switchFailed: '无法切换网关',
       midDialTitle: '网关未更改',
-      midDialMessage: label => `${label} 在连接过程中被修改，因此仍停留在之前的网关。`
+      midDialMessage: label => `${label} 在连接过程中被修改，因此仍停留在之前的网关。`,
+      tunnelSignInTitle: label => `${label} 需要登录`,
+      tunnelSignInMessage: '需要登录后，Hermes 才能访问此网关。',
+      tunnelConnect: '连接',
+      restartLocalTitle: '重启后端？',
+      restartLocalDescription: (titles, more) => {
+        const list = [...titles, ...(more > 0 ? [`+${more}`] : [])].join(', ')
+
+        return `仍在进行：${list}。重启会让智能体在任务中途停止，尚未写完的内容将会丢失。`
+      },
+      restartLocalConfirm: '重启',
+      profileRestartMessage: name => `正在使用 ${name}。要重启后端以重新加载吗？`,
+      profileRestartAction: '重启后端'
     },
     keys: {
       loading: '正在加载 API 密钥和凭据...',
