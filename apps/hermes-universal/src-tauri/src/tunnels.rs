@@ -2268,18 +2268,6 @@ mod tests {
     }
 
     #[test]
-    fn d3_remove_slot_is_the_only_code_that_removes_a_slot() {
-        // `on_dead` and a failed first dial remove a slot that has no dial left
-        // (a Ready slot, a settled dial), so no token can show a bypass there;
-        // this does. Built with concat! so the needle is not in this test.
-        let source = include_str!("tunnels.rs");
-        let needle = concat!("self.slots", ".remove(");
-
-        assert_eq!(source.matches(needle).count(), 1, "only remove_slot");
-        assert!(!source.contains(concat!("book", ".remove(")));
-    }
-
-    #[test]
     fn i15_nothing_starts_after_quit() {
         let mut book = pages();
         let (key, dial) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
@@ -2311,72 +2299,186 @@ mod tests {
         assert!(book.begin_redial(&key, 1, "t").is_none(), "redial");
     }
 
+    /// Every dial token the book has issued, and the serials whose result was
+    /// credited. Invariant 25: an unsettled token is its slot's current dial,
+    /// or it has been cancelled — no removal or supersede leaves a dial running
+    /// that nothing waits on.
+    #[derive(Default)]
+    struct Ledger {
+        issued: BTreeMap<u64, tokio_util::sync::CancellationToken>,
+        settled: std::collections::BTreeSet<u64>,
+    }
+
+    struct Model {
+        book: SlotBook,
+        ledger: Ledger,
+    }
+
+    impl Model {
+        /// Record the dials now in flight, then check the model's invariants.
+        fn check(&mut self) {
+            assert_model(&self.book);
+
+            let current: BTreeMap<u64, ()> = self
+                .book
+                .slots
+                .values()
+                .filter_map(|slot| slot.dial.as_ref())
+                .map(|dial| {
+                    self.ledger
+                        .issued
+                        .entry(dial.serial)
+                        .or_insert_with(|| dial.cancel.clone());
+
+                    (dial.serial, ())
+                })
+                .collect();
+
+            for (serial, token) in &self.ledger.issued {
+                if self.ledger.settled.contains(serial) {
+                    continue;
+                }
+
+                assert!(
+                    current.contains_key(serial) || token.is_cancelled(),
+                    "dial {serial} is running with no slot waiting on it"
+                );
+            }
+        }
+
+        fn acquire(&mut self, key: &str, spec: SlotSpec, holder: Holder) -> (String, Action) {
+            let out = acquire(&mut self.book, key, spec, holder);
+
+            self.check();
+
+            out
+        }
+
+        /// A dial result; credited (settled) only when it is not stale.
+        fn settle(&mut self, key: &str, serial: u64, result: Result<&str, FailureKind>) -> Action {
+            let action = self.book.on_dial_result(key, serial, result);
+
+            if action != Action::Stale {
+                self.ledger.settled.insert(serial);
+            }
+
+            self.check();
+
+            action
+        }
+    }
+
     #[test]
     fn the_lifecycle_model_holds_across_every_transition() {
-        let mut book = pages();
+        let mut m = Model {
+            book: pages(),
+            ledger: Ledger::default(),
+        };
 
         // Lease dial, join, land.
-        let (a, dial) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
-        assert_model(&book);
-        acquire(&mut book, &a, ssh("a"), Holder::new("session-x", "s1"));
-        assert_model(&book);
-        ready(&mut book, &a, &dial);
-        assert_model(&book);
+        let (a, dial) = m.acquire("conn:a::default", ssh("a"), lease("l1"));
+        m.acquire(&a, ssh("a"), Holder::new("session-x", "s1"));
+        m.settle(&a, serial_of(&dial), Ok("http://127.0.0.1:1"));
 
         // Release one, reap a reloading page, destroy a window.
-        book.release("a", &lease("l1"), 0);
-        assert_model(&book);
-        book.page_open("session-x", 1);
-        assert_model(&book);
-        let epoch = book.page_epoch("session-x").unwrap();
-        book.acquire(
-            &a,
-            ssh("a"),
-            Holder::new("session-x", "s2"),
-            false,
-            "t",
-            epoch,
-        )
-        .unwrap();
-        book.window_destroyed("session-x", 2);
-        assert_model(&book);
+        m.book.release("a", &lease("l1"), 0);
+        m.check();
+        m.book.page_open("session-x", 1);
+        m.check();
+        let epoch = m.book.page_epoch("session-x").unwrap();
+        m.book
+            .acquire(
+                &a,
+                ssh("a"),
+                Holder::new("session-x", "s2"),
+                false,
+                "t",
+                epoch,
+            )
+            .unwrap();
+        m.book.window_destroyed("session-x", 2);
+        m.check();
 
         // Death, redial, transient failure, redial again.
-        acquire(&mut book, &a, ssh("a"), lease("l3"));
-        assert_eq!(book.on_dead(&a), Action::Redial { attempt: 1 });
-        assert_model(&book);
-        let serial = book.begin_redial(&a, 1, "t").unwrap();
-        assert_model(&book);
-        book.on_dial_result(&a, serial, Err(FailureKind::Transient));
-        assert_model(&book);
-        let serial = book.begin_redial(&a, 2, "t").unwrap();
-        book.on_dial_result(&a, serial, Ok("http://127.0.0.1:3"));
-        assert_model(&book);
+        m.acquire(&a, ssh("a"), lease("l3"));
+        assert_eq!(m.book.on_dead(&a), Action::Redial { attempt: 1 });
+        m.check();
+        let serial = m.book.begin_redial(&a, 1, "t").unwrap();
+        m.check();
+        m.settle(&a, serial, Err(FailureKind::Transient));
+        let serial = m.book.begin_redial(&a, 2, "t").unwrap();
+        m.check();
+        m.settle(&a, serial, Ok("http://127.0.0.1:3"));
 
-        // Primary adopt, restart mid-dial, retarget, release.
-        let (_, _) = book.hold_primary(&a, ssh("a"), false, false, "p").unwrap();
-        assert_model(&book);
-        book.restart(&a, "restart");
-        assert_model(&book);
+        // Primary adopt with a dead backend, restart mid-dial, retarget mid-dial.
+        let (_, first) = m
+            .book
+            .hold_primary(&a, ssh("a"), false, false, "p")
+            .unwrap();
+        m.check();
+        let restart = m.book.restart(&a, "restart");
+        m.check();
+        assert_eq!(
+            m.settle(&a, serial_of(&first), Ok("http://127.0.0.1:4")),
+            Action::Stale
+        );
         let mut moved = ssh("a");
         moved.fingerprint = ssh_fingerprint("deploy", "box2", 22, None, None);
-        let (_, retarget) = book.hold_primary(&a, moved, true, false, "p2").unwrap();
-        assert_model(&book);
-        ready(&mut book, &a, &retarget);
-        acquire(&mut book, &a, ssh("a"), lease("l4"));
-        book.release_primary(&a);
-        assert_model(&book);
+        let (_, retarget) = m.book.hold_primary(&a, moved, true, false, "p2").unwrap();
+        m.check();
+        assert_eq!(
+            m.settle(&a, serial_of(&restart), Ok("http://127.0.0.1:5")),
+            Action::Stale
+        );
+        m.settle(&a, serial_of(&retarget), Ok("http://127.0.0.1:6"));
+        m.acquire(&a, ssh("a"), lease("l4"));
+        m.book.release_primary(&a);
+        m.check();
 
-        // A second connection: a failed first dial, then a drop and expiry.
-        let (b, dial) = acquire(&mut book, "conn:b::default", ssh("b"), lease("l5"));
-        book.on_dial_result(&b, serial_of(&dial), Err(FailureKind::Transient));
-        assert_model(&book);
-        book.drop_connection("a");
-        assert_model(&book);
-        book.expire(LINGER_MS * 4);
-        assert_model(&book);
-        book.quit();
-        assert_model(&book);
+        // A lease retargets a slot whose dial is in flight.
+        let (d, _) = m.acquire("conn:d::default", ssh("d"), lease("d1"));
+        let mut moved = ssh("d");
+        moved.fingerprint = ssh_fingerprint("deploy", "box3", 22, None, None);
+        m.acquire(&d, moved, lease("d2"));
+
+        // An interactive request supersedes a background dial.
+        let (e, _) = m.acquire("conn:e::default", ssh("e"), lease("e1"));
+        m.book
+            .acquire(&e, ssh("e"), lease("e2"), true, "connect", 1)
+            .unwrap();
+        m.check();
+
+        // Removals, each with a dial in flight: linger expiry…
+        let (b, _) = m.acquire("conn:b::default", ssh("b"), lease("b1"));
+        m.book.release("b", &lease("b1"), 10);
+        m.check();
+        m.book.expire(10 + LINGER_MS);
+        m.check();
+        assert!(m.book.slot(&b).is_none());
+
+        // …the primary letting go of a slot only it held…
+        let (p, _) = m
+            .book
+            .hold_primary("conn:p::default", ssh("p"), false, false, "p")
+            .unwrap();
+        m.check();
+        assert_eq!(m.book.release_primary(&p), Some(Action::Teardown));
+        m.check();
+
+        // …a dropped connection…
+        let (c, _) = m.acquire("conn:c::default", ssh("c"), lease("c1"));
+        m.book.drop_connection("c");
+        m.check();
+        assert!(m.book.slot(&c).is_none());
+
+        // …a failed first dial (it holds no dial once settled)…
+        let (f, dial) = m.acquire("conn:f::default", ssh("f"), lease("f1"));
+        m.settle(&f, serial_of(&dial), Err(FailureKind::Transient));
+
+        // …and quit, with two dials still in flight (d and e).
+        m.acquire("conn:g::default", ssh("g"), lease("g1"));
+        m.book.quit();
+        m.check();
     }
 
     #[test]
