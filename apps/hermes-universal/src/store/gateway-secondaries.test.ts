@@ -20,6 +20,16 @@ const {
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('@/store/connection-tunnels', () => ({ acquireTunnel }))
+vi.mock('@/store/session-request-router', () => ({
+  SessionRouteError: class extends Error {
+    constructor(
+      readonly kind: string,
+      readonly scopeKey: string
+    ) {
+      super(`session route unavailable (${kind})`)
+    }
+  }
+}))
 vi.mock('@/transport/tauri-websocket', () => ({
   TauriWebSocket: class {
     constructor(url: string, options: unknown) {
@@ -180,6 +190,90 @@ describe('leaseSecondary', () => {
     releaseParkedTunnels()
 
     expect(release).toHaveBeenCalledTimes(2)
+  })
+})
+
+function deferred<T>() {
+  let resolve = (_value: T) => {}
+
+  let reject = (_error: unknown) => {}
+
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes
+    reject = no
+  })
+
+  return { promise, reject, resolve }
+}
+
+// MJXHRM-592: a cold SSH dial takes 45–90 s, so a second lease on the scope
+// arrives while the first is still opening.
+describe('opening a secondary', () => {
+  it('shares one open between concurrent leases', async () => {
+    const tunnel = deferred<ReturnType<typeof fakeTunnel>['lease']>()
+    const { lease } = fakeTunnel()
+
+    invoke.mockResolvedValue({ kind: 'ssh' })
+    acquireTunnel.mockReturnValue(tunnel.promise)
+
+    const first = leaseSecondary('conn:ssh1::default', 'ssh1')
+    const second = leaseSecondary('conn:ssh1::default', 'ssh1')
+
+    tunnel.resolve(lease)
+
+    const [one, two] = await Promise.all([first, second])
+
+    expect(acquireTunnel).toHaveBeenCalledTimes(1)
+    expect(connect).toHaveBeenCalledTimes(1)
+    await expect(one.request('session.list')).resolves.toBe('ok')
+    await expect(two.request('session.list')).resolves.toBe('ok')
+  })
+
+  it('fails every caller together, releases once, and lets the next call start over', async () => {
+    const dial = deferred<void>()
+    const { lease, release } = fakeTunnel()
+
+    invoke.mockResolvedValue({ kind: 'ssh' })
+    acquireTunnel.mockResolvedValue(lease)
+    connect.mockImplementationOnce(() => dial.promise)
+
+    const first = leaseSecondary('conn:ssh1::default', 'ssh1')
+    const second = leaseSecondary('conn:ssh1::default', 'ssh1')
+    const refused = new Error('refused')
+
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1))
+    dial.reject(refused)
+
+    await expect(first).rejects.toBe(refused)
+    await expect(second).rejects.toBe(refused)
+    expect(release).toHaveBeenCalledTimes(1)
+
+    await expect(leaseSecondary('conn:ssh1::default', 'ssh1')).resolves.toBeDefined()
+    expect(connect).toHaveBeenCalledTimes(2)
+  })
+
+  it('lets nothing a switch interrupted land in live', async () => {
+    const dial = deferred<void>()
+    const { lease, release } = fakeTunnel()
+
+    invoke.mockResolvedValue({ kind: 'ssh' })
+    acquireTunnel.mockResolvedValue(lease)
+    connect.mockImplementationOnce(() => dial.promise)
+
+    const first = leaseSecondary('conn:ssh1::default', 'ssh1')
+    const second = leaseSecondary('conn:ssh1::default', 'ssh1')
+
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1))
+    closeAllSecondaries()
+    dial.resolve()
+
+    await expect(first).rejects.toMatchObject({ kind: 'switching' })
+    await expect(second).rejects.toMatchObject({ kind: 'switching' })
+    expect(__testing.liveScopeKeys()).toEqual([])
+    // Parked like any hold a switch closed, not dropped under the new dial.
+    expect(release).not.toHaveBeenCalled()
+    releaseParkedTunnels()
+    expect(release).toHaveBeenCalledTimes(1)
   })
 })
 
