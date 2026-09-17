@@ -39,10 +39,13 @@ pub struct LocalBackendStatus {
 mod imp {
     use super::*;
     use std::process::Stdio;
+    use std::sync::Arc;
     use std::time::Duration;
 
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::process::{Child, Command};
+
+    use crate::backend_log::{self, BackendLog};
 
     pub struct Running {
         pub child: Child,
@@ -53,10 +56,21 @@ mod imp {
 
     /// The one live local backend (at most one at a time), shared by the
     /// primary and every background lease (MJXHRM-592).
-    #[derive(Default)]
     pub struct LocalBackendState {
         pub running: Mutex<Option<Running>>,
         serial: std::sync::atomic::AtomicU64,
+        /// Everything the child prints, redacted (gap 10).
+        pub log: Arc<BackendLog>,
+    }
+
+    impl Default for LocalBackendState {
+        fn default() -> Self {
+            Self {
+                running: Mutex::new(None),
+                serial: Default::default(),
+                log: Arc::new(BackendLog::at_hermes_home()),
+            }
+        }
     }
 
     /// How often the watcher checks whether the child exited on its own.
@@ -116,8 +130,9 @@ mod imp {
     /// started is worth retrying.
     async fn start(
         profile: Option<String>,
+        log: &Arc<BackendLog>,
     ) -> Result<(Child, LocalBackend), (FailureKind, String)> {
-        let transient = |message: String| (FailureKind::Transient, message);
+        let transient = |message: String| (FailureKind::Transient, log.with_tail(message));
         let token = random_token();
         let program = std::env::var("HERMES_BIN").unwrap_or_else(|_| "hermes".to_string());
 
@@ -151,29 +166,8 @@ mod imp {
             )
         })?;
 
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| transient("failed to capture backend stdout".to_string()))?;
-        let mut lines = BufReader::new(stdout).lines();
-
         // Stage 1: wait (≤90s) for the port announcement on stdout.
-        let port = tokio::time::timeout(Duration::from_secs(90), async {
-            while let Ok(Some(line)) = lines.next_line().await {
-                if let Some(port) = parse_ready_port(&line) {
-                    return Some(port);
-                }
-            }
-            None
-        })
-        .await
-        .map_err(|_| {
-            transient("timed out waiting for the backend to announce its port".to_string())
-        })?
-        .ok_or_else(|| transient("backend exited before announcing a port".to_string()))?;
-
-        // Keep draining stdout so the child's pipe never blocks.
-        tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+        let port = announce(&mut child, log).await.map_err(transient)?;
 
         let base_url = format!("http://127.0.0.1:{port}");
 
@@ -194,6 +188,44 @@ mod imp {
         Ok((child, backend))
     }
 
+    /// Read the ready line, draining both streams from the moment of spawn.
+    ///
+    /// stderr is drained on its own task from the start: a backend that writes
+    /// more than a pipe's worth before it is ready would otherwise block forever
+    /// and never print the line we are waiting for.
+    pub(super) async fn announce(child: &mut Child, log: &Arc<BackendLog>) -> Result<u16, String> {
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(backend_log::drain(stderr, Arc::clone(log)));
+        }
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "failed to capture backend stdout".to_string())?;
+        let mut lines = BufReader::new(stdout).lines();
+
+        let port = tokio::time::timeout(Duration::from_secs(90), async {
+            while let Ok(Some(line)) = lines.next_line().await {
+                log.push(&line);
+
+                if let Some(port) = parse_ready_port(&line) {
+                    return Some(port);
+                }
+            }
+            None
+        })
+        .await
+        .map_err(|_| "timed out waiting for the backend to announce its port".to_string())?
+        .ok_or_else(|| "backend exited before announcing a port".to_string())?;
+
+        let rest = lines.into_inner();
+        let log = Arc::clone(log);
+
+        tokio::spawn(async move { backend_log::drain(rest, log).await });
+
+        Ok(port)
+    }
+
     /// Replace whatever child is held with a fresh one and publish its token
     /// for leases. The caller reports the outcome to the tunnel book.
     pub async fn respawn(
@@ -203,7 +235,7 @@ mod imp {
     ) -> Result<LocalBackend, TunnelError> {
         kill(app, state).await;
 
-        match start(profile).await {
+        match start(profile, &state.log).await {
             Ok((child, backend)) => {
                 let serial = state
                     .serial
@@ -279,7 +311,12 @@ mod imp {
                 }
 
                 drop(guard);
-                log::warn!("[tunnel] the local backend exited on its own");
+                log::warn!(
+                    "{}",
+                    state
+                        .log
+                        .with_tail("[tunnel] the local backend exited on its own")
+                );
                 crate::tunnels::on_dead(&app, LOCAL_SLOT);
 
                 return;
@@ -523,6 +560,31 @@ pub async fn local_backend_kill() -> Result<(), String> {
 #[cfg(all(test, desktop))]
 mod tests {
     use super::imp::parse_ready_port;
+
+    /// A backend that writes a megabyte to stderr before it is ready must still
+    /// be seen as ready: nobody reading stderr blocks it on a full pipe.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_chatty_backend_still_announces_its_port() {
+        let mut child = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg("yes 'some backend noise on stderr' | head -c 1048576 >&2; echo HERMES_BACKEND_READY port=4321")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("sh runs");
+        let log = std::sync::Arc::new(crate::backend_log::BackendLog::new(None));
+
+        let port = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            super::imp::announce(&mut child, &log),
+        )
+        .await
+        .expect("the ready line arrives while stderr is drained");
+
+        assert_eq!(port, Ok(4321));
+    }
 
     #[test]
     fn parses_backend_and_dashboard_ready_lines() {

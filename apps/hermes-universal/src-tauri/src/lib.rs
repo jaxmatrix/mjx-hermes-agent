@@ -13,6 +13,8 @@
 mod app_state;
 mod appearance;
 mod artifact;
+#[cfg(desktop)]
+mod backend_log;
 mod background;
 mod browser;
 mod cloud;
