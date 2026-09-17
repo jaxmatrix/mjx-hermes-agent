@@ -11,7 +11,7 @@ import { setCronJobs } from '@/store/cron'
 import { closeGateway } from '@/store/gateway'
 import type { Connection, GatewayMode } from '@/store/gateway-config'
 import { dialSavedTarget, type GatewayTarget, loadGatewayTarget } from '@/store/gateway-restore'
-import { closeAllSecondaries } from '@/store/gateway-secondaries'
+import { closeAllSecondaries, releaseParkedTunnels } from '@/store/gateway-secondaries'
 import { $gatewayMode, $gatewaySwitching } from '@/store/gateway-switch'
 import { resetLiveRuntimeTracking } from '@/store/live-session-status'
 import { resetLiveSync } from '@/store/live-sync'
@@ -308,6 +308,8 @@ export async function softSwitchGateway(mode: GatewayMode, dial: () => Promise<v
 
     throw err
   } finally {
+    // After the dial: a tunnel the new connection now holds as primary survives.
+    releaseParkedTunnels()
     $sessionsLoading.set(false)
     // Imperative guard down before the reactive one, so the root gates never un-gate
     // while the reconnect supervisor is still suspended.

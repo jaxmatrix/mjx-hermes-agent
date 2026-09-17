@@ -22,6 +22,7 @@ vi.mock('@/store/local-backend', () => ({
   stopLocalBackend: vi.fn().mockResolvedValue(undefined)
 }))
 vi.mock('@/store/ssh-backend', () => ({ disconnectSsh: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('@/store/gateway-secondaries', () => ({ closeAllSecondaries: vi.fn(), releaseParkedTunnels: vi.fn() }))
 vi.mock('@/store/chat', () => ({ resetChat: vi.fn() }))
 vi.mock('@/store/cron', () => ({ setCronJobs: vi.fn() }))
 vi.mock('@/store/workspace-events', () => ({ resetWorkspaceCwd: vi.fn() }))
@@ -74,6 +75,7 @@ import { $connection, beginGatewaySwitch, disconnect, endGatewaySwitch } from '@
 import { closeGateway } from '@/store/gateway'
 import type { Connection } from '@/store/gateway-config'
 import { dialSavedTarget, type GatewayTarget, loadGatewayTarget } from '@/store/gateway-restore'
+import { closeAllSecondaries, releaseParkedTunnels } from '@/store/gateway-secondaries'
 import { killLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import { notify, notifyError } from '@/store/notifications'
 import { $projectTree } from '@/store/project-scope'
@@ -315,6 +317,16 @@ describe('gateway soft switch', () => {
     // A release, not the kill: a background tunnel may still be riding it.
     expect(stopLocalBackend).toHaveBeenCalledOnce()
     expect(killLocalBackend).not.toHaveBeenCalled()
+  })
+
+  it("keeps the secondaries' tunnel holds until the new dial has adopted them", async () => {
+    const dial = vi.fn().mockResolvedValue(undefined)
+
+    await softSwitchGateway('ssh', dial)
+
+    expect(vi.mocked(closeAllSecondaries).mock.invocationCallOrder[0]).toBeLessThan(dial.mock.invocationCallOrder[0])
+    expect(releaseParkedTunnels).toHaveBeenCalledOnce()
+    expect(dial.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(releaseParkedTunnels).mock.invocationCallOrder[0])
   })
 
   it('leaves a remote backend alone', async () => {

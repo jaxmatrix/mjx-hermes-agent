@@ -116,7 +116,10 @@ function armReap(secondary: Secondary): void {
   }, IDLE_REAP_MS)
 }
 
-function close(secondary: Secondary): void {
+/** Tunnel holds kept across a gateway switch, released once it settles. */
+const parked: TunnelLease[] = []
+
+function close(secondary: Secondary, park = false): void {
   if (secondary.reaper) {
     clearTimeout(secondary.reaper)
   }
@@ -127,7 +130,13 @@ function close(secondary: Secondary): void {
   }
 
   secondary.client.close()
-  secondary.tunnel?.release()
+
+  if (park && secondary.tunnel) {
+    parked.push(secondary.tunnel)
+  } else {
+    secondary.tunnel?.release()
+  }
+
   secondary.tunnel = null
 }
 
@@ -261,7 +270,17 @@ export function releaseSecondary(lease: SecondaryLease): void {
  */
 export function closeAllSecondaries(): void {
   for (const secondary of [...live.values()]) {
-    close(secondary)
+    // The tunnel hold outlives the socket until the switch settles: switching
+    // ONTO a connection a secondary was riding must adopt its tunnel, not watch
+    // it torn down a moment before the new dial (MJXHRM-592).
+    close(secondary, true)
+  }
+}
+
+/** Let go of the tunnel holds `closeAllSecondaries` kept across a switch. */
+export function releaseParkedTunnels(): void {
+  for (const tunnel of parked.splice(0)) {
+    tunnel.release()
   }
 }
 
@@ -269,6 +288,7 @@ export const __testing = {
   liveScopeKeys: (): string[] => [...live.keys()],
   reset: (): void => {
     closeAllSecondaries()
+    releaseParkedTunnels()
     listeners.clear()
   }
 }

@@ -51,6 +51,7 @@ import {
   IDLE_REAP_MS,
   leaseSecondary,
   MAX_SECONDARIES,
+  releaseParkedTunnels,
   releaseSecondary
 } from './gateway-secondaries'
 
@@ -148,6 +149,12 @@ describe('leaseSecondary', () => {
 
     await leaseSecondary('conn:ssh1::default', 'ssh1')
     closeAllSecondaries()
+
+    // A switch keeps the hold until its own dial has adopted the tunnel.
+    expect(closeClient).toHaveBeenCalledTimes(2)
+    expect(release).toHaveBeenCalledTimes(1)
+
+    releaseParkedTunnels()
 
     expect(release).toHaveBeenCalledTimes(2)
   })
