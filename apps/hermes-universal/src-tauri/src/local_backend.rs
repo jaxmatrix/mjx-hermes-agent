@@ -1049,6 +1049,25 @@ mod tests {
         assert_eq!(refused.err(), Some(SpawnRefusal::Closed));
         assert!(!spawned.load(Ordering::SeqCst), "the spawn never ran");
         assert!(state.lock().await.entry.is_none());
+
+        // Nor for a dial the slot no longer waits on.
+        let state = Mutex::new(Local::default());
+        let refused = spawn_recorded(
+            &state,
+            1,
+            || false,
+            &CancellationToken::new(),
+            &|_| {},
+            || {
+                spawned.store(true, Ordering::SeqCst);
+                program("sleep", &["60"])
+            },
+            &log(),
+        )
+        .await;
+
+        assert_eq!(refused.err(), Some(SpawnRefusal::NotCurrent));
+        assert!(!spawned.load(Ordering::SeqCst), "the spawn never ran");
     }
 
     #[cfg(unix)]
