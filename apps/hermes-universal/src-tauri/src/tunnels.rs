@@ -2615,6 +2615,22 @@ mod tests {
         assert_eq!(book.release_primary(&key), Some(Action::None));
         assert!(book.slot(&key).is_some(), "the lease keeps the slot");
 
+        // 5b. The same, when the newer owner CREATED the key rather than
+        // retargeting it: a lease re-created it for another target, so the
+        // displaced primary still fails loudly and resolves its own UI.
+        let mut book = pages();
+        let (key, own) = book
+            .hold_primary("conn:a::default", a.clone(), false, false, "p")
+            .unwrap();
+
+        book.remove_slot(&key);
+        acquire(&mut book, &key, moved.clone(), lease("l4"));
+
+        assert_eq!(
+            book.join(&key, serial_of(&own), &target(&a), true),
+            Verdict::Fail
+        );
+
         // Local never reaches Quiet: it has one constant fingerprint, so a
         // re-created local key is always a Join for the caller it displaced.
         let mut book = pages();
