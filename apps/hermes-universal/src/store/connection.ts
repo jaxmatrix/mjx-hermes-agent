@@ -60,6 +60,7 @@ import {
   cancelSsh,
   connectSshBackend,
   disconnectSsh,
+  isSshError,
   newAttemptId,
   onSshDisconnected,
   onSshProgress,
@@ -502,6 +503,14 @@ export async function connectSsh(
     // serves every profile of a connection. An older core keyed it per profile.
     await watchSshTunnel(backend.scope ?? sshScopeOf(hint?.dialConnectionId ?? null, profile))
   } catch (err) {
+    // `superseded`: the row was retargeted mid-dial, so a NEWER attempt owns
+    // this connection and is publishing its own result (MJXHRM-592). Tearing
+    // down here would release the primary hold under that attempt and cancel
+    // its dial, so this one only reports upwards.
+    if (isSshError(err) && err.kind === 'superseded') {
+      throw err
+    }
+
     // Drop the tunnel so a failed connect does not leave one open. The remote
     // backend is deliberately left alone — Rust already reaped it if the failure
     // was its own.

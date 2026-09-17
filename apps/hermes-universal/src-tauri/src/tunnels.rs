@@ -356,6 +356,15 @@ impl SlotBook {
         serial <= slot.superseded_max || slot.dial.as_ref().is_some_and(|dial| dial.serial > serial)
     }
 
+    /// Whether dial `serial` asked for a target this slot no longer serves: a
+    /// retarget moved the slot's origin past it. Its caller is neither joined
+    /// (that would adopt another host's session) nor allowed to tear the slot
+    /// down — the newer attempt owns the connection now. The exact complement of
+    /// the origin guard in `superseded`.
+    pub fn retargeted(&self, key: &str, serial: u64) -> bool {
+        self.slots.get(key).is_some_and(|slot| serial < slot.origin)
+    }
+
     /// What an existing slot does for a request (a lease or the primary).
     fn request(
         &mut self,
@@ -1167,6 +1176,12 @@ pub(crate) fn join_if_superseded(
     })
 }
 
+/// Whether dial `serial` at `key` asked for a target the slot has since been
+/// retargeted away from.
+pub(crate) fn retargeted(app: &AppHandle, key: &str, serial: u64) -> bool {
+    locked(app, |inner| inner.book.retargeted(key, serial))
+}
+
 /// Wait for a single-flight dial to settle.
 pub(crate) async fn wait(
     mut rx: watch::Receiver<Outcome>,
@@ -1936,6 +1951,13 @@ mod tests {
         }
     }
 
+    fn token_serial(book: &SlotBook, key: &str) -> u64 {
+        book.slot(key)
+            .and_then(|slot| slot.dial.as_ref())
+            .expect("a dial is in flight")
+            .serial
+    }
+
     fn token(book: &SlotBook, key: &str) -> tokio_util::sync::CancellationToken {
         book.slot(key)
             .and_then(|slot| slot.dial.as_ref())
@@ -2431,6 +2453,49 @@ mod tests {
     }
 
     #[test]
+    fn i28_a_retargeted_dial_is_neither_joined_nor_allowed_to_tear_down() {
+        let mut book = pages();
+        let (key, old) = book
+            .hold_primary("conn:a::default", ssh("a"), false, false, "p")
+            .unwrap();
+
+        assert!(!book.retargeted(&key, serial_of(&old)), "its own target");
+
+        let mut moved = ssh("a");
+
+        moved.fingerprint = ssh_fingerprint("deploy", "box2", 22, None, None);
+
+        let (_, retarget) = book.hold_primary(&key, moved, true, false, "p2").unwrap();
+
+        assert!(book.retargeted(&key, serial_of(&old)));
+        assert!(
+            !book.superseded(&key, serial_of(&old)),
+            "a retargeted caller is never joined"
+        );
+        assert!(
+            !book.retargeted(&key, serial_of(&retarget)),
+            "the current dial"
+        );
+
+        // Removed, re-created, and drained: there is no slot to be stale against.
+        book.remove_slot(&key);
+
+        assert!(!book.retargeted(&key, serial_of(&old)));
+
+        let (_, fresh) = acquire(&mut book, &key, ssh("a"), lease("l1"));
+
+        assert!(!book.retargeted(&key, serial_of(&fresh)));
+        assert!(
+            book.retargeted(&key, serial_of(&old)),
+            "a slot re-created at the key is not this caller's either"
+        );
+
+        book.quit();
+
+        assert!(!book.retargeted(&key, serial_of(&old)));
+    }
+
+    #[test]
     fn i27_a_death_report_changes_nothing_but_a_ready_slot() {
         let mut book = pages();
 
@@ -2662,6 +2727,30 @@ mod tests {
         m.acquire(&a, ssh("a"), lease("l4"));
         m.book.release_primary(&a);
         m.check();
+
+        // A primary dial the book retargets: neither joined nor released, and
+        // the retarget's own dial keeps a live token.
+        let (r, before) = m
+            .book
+            .hold_primary("conn:r::default", ssh("r"), false, false, "p")
+            .unwrap();
+
+        m.check();
+
+        let mut moved = ssh("r");
+
+        moved.fingerprint = ssh_fingerprint("deploy", "box9", 22, None, None);
+
+        let (_, after) = m.book.hold_primary(&r, moved, true, false, "p2").unwrap();
+
+        m.check();
+        assert!(m.book.retargeted(&r, serial_of(&before)));
+        assert!(!m.book.superseded(&r, serial_of(&before)));
+        assert!(
+            !token(&m.book, &r).is_cancelled(),
+            "the retarget's dial runs"
+        );
+        assert_eq!(serial_of(&after), token_serial(&m.book, &r));
 
         // A lease retargets a slot whose dial is in flight.
         let (d, _) = m.acquire("conn:d::default", ssh("d"), lease("d1"));

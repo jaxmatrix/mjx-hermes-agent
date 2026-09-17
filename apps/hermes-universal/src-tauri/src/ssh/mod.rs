@@ -1057,7 +1057,14 @@ pub async fn ssh_connect(
     // its JS would release the hold under the successor. Wait for that dial and
     // adopt its session. Only a removal or quit fails the caller.
     let Some(successor) = crate::tunnels::join_if_superseded(&app, &dial.key, dial.serial) else {
-        return Err(error);
+        // A retarget: this dial asked for a target the slot no longer serves, so
+        // it cannot adopt the successor's session either. It fails as
+        // `superseded`, which tells JS a newer attempt owns this connection and
+        // that tearing anything down would take the retarget's own dial with it.
+        return Err(retarget_error(
+            error,
+            crate::tunnels::retargeted(&app, &dial.key, dial.serial),
+        ));
     };
 
     crate::tunnels::wait(successor)
@@ -1065,6 +1072,16 @@ pub async fn ssh_connect(
         .map_err(|e| SshError::new(ssh_kind_of(e.kind), e.message))?;
 
     live_connection(&state, &dial.key).await
+}
+
+/// A failure whose dial was retargeted is reported as `Superseded`, keeping the
+/// message it failed with. Every other failure is its own.
+fn retarget_error(error: SshError, retargeted: bool) -> SshError {
+    if retargeted {
+        SshError::new(SshErrorKind::Superseded, error.message)
+    } else {
+        error
+    }
 }
 
 fn cancelled_error() -> SshError {
@@ -2122,6 +2139,39 @@ mod tests {
         // `ssh_cancel` for the id still reaches the newer attempt.
         cancel_in(&state, "tunnel-box").await;
         assert!(newer.cancel.is_cancelled());
+    }
+
+    #[test]
+    fn a_retargeted_dial_fails_as_superseded_whatever_it_failed_on() {
+        let kept = |error: SshError| (error.kind, error.message);
+
+        assert_eq!(
+            kept(retarget_error(cancelled_error(), true)),
+            (
+                SshErrorKind::Superseded,
+                "The connection attempt was cancelled.".to_string()
+            )
+        );
+        assert_eq!(
+            kept(retarget_error(
+                SshError::new(SshErrorKind::AuthFailed, "wrong passphrase"),
+                true
+            )),
+            (SshErrorKind::Superseded, "wrong passphrase".to_string())
+        );
+
+        // Not retargeted: the failure is the caller's own.
+        assert_eq!(
+            kept(retarget_error(
+                SshError::new(SshErrorKind::AuthFailed, "wrong passphrase"),
+                false
+            )),
+            (SshErrorKind::AuthFailed, "wrong passphrase".to_string())
+        );
+        assert_eq!(
+            kept(retarget_error(cancelled_error(), false)).0,
+            SshErrorKind::Cancelled
+        );
     }
 
     #[tokio::test]

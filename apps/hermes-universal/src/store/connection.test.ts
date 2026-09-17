@@ -25,6 +25,7 @@ vi.mock('@/store/gateway', async () => {
 vi.mock('@/lib/secure-store', () => ({
   saveSecrets: vi.fn().mockResolvedValue(true),
   loadSecrets: vi.fn().mockResolvedValue({ token: 'T', password: 'P' }),
+  loadSshSecrets: vi.fn().mockResolvedValue({}),
   clearSecrets: vi.fn().mockResolvedValue(undefined)
 }))
 vi.mock('@/lib/session-persist', () => ({
@@ -38,6 +39,25 @@ vi.mock('@/store/local-backend', () => ({
   spawnLocalBackend: vi.fn(),
   stopLocalBackend: vi.fn().mockResolvedValue(undefined)
 }))
+vi.mock('@/store/installation-id', () => ({ getInstallationId: vi.fn().mockResolvedValue('i'.repeat(32)) }))
+vi.mock('@/store/ssh-backend', async () => {
+  const { atom } = await import('@/store/atom')
+
+  return {
+    $sshPrompt: atom(null),
+    $sshStep: atom(null),
+    attachSshPrompts: vi.fn().mockResolvedValue(() => {}),
+    cancelSsh: vi.fn().mockResolvedValue(undefined),
+    connectSshBackend: vi.fn(),
+    disconnectSsh: vi.fn().mockResolvedValue(undefined),
+    isSshError: (value: unknown) =>
+      typeof value === 'object' && value !== null && typeof (value as { kind?: unknown }).kind === 'string',
+    newAttemptId: () => 'attempt-1',
+    onSshDisconnected: vi.fn().mockResolvedValue(() => {}),
+    onSshProgress: vi.fn().mockResolvedValue(() => {}),
+    sshScopeOf: (id: null | string, profile: null | string) => `${id ?? ''}::${profile ?? ''}`
+  }
+})
 
 import {
   fetchAuthProviders,
@@ -52,6 +72,7 @@ import { clearSecrets, saveSecrets } from '@/lib/secure-store'
 import { clearSessionJar, suspendSessionCookiePersistence } from '@/lib/session-persist'
 import { $gatewayState, connectGateway } from '@/store/gateway'
 import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
+import { connectSshBackend, disconnectSsh } from '@/store/ssh-backend'
 import { httpRequest } from '@/transport/http'
 
 import {
@@ -62,6 +83,7 @@ import {
   connect,
   connectCloud,
   connectLocal,
+  connectSsh,
   disconnect,
   endGatewaySwitch,
   loadSavedLogin,
@@ -208,6 +230,36 @@ describe('connectLocal — desktop local spawn', () => {
     vi.mocked(stopLocalBackend).mockClear()
     disconnect()
     expect(stopLocalBackend).toHaveBeenCalled()
+  })
+})
+
+// MJXHRM-592: the row was retargeted mid-dial, so a NEWER attempt owns this
+// connection. Tearing down here would release the hold under it.
+describe('connectSsh — a superseded dial', () => {
+  const target = { host: 'box', port: 22, user: 'deploy', profile: null }
+
+  it('leaves the connection alone and never disconnects', async () => {
+    $connection.set({ baseUrl: 'http://127.0.0.1:7001', mode: 'ssh', authMode: 'token', token: 'NEWER' })
+    vi.mocked(connectSshBackend).mockRejectedValue({
+      kind: 'superseded',
+      message: 'A newer connection attempt replaced this one.'
+    })
+
+    await expect(connectSsh(target)).rejects.toMatchObject({ kind: 'superseded' })
+
+    expect(disconnectSsh).not.toHaveBeenCalled()
+    expect($connection.get()).toMatchObject({ baseUrl: 'http://127.0.0.1:7001', token: 'NEWER' })
+    expect($connectionError.get()).toBeNull()
+  })
+
+  it('still tears down for any other failure', async () => {
+    vi.mocked(connectSshBackend).mockRejectedValue({ kind: 'auth-failed', message: 'wrong passphrase' })
+
+    await expect(connectSsh(target)).rejects.toMatchObject({ kind: 'auth-failed' })
+
+    expect(disconnectSsh).toHaveBeenCalled()
+    expect($connection.get()).toBeNull()
+    expect($connectionError.get()).toBe('wrong passphrase')
   })
 })
 
