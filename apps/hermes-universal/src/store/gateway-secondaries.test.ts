@@ -181,13 +181,13 @@ describe('leaseSecondary', () => {
     expect(__testing.liveScopeKeys()).toEqual([])
 
     await leaseSecondary('conn:ssh1::default', 'ssh1')
-    closeAllSecondaries()
+    const revision = closeAllSecondaries()
 
     // A switch keeps the hold until its own dial has adopted the tunnel.
     expect(closeClient).toHaveBeenCalledTimes(2)
     expect(release).toHaveBeenCalledTimes(1)
 
-    releaseParkedTunnels()
+    releaseParkedTunnels(revision)
 
     expect(release).toHaveBeenCalledTimes(2)
   })
@@ -264,7 +264,7 @@ describe('opening a secondary', () => {
     const second = leaseSecondary('conn:ssh1::default', 'ssh1')
 
     await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1))
-    closeAllSecondaries()
+    const revision = closeAllSecondaries()
     dial.resolve()
 
     await expect(first).rejects.toMatchObject({ kind: 'switching' })
@@ -272,8 +272,76 @@ describe('opening a secondary', () => {
     expect(__testing.liveScopeKeys()).toEqual([])
     // Parked like any hold a switch closed, not dropped under the new dial.
     expect(release).not.toHaveBeenCalled()
-    releaseParkedTunnels()
+    releaseParkedTunnels(revision)
     expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  it('parks nothing once the switch that interrupted the open has settled', async () => {
+    const tunnel = deferred<ReturnType<typeof fakeTunnel>['lease']>()
+    const { lease, release } = fakeTunnel()
+
+    invoke.mockResolvedValue({ kind: 'ssh' })
+    acquireTunnel.mockReturnValue(tunnel.promise)
+
+    const opening = leaseSecondary('conn:ssh1::default', 'ssh1')
+
+    await vi.waitFor(() => expect(acquireTunnel).toHaveBeenCalledTimes(1))
+
+    // The switch begins and settles while the tunnel is still being acquired.
+    releaseParkedTunnels(closeAllSecondaries())
+    tunnel.resolve(lease)
+
+    await expect(opening).rejects.toMatchObject({ kind: 'switching' })
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(__testing.parkedCount()).toBe(0)
+  })
+
+  it("keeps a newer switch's parked hold when an older switch settles", async () => {
+    const tunnel = deferred<ReturnType<typeof fakeTunnel>['lease']>()
+    const { lease, release } = fakeTunnel()
+
+    invoke.mockResolvedValue({ kind: 'ssh' })
+    acquireTunnel.mockReturnValue(tunnel.promise)
+
+    const opening = leaseSecondary('conn:ssh1::default', 'ssh1')
+
+    await vi.waitFor(() => expect(acquireTunnel).toHaveBeenCalledTimes(1))
+
+    const older = closeAllSecondaries()
+    const newer = closeAllSecondaries()
+
+    // The older switch settles; the newer is still dialling when the open lands.
+    releaseParkedTunnels(older)
+    tunnel.resolve(lease)
+    await expect(opening).rejects.toMatchObject({ kind: 'switching' })
+
+    expect(release).not.toHaveBeenCalled()
+    expect(__testing.parkedCount()).toBe(1)
+
+    // A repeated older settle still leaves the newer switch's hold alone.
+    releaseParkedTunnels(older)
+    expect(release).not.toHaveBeenCalled()
+
+    releaseParkedTunnels(newer)
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(__testing.parkedCount()).toBe(0)
+  })
+
+  it('leaves no open behind a test reset', async () => {
+    const resolved = deferred<{ kind: string }>()
+
+    invoke.mockReturnValueOnce(resolved.promise)
+
+    // A previous test's open, still waiting on `connections_resolve`.
+    void leaseSecondary('conn:a::default', 'a').catch(() => {})
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1))
+
+    __testing.reset()
+
+    await leaseSecondary('conn:a::default', 'a')
+
+    expect(invoke).toHaveBeenCalledTimes(2)
+    resolved.resolve({ kind: 'remote' })
   })
 })
 

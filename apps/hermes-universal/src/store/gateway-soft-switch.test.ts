@@ -22,7 +22,7 @@ vi.mock('@/store/local-backend', () => ({
   stopLocalBackend: vi.fn().mockResolvedValue(undefined)
 }))
 vi.mock('@/store/ssh-backend', () => ({ disconnectSsh: vi.fn().mockResolvedValue(undefined) }))
-vi.mock('@/store/gateway-secondaries', () => ({ closeAllSecondaries: vi.fn(), releaseParkedTunnels: vi.fn() }))
+vi.mock('@/store/gateway-secondaries', () => ({ closeAllSecondaries: vi.fn(() => 7), releaseParkedTunnels: vi.fn() }))
 vi.mock('@/store/chat', () => ({ resetChat: vi.fn() }))
 vi.mock('@/store/cron', () => ({ setCronJobs: vi.fn() }))
 vi.mock('@/store/workspace-events', () => ({ resetWorkspaceCwd: vi.fn() }))
@@ -334,7 +334,8 @@ describe('gateway soft switch', () => {
     finishDial()
     await switching
 
-    expect(releaseParkedTunnels).toHaveBeenCalledOnce()
+    // The revision this switch began, not whatever is newest by now.
+    expect(releaseParkedTunnels).toHaveBeenCalledExactlyOnceWith(7)
   })
 
   it('leaves a remote backend alone', async () => {

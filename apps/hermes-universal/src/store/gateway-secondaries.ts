@@ -69,6 +69,8 @@ const live = new Map<string, Secondary>()
 const opening = new Map<string, Promise<Secondary>>()
 /** Bumped by `closeAllSecondaries`: an open that began before it is stale. */
 let openRevision = 0
+/** The newest switch that has settled: nothing it closed stays parked. */
+let settledRevision = 0
 const listeners = new Map<string, Set<(event: GatewayEvent) => void>>()
 
 /**
@@ -125,10 +127,23 @@ function armReap(secondary: Secondary): void {
   }, IDLE_REAP_MS)
 }
 
-/** Tunnel holds kept across a gateway switch, released once it settles. */
-const parked: TunnelLease[] = []
+/** Tunnel holds kept across a gateway switch, tagged with that switch's revision. */
+const parked: { revision: number; tunnel: TunnelLease }[] = []
 
-function close(secondary: Secondary, park = false): void {
+/**
+ * Keep a hold a switch closed until that switch settles — unless it already
+ * has, in which case nothing would ever release it.
+ */
+function park(tunnel: TunnelLease, revision: number): void {
+  if (settledRevision < revision) {
+    parked.push({ revision, tunnel })
+  } else {
+    tunnel.release()
+  }
+}
+
+/** `parkAt`: the revision of the switch that closed it, when a switch did. */
+function close(secondary: Secondary, parkAt?: number): void {
   if (secondary.reaper) {
     clearTimeout(secondary.reaper)
     secondary.reaper = null
@@ -145,8 +160,8 @@ function close(secondary: Secondary, park = false): void {
 
   secondary.client.close()
 
-  if (park && secondary.tunnel) {
-    parked.push(secondary.tunnel)
+  if (parkAt !== undefined && secondary.tunnel) {
+    park(secondary.tunnel, parkAt)
   } else {
     secondary.tunnel?.release()
   }
@@ -247,7 +262,7 @@ async function openSecondary(scopeKey: string, connectionId: string): Promise<Se
 
   if (switched()) {
     if (tunnel) {
-      parked.push(tunnel)
+      park(tunnel, openRevision)
     }
 
     throw new SessionRouteError('switching', scopeKey)
@@ -320,7 +335,7 @@ async function openSecondary(scopeKey: string, connectionId: string): Promise<Se
 
   if (switched() || secondary.stale) {
     // Parked only when a switch caused it, as `closeAllSecondaries` parks.
-    close(secondary, switched())
+    close(secondary, switched() ? openRevision : undefined)
 
     throw new SessionRouteError('switching', scopeKey)
   }
@@ -375,30 +390,51 @@ export function releaseSecondary(lease: SecondaryLease): void {
  * these sockets belong to the source we are LEAVING, and a credential attached
  * per base URL in Rust has just been re-pointed.
  */
-export function closeAllSecondaries(): void {
+export function closeAllSecondaries(): number {
   // Opens still in flight belong to the source being left too.
   openRevision += 1
+
+  const revision = openRevision
 
   for (const secondary of [...live.values()]) {
     // The tunnel hold outlives the socket until the switch settles: switching
     // ONTO a connection a secondary was riding must adopt its tunnel, not watch
     // it torn down a moment before the new dial (MJXHRM-592).
-    close(secondary, true)
+    close(secondary, revision)
   }
+
+  return revision
 }
 
-/** Let go of the tunnel holds `closeAllSecondaries` kept across a switch. */
-export function releaseParkedTunnels(): void {
-  for (const tunnel of parked.splice(0)) {
-    tunnel.release()
+/**
+ * The switch that began at `revision` settled: let go of every hold parked by
+ * it or an earlier switch, and park nothing it closed from here on. A newer
+ * switch still in flight keeps its own.
+ */
+export function releaseParkedTunnels(revision: number): void {
+  settledRevision = Math.max(settledRevision, revision)
+
+  for (let index = parked.length - 1; index >= 0; index -= 1) {
+    const entry = parked[index]
+
+    if (entry && entry.revision <= revision) {
+      parked.splice(index, 1)
+      entry.tunnel.release()
+    }
   }
 }
 
 export const __testing = {
   liveScopeKeys: (): string[] => [...live.keys()],
+  parkedCount: (): number => parked.length,
+  /**
+   * Every module map back to empty. The revisions end settled (settled = open),
+   * as on a fresh load, but never go back to 0: an open a previous test left
+   * pending captured an old revision, and must still see that it was switched.
+   */
   reset: (): void => {
-    closeAllSecondaries()
-    releaseParkedTunnels()
+    releaseParkedTunnels(closeAllSecondaries())
+    opening.clear()
     listeners.clear()
   }
 }
