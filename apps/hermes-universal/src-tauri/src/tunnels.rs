@@ -22,7 +22,7 @@
 //! request supersedes a background dial: cancel, drain, redial (upstream
 //! desktop's `apps/desktop/electron/ssh-bootstrap-coordinator.ts`).
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -180,9 +180,14 @@ pub struct Slot {
     pub dial: Option<InFlight>,
     /// When the slot lost its last holder, while it lingers.
     pub unheld_since: Option<u64>,
-    /// Dials a newer dial superseded. Their callers join the successor instead
-    /// of failing; the set lives and dies with the slot.
-    pub superseded: BTreeSet<u64>,
+    /// The serial this slot's dials start from: its first dial, or the retarget
+    /// that made it a different backend. A caller from before it belongs to a
+    /// slot, or a target, that is gone, and is never told it was superseded.
+    pub origin: u64,
+    /// The highest serial a newer dial of this slot superseded. One number, not
+    /// a set: serials are globally monotonic, so every dial of this slot at or
+    /// below it has been replaced. Dies with the slot.
+    pub superseded_max: u64,
 }
 
 impl Slot {
@@ -198,7 +203,8 @@ impl Slot {
             failure: None,
             dial: None,
             unheld_since: None,
-            superseded: BTreeSet::new(),
+            origin: 0,
+            superseded_max: 0,
         }
     }
 
@@ -301,6 +307,11 @@ impl SlotBook {
             .expect("a slot being dialled exists");
 
         slot.phase = Phase::Connecting;
+
+        if slot.origin == 0 {
+            slot.origin = serial;
+        }
+
         slot.dial = Some(InFlight {
             serial,
             interactive,
@@ -318,20 +329,31 @@ impl SlotBook {
 
         if let Some(previous) = &previous {
             previous.cancel.cancel();
-            slot.superseded.insert(previous.serial);
+            slot.superseded_max = slot.superseded_max.max(previous.serial);
         }
 
         previous
     }
 
-    /// Whether dial `serial` at `key` was superseded by a newer dial of the same
-    /// slot — so its caller waits for that dial instead of failing. False once
-    /// the slot is removed (or quit drained it), and on a slot re-created at the
-    /// key.
+    /// Whether a newer dial of the same slot took dial `serial`'s place — so its
+    /// caller waits for that dial instead of failing.
+    ///
+    /// True when the slot superseded it, and when the slot is dialling something
+    /// newer: a dial that failed on its own a moment before a newer one began
+    /// was never recorded, and failing its caller would remove the slot and
+    /// cancel that newer dial. False once the slot is removed (or quit drained
+    /// it), on a slot re-created at the key, and for a caller from before a
+    /// retarget — that dial asked for a different backend.
     pub fn superseded(&self, key: &str, serial: u64) -> bool {
-        self.slots
-            .get(key)
-            .is_some_and(|slot| slot.superseded.contains(&serial))
+        let Some(slot) = self.slots.get(key) else {
+            return false;
+        };
+
+        if serial < slot.origin {
+            return false;
+        }
+
+        serial <= slot.superseded_max || slot.dial.as_ref().is_some_and(|dial| dial.serial > serial)
     }
 
     /// What an existing slot does for a request (a lease or the primary).
@@ -356,6 +378,13 @@ impl SlotBook {
             slot.failure = None;
 
             let serial = self.begin(key, interactive, attempt_id);
+
+            // A caller from before the retarget asked for the OLD backend: it
+            // must fail rather than adopt a session to a different host.
+            self.slots
+                .get_mut(key)
+                .expect("the retargeted slot exists")
+                .origin = serial;
 
             return Action::Supersede {
                 serial,
@@ -1785,6 +1814,11 @@ pub async fn tunnel_acquire(
         }
     };
 
+    // Invariant 26 for a lease: this caller never fails a dial that a newer one
+    // replaced, because it waits on the SLOT's signal — subscribed in `begun`,
+    // under the same book section that began the dial — and only a current dial
+    // ever settles that signal. A refactor that returned this dial's own result
+    // instead would have to call `join_if_superseded`, as the primary paths do.
     wait(rx).await
 }
 
@@ -2334,30 +2368,66 @@ mod tests {
         assert!(book.superseded(&a, serial_of(&background)));
         assert!(!book.superseded(&a, serial_of(&connect)));
 
-        // A retarget.
+        // A retarget is NOT a supersede: that caller asked for a different
+        // backend, and joining would hand it a session to another host.
         let (b, old) = acquire(&mut book, "conn:b::default", ssh("b"), lease("l3"));
         let mut moved = ssh("b");
 
         moved.fingerprint = ssh_fingerprint("deploy", "box2", 22, None, None);
-        acquire(&mut book, &b, moved, lease("l4"));
+        let (_, retargeted) = acquire(&mut book, &b, moved, lease("l4"));
 
-        assert!(book.superseded(&b, serial_of(&old)));
+        assert!(
+            !book.superseded(&b, serial_of(&old)),
+            "a retargeted caller fails"
+        );
+        assert!(!book.superseded(&b, serial_of(&retargeted)));
 
         // Removed, not superseded: the caller fails.
         book.remove_slot(&a);
 
         assert!(!book.superseded(&a, serial_of(&background)));
 
-        // A slot re-created at the key starts with a clean set.
+        // A slot re-created at the key answers for its own dials only.
         acquire(&mut book, &a, ssh("a"), lease("l5"));
 
         assert!(!book.superseded(&a, serial_of(&background)));
+
+        // A dial that failed on its own, then a newer dial: nothing recorded a
+        // supersede, and failing the caller would remove the slot and cancel
+        // that newer dial.
+        let (c, failed) = book
+            .hold_primary("conn:c::default", ssh("c"), false, false, "p")
+            .unwrap();
+
+        book.on_dial_result(&c, serial_of(&failed), Err(FailureKind::Transient));
+
+        assert!(
+            !book.superseded(&c, serial_of(&failed)),
+            "nothing newer yet"
+        );
+
+        let (_, newer) = book.hold_primary(&c, ssh("c"), false, false, "p2").unwrap();
+
+        assert!(book.superseded(&c, serial_of(&failed)));
+        assert!(!book.superseded(&c, serial_of(&newer)));
+
+        // However many restarts a slot lives through, it remembers one serial.
+        let restarts: Vec<Action> = (0..5)
+            .map(|n| book.restart(&c, &format!("restart-{n}")))
+            .collect();
+
+        assert_eq!(
+            book.slot(&c).map(|slot| slot.superseded_max),
+            Some(serial_of(&restarts[restarts.len() - 2]))
+        );
+        assert!(book.superseded(&c, serial_of(&failed)), "still superseded");
 
         // Quit drains every slot.
         book.quit();
 
         assert!(!book.superseded(&key, serial_of(&first)));
         assert!(!book.superseded(&b, serial_of(&old)));
+        assert!(!book.superseded(&c, serial_of(&failed)));
     }
 
     #[test]
@@ -2446,6 +2516,8 @@ mod tests {
     struct Ledger {
         issued: BTreeMap<u64, tokio_util::sync::CancellationToken>,
         settled: std::collections::BTreeSet<u64>,
+        /// Every serial the book has told us a newer dial superseded.
+        superseded: std::collections::BTreeSet<u64>,
     }
 
     struct Model {
@@ -2473,18 +2545,21 @@ mod tests {
                 })
                 .collect();
 
-            // 26: a superseded dial was cancelled when it was superseded.
-            for (key, slot) in &self.book.slots {
-                for serial in &slot.superseded {
-                    let token = self.ledger.issued.get(serial).unwrap_or_else(|| {
-                        panic!("{key}: superseded dial {serial} was never seen")
-                    });
-
-                    assert!(
-                        token.is_cancelled(),
-                        "{key}: superseded dial {serial} still runs"
-                    );
+            // 26: every dial the book superseded was cancelled when it was.
+            for slot in self.book.slots.values() {
+                if slot.superseded_max > 0 {
+                    self.ledger.superseded.insert(slot.superseded_max);
                 }
+            }
+
+            for serial in &self.ledger.superseded {
+                let token = self
+                    .ledger
+                    .issued
+                    .get(serial)
+                    .unwrap_or_else(|| panic!("superseded dial {serial} was never seen"));
+
+                assert!(token.is_cancelled(), "superseded dial {serial} still runs");
             }
 
             for (serial, token) in &self.ledger.issued {

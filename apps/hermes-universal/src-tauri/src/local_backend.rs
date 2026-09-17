@@ -658,6 +658,12 @@ mod imp {
                     Verdict::Replaced => return,
                     Verdict::Gone => {
                         drop(local);
+                        log::warn!(
+                            "{}",
+                            state.log.with_tail(
+                                "[tunnel] the local backend is gone without having been stopped"
+                            )
+                        );
                     }
                     Verdict::Died => {
                         if let Some(Entry::Running { backend, .. }) = local.entry.take() {
