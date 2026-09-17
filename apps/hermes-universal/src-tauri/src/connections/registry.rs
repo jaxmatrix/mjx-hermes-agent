@@ -1688,6 +1688,49 @@ mod tests {
         assert_eq!(merged.order, 0);
     }
 
+    /// MJXHRM-592: Connect keeps a prompt answer through `connections_save`, and
+    /// that save must not recycle the tunnel it just brought up.
+    #[test]
+    fn saving_only_an_ssh_secret_changes_no_dial_field() {
+        let input = ConnectionInput {
+            kind: ConnectionKind::Ssh,
+            label: "Box".to_string(),
+            host: Some("deploy@box:2222".to_string()),
+            key_path: Some("~/.ssh/id_ed25519".to_string()),
+            ..ConnectionInput::default()
+        };
+        let (stored, _) =
+            normalize_connection_input(&input, None, 0, &BTreeSet::new(), &BTreeSet::new())
+                .expect("stored");
+        let mut registry = Registry {
+            connections: vec![stored.clone()],
+            ..Registry::default()
+        };
+
+        // What Connect sends: the row as the registry view shows it, plus the answer.
+        let answer = ConnectionInput {
+            id: Some(stored.id.clone()),
+            kind: ConnectionKind::Ssh,
+            label: stored.label.clone(),
+            host: stored.host.clone(),
+            user: stored.user.clone(),
+            port: stored.port,
+            key_path: stored.key_path.clone(),
+            passphrase: Some("open sesame".to_string()),
+            ..ConnectionInput::default()
+        };
+        let (saved, _) = normalize_connection_input(
+            &answer,
+            Some(&stored),
+            0,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )
+        .expect("saved");
+
+        assert!(!merge_connection_input(&mut registry, saved).expect("merged"));
+    }
+
     #[test]
     fn label_only_edits_do_not_recycle_but_dial_edits_do() {
         let before = remote("a", "A", "http://gw", 0);
