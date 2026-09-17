@@ -57,6 +57,8 @@ interface Secondary {
   reaper: null | ReturnType<typeof setTimeout>
   /** Held for the secondary's life when the source is local or SSH (MJXHRM-592). */
   tunnel: null | TunnelLease
+  /** Undoes the tunnel subscriptions `close` must not leave behind. */
+  unsubscribe: (() => void)[]
 }
 
 const live = new Map<string, Secondary>()
@@ -70,10 +72,7 @@ const listeners = new Map<string, Set<(event: GatewayEvent) => void>>()
  * unregister. It exists because a secondary's events have to go SOMEWHERE and
  * rule 7 says the default is nowhere.
  */
-export function addConnectionEventListener(
-  connectionId: string,
-  handler: (event: GatewayEvent) => void
-): () => void {
+export function addConnectionEventListener(connectionId: string, handler: (event: GatewayEvent) => void): () => void {
   const held = listeners.get(connectionId) ?? new Set()
 
   held.add(handler)
@@ -125,6 +124,11 @@ const parked: TunnelLease[] = []
 function close(secondary: Secondary, park = false): void {
   if (secondary.reaper) {
     clearTimeout(secondary.reaper)
+    secondary.reaper = null
+  }
+
+  for (const off of secondary.unsubscribe.splice(0)) {
+    off()
   }
 
   // Only this secondary's own entry: a replacement may already sit at the key.
@@ -183,16 +187,19 @@ export async function leaseSecondary(scopeKey: string, connectionId: string): Pr
     evictLeastRecentlyUsed()
   }
 
-  const resolved = await invoke<{ baseUrl?: string; dialConnectionId?: string; kind?: string; profile?: string }>(
-    'connections_resolve',
-    { connectionId, profile: null }
-  )
+  const resolved = await invoke<{
+    baseUrl?: string
+    dialConnectionId?: string
+    kind?: string
+    label?: string
+    profile?: string
+  }>('connections_resolve', { connectionId, profile: null })
 
   // `local` and `ssh` have no address of their own: they are reached through a
   // tunnel Rust holds for as long as this secondary does.
   const tunnel =
     !resolved.baseUrl && (resolved.kind === 'local' || resolved.kind === 'ssh')
-      ? await acquireTunnel(connectionId)
+      ? await acquireTunnel(connectionId, { label: resolved.label })
       : null
 
   const baseUrl = resolved.baseUrl ?? tunnel?.baseUrl()
@@ -212,15 +219,30 @@ export async function leaseSecondary(scopeKey: string, connectionId: string): Pr
     lastUsed: Date.now(),
     reaper: null,
     scopeKey,
-    tunnel
+    tunnel,
+    unsubscribe: []
   }
 
   client.onAny(event => deliver(connectionId, event))
   live.set(scopeKey, secondary)
 
-  // A redial moved the tunnel to a new port: this socket is dead weight, and the
-  // next request opens a fresh one against the new base.
-  tunnel?.onChange(() => close(secondary))
+  if (tunnel) {
+    const dialled = tunnel.generation()
+
+    secondary.unsubscribe.push(
+      // A redial moved the tunnel to a new port: this socket is dead weight, and
+      // the next request opens a fresh one against the new base. Only a LATER
+      // generation: the event for the dial this socket rides can land after it.
+      tunnel.onChange(next => {
+        if (next.generation > dialled) {
+          close(secondary)
+        }
+      }),
+      // The tunnel no longer serves us (closed, forgotten, needs sign-in): a
+      // socket kept in `live` would be handed to every later request.
+      tunnel.onClosed(() => close(secondary))
+    )
+  }
 
   const wsUrl = tunnel ? tunnel.wsUrl() : `${baseUrl.replace(/^http/, 'ws')}/api/ws`
 
@@ -241,6 +263,12 @@ function leaseFor(secondary: Secondary): SecondaryLease {
   return {
     connectionId: secondary.connectionId,
     async request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
+      // A lease on a closed secondary must not reach its dead socket, nor re-arm
+      // a reap timer for a secondary nothing tracks any more.
+      if (live.get(secondary.scopeKey) !== secondary) {
+        throw new Error(`secondary for ${secondary.connectionId} is closed`)
+      }
+
       secondary.inFlight += 1
 
       try {
@@ -248,7 +276,10 @@ function leaseFor(secondary: Secondary): SecondaryLease {
       } finally {
         secondary.inFlight -= 1
         secondary.lastUsed = Date.now()
-        armReap(secondary)
+
+        if (live.get(secondary.scopeKey) === secondary) {
+          armReap(secondary)
+        }
       }
     },
     scopeKey: secondary.scopeKey

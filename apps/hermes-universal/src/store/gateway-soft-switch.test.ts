@@ -320,13 +320,21 @@ describe('gateway soft switch', () => {
   })
 
   it("keeps the secondaries' tunnel holds until the new dial has adopted them", async () => {
-    const dial = vi.fn().mockResolvedValue(undefined)
+    let finishDial = () => {}
+    const dial = vi.fn(() => new Promise<void>(resolve => (finishDial = resolve)))
 
-    await softSwitchGateway('ssh', dial)
+    const switching = softSwitchGateway('ssh', dial)
 
-    expect(vi.mocked(closeAllSecondaries).mock.invocationCallOrder[0]).toBeLessThan(dial.mock.invocationCallOrder[0])
+    // Run the switch up to the dial it waits on, and hold it there.
+    await vi.waitFor(() => expect(dial).toHaveBeenCalled())
+
+    expect(closeAllSecondaries).toHaveBeenCalledOnce()
+    expect(releaseParkedTunnels).not.toHaveBeenCalled()
+
+    finishDial()
+    await switching
+
     expect(releaseParkedTunnels).toHaveBeenCalledOnce()
-    expect(dial.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(releaseParkedTunnels).mock.invocationCallOrder[0])
   })
 
   it('leaves a remote backend alone', async () => {

@@ -100,7 +100,49 @@ export function requestGateway<T = unknown>(
     return Promise.reject(new Error('Hermes gateway is not connected'))
   }
 
-  return client.request<T>(method, params, timeoutMs)
+  return client.request<T>(method, withGatewayProfile(method, params), timeoutMs)
+}
+
+type GatewayProfileResolver = () => null | string
+
+let gatewayProfile: GatewayProfileResolver = () => null
+
+/**
+ * Where the active, non-default profile comes from. A registration hook, like
+ * `setSessionRequestRouter`, so this module never imports the profile graph;
+ * `store/connection-session-router.ts` registers it.
+ */
+export function setGatewayRequestProfile(resolver: GatewayProfileResolver): () => void {
+  const previous = gatewayProfile
+
+  gatewayProfile = resolver
+
+  return () => {
+    if (gatewayProfile === resolver) {
+      gatewayProfile = previous
+    }
+  }
+}
+
+/**
+ * Name the active profile on an RPC that names none (MJXHRM-592).
+ *
+ * Local and SSH backends run the backend's unified server, and an RPC without
+ * `profile` runs against its launch profile (`tui_gateway/server.py`), which is
+ * `default`. REST already carries the active profile (`hermes.ts`
+ * `apiRequestProfile`); this is the same rule for the socket, and the one the
+ * session router applies to a same-connection route. A caller that set
+ * `profile` keeps it, and `profile.*` methods are left alone: their profile is
+ * the target, not the scope.
+ */
+export function withGatewayProfile(method: string, params: Record<string, unknown>): Record<string, unknown> {
+  const profile = gatewayProfile()
+
+  if (!profile || method.startsWith('profile.') || Object.hasOwn(params, 'profile')) {
+    return params
+  }
+
+  return { ...params, profile }
 }
 
 // The live gateway client, typed as HermesGateway for the ported composer

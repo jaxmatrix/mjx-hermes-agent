@@ -1,11 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
+import { translateNow } from '@/i18n'
 import { LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { IS_MOBILE } from '@/lib/platform'
 import { map } from '@/store/atom'
 import { getInstallationId } from '@/store/installation-id'
-import { attachSshPrompts, onSshProgress, type SshStep } from '@/store/ssh-backend'
+import { notify, notifyError } from '@/store/notifications'
+import { attachSshPrompts, newAttemptId, onSshProgress, type SshStep } from '@/store/ssh-backend'
 import { isActivityWindow, isSatelliteWindow } from '@/store/windows'
 
 /**
@@ -56,19 +58,34 @@ export interface TunnelLease {
   /** The gateway socket URL. No token: Rust attaches it on `ws_open`. */
   wsUrl(): string
   generation(): number
+  /** A redial moved the tunnel to a new base. */
   onChange(handler: (descriptor: TunnelDescriptor) => void): () => void
+  /** The tunnel no longer serves this lease: closed, forgotten, or stopped on
+   *  a failure only a person can answer. Re-acquire to use it again. */
+  onClosed(handler: () => void): () => void
   release(): void
 }
 
 /** Every tunnel this window has heard about, by connection id. */
 export const $tunnelStatus = map<Record<string, TunnelStatus>>({})
 
+/** How often a held lease tells Rust it is still held (Rust drops it after 60 s). */
+export const TOUCH_INTERVAL_MS = 20_000
+
 /** "Needs sign-in": a background tunnel stopped on something only a person can answer. */
 export function needsInteraction(status: null | TunnelStatus | undefined): boolean {
   return status?.phase === 'failed' && status.terminal
 }
 
-/** The attempt id Rust dials a tunnel under, for its progress and prompts. */
+/** The failures a Connect can fix: unlock the device, answer a credential, trust a key. */
+const SIGN_IN_KINDS = new Set(['credentials-needed', 'host-key-changed', 'locked'])
+
+/** Whether `error` is a tunnel that needs a person to sign in. */
+export function isTunnelSignInError(error: unknown): error is TunnelError {
+  return typeof error === 'object' && error !== null && SIGN_IN_KINDS.has(String((error as Partial<TunnelError>).kind))
+}
+
+/** The attempt id Rust dials a background tunnel under, for its progress. */
 export function tunnelAttemptId(connectionId: string): string {
   return `tunnel-${connectionId}`
 }
@@ -81,7 +98,9 @@ interface Held {
   closed: boolean
   pending: null | Promise<TunnelDescriptor>
   listeners: Set<(descriptor: TunnelDescriptor) => void>
+  closedListeners: Set<() => void>
   subscribed: Promise<UnlistenFn[]>
+  toucher: null | ReturnType<typeof setInterval>
 }
 
 const held = new Map<string, Held>()
@@ -90,12 +109,24 @@ function tunnelError(kind: string, message: string, terminal = true): TunnelErro
   return { kind, message, terminal }
 }
 
+function markClosed(entry: Held): void {
+  entry.closed = true
+
+  for (const handler of [...entry.closedListeners]) {
+    try {
+      handler()
+    } catch {
+      // One consumer failing to close must not starve the others.
+    }
+  }
+}
+
 function subscribe(connectionId: string, entry: Held): Promise<UnlistenFn[]> {
   return Promise.all([
     listen<TunnelDescriptor>(`tunnel://${connectionId}/changed`, event => {
       entry.descriptor = event.payload
 
-      for (const handler of entry.listeners) {
+      for (const handler of [...entry.listeners]) {
         try {
           handler(event.payload)
         } catch {
@@ -104,9 +135,12 @@ function subscribe(connectionId: string, entry: Held): Promise<UnlistenFn[]> {
       }
     }),
     listen<TunnelStatus>(`tunnel://${connectionId}/status`, event => {
-      // The next acquire dials again rather than handing out a dead base.
-      entry.closed = event.payload.phase === 'closed'
       $tunnelStatus.setKey(connectionId, event.payload)
+
+      if (event.payload.phase === 'closed' || needsInteraction(event.payload)) {
+        // The next acquire dials again rather than handing out a dead base.
+        markClosed(entry)
+      }
     }),
     onSshProgress(tunnelAttemptId(connectionId), progress => {
       const current = $tunnelStatus.get()[connectionId]
@@ -121,13 +155,16 @@ function subscribe(connectionId: string, entry: Held): Promise<UnlistenFn[]> {
 async function dial(connectionId: string, entry: Held, interactive: boolean): Promise<TunnelDescriptor> {
   await entry.subscribed
 
-  // Before the invoke: Rust can ask for a passphrase in the first auth exchange.
-  const detach = interactive ? await attachSshPrompts(tunnelAttemptId(connectionId)) : null
+  // An interactive dial asks under an attempt of its own, attached before the
+  // invoke: Rust can ask for a passphrase in the first auth exchange.
+  const attemptId = interactive ? newAttemptId() : null
+  const detach = attemptId ? await attachSshPrompts(attemptId) : null
 
   try {
     const installationId = await getInstallationId()
 
     return await invoke<TunnelDescriptor>('tunnel_acquire', {
+      attemptId,
       connectionId,
       installationId,
       interactive,
@@ -143,8 +180,30 @@ function drop(connectionId: string, entry: Held): void {
     held.delete(connectionId)
   }
 
+  if (entry.toucher) {
+    clearInterval(entry.toucher)
+    entry.toucher = null
+  }
+
   void entry.subscribed.then(unlisten => unlisten.forEach(stop => stop()))
   void invoke('tunnel_release', { connectionId, leaseId: entry.leaseId }).catch(() => {})
+}
+
+/** Tell Rust the lease is still held, so a reload or a crash cannot leak it. */
+function startTouching(connectionId: string, entry: Held): void {
+  if (entry.toucher) {
+    return
+  }
+
+  entry.toucher = setInterval(() => {
+    void invoke<boolean>('tunnel_touch', { connectionId, leaseId: entry.leaseId })
+      .then(known => {
+        if (known === false) {
+          markClosed(entry)
+        }
+      })
+      .catch(() => {})
+  }, TOUCH_INTERVAL_MS)
 }
 
 function leaseFor(connectionId: string, entry: Held): TunnelLease {
@@ -160,6 +219,11 @@ function leaseFor(connectionId: string, entry: Held): TunnelLease {
       entry.listeners.add(handler)
 
       return () => entry.listeners.delete(handler)
+    },
+    onClosed(handler) {
+      entry.closedListeners.add(handler)
+
+      return () => entry.closedListeners.delete(handler)
     },
     release() {
       if (released) {
@@ -178,14 +242,43 @@ function leaseFor(connectionId: string, entry: Held): TunnelLease {
 }
 
 /**
+ * Say a background tunnel needs sign-in, once per connection (MJXHRM-592).
+ *
+ * Connect runs the interactive dial and only connects: the action that failed
+ * is not re-run, because a rename, a delete or a Bot Mode send must never be
+ * replayed on the user's behalf.
+ */
+function notifySignIn(connectionId: string, label: string): void {
+  notify({
+    action: {
+      label: translateNow('settings.connections.tunnelConnect'),
+      onClick: () => {
+        void acquireTunnel(connectionId, { interactive: true, label })
+          .then(lease => lease.release())
+          .catch(error => {
+            if (!isTunnelSignInError(error)) {
+              notifyError(error, translateNow('settings.connections.tunnelSignInTitle', label))
+            }
+          })
+      }
+    },
+    id: `tunnel-signin:${connectionId}`,
+    kind: 'warning',
+    message: translateNow('settings.connections.tunnelSignInMessage'),
+    title: translateNow('settings.connections.tunnelSignInTitle', label)
+  })
+}
+
+/**
  * Hold a tunnel to a local or SSH connection.
  *
- * `interactive` is the "Connect" of a tunnel that needs sign-in: it may prompt
- * for an unlock, a passphrase or a host key. Nothing else prompts.
+ * `interactive` is the Connect of a tunnel that needs sign-in: it may prompt for
+ * an unlock, a passphrase or a host key. Nothing else prompts; a background
+ * acquire that needs a person raises the sign-in notification instead.
  */
 export async function acquireTunnel(
   connectionId: string,
-  options: { interactive?: boolean } = {}
+  options: { interactive?: boolean; label?: string } = {}
 ): Promise<TunnelLease> {
   if (IS_MOBILE && connectionId === LOCAL_CONNECTION_ID) {
     throw tunnelError('unsupported-platform', 'unsupported_platform')
@@ -201,12 +294,14 @@ export async function acquireTunnel(
   if (!entry) {
     const created: Held = {
       closed: false,
+      closedListeners: new Set(),
       count: 0,
       descriptor: null,
       leaseId: crypto.randomUUID(),
       listeners: new Set(),
       pending: null,
-      subscribed: Promise.resolve([])
+      subscribed: Promise.resolve([]),
+      toucher: null
     }
 
     created.subscribed = subscribe(connectionId, created)
@@ -243,8 +338,14 @@ export async function acquireTunnel(
       drop(connectionId, current)
     }
 
+    if (!options.interactive && isTunnelSignInError(error)) {
+      notifySignIn(connectionId, options.label ?? connectionId)
+    }
+
     throw error
   }
+
+  startTouching(connectionId, current)
 
   const descriptor = current.descriptor as TunnelDescriptor
 
@@ -273,6 +374,12 @@ export function connectionBase(rowUrl: null | string | undefined, connectionId: 
 
 export const __testing = {
   reset(): void {
+    for (const entry of held.values()) {
+      if (entry.toucher) {
+        clearInterval(entry.toucher)
+      }
+    }
+
     held.clear()
     $tunnelStatus.set({})
   }

@@ -22,11 +22,16 @@ vi.mock('@/lib/platform', () => ({
   }
 }))
 vi.mock('@/store/installation-id', () => ({ getInstallationId: vi.fn(async () => 'a'.repeat(32)) }))
-vi.mock('@/store/ssh-backend', () => ({ attachSshPrompts, onSshProgress: vi.fn(async () => () => {}) }))
+vi.mock('@/store/ssh-backend', () => ({
+  attachSshPrompts,
+  newAttemptId: () => 'attempt-7',
+  onSshProgress: vi.fn(async () => () => {})
+}))
 vi.mock('@/store/windows', () => ({ isActivityWindow: () => false, isSatelliteWindow: () => false }))
 vi.mock('@/transport/http', () => ({ httpRequest }))
 
 import { api, setConnectionBaseResolver } from '@/lib/api'
+import { $notifications } from '@/store/notifications'
 
 import {
   $tunnelStatus,
@@ -34,6 +39,7 @@ import {
   acquireTunnel,
   connectionBase,
   needsInteraction,
+  TOUCH_INTERVAL_MS,
   type TunnelStatus
 } from './connection-tunnels'
 
@@ -53,10 +59,12 @@ beforeEach(() => {
   attachSshPrompts.mockReset()
   httpRequest.mockReset()
   platform.mobile = false
+  $notifications.set([])
   invoke.mockImplementation(async (command: string) => (command === 'tunnel_acquire' ? descriptor : undefined))
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -134,11 +142,12 @@ describe('acquireTunnel', () => {
 
     await acquireTunnel('ssh1', { interactive: true })
 
-    expect(attachSshPrompts).toHaveBeenCalledWith('tunnel-ssh1')
+    // Its own attempt, so the prompts reach this dial and no other.
+    expect(attachSshPrompts).toHaveBeenCalledWith('attempt-7')
     expect(attachSshPrompts.mock.invocationCallOrder[0]).toBeLessThan(
       invoke.mock.invocationCallOrder[invoke.mock.calls.findIndex(([name]) => name === 'tunnel_acquire')]
     )
-    expect(calls('tunnel_acquire')[0]?.[1]).toMatchObject({ interactive: true })
+    expect(calls('tunnel_acquire')[0]?.[1]).toMatchObject({ attemptId: 'attempt-7', interactive: true })
     expect(detach).toHaveBeenCalled()
   })
 
@@ -165,6 +174,94 @@ describe('acquireTunnel', () => {
     lease.release()
     again.release()
     expect(calls('tunnel_release')).toHaveLength(1)
+  })
+
+  it('keeps telling Rust the lease is held, and hears when Rust forgot it', async () => {
+    vi.useFakeTimers()
+
+    const lease = await acquireTunnel('ssh1')
+    const closed = vi.fn()
+
+    lease.onClosed(closed)
+    await vi.advanceTimersByTimeAsync(TOUCH_INTERVAL_MS)
+
+    expect(calls('tunnel_touch')).toEqual([
+      [
+        'tunnel_touch',
+        { connectionId: 'ssh1', leaseId: (calls('tunnel_acquire')[0]?.[1] as { leaseId: string }).leaseId }
+      ]
+    ])
+    expect(closed).not.toHaveBeenCalled()
+
+    invoke.mockImplementation(async (command: string) => (command === 'tunnel_touch' ? false : undefined))
+    await vi.advanceTimersByTimeAsync(TOUCH_INTERVAL_MS)
+
+    expect(closed).toHaveBeenCalledTimes(1)
+
+    lease.release()
+    await vi.advanceTimersByTimeAsync(TOUCH_INTERVAL_MS * 2)
+
+    expect(calls('tunnel_touch')).toHaveLength(2)
+  })
+
+  it('tells its consumers when the tunnel closed or needs sign-in', async () => {
+    const lease = await acquireTunnel('ssh1')
+    const closed = vi.fn()
+
+    lease.onClosed(closed)
+    handlers.get('tunnel://ssh1/status')?.({
+      payload: { connectionId: 'ssh1', generation: 1, phase: 'retrying', terminal: false }
+    })
+    expect(closed).not.toHaveBeenCalled()
+
+    handlers.get('tunnel://ssh1/status')?.({
+      payload: { connectionId: 'ssh1', generation: 1, phase: 'closed', terminal: false }
+    })
+    handlers.get('tunnel://ssh1/status')?.({
+      payload: { connectionId: 'ssh1', errorKind: 'locked', generation: 1, phase: 'failed', terminal: true }
+    })
+
+    expect(closed).toHaveBeenCalledTimes(2)
+  })
+
+  it('says Needs sign-in once per connection, with a Connect that only connects', async () => {
+    invoke.mockImplementation(async (command: string, args: { interactive?: boolean }) => {
+      if (command !== 'tunnel_acquire') {
+        return undefined
+      }
+
+      if (args.interactive) {
+        return descriptor
+      }
+
+      throw { kind: 'credentials-needed', message: 'needs a passphrase', terminal: true }
+    })
+
+    await expect(acquireTunnel('ssh1', { label: 'Box' })).rejects.toMatchObject({ kind: 'credentials-needed' })
+    await expect(acquireTunnel('ssh1', { label: 'Box' })).rejects.toMatchObject({ kind: 'credentials-needed' })
+
+    const shown = $notifications.get()
+
+    expect(shown).toHaveLength(1)
+    expect(shown[0]).toMatchObject({ id: 'tunnel-signin:ssh1', title: 'Box needs sign-in' })
+
+    invoke.mockClear()
+    shown[0]?.action?.onClick()
+
+    await vi.waitFor(() => expect(calls('tunnel_release')).toHaveLength(1))
+    expect(calls('tunnel_acquire')).toHaveLength(1)
+    expect(calls('tunnel_acquire')[0]?.[1]).toMatchObject({ interactive: true })
+  })
+
+  it('raises nothing for a failure that retrying can fix', async () => {
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'tunnel_acquire') {
+        throw { kind: 'transient', message: 'unreachable', terminal: false }
+      }
+    })
+
+    await expect(acquireTunnel('ssh1', { label: 'Box' })).rejects.toMatchObject({ kind: 'transient' })
+    expect($notifications.get()).toHaveLength(0)
   })
 
   it('lets its hold go when the dial fails', async () => {

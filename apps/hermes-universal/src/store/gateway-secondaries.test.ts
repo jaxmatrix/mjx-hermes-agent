@@ -55,6 +55,33 @@ import {
   releaseSecondary
 } from './gateway-secondaries'
 
+function fakeTunnel() {
+  const changed: ((next: { generation: number }) => void)[] = []
+  const closed: (() => void)[] = []
+  const release = vi.fn()
+
+  const lease = {
+    baseUrl: () => 'http://127.0.0.1:41000',
+    connectionId: 'ssh1',
+    generation: () => 1,
+    instanceKey: 'ssh:deploy@box:22',
+    onChange: (handler: (next: { generation: number }) => void) => {
+      changed.push(handler)
+
+      return () => changed.splice(changed.indexOf(handler), 1)
+    },
+    onClosed: (handler: () => void) => {
+      closed.push(handler)
+
+      return () => closed.splice(closed.indexOf(handler), 1)
+    },
+    release,
+    wsUrl: () => 'ws://127.0.0.1:41000/api/ws'
+  }
+
+  return { changed, closed, lease, release }
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   __testing.reset()
@@ -120,28 +147,24 @@ describe('leaseSecondary', () => {
   })
 
   it('reaches an ssh source through its tunnel, and lets the tunnel go on close', async () => {
-    const release = vi.fn()
-    const changed: (() => void)[] = []
+    const { changed, lease, release } = fakeTunnel()
 
-    invoke.mockResolvedValue({ kind: 'ssh' })
-    acquireTunnel.mockResolvedValue({
-      baseUrl: () => 'http://127.0.0.1:41000',
-      connectionId: 'ssh1',
-      instanceKey: 'ssh:deploy@box:22',
-      onChange: (handler: () => void) => changed.push(handler),
-      release,
-      wsUrl: () => 'ws://127.0.0.1:41000/api/ws'
-    })
+    invoke.mockResolvedValue({ kind: 'ssh', label: 'Box' })
+    acquireTunnel.mockResolvedValue(lease)
 
     await leaseSecondary('conn:ssh1::default', 'ssh1')
 
-    expect(acquireTunnel).toHaveBeenCalledWith('ssh1')
+    expect(acquireTunnel).toHaveBeenCalledWith('ssh1', { label: 'Box' })
     // No token in the URL: Rust attaches it for this connection id.
     expect(sockets).toEqual([{ options: { connectionId: 'ssh1' }, url: 'ws://127.0.0.1:41000/api/ws' }])
     expect(release).not.toHaveBeenCalled()
 
+    // The event for the dial this socket rides can land after it: not a redial.
+    changed.forEach(handler => handler({ generation: 1 }))
+    expect(closeClient).not.toHaveBeenCalled()
+
     // A redial moved the port: the socket goes, and so does its hold.
-    changed.forEach(handler => handler())
+    changed.forEach(handler => handler({ generation: 2 }))
 
     expect(closeClient).toHaveBeenCalledTimes(1)
     expect(release).toHaveBeenCalledTimes(1)
@@ -157,6 +180,30 @@ describe('leaseSecondary', () => {
     releaseParkedTunnels()
 
     expect(release).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('a tunnel that closes', () => {
+  it('closes its secondary instead of reusing a dead socket', async () => {
+    const { closed, lease, release } = fakeTunnel()
+
+    invoke.mockResolvedValue({ kind: 'ssh' })
+    acquireTunnel.mockResolvedValue(lease)
+
+    const held = await leaseSecondary('conn:ssh1::default', 'ssh1')
+
+    closed.forEach(handler => handler())
+
+    expect(__testing.liveScopeKeys()).toEqual([])
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(closeClient).toHaveBeenCalledTimes(1)
+
+    // A lease still in someone's hands rejects, and arms no reap timer.
+    const timers = vi.getTimerCount()
+
+    await expect(held.request('session.list')).rejects.toThrow(/closed/)
+    expect(request).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(timers)
   })
 })
 

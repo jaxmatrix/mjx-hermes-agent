@@ -422,14 +422,19 @@ async function dialResolved(resolved: ResolvedDial, allowInteractive: boolean): 
       // by Rust from this connection's own keyring accounts (rule 4), and the
       // non-target fields (`id`, `label`, `hasToken`) have no business on the
       // wire.
-      return connectSsh({
-        host: row?.host ?? resolved.remoteHost ?? '',
-        keyPath: row?.keyPath,
-        port: row?.port,
-        profile,
-        remoteHermesPath: row?.remoteHermesPath,
-        user: row?.user
-      })
+      // A click may answer a passphrase or host-key question; a background
+      // re-home may not (MJXHRM-592).
+      return connectSsh(
+        {
+          host: row?.host ?? resolved.remoteHost ?? '',
+          keyPath: row?.keyPath,
+          port: row?.port,
+          profile,
+          remoteHermesPath: row?.remoteHermesPath,
+          user: row?.user
+        },
+        { interactive: allowInteractive }
+      )
     }
 
     case 'cloud':

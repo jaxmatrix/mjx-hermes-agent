@@ -67,6 +67,10 @@ export interface SshConnection {
   hermesVersion: string
   ownershipId: string
   hostLabel: string
+  /** The scope the session and its `ssh://{scope}/disconnected` event live
+   *  under: one per connection, whatever the profile (MJXHRM-592). Absent from
+   *  an older Rust core. */
+  scope?: string
 }
 
 export interface SshTestResult {
@@ -364,12 +368,8 @@ export async function decideActiveSshHostKey(accept: boolean): Promise<void> {
  * re-dials `http://127.0.0.1:<ephemeral>`, and if the session is gone that port
  * is dead forever, so the loop just backs off and spins.
  */
-export function onSshDisconnected(
-  profile: null | string | undefined,
-  handler: () => void,
-  connectionId?: null | string
-): Promise<UnlistenFn> {
-  return listen(`ssh://${sshScopeOf(connectionId, profile)}/disconnected`, () => handler())
+export function onSshDisconnected(scope: string, handler: () => void): Promise<UnlistenFn> {
+  return listen(`ssh://${scope}/disconnected`, () => handler())
 }
 
 /**

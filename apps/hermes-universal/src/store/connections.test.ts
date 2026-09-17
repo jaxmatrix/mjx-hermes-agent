@@ -127,6 +127,23 @@ describe('selectConnection', () => {
     expect(connect).toHaveBeenCalledWith(expect.objectContaining({ allowInteractive: true }))
   })
 
+  // MJXHRM-592: a click on an SSH source may answer its passphrase or host-key
+  // question; a background re-home must not raise one.
+  it('dials an ssh source interactively only when a person asked', async () => {
+    const ssh = { ...RESOLVED, baseUrl: undefined, kind: 'ssh', mode: 'ssh', remoteHost: 'deploy@box' }
+
+    invoke.mockImplementation(async (command: string) => (command === 'connections_resolve' ? ssh : undefined))
+
+    await selectConnection('studio', { allowInteractive: true })
+
+    expect(connectSsh).toHaveBeenLastCalledWith(expect.objectContaining({ host: 'deploy@box' }), { interactive: true })
+
+    publishActiveConnection(null)
+    await selectConnection('studio')
+
+    expect(connectSsh).toHaveBeenLastCalledWith(expect.anything(), { interactive: false })
+  })
+
   it('is a no-op except for lastUsed when the same source is re-clicked', async () => {
     await selectConnection('studio')
     softSwitchGateway.mockClear()

@@ -56,13 +56,15 @@ import { getInstallationId } from '@/store/installation-id'
 import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import {
   $sshStep,
+  attachSshPrompts,
   cancelSsh,
   connectSshBackend,
   disconnectSsh,
   newAttemptId,
   onSshDisconnected,
   onSshProgress,
-  type SshConnectConfig
+  type SshConnectConfig,
+  sshScopeOf
 } from '@/store/ssh-backend'
 import { httpRequest } from '@/transport/http'
 
@@ -440,6 +442,9 @@ export async function connectSsh(
   // screen during a boot restore, and the tunnel re-bootstrap. Subscribed before
   // the invoke so no step is missed.
   const unlistenProgress = await onSshProgress(attemptId, progress => $sshStep.set(progress.step)).catch(() => null)
+  // A dial that may ask gets its questions on screen: attached before the invoke,
+  // because Rust can ask during the very first auth exchange.
+  const detachPrompts = options.interactive ? await attachSshPrompts(attemptId).catch(() => null) : null
 
   try {
     // Secrets come from the keyring, never from the saved target.
@@ -473,7 +478,8 @@ export async function connectSsh(
       profile,
       remoteHost: backend.hostLabel,
       // Stable across re-tunnels, unlike baseUrl — see connectionCacheKey.
-      remoteIdentity: backend.ownershipId
+      remoteIdentity: backend.ownershipId,
+      sshScope: backend.scope
     }
 
     publishActiveConnection(describeConnection(conn, hint))
@@ -492,7 +498,9 @@ export async function connectSsh(
     }
 
     saveGatewayTarget({ connectionId: activeConnectionId(), mode: 'ssh', profile, ssh: target })
-    await watchSshTunnel(profile, hint?.dialConnectionId ?? null)
+    // The scope Rust dialled, not one derived here from the profile: one backend
+    // serves every profile of a connection. An older core keyed it per profile.
+    await watchSshTunnel(backend.scope ?? sshScopeOf(hint?.dialConnectionId ?? null, profile))
   } catch (err) {
     // Drop the tunnel so a failed connect does not leave one open. The remote
     // backend is deliberately left alone — Rust already reaped it if the failure
@@ -504,6 +512,7 @@ export async function connectSsh(
     throw err
   } finally {
     unlistenProgress?.()
+    detachPrompts?.()
     $sshStep.set(null)
 
     if (activeSshAttempt === attemptId) {
@@ -673,23 +682,19 @@ export async function signOut(): Promise<void> {
 
 let sshWatcher: null | (() => void) = null
 
-async function watchSshTunnel(profile: null | string, connectionId: null | string): Promise<void> {
+async function watchSshTunnel(scope: string): Promise<void> {
   sshWatcher?.()
   sshWatcher = null
 
-  const unlisten = await onSshDisconnected(
-    profile,
-    () => {
-      // A deliberate disconnect does not emit this, but the user may have torn the
-      // connection down between the event firing and it arriving.
-      if (intentionalClose || $connection.get()?.mode !== 'ssh') {
-        return
-      }
+  const unlisten = await onSshDisconnected(scope, () => {
+    // A deliberate disconnect does not emit this, but the user may have torn the
+    // connection down between the event firing and it arriving.
+    if (intentionalClose || $connection.get()?.mode !== 'ssh') {
+      return
+    }
 
-      void rebootstrapSsh()
-    },
-    connectionId
-  ).catch(() => null)
+    void rebootstrapSsh()
+  }).catch(() => null)
 
   if (unlisten) {
     sshWatcher = unlisten
