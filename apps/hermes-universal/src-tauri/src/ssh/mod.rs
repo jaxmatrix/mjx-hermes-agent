@@ -1118,8 +1118,7 @@ async fn connect_scope(
     // there; filling it here keeps that one reader unchanged.
     config.reuse_token = auth::nonempty(config.reuse_token.clone()).or(stored.reuse_token);
 
-    let (prompter, policy, _attempt) =
-        arm_prompts(app, state, attempt_id, config.interactive).await;
+    let (prompter, policy, attempt) = arm_prompts(app, state, attempt_id, config.interactive).await;
     let host_label = target.label();
     let remote_hermes_path = target.remote_hermes_path.clone();
 
@@ -1134,31 +1133,37 @@ async fn connect_scope(
     };
 
     reporter.step(SshStep::Authenticating);
-    let opened = SshSession::open(target, user, options, prompter.as_ref()).await;
 
-    let session = match opened {
-        Ok(session) => Arc::new(session),
-        Err(err) => {
-            state.attempts.lock().await.remove(attempt_id);
+    // `ssh_cancel` cancels this token; racing it here is what makes a cancel stop
+    // the dial. A backend spawned before the cancel stays reapable: its lockfile
+    // is written before readiness (see `ssh_connect`'s ordering note).
+    let result = unless_cancelled(&attempt.cancel, async {
+        let session = Arc::new(SshSession::open(target, user, options, prompter.as_ref()).await?);
+        let established = establish(
+            &session,
+            &ownership_id,
+            &config,
+            remote_hermes_path.as_deref(),
+            &host_label,
+            &reporter,
+        )
+        .await;
 
-            return Err(err);
+        match established {
+            Ok(established) => Ok((session, established)),
+            Err(err) => {
+                let _ = session.close().await;
+
+                Err(err)
+            }
         }
-    };
-
-    let result = establish(
-        &session,
-        &ownership_id,
-        &config,
-        remote_hermes_path.as_deref(),
-        &host_label,
-        &reporter,
-    )
+    })
     .await;
 
     state.attempts.lock().await.remove(attempt_id);
 
     match result {
-        Ok((connection, forward)) => {
+        Ok((session, (connection, forward))) => {
             println!(
                 "[ssh probe] ssh_connect: succeeded, pid={} reused={} base_url={}",
                 connection.pid, connection.reused, connection.base_url
@@ -1232,10 +1237,24 @@ async fn connect_scope(
                 "[ssh probe] ssh_connect: failed: {err} (kind={:?})",
                 err.kind
             );
-            let _ = session.close().await;
 
             Err(err)
         }
+    }
+}
+
+/// Run `work` unless the attempt is cancelled first.
+async fn unless_cancelled<T>(
+    cancel: &tokio_util::sync::CancellationToken,
+    work: impl std::future::Future<Output = Result<T, SshError>>,
+) -> Result<T, SshError> {
+    tokio::select! {
+        biased;
+        () = cancel.cancelled() => Err(SshError::new(
+            SshErrorKind::Cancelled,
+            "The connection attempt was cancelled.",
+        )),
+        result = work => result,
     }
 }
 
@@ -1820,6 +1839,22 @@ mod tests {
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOGXTILfYe9/k4y5hfEhEtghgFt9121WP+K8hBJssvoS hermes-ssh-test";
 
     use super::*;
+
+    #[tokio::test]
+    async fn a_cancelled_attempt_stops_the_dial() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+
+        cancel.cancel();
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            unless_cancelled(&cancel, std::future::pending::<Result<(), SshError>>()),
+        )
+        .await
+        .expect("a cancelled attempt returns instead of waiting on the dial");
+
+        assert_eq!(outcome.map_err(|e| e.kind), Err(SshErrorKind::Cancelled));
+    }
 
     #[test]
     fn the_default_profile_and_an_empty_profile_share_one_scope() {
