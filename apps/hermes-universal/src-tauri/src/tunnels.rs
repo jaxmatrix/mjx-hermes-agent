@@ -382,19 +382,19 @@ impl SlotBook {
     /// result, so the displaced caller says nothing; a lease does not, so the
     /// caller must resolve its own UI.
     pub fn join(&mut self, key: &str, serial: u64, fingerprint: &str, primary: bool) -> Verdict {
-        let Some(slot) = self.slots.get_mut(key) else {
+        if !self.slots.contains_key(key) {
             return Verdict::Fail;
-        };
+        }
+
+        // Still this caller's slot: it joins only a newer dial of it.
+        if self.superseded(key, serial) {
+            return Verdict::Join;
+        }
+
+        let slot = self.slots.get_mut(key).expect("the key was just checked");
 
         if serial >= slot.origin {
-            // Still this caller's slot: it joins only a newer dial of it.
-            return if serial <= slot.superseded_max
-                || slot.dial.as_ref().is_some_and(|dial| dial.serial > serial)
-            {
-                Verdict::Join
-            } else {
-                Verdict::Fail
-            };
+            return Verdict::Fail;
         }
 
         if slot.spec.fingerprint != fingerprint {
