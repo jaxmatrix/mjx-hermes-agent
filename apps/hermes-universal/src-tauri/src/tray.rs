@@ -299,9 +299,7 @@ mod imp {
         let app = app.clone();
 
         tauri::async_runtime::spawn(async move {
-            if let Some(backend) = app.try_state::<crate::local_backend::LocalBackendState>() {
-                crate::local_backend::stop(&backend).await;
-            }
+            crate::local_backend::stop(&app).await;
 
             if any_window_visible(&app) {
                 return;

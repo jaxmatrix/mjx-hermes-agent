@@ -480,6 +480,95 @@ pub fn ssh_credentials(app: &AppHandle, connection_id: &str) -> Option<SshCreden
     })
 }
 
+/// `ssh_credentials`, except that a LOCKED credential store is reported rather
+/// than read as "nothing stored". A background tunnel must tell "unlock this
+/// device" apart from "this connection has no key" (MJXHRM-592).
+pub fn try_ssh_credentials(
+    app: &AppHandle,
+    connection_id: &str,
+) -> Result<Option<SshCredentials>, crate::secrets::SecretsError> {
+    let Some(state) = app.try_state::<ConnectionsState>() else {
+        return Ok(None);
+    };
+    let registry = state.load(app);
+    let Some(connection) = registry
+        .connections
+        .iter()
+        .find(|row| row.id == connection_id)
+    else {
+        return Ok(None);
+    };
+    let scope = scope_for(&registry, connection);
+
+    let read = |secret: ConnectionSecret| match secrets::read(&scope, secret) {
+        Err(error) if error.kind == crate::secrets::error::SecretsErrorKind::Locked => Err(error),
+        other => Ok(other.ok().flatten()),
+    };
+
+    Ok(Some(SshCredentials {
+        passphrase: read(ConnectionSecret::SshPassphrase)?,
+        password: read(ConnectionSecret::SshPassword)?,
+        private_key_pem: read(ConnectionSecret::SshKey)?,
+        reuse_token: read(ConnectionSecret::ReuseToken)?,
+    }))
+}
+
+/// Where a registered local or SSH connection is dialled from, read from its
+/// row. `None` for a remote or cloud row, or an unknown id.
+pub fn tunnel_target(app: &AppHandle, connection_id: &str) -> Option<crate::tunnels::TunnelTarget> {
+    let state = app.try_state::<ConnectionsState>()?;
+    let registry = state.load(app);
+    let row = registry
+        .connections
+        .iter()
+        .find(|row| row.id == connection_id)?;
+
+    match row.kind {
+        ConnectionKind::Local => Some(crate::tunnels::TunnelTarget::Local),
+        ConnectionKind::Ssh => {
+            let profile = row
+                .remote_profile
+                .clone()
+                .filter(|value| !value.trim().is_empty());
+            let dial_id = dial_connection_id(&registry, &row.id);
+
+            Some(crate::tunnels::TunnelTarget::Ssh {
+                scope: crate::ssh::registry_scope_of(dial_id, profile.as_deref()),
+                profile,
+                input: crate::ssh::target::SshTargetInput {
+                    host: row.host.clone().unwrap_or_default(),
+                    user: row.user.clone(),
+                    port: row.port,
+                    key_path: row.key_path.clone(),
+                    remote_hermes_path: row.remote_hermes_path.clone(),
+                },
+            })
+        }
+        ConnectionKind::Remote | ConnectionKind::Cloud => None,
+    }
+}
+
+/// The id a dial of `connection_id` carries (`None` for the legacy owner).
+pub fn dial_connection_id_of(app: &AppHandle, connection_id: &str) -> Option<String> {
+    let state = app.try_state::<ConnectionsState>()?;
+    let registry = state.load(app);
+
+    dial_connection_id(&registry, connection_id).map(str::to_string)
+}
+
+/// The legacy owner's row id when that row is an SSH connection — the one SSH
+/// dial that carries no id of its own.
+pub fn legacy_ssh_connection_id(app: &AppHandle) -> Option<String> {
+    let state = app.try_state::<ConnectionsState>()?;
+    let registry = state.load(app);
+
+    registry
+        .connections
+        .iter()
+        .find(|row| row.kind == ConnectionKind::Ssh && is_legacy_connection(&registry, &row.id))
+        .map(|row| row.id.clone())
+}
+
 /// Remember the token a just-connected registered backend was started with, so
 /// the NEXT dial reattaches instead of respawning.
 pub fn remember_reuse_token(app: &AppHandle, connection_id: &str, token: &str) {
@@ -649,6 +738,13 @@ pub async fn connections_save(
     }
 
     publish_auth(&app, &registry, &connection);
+
+    // A background tunnel into the OLD target must not outlive the edit
+    // (MJXHRM-592). A slot the active connection holds stays with it.
+    if changed {
+        crate::tunnels::drop_connection(&app, &connection.id).await;
+    }
+
     notify_changed(&app, "saved", Some(&connection.id));
 
     Ok(SaveOutcome {
@@ -705,6 +801,7 @@ pub async fn connections_remove(
 
     app.state::<crate::transport::TransportState>()
         .forget_connection_auth(&connection.id);
+    crate::tunnels::drop_connection(&app, &connection.id).await;
     notify_changed(&app, "removed", Some(&connection.id));
 
     Ok(to_registry_view(&state, &registry))

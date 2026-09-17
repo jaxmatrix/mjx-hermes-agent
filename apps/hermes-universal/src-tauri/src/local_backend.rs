@@ -11,7 +11,14 @@
 //! connection descriptor.
 
 use serde::Serialize;
+#[cfg(desktop)]
+use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
+
+#[cfg(desktop)]
+use crate::tunnels::{
+    FailureKind, Hold, SlotKind, SlotSpec, TunnelError, LOCAL_INSTANCE_KEY, LOCAL_SLOT,
+};
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -40,11 +47,20 @@ mod imp {
     pub struct Running {
         pub child: Child,
         pub backend: LocalBackend,
+        /// Which spawn this is, so a death watcher never reports a successor.
+        pub serial: u64,
     }
 
-    /// The one live local backend (at most one at a time).
+    /// The one live local backend (at most one at a time), shared by the
+    /// primary and every background lease (MJXHRM-592).
     #[derive(Default)]
-    pub struct LocalBackendState(pub Mutex<Option<Running>>);
+    pub struct LocalBackendState {
+        pub running: Mutex<Option<Running>>,
+        serial: std::sync::atomic::AtomicU64,
+    }
+
+    /// How often the watcher checks whether the child exited on its own.
+    const CHILD_WATCH_INTERVAL: Duration = Duration::from_secs(5);
 
     fn random_token() -> String {
         let mut buf = [0u8; 32];
@@ -94,13 +110,14 @@ mod imp {
         }
     }
 
-    pub async fn spawn(
-        state: &LocalBackendState,
+    /// Start `hermes serve` and wait until it answers. Stores nothing.
+    ///
+    /// A binary that cannot be started at all is terminal; anything after it
+    /// started is worth retrying.
+    async fn start(
         profile: Option<String>,
-    ) -> Result<LocalBackend, String> {
-        // If one is already running, tear it down first.
-        stop(state).await;
-
+    ) -> Result<(Child, LocalBackend), (FailureKind, String)> {
+        let transient = |message: String| (FailureKind::Transient, message);
         let token = random_token();
         let program = std::env::var("HERMES_BIN").unwrap_or_else(|_| "hermes".to_string());
 
@@ -128,13 +145,16 @@ mod imp {
         }
 
         let mut child = cmd.spawn().map_err(|e| {
-            format!("could not start `{program}`: {e}. Is the Hermes CLI installed / on PATH?")
+            (
+                FailureKind::HermesNotFound,
+                format!("could not start `{program}`: {e}. Is the Hermes CLI installed / on PATH?"),
+            )
         })?;
 
         let stdout = child
             .stdout
             .take()
-            .ok_or("failed to capture backend stdout")?;
+            .ok_or_else(|| transient("failed to capture backend stdout".to_string()))?;
         let mut lines = BufReader::new(stdout).lines();
 
         // Stage 1: wait (≤90s) for the port announcement on stdout.
@@ -147,8 +167,10 @@ mod imp {
             None
         })
         .await
-        .map_err(|_| "timed out waiting for the backend to announce its port".to_string())?
-        .ok_or_else(|| "backend exited before announcing a port".to_string())?;
+        .map_err(|_| {
+            transient("timed out waiting for the backend to announce its port".to_string())
+        })?
+        .ok_or_else(|| transient("backend exited before announcing a port".to_string()))?;
 
         // Keep draining stdout so the child's pipe never blocks.
         tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
@@ -156,7 +178,9 @@ mod imp {
         let base_url = format!("http://127.0.0.1:{port}");
 
         // Stage 2: HTTP readiness.
-        wait_for_status(&base_url, &token).await?;
+        wait_for_status(&base_url, &token)
+            .await
+            .map_err(transient)?;
 
         let backend = LocalBackend {
             base_url: base_url.clone(),
@@ -166,26 +190,138 @@ mod imp {
                 base_url.replacen("http", "ws", 1)
             ),
         };
-        *state.0.lock().await = Some(Running {
-            child,
-            backend: backend.clone(),
+
+        Ok((child, backend))
+    }
+
+    /// Replace whatever child is held with a fresh one and publish its token
+    /// for leases. The caller reports the outcome to the tunnel book.
+    pub async fn respawn(
+        app: &AppHandle,
+        state: &LocalBackendState,
+        profile: Option<String>,
+    ) -> Result<LocalBackend, TunnelError> {
+        kill(app, state).await;
+
+        match start(profile).await {
+            Ok((child, backend)) => {
+                let serial = state
+                    .serial
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                app.state::<crate::transport::TransportState>()
+                    .set_tunnel_auth(
+                        &backend.base_url,
+                        crate::transport::ConnectionAuth {
+                            connection_id: crate::connections::registry::LOCAL_CONNECTION_ID
+                                .to_string(),
+                            token: Some(backend.token.clone()),
+                            headers: Vec::new(),
+                        },
+                    );
+
+                *state.running.lock().await = Some(Running {
+                    child,
+                    backend: backend.clone(),
+                    serial,
+                });
+
+                watch_child(app.clone(), serial);
+
+                Ok(backend)
+            }
+            Err((kind, message)) => Err(TunnelError::new(kind, message)),
+        }
+    }
+
+    /// `respawn` for the primary's own commands, which report it themselves.
+    pub async fn respawn_reported(
+        app: &AppHandle,
+        state: &LocalBackendState,
+        profile: Option<String>,
+    ) -> Result<LocalBackend, String> {
+        let result = respawn(app, state, profile).await;
+
+        crate::tunnels::finish_dial(
+            app,
+            LOCAL_SLOT,
+            result
+                .as_ref()
+                .map(|backend| backend.base_url.clone())
+                .map_err(Clone::clone),
+        );
+
+        result.map_err(|error| error.message)
+    }
+
+    /// Notice the child exiting on its own and tell the tunnel book.
+    fn watch_child(app: AppHandle, serial: u64) {
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::time::sleep(CHILD_WATCH_INTERVAL).await;
+
+                let state = app.state::<LocalBackendState>();
+                let mut guard = state.running.lock().await;
+
+                let Some(running) = guard.as_mut().filter(|running| running.serial == serial)
+                else {
+                    // Killed on purpose, or replaced.
+                    return;
+                };
+
+                if matches!(running.child.try_wait(), Ok(None)) {
+                    continue;
+                }
+
+                if let Some(dead) = guard.take() {
+                    app.state::<crate::transport::TransportState>()
+                        .forget_tunnel_auth(&dead.backend.base_url);
+                }
+
+                drop(guard);
+                log::warn!("[tunnel] the local backend exited on its own");
+                crate::tunnels::on_dead(&app, LOCAL_SLOT);
+
+                return;
+            }
         });
-        Ok(backend)
+    }
+
+    /// Whether the held child is still running.
+    pub async fn alive(state: &LocalBackendState) -> bool {
+        state
+            .running
+            .lock()
+            .await
+            .as_mut()
+            .is_some_and(|running| matches!(running.child.try_wait(), Ok(None)))
+    }
+
+    pub async fn current(state: &LocalBackendState) -> Option<LocalBackend> {
+        state
+            .running
+            .lock()
+            .await
+            .as_ref()
+            .map(|running| running.backend.clone())
+    }
+
+    /// Kill the child. Its credential is forgotten before the port is freed.
+    pub async fn kill(app: &AppHandle, state: &LocalBackendState) {
+        if let Some(mut running) = state.running.lock().await.take() {
+            app.state::<crate::transport::TransportState>()
+                .forget_tunnel_auth(&running.backend.base_url);
+            let _ = running.child.start_kill();
+        }
     }
 
     pub async fn status(state: &LocalBackendState) -> LocalBackendStatus {
-        match &*state.0.lock().await {
+        match &*state.running.lock().await {
             Some(r) => LocalBackendStatus {
                 running: true,
                 base_url: Some(r.backend.base_url.clone()),
             },
             None => LocalBackendStatus::default(),
-        }
-    }
-
-    pub async fn stop(state: &LocalBackendState) {
-        if let Some(mut r) = state.0.lock().await.take() {
-            let _ = r.child.start_kill();
         }
     }
 }
@@ -215,19 +351,95 @@ pub async fn running_base_url(_state: &LocalBackendState) -> Option<String> {
 /// The tray's Keep Running row is the one such caller: turning background mode
 /// off means the process is about to stop being resident, and a child gateway
 /// left behind would outlive the app that spawned it with nothing in the UI able
-/// to reach it. `imp` stays private — this is the one door out of it.
+/// to reach it. A hard stop: every lease on the child ends with it.
 #[cfg(desktop)]
-pub async fn stop(state: &imp::LocalBackendState) {
-    imp::stop(state).await;
+pub async fn stop(app: &AppHandle) {
+    crate::tunnels::remove_slot(app, LOCAL_SLOT);
+    imp::kill(app, &app.state::<imp::LocalBackendState>()).await;
 }
 
+/// The tunnel book's teardown and exit door. No-op on mobile.
+#[cfg(desktop)]
+pub(crate) async fn kill_child(app: &AppHandle) {
+    if let Some(state) = app.try_state::<imp::LocalBackendState>() {
+        imp::kill(app, &state).await;
+    }
+}
+
+#[cfg(mobile)]
+pub(crate) async fn kill_child(_app: &tauri::AppHandle) {}
+
+/// Spawn the child for a background lease (MJXHRM-592).
+#[cfg(desktop)]
+pub(crate) async fn dial_tunnel(
+    app: &AppHandle,
+    profile: Option<String>,
+) -> Result<String, TunnelError> {
+    let state = app.state::<imp::LocalBackendState>();
+
+    imp::respawn(app, &state, profile)
+        .await
+        .map(|backend| backend.base_url)
+}
+
+#[cfg(mobile)]
+pub(crate) async fn dial_tunnel(
+    _app: &tauri::AppHandle,
+    _profile: Option<String>,
+) -> Result<String, crate::tunnels::TunnelError> {
+    Err(crate::tunnels::TunnelError::new(
+        crate::tunnels::FailureKind::UnsupportedPlatform,
+        "unsupported_platform",
+    ))
+}
+
+/// The active connection's local backend.
+///
+/// A child that is already running is ADOPTED whatever profile it was launched
+/// as — requests carry their own profile, and a background lease may be riding
+/// it. Only `local_backend_restart` respawns a live child.
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn local_backend_spawn(
+    app: AppHandle,
     state: tauri::State<'_, imp::LocalBackendState>,
     profile: Option<String>,
 ) -> Result<LocalBackend, String> {
-    imp::spawn(&state, profile).await
+    let alive = imp::alive(&state).await;
+    let spec = SlotSpec {
+        connection_id: crate::connections::registry::LOCAL_CONNECTION_ID.to_string(),
+        kind: SlotKind::Local,
+        instance_key: LOCAL_INSTANCE_KEY.to_string(),
+        profile: profile.clone(),
+    };
+
+    match crate::tunnels::hold_primary(&app, LOCAL_SLOT, spec, alive) {
+        Hold::Reuse => {}
+        Hold::Join(rx) => {
+            crate::tunnels::wait(rx).await.map_err(|e| e.message)?;
+        }
+        Hold::Dial => return imp::respawn_reported(&app, &state, profile).await,
+    }
+
+    imp::current(&state)
+        .await
+        .ok_or_else(|| "the local backend stopped before it could be adopted".to_string())
+}
+
+/// "Restart as <profile>": respawn the child in place. Every lease stays held
+/// and reconnects on `tunnel://local/changed`.
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn local_backend_restart(
+    app: AppHandle,
+    state: tauri::State<'_, imp::LocalBackendState>,
+    profile: Option<String>,
+) -> Result<LocalBackend, String> {
+    if !crate::tunnels::begin_restart(&app, LOCAL_SLOT, profile.clone()) {
+        return local_backend_spawn(app, state, profile).await;
+    }
+
+    imp::respawn_reported(&app, &state, profile).await
 }
 
 #[cfg(desktop)]
@@ -238,12 +450,27 @@ pub async fn local_backend_status(
     Ok(imp::status(&state).await)
 }
 
+/// Release the active connection's hold. The child keeps running while a
+/// background lease holds it.
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn local_backend_stop(
+    app: AppHandle,
     state: tauri::State<'_, imp::LocalBackendState>,
 ) -> Result<(), String> {
-    imp::stop(&state).await;
+    if !crate::tunnels::release_primary(&app, LOCAL_SLOT).await {
+        imp::kill(&app, &state).await;
+    }
+
+    Ok(())
+}
+
+/// The hard stop, for quitting: kills the child whoever holds it.
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn local_backend_kill(app: AppHandle) -> Result<(), String> {
+    stop(&app).await;
+
     Ok(())
 }
 
@@ -275,6 +502,21 @@ pub async fn local_backend_status(
 #[cfg(mobile)]
 #[tauri::command]
 pub async fn local_backend_stop(_state: tauri::State<'_, LocalBackendState>) -> Result<(), String> {
+    Err("unsupported_platform".to_string())
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn local_backend_restart(
+    _state: tauri::State<'_, LocalBackendState>,
+    _profile: Option<String>,
+) -> Result<LocalBackend, String> {
+    Err("unsupported_platform".to_string())
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn local_backend_kill() -> Result<(), String> {
     Err("unsupported_platform".to_string())
 }
 

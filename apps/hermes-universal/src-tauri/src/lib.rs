@@ -41,6 +41,7 @@ mod surface;
 mod telemetry;
 mod transport;
 mod tray;
+mod tunnels;
 mod updates;
 mod voice;
 mod webview_cookies;
@@ -77,7 +78,8 @@ use find_in_page::{find_in_page, stop_find_in_page};
 use keep_awake::{set_keep_awake, KeepAwakeState};
 use link_title::fetch_link_title;
 use local_backend::{
-    local_backend_spawn, local_backend_status, local_backend_stop, LocalBackendState,
+    local_backend_kill, local_backend_restart, local_backend_spawn, local_backend_status,
+    local_backend_stop, LocalBackendState,
 };
 use local_install::{local_install_cancel, local_install_detect, local_install_start};
 use marketplace::{marketplace_fetch, marketplace_search};
@@ -330,6 +332,7 @@ pub fn run() {
         // Live SSH sessions. Unlike desktop's on-disk control socket, nothing
         // here outlives the process, so there is no stale master to evict.
         .manage(SshState::default())
+        .manage(tunnels::TunnelState::default())
         // Background mode's two flags — the mirrored preference, and the
         // one-way "the user asked to quit" latch that stops `ExitRequested`
         // from preventing the app's own exit (background.rs).
@@ -505,6 +508,11 @@ pub fn run() {
             local_backend_spawn,
             local_backend_status,
             local_backend_stop,
+            local_backend_restart,
+            local_backend_kill,
+            tunnels::tunnel_acquire,
+            tunnels::tunnel_release,
+            tunnels::tunnel_status,
             local_install_detect,
             local_install_start,
             local_install_cancel,
@@ -646,6 +654,8 @@ pub fn run() {
                 pty::reap_window_ptys(app_handle, label);
 
                 transport::reap_window_sockets(app_handle, label);
+                // …and so do the tunnel leases it held (MJXHRM-592).
+                tunnels::reap_window(app_handle, label);
                 appearance::reap_window(app_handle, label);
                 // …and so do the guest webviews it hosted (MJXHRM-447): a child
                 // webview dies with its window, but the Rust-side registry
@@ -703,6 +713,9 @@ pub fn run() {
             // interesting one — whatever happened right before the user quit.
             // No-op without the tracing feature.
             if let tauri::RunEvent::Exit = &event {
+                // Every tunnel goes, and the local child with it, whoever holds
+                // them (MJXHRM-592).
+                tunnels::shutdown(app_handle);
                 telemetry::shutdown();
             }
 
