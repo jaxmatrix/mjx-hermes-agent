@@ -365,7 +365,7 @@ pub fn run() {
         // new page (MJXHRM-592). Keyed by the webview's own label, so a browser
         // guest navigating inside a window never touches that window's leases.
         .on_page_load(|webview, payload| {
-            if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+            if tunnels::reaps_on_page_load(&payload.event()) {
                 use tauri::Manager;
 
                 tunnels::reap_window(webview.app_handle(), webview.label());
@@ -527,7 +527,6 @@ pub fn run() {
             local_backend_kill,
             tunnels::tunnel_acquire,
             tunnels::tunnel_release,
-            tunnels::tunnel_touch,
             tunnels::tunnel_status,
             local_install_detect,
             local_install_start,

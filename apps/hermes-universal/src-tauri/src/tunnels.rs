@@ -22,7 +22,7 @@
 //! request supersedes a background dial: cancel, drain, redial (upstream
 //! desktop's `apps/desktop/electron/ssh-bootstrap-coordinator.ts`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -42,11 +42,12 @@ pub const BACKOFF_CAP: Duration = Duration::from_secs(30);
 /// Full jitter can draw zero; a floor keeps a dead host from being hammered.
 const BACKOFF_FLOOR: Duration = Duration::from_millis(250);
 
-/// A lease JS has not touched for this long is gone (a reload, a crashed
-/// renderer, a lost release). Upstream's pool idle floor (`pool-limits.ts`).
-pub const HOLDER_TTL_MS: u64 = 60_000;
 /// An unheld slot waits this long before teardown, so a reloading window's new
-/// page re-acquires the live tunnel instead of redialling it.
+/// page re-acquires the live tunnel instead of redialling it. The ONLY timer on a
+/// hold: a hold itself never ages out (hidden, occluded and paused webviews
+/// throttle their timers without bound), it ends on release, on its window's
+/// page load or destroy, on a connection drop, or at exit — the lifecycle rule
+/// `transport::reap_window_sockets` follows.
 pub const LINGER_MS: u64 = 15_000;
 pub const REAP_TICK: Duration = Duration::from_millis(LINGER_MS);
 
@@ -153,8 +154,7 @@ pub struct InFlight {
 #[derive(Debug, Clone)]
 pub struct Slot {
     pub spec: SlotSpec,
-    /// Each lease and when JS last touched it (ms).
-    pub holders: HashMap<Holder, u64>,
+    pub holders: HashSet<Holder>,
     pub primary: bool,
     pub phase: Phase,
     /// Bumped on every successful (re)establish.
@@ -172,7 +172,7 @@ impl Slot {
     fn new(spec: SlotSpec) -> Self {
         Self {
             spec,
-            holders: HashMap::new(),
+            holders: HashSet::new(),
             primary: false,
             phase: Phase::Connecting,
             generation: 0,
@@ -343,7 +343,6 @@ impl SlotBook {
         holder: Holder,
         interactive: bool,
         attempt_id: &str,
-        now: u64,
     ) -> (String, Action) {
         let key = self
             .key_for(&spec.connection_id)
@@ -361,7 +360,7 @@ impl SlotBook {
 
         let slot = self.slots.get_mut(&key).expect("the acquired slot exists");
 
-        slot.holders.insert(holder, now);
+        slot.holders.insert(holder);
         slot.unheld_since = None;
 
         (key, action)
@@ -433,7 +432,7 @@ impl SlotBook {
         let mut lingering = Vec::new();
 
         for (key, slot) in &mut self.slots {
-            if slot.spec.connection_id != connection_id || slot.holders.remove(holder).is_none() {
+            if slot.spec.connection_id != connection_id || !slot.holders.remove(holder) {
                 continue;
             }
 
@@ -446,24 +445,6 @@ impl SlotBook {
         lingering
     }
 
-    /// JS still holds this lease.
-    pub fn touch(&mut self, connection_id: &str, holder: &Holder, now: u64) -> bool {
-        let mut touched = false;
-
-        for slot in self
-            .slots
-            .values_mut()
-            .filter(|slot| slot.spec.connection_id == connection_id)
-        {
-            if let Some(at) = slot.holders.get_mut(holder) {
-                *at = now;
-                touched = true;
-            }
-        }
-
-        touched
-    }
-
     /// A window reloaded or went away: its leases end, and a slot that leaves
     /// unheld lingers for the new page to re-acquire. Returns those slots.
     pub fn reap_window(&mut self, label: &str, now: u64) -> Vec<String> {
@@ -472,7 +453,7 @@ impl SlotBook {
         for (key, slot) in &mut self.slots {
             let before = slot.holders.len();
 
-            slot.holders.retain(|holder, _| holder.window != label);
+            slot.holders.retain(|holder| holder.window != label);
 
             if slot.holders.len() != before && slot.unheld() && slot.unheld_since.is_none() {
                 slot.unheld_since = Some(now);
@@ -483,15 +464,12 @@ impl SlotBook {
         lingering
     }
 
-    /// The reaper's tick: drop leases JS stopped touching, and tear down slots
-    /// that have lingered unheld for a full tick.
+    /// The reaper's tick: tear down slots that have lingered unheld for a full
+    /// tick. Holders are never aged out here.
     pub fn expire(&mut self, now: u64) -> Vec<(String, Action)> {
         let mut out = Vec::new();
 
         for (key, slot) in &mut self.slots {
-            slot.holders
-                .retain(|_, touched| now.saturating_sub(*touched) <= HOLDER_TTL_MS);
-
             if !slot.unheld() {
                 slot.unheld_since = None;
                 continue;
@@ -716,11 +694,22 @@ pub fn ssh_fingerprint(
     )
 }
 
+/// Milliseconds on a monotonic clock. Only the linger reads it, and a
+/// suspend/resume or a wall-clock jump must not end it early.
 fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or_default()
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64
+}
+
+/// Whether a page-load event ends the leases its webview's page held. A load
+/// STARTING is a reload (or a first load, which holds nothing): the old page's
+/// JS, and every hold it took, is gone.
+pub fn reaps_on_page_load(event: &tauri::webview::PageLoadEvent) -> bool {
+    matches!(event, tauri::webview::PageLoadEvent::Started)
 }
 
 // --------------------------------------------------------------------------
@@ -816,6 +805,9 @@ enum Effect {
 pub(crate) struct Dial {
     pub key: String,
     pub serial: u64,
+    /// Subscribed under the same lock that began the dial, so no settle can
+    /// land before the caller is listening.
+    pub outcome: watch::Receiver<Outcome>,
     /// The superseded dial to cancel and wait out first.
     previous: Option<(InFlight, Option<watch::Receiver<bool>>)>,
     /// The previous target's resources go before this dial.
@@ -893,7 +885,12 @@ fn begun(
     previous: Option<InFlight>,
     retarget: bool,
 ) -> Dial {
-    signal(inner, &key).send_replace(Outcome::Pending);
+    let tx = signal(inner, &key);
+
+    tx.send_replace(Outcome::Pending);
+
+    let outcome = tx.subscribe();
+
     inner.drains.insert(serial, watch::channel(false).0);
 
     if let Some(slot) = inner.book.slot(&key) {
@@ -914,6 +911,7 @@ fn begun(
     Dial {
         key,
         serial,
+        outcome,
         previous,
         retarget,
     }
@@ -1353,8 +1351,7 @@ pub fn reap_window(app: &AppHandle, label: &str) {
     });
 }
 
-/// The reaper: every tick, drop untouched leases and tear down slots that
-/// lingered unheld for a full tick. Started once from `setup`.
+/// The reaper: every tick, tear down slots that lingered unheld for a full tick. Started once from `setup`.
 pub fn start_reaper(app: &AppHandle) {
     let app = app.clone();
 
@@ -1499,10 +1496,9 @@ pub async fn tunnel_acquire(
             inner.installation_id = installation_id.clone();
         }
 
-        let (key, action) =
-            inner
-                .book
-                .acquire(&key, spec, holder, interactive, &attempt_id, now_ms());
+        let (key, action) = inner
+            .book
+            .acquire(&key, spec, holder, interactive, &attempt_id);
         let spec = inner
             .book
             .slot(&key)
@@ -1522,8 +1518,7 @@ pub async fn tunnel_acquire(
         }
         Hold::Join(_, rx) => rx,
         Hold::Dial(dial) => {
-            let key = dial.key.clone();
-            let rx = locked(&app, |inner| signal(inner, &key).subscribe());
+            let rx = dial.outcome.clone();
 
             run(&app, dial, &spec, installation_id, interactive, &attempt_id).await;
 
@@ -1548,21 +1543,6 @@ pub async fn tunnel_release(
     });
 
     Ok(())
-}
-
-/// JS still holds this lease. False when Rust no longer knows it.
-#[tauri::command]
-pub async fn tunnel_touch(
-    app: AppHandle,
-    webview: Webview<Wry>,
-    connection_id: String,
-    lease_id: String,
-) -> bool {
-    let holder = Holder::new(webview.window().label(), lease_id);
-
-    locked(&app, |inner| {
-        inner.book.touch(&connection_id, &holder, now_ms())
-    })
 }
 
 #[tauri::command]
@@ -1609,7 +1589,7 @@ mod tests {
     }
 
     fn acquire(book: &mut SlotBook, key: &str, spec: SlotSpec, holder: Holder) -> (String, Action) {
-        book.acquire(key, spec, holder, false, "tunnel-x", 0)
+        book.acquire(key, spec, holder, false, "tunnel-x")
     }
 
     /// Land a dial successfully.
@@ -1756,21 +1736,14 @@ mod tests {
     #[test]
     fn gap5_a_reloading_window_keeps_its_slot_for_one_tick() {
         let mut book = SlotBook::default();
-        let (key, dial) = book.acquire(
-            "conn:a::default",
-            ssh("a"),
-            lease("old-page"),
-            false,
-            "t",
-            0,
-        );
+        let (key, dial) = book.acquire("conn:a::default", ssh("a"), lease("old-page"), false, "t");
 
         ready(&mut book, &key, &dial);
 
         assert_eq!(book.reap_window("main", 1_000), vec![key.clone()]);
         assert!(book.slot(&key).is_some(), "not torn down at once");
 
-        let (_, again) = book.acquire(&key, ssh("a"), lease("new-page"), false, "t", 5_000);
+        let (_, again) = book.acquire(&key, ssh("a"), lease("new-page"), false, "t");
 
         assert_eq!(again, Action::Reuse);
         assert!(book.expire(1_000 + LINGER_MS).is_empty());
@@ -1787,20 +1760,27 @@ mod tests {
     }
 
     #[test]
-    fn gap5_a_lease_js_stopped_touching_expires() {
+    fn a_hold_never_ages_out_during_its_dial_or_after() {
         let mut book = SlotBook::default();
-        let (key, dial) = book.acquire("conn:a::default", ssh("a"), lease("stale"), false, "t", 0);
+        let (key, dial) = book.acquire("conn:a::default", ssh("a"), lease("cold"), false, "t");
+
+        // A cold spawn, or a Connect waiting on a passphrase, for ten minutes.
+        assert!(book.expire(10 * 60_000).is_empty());
+        assert!(book.slot(&key).unwrap().holders.contains(&lease("cold")));
 
         ready(&mut book, &key, &dial);
-        book.acquire(&key, ssh("a"), lease("alive"), false, "t", 0);
-        assert!(book.touch("a", &lease("alive"), 2_000));
 
-        book.expire(HOLDER_TTL_MS + 1_000);
+        // A tray-hidden window whose timers stopped for a day still holds it.
+        assert!(book.expire(24 * 60 * 60_000).is_empty());
+        assert!(book.slot(&key).unwrap().holders.contains(&lease("cold")));
+    }
 
-        let holders = &book.slot(&key).unwrap().holders;
-
-        assert!(!holders.contains_key(&lease("stale")), "untouched for 61 s");
-        assert!(holders.contains_key(&lease("alive")), "touched 59 s ago");
+    #[test]
+    fn only_a_page_load_that_starts_reaps() {
+        assert!(reaps_on_page_load(&tauri::webview::PageLoadEvent::Started));
+        assert!(!reaps_on_page_load(
+            &tauri::webview::PageLoadEvent::Finished
+        ));
     }
 
     #[test]
@@ -1808,7 +1788,7 @@ mod tests {
         let mut book = SlotBook::default();
         let (key, background) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
 
-        let (_, connect) = book.acquire(&key, ssh("a"), lease("l2"), true, "connect-1", 0);
+        let (_, connect) = book.acquire(&key, ssh("a"), lease("l2"), true, "connect-1");
 
         assert!(
             matches!(&connect, Action::Supersede { previous: Some(previous), retarget: false, .. } if previous.serial == serial_of(&background) && !previous.interactive),
@@ -1822,7 +1802,7 @@ mod tests {
         );
 
         // An interactive dial in flight is joined, not superseded again.
-        let (_, second) = book.acquire(&key, ssh("a"), lease("l3"), true, "connect-2", 0);
+        let (_, second) = book.acquire(&key, ssh("a"), lease("l3"), true, "connect-2");
 
         assert_eq!(second, Action::Join);
     }
@@ -1845,7 +1825,7 @@ mod tests {
         let holders = &book.slot(&key).expect("still held by main").holders;
 
         assert_eq!(holders.len(), 1);
-        assert!(holders.contains_key(&Holder::new("main", "same")));
+        assert!(holders.contains(&Holder::new("main", "same")));
     }
 
     #[test]
