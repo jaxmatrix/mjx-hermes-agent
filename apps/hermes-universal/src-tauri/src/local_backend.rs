@@ -615,7 +615,36 @@ mod imp {
         Err(error)
     }
 
-    /// Notice the running child exiting on its own and tell the tunnel book.
+    /// What the watcher of child `spawn` finds.
+    #[derive(Debug, PartialEq, Eq)]
+    pub enum Verdict {
+        Alive,
+        /// It exited on its own.
+        Died,
+        /// A newer child is running; that child's own watcher reports it.
+        Replaced,
+        /// No running child at all. Every legitimate kill leaves the slot absent,
+        /// Connecting under the next spawn, or quitting, where `on_dead` does
+        /// nothing; anything else is a Ready slot whose child vanished.
+        Gone,
+    }
+
+    pub fn watch_verdict(local: &mut Local, spawn: u64) -> Verdict {
+        match &mut local.entry {
+            Some(Entry::Running {
+                spawn: watched,
+                child,
+                ..
+            }) if *watched == spawn => match child.try_wait() {
+                Ok(None) => Verdict::Alive,
+                _ => Verdict::Died,
+            },
+            Some(Entry::Running { .. }) => Verdict::Replaced,
+            _ => Verdict::Gone,
+        }
+    }
+
+    /// Notice the running child going away and tell the tunnel book.
     fn watch_child(app: AppHandle, spawn: u64) {
         tauri::async_runtime::spawn(async move {
             loop {
@@ -624,36 +653,28 @@ mod imp {
                 let state = app.state::<LocalBackendState>();
                 let mut local = state.running.lock().await;
 
-                let Some(Entry::Running {
-                    spawn: watched,
-                    child,
-                    ..
-                }) = local.entry.as_mut()
-                else {
-                    // Killed on purpose, or replaced.
-                    return;
-                };
+                match watch_verdict(&mut local, spawn) {
+                    Verdict::Alive => continue,
+                    Verdict::Replaced => return,
+                    Verdict::Gone => {
+                        drop(local);
+                    }
+                    Verdict::Died => {
+                        if let Some(Entry::Running { backend, .. }) = local.entry.take() {
+                            app.state::<crate::transport::TransportState>()
+                                .forget_tunnel_auth(&backend.base_url);
+                        }
 
-                if *watched != spawn {
-                    return;
+                        drop(local);
+                        log::warn!(
+                            "{}",
+                            state
+                                .log
+                                .with_tail("[tunnel] the local backend exited on its own")
+                        );
+                    }
                 }
 
-                if matches!(child.try_wait(), Ok(None)) {
-                    continue;
-                }
-
-                if let Some(Entry::Running { backend, .. }) = local.entry.take() {
-                    app.state::<crate::transport::TransportState>()
-                        .forget_tunnel_auth(&backend.base_url);
-                }
-
-                drop(local);
-                log::warn!(
-                    "{}",
-                    state
-                        .log
-                        .with_tail("[tunnel] the local backend exited on its own")
-                );
                 crate::tunnels::on_dead(&app, LOCAL_SLOT);
 
                 return;
@@ -859,12 +880,11 @@ pub async fn local_backend_status(
 /// background lease holds it.
 #[cfg(desktop)]
 #[tauri::command]
-pub async fn local_backend_stop(
-    app: AppHandle,
-    state: tauri::State<'_, imp::LocalBackendState>,
-) -> Result<(), String> {
+pub async fn local_backend_stop(app: AppHandle) -> Result<(), String> {
+    // No slot: the child still goes, through the teardown's install lock and its
+    // re-created-slot skip, so a lease's start that raced in is never killed.
     if !crate::tunnels::release_primary(&app, LOCAL_SLOT).await {
-        let _ = imp::kill(&app, &state, false).await;
+        crate::tunnels::teardown(&app, LOCAL_SLOT, SlotKind::Local).await;
     }
 
     Ok(())
@@ -935,8 +955,8 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::imp::{
-        await_ready, end_own_start, kill_entry, parse_ready_port, promote, spawn_recorded, Drain,
-        Entry, Local, SpawnRefusal,
+        await_ready, end_own_start, kill_entry, parse_ready_port, promote, spawn_recorded,
+        watch_verdict, Drain, Entry, Local, SpawnRefusal, Verdict,
     };
     use super::LocalBackend;
     use crate::backend_log::BackendLog;
@@ -1260,6 +1280,78 @@ mod tests {
 
         assert_eq!(spawning.await.err(), Some(SpawnRefusal::Cancelled));
         assert!(!spawned.load(Ordering::SeqCst));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_replaced_running_child_is_forgotten_before_the_next_spawn() {
+        let state = Mutex::new(Local::default());
+        let cancel = CancellationToken::new();
+        let events = std::sync::Mutex::new(Vec::<String>::new());
+
+        start(&state, 1, &cancel).await.expect("spawned");
+        assert!(promote(
+            &mut *state.lock().await,
+            1,
+            || true,
+            1,
+            backend(),
+            |_| {}
+        ));
+
+        spawn_recorded(
+            &state,
+            2,
+            || true,
+            &cancel,
+            &|base| events.lock().unwrap().push(format!("forget:{base}")),
+            || {
+                events.lock().unwrap().push("spawn".to_string());
+                program("sleep", &["60"])
+            },
+            &log(),
+        )
+        .await
+        .expect("spawned");
+
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![
+                format!("forget:{}", backend().base_url),
+                "spawn".to_string()
+            ]
+        );
+
+        ended(kill_entry(&mut *state.lock().await, true, &|_| {})).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_watcher_tells_a_death_from_a_replacement_and_a_vanished_child() {
+        let state = Mutex::new(Local::default());
+        let cancel = CancellationToken::new();
+        let mut local = state.lock().await;
+
+        assert_eq!(watch_verdict(&mut local, 1), Verdict::Gone, "no child");
+        drop(local);
+
+        start(&state, 1, &cancel).await.expect("spawned");
+
+        let mut local = state.lock().await;
+
+        assert_eq!(watch_verdict(&mut local, 1), Verdict::Gone, "only starting");
+        assert!(promote(&mut local, 1, || true, 7, backend(), |_| {}));
+        assert_eq!(watch_verdict(&mut local, 7), Verdict::Alive);
+        assert_eq!(watch_verdict(&mut local, 6), Verdict::Replaced);
+
+        if let Some(Entry::Running { child, .. }) = &mut local.entry {
+            let _ = child.start_kill();
+            let _ = tokio::time::timeout(HANG_GUARD, child.wait()).await;
+        }
+
+        assert_eq!(watch_verdict(&mut local, 7), Verdict::Died);
+
+        ended(kill_entry(&mut local, true, &|_| {})).await;
     }
 
     #[test]

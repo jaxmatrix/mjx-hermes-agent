@@ -1217,7 +1217,7 @@ fn apply_detached(app: &AppHandle, effects: Vec<Effect>) {
     tauri::async_runtime::spawn(async move { apply(&app, effects).await });
 }
 
-async fn teardown(app: &AppHandle, key: &str, kind: SlotKind) {
+pub(crate) async fn teardown(app: &AppHandle, key: &str, kind: SlotKind) {
     log::info!("[tunnel] tearing down {key:?}");
 
     let _guard = install_lock(app, key).await;
