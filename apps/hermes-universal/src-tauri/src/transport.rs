@@ -367,6 +367,17 @@ impl ConnectionAuthTable {
     }
 }
 
+/// A WebSocket URL in the `http(s)` form its gateway base is registered under.
+fn http_form_of(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("ws://") {
+        format!("http://{rest}")
+    } else if let Some(rest) = url.strip_prefix("wss://") {
+        format!("https://{rest}")
+    } else {
+        url.to_string()
+    }
+}
+
 /// A live raw WebSocket: `tx` feeds the writer task; the two task handles are
 /// aborted on close.
 pub struct SocketHandle {
@@ -401,6 +412,11 @@ pub struct TransportState {
     /// shape and same reason as `bearer_bases`: every access is a short lookup
     /// with no await inside.
     connection_auth: std::sync::Mutex<ConnectionAuthTable>,
+    /// Loopback tunnel base URL → the credential of the local or SSH backend
+    /// behind it (MJXHRM-592). Separate from `connection_auth` because one
+    /// connection can hold several bases at once and each is replaced by BASE,
+    /// never by connection id — see `set_tunnel_auth`.
+    tunnel_auth: std::sync::Mutex<ConnectionAuthTable>,
     sockets: Mutex<HashMap<String, SocketHandle>>,
 }
 
@@ -427,6 +443,7 @@ impl TransportState {
             cookies,
             bearer_bases: std::sync::Mutex::new(BearerBases::default()),
             connection_auth: std::sync::Mutex::new(ConnectionAuthTable::default()),
+            tunnel_auth: std::sync::Mutex::new(ConnectionAuthTable::default()),
             sockets: Mutex::new(HashMap::new()),
         }
     }
@@ -571,12 +588,73 @@ impl TransportState {
         }
     }
 
-    /// What this URL's connection attaches, if it belongs to one.
+    /// What this URL's connection attaches, if it belongs to one. A live tunnel
+    /// base is consulted first: it is a loopback port this process holds bound,
+    /// so no registry URL can name the same origin while it is up.
     pub fn connection_auth_for_url(&self, url: &str) -> Option<ConnectionAuth> {
-        self.connection_auth
+        self.tunnel_auth
             .lock()
             .ok()
             .and_then(|table| table.for_url(url).cloned())
+            .or_else(|| {
+                self.connection_auth
+                    .lock()
+                    .ok()
+                    .and_then(|table| table.for_url(url).cloned())
+            })
+    }
+
+    /// Register what a live tunnel base attaches (MJXHRM-592).
+    ///
+    /// Replaced by BASE only. A connection can have two bases alive at once (a
+    /// redial installs the new forward before the old one is dropped), and
+    /// evicting by id would strip the credential from the one still serving.
+    pub fn set_tunnel_auth(&self, base: &str, auth: ConnectionAuth) {
+        let base = base.trim_end_matches('/').to_string();
+
+        if let Ok(mut table) = self.tunnel_auth.lock() {
+            table.entries.retain(|(existing, _)| existing != &base);
+            table.entries.push((base, auth));
+        }
+    }
+
+    /// Forget a tunnel base. Called BEFORE its forward is dropped, so the port
+    /// can never be re-bound by something else while it still carries a token.
+    pub fn forget_tunnel_auth(&self, base: &str) {
+        let base = base.trim_end_matches('/');
+
+        if let Ok(mut table) = self.tunnel_auth.lock() {
+            table.entries.retain(|(existing, _)| existing != base);
+        }
+    }
+
+    /// What a socket dial to `url` for `connection_id` attaches.
+    ///
+    /// The tunnel whose base the URL is under wins, matched on id AND base: a
+    /// connection mid-redial has two bases, and the first entry for its id is
+    /// not necessarily the one being dialled. Otherwise the registry entry for
+    /// the id, exactly as before.
+    pub fn connection_auth_for_dial(
+        &self,
+        connection_id: &str,
+        url: &str,
+    ) -> Option<ConnectionAuth> {
+        let http_url = http_form_of(url);
+
+        self.tunnel_auth
+            .lock()
+            .ok()
+            .and_then(|table| {
+                table
+                    .entries
+                    .iter()
+                    .filter(|(base, auth)| {
+                        auth.connection_id == connection_id && url_is_under(&http_url, base)
+                    })
+                    .max_by_key(|(base, _)| base.len())
+                    .map(|(_, auth)| auth.clone())
+            })
+            .or_else(|| self.connection_auth_by_id(connection_id))
     }
 
     /// What connection `id` attaches, wherever it lives. Used by `ws_open`, which
@@ -1342,7 +1420,7 @@ pub async fn ws_open(
     // so the token can go into the query without ever having been in JS.
     let connection = connection_id
         .as_deref()
-        .and_then(|id| state.connection_auth_by_id(id));
+        .and_then(|id| state.connection_auth_for_dial(id, &url));
     let url = match &connection {
         Some(auth) => apply_ws_token(&url, auth.token.as_deref()),
         None => url,
