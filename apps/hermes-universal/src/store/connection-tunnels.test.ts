@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { answerListeners, attachSshPrompts, handlers, httpRequest, invoke, platform } = vi.hoisted(() => ({
+const { answerListeners, attachSshPrompts, handlers, httpRequest, invoke, platform, windowKind } = vi.hoisted(() => ({
   answerListeners: new Set<(prompt: { attemptId: string; kind: string }, answer: string) => void>(),
   attachSshPrompts: vi.fn(),
   handlers: new Map<string, (event: { payload: unknown }) => void>(),
   httpRequest: vi.fn(),
   invoke: vi.fn(),
-  platform: { mobile: false }
+  platform: { mobile: false, tauri: true },
+  windowKind: { activity: false, satellite: false }
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
@@ -20,6 +21,9 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('@/lib/platform', () => ({
   get IS_MOBILE() {
     return platform.mobile
+  },
+  get IS_TAURI() {
+    return platform.tauri
   }
 }))
 vi.mock('@/store/installation-id', () => ({ getInstallationId: vi.fn(async () => 'a'.repeat(32)) }))
@@ -33,7 +37,10 @@ vi.mock('@/store/ssh-backend', () => ({
   newAttemptId: () => 'attempt-7',
   onSshProgress: vi.fn(async () => () => {})
 }))
-vi.mock('@/store/windows', () => ({ isActivityWindow: () => false, isSatelliteWindow: () => false }))
+vi.mock('@/store/windows', () => ({
+  isActivityWindow: () => windowKind.activity,
+  isSatelliteWindow: () => windowKind.satellite
+}))
 vi.mock('@/transport/http', () => ({ httpRequest }))
 
 import { TRANSLATIONS } from '@/i18n/catalog'
@@ -48,6 +55,7 @@ import {
   connectTunnel,
   isTunnelSignInError,
   needsInteraction,
+  openTunnelPage,
   setTunnelAnswerSaver,
   type TunnelStatus
 } from './connection-tunnels'
@@ -74,6 +82,9 @@ beforeEach(() => {
   attachSshPrompts.mockReset()
   httpRequest.mockReset()
   platform.mobile = false
+  platform.tauri = true
+  windowKind.activity = false
+  windowKind.satellite = false
   $notifications.set([])
   answerListeners.clear()
   invoke.mockImplementation(async (command: string) =>
@@ -229,6 +240,32 @@ describe('acquireTunnel', () => {
     await acquiring
 
     expect(calls('tunnel_acquire')[0]?.[1]).toMatchObject({ pageEpoch: 4 })
+  })
+
+  // MJXHRM-592: a reloaded page that never acquires still ends the old page's holds.
+  it('opens the page at window boot, without an acquire, and acquires under that epoch', async () => {
+    openTunnelPage()
+
+    expect(calls('tunnel_page_open')).toHaveLength(1)
+    expect(calls('tunnel_acquire')).toHaveLength(0)
+
+    await acquireTunnel('ssh1')
+
+    expect(calls('tunnel_page_open')).toHaveLength(1)
+    expect(calls('tunnel_acquire')[0]?.[1]).toMatchObject({ pageEpoch: 3 })
+  })
+
+  it('never opens a page in a window that holds no tunnels', () => {
+    windowKind.satellite = true
+    openTunnelPage()
+    windowKind.satellite = false
+    windowKind.activity = true
+    openTunnelPage()
+    windowKind.activity = false
+    platform.tauri = false
+    openTunnelPage()
+
+    expect(invoke).not.toHaveBeenCalled()
   })
 
   it('forgets the page open on a test reset', async () => {

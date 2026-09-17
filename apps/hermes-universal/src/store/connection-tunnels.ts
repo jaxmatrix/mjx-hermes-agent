@@ -5,7 +5,7 @@ import { tunnelErrorMessage } from '@/app/gateway/ssh-copy'
 import { getRuntimeI18nLocale, translateNow, type Translations } from '@/i18n'
 import { TRANSLATIONS } from '@/i18n/catalog'
 import { LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
-import { IS_MOBILE } from '@/lib/platform'
+import { IS_MOBILE, IS_TAURI } from '@/lib/platform'
 import { map } from '@/store/atom'
 import { getInstallationId } from '@/store/installation-id'
 import { dismissNotification, notify, notifyError } from '@/store/notifications'
@@ -188,6 +188,21 @@ function ensurePageOpen(): Promise<number> {
   }
 
   return pageOpen
+}
+
+/**
+ * Window boot: the page declares its start before anything else can acquire,
+ * so a reloaded or recreated page ends the previous page's holds even if it
+ * never takes one of its own. The HUD, Quick Entry, the wake indicator and the
+ * mobile activity screens hold no tunnels, so they never open one. A failure
+ * here is retried by the first acquire, which awaits the same open.
+ */
+export function openTunnelPage(): void {
+  if (!IS_TAURI || isSatelliteWindow() || isActivityWindow()) {
+    return
+  }
+
+  void ensurePageOpen().catch(() => {})
 }
 
 async function dial(
