@@ -353,13 +353,15 @@ pub(crate) async fn begin_attempt(
         pending_host_key: Arc::new(Mutex::new(None)),
     });
 
+    let mut attempts = state.attempts.lock().await;
+
+    // Checked holding the lock: a supersede that lands while this waits for it
+    // is still seen, so a cancelled attempt never displaces a newer one.
     if !attempt.cancel.is_cancelled() {
-        state
-            .attempts
-            .lock()
-            .await
-            .insert(attempt_id.to_string(), Arc::clone(&attempt));
+        attempts.insert(attempt_id.to_string(), Arc::clone(&attempt));
     }
+
+    drop(attempts);
 
     attempt
 }
@@ -2101,6 +2103,33 @@ mod tests {
         // `ssh_cancel` for the id still reaches the newer attempt.
         cancel_in(&state, "tunnel-box").await;
         assert!(newer.cancel.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn an_attempt_cancelled_while_it_waits_for_the_lock_never_registers() {
+        let state = SshState::default();
+        let token = tokio_util::sync::CancellationToken::new();
+        let held = state.attempts.lock().await;
+        let register = begin_attempt(&state, "tunnel-box", token.clone());
+
+        tokio::pin!(register);
+
+        // Polled once: it is parked on the lock this test holds, token live.
+        assert!(
+            tokio::time::timeout(std::time::Duration::ZERO, &mut register)
+                .await
+                .is_err(),
+            "the registration waits for the lock"
+        );
+
+        // The supersede lands while it waits.
+        token.cancel();
+        drop(held);
+
+        let attempt = register.await;
+
+        assert!(attempt.cancel.is_cancelled());
+        assert!(state.attempts.lock().await.get("tunnel-box").is_none());
     }
 
     #[tokio::test]
