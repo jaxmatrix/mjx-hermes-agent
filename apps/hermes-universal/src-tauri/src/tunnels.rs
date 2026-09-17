@@ -1204,7 +1204,7 @@ async fn teardown_resources(app: &AppHandle, key: &str, kind: SlotKind) {
     match kind {
         SlotKind::Ssh => crate::ssh::teardown_scope(app, key).await,
         SlotKind::Local => {
-            let _ = crate::local_backend::kill_child(app).await;
+            let _ = crate::local_backend::kill_child(app, false).await;
         }
     }
 }
@@ -1367,7 +1367,7 @@ fn schedule_redial(app: AppHandle, key: String, attempt: u32) {
 /// Run a dial to completion; it settles itself through `finish_dial`.
 async fn run(
     app: &AppHandle,
-    mut dial: Dial,
+    dial: Dial,
     spec: &SlotSpec,
     installation_id: Option<String>,
     interactive: bool,
@@ -1386,10 +1386,8 @@ async fn run(
             )
             .await
         }
-        SlotKind::Local => {
-            prepare(app, &mut dial, spec.kind).await;
-            crate::local_backend::dial_tunnel(app, dial.serial).await
-        }
+        // So does the local dial, racing its cancel through every step.
+        SlotKind::Local => crate::local_backend::dial_tunnel(app, dial).await,
     }
 }
 
@@ -1467,13 +1465,25 @@ pub(crate) fn begin_restart(app: &AppHandle, key: &str, attempt_id: &str) -> Opt
     })
 }
 
-/// Drop a slot regardless of its holders (a hard stop: quit, the tray).
-pub(crate) fn remove_slot(app: &AppHandle, key: &str) {
+/// Drop a slot regardless of its holders, returning its teardown.
+fn remove_slot(app: &AppHandle, key: &str) -> Option<Effect> {
     locked(app, |inner| {
-        if let Some(slot) = inner.book.remove_slot(key) {
-            closed(app, inner, key, &slot, None);
-        }
+        let slot = inner.book.remove_slot(key)?;
+
+        Some(closed(app, inner, key, &slot, None))
+    })
+}
+
+/// A hard stop (the tray, `local_backend_kill`): the slot goes whoever holds
+/// it, and its resources go through the teardown under the install lock. With
+/// no slot the teardown still runs: a start or a child may exist outside it.
+pub(crate) async fn stop_slot(app: &AppHandle, key: &str, kind: SlotKind) {
+    let effect = remove_slot(app, key).unwrap_or(Effect::Teardown {
+        key: key.to_string(),
+        kind,
     });
+
+    apply(app, vec![effect]).await;
 }
 
 /// Every slot key a connection currently has. For MJXHRM-528's drain, which is
@@ -1606,7 +1616,9 @@ pub fn shutdown(app: &AppHandle) {
 
         for step in shutdown_plan(&slots) {
             match step {
-                ShutdownStep::KillLocal => drains = crate::local_backend::kill_child(&app).await,
+                ShutdownStep::KillLocal => {
+                    drains = crate::local_backend::kill_child(&app, true).await
+                }
                 ShutdownStep::AwaitDrains => {
                     crate::backend_log::await_drains(std::mem::take(&mut drains), log_until).await
                 }

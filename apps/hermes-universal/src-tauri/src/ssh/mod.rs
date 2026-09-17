@@ -1427,7 +1427,7 @@ async fn settle_scope(
 }
 
 /// Run `work` unless the attempt is cancelled first (`None`).
-async fn race_cancel<T>(
+pub(crate) async fn race_cancel<T>(
     cancel: &tokio_util::sync::CancellationToken,
     work: impl std::future::Future<Output = T>,
 ) -> Option<T> {
