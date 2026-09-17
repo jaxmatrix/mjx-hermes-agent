@@ -767,7 +767,9 @@ async function rebootstrapSsh(): Promise<void> {
     await connectSsh({ ...ssh, profile }, { interactive: false })
   } catch {
     // connectSsh already set $connectionError + phase; the connecting screen
-    // surfaces it and the ordinary supervisor keeps retrying the socket.
+    // surfaces it and the ordinary supervisor keeps retrying the socket. Except
+    // for a `superseded` rejection: a newer attempt owns the connection and
+    // publishes its own result, so there is nothing here to surface.
   } finally {
     rebootstrapping = false
   }

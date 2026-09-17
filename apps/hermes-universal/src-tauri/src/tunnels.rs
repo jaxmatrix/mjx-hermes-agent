@@ -182,8 +182,12 @@ pub struct Slot {
     pub unheld_since: Option<u64>,
     /// The serial this slot's dials start from: its first dial, or the retarget
     /// that made it a different backend. A caller from before it belongs to a
-    /// slot, or a target, that is gone, and is never told it was superseded.
+    /// slot, or a target, that is gone.
     pub origin: u64,
+    /// Whether the request that set `origin` was the primary's. A newer PRIMARY
+    /// attempt publishes its own result, so the caller it displaced can fail
+    /// quietly; a lease's does not, so that caller must resolve its own UI.
+    pub origin_primary: bool,
     /// The highest serial a newer dial of this slot superseded. One number, not
     /// a set: serials are globally monotonic, so every dial of this slot at or
     /// below it has been replaced. Dies with the slot.
@@ -204,6 +208,7 @@ impl Slot {
             dial: None,
             unheld_since: None,
             origin: 0,
+            origin_primary: false,
             superseded_max: 0,
         }
     }
@@ -211,6 +216,18 @@ impl Slot {
     fn unheld(&self) -> bool {
         !self.primary && self.holders.is_empty()
     }
+}
+
+/// What a caller does with a dial that ended while the key moved on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// Wait for the key's current dial and adopt what it installs.
+    Join,
+    /// Fail with the caller's own kind; its JS tears down as usual.
+    Fail,
+    /// Fail with kind `superseded`, releasing nothing: a newer primary attempt
+    /// owns this connection and publishes its own result.
+    Quiet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -297,7 +314,7 @@ impl SlotBook {
         )
     }
 
-    fn begin(&mut self, key: &str, interactive: bool, attempt_id: &str) -> u64 {
+    fn begin(&mut self, key: &str, interactive: bool, attempt_id: &str, primary: bool) -> u64 {
         self.serial += 1;
 
         let serial = self.serial;
@@ -310,6 +327,7 @@ impl SlotBook {
 
         if slot.origin == 0 {
             slot.origin = serial;
+            slot.origin_primary = primary;
         }
 
         slot.dial = Some(InFlight {
@@ -356,13 +374,45 @@ impl SlotBook {
         serial <= slot.superseded_max || slot.dial.as_ref().is_some_and(|dial| dial.serial > serial)
     }
 
-    /// Whether dial `serial` asked for a target this slot no longer serves: a
-    /// retarget moved the slot's origin past it. Its caller is neither joined
-    /// (that would adopt another host's session) nor allowed to tear the slot
-    /// down — the newer attempt owns the connection now. The exact complement of
-    /// the origin guard in `superseded`.
-    pub fn retargeted(&self, key: &str, serial: u64) -> bool {
-        self.slots.get(key).is_some_and(|slot| serial < slot.origin)
+    /// Who the key belongs to now, for a caller whose dial `serial` has ended.
+    ///
+    /// Two independent questions. The FINGERPRINT decides join or fail: may this
+    /// caller adopt what the key serves now? And, when it may not, who moved the
+    /// origin decides quiet or loud: a newer PRIMARY attempt publishes its own
+    /// result, so the displaced caller says nothing; a lease does not, so the
+    /// caller must resolve its own UI.
+    pub fn join(&mut self, key: &str, serial: u64, fingerprint: &str, primary: bool) -> Verdict {
+        let Some(slot) = self.slots.get_mut(key) else {
+            return Verdict::Fail;
+        };
+
+        if serial >= slot.origin {
+            // Still this caller's slot: it joins only a newer dial of it.
+            return if serial <= slot.superseded_max
+                || slot.dial.as_ref().is_some_and(|dial| dial.serial > serial)
+            {
+                Verdict::Join
+            } else {
+                Verdict::Fail
+            };
+        }
+
+        if slot.spec.fingerprint != fingerprint {
+            return if slot.origin_primary {
+                Verdict::Quiet
+            } else {
+                Verdict::Fail
+            };
+        }
+
+        // The key still serves what this caller asked for — a re-creation, or a
+        // retarget back to the same target. A re-creation dropped the primary's
+        // hold, so it is re-asserted here, under the same book lock.
+        if primary {
+            slot.primary = true;
+        }
+
+        Verdict::Join
     }
 
     /// What an existing slot does for a request (a lease or the primary).
@@ -373,6 +423,7 @@ impl SlotBook {
         alive: bool,
         interactive: bool,
         attempt_id: &str,
+        primary: bool,
     ) -> Action {
         let slot = self.slots.get_mut(key).expect("a requested slot exists");
 
@@ -386,14 +437,14 @@ impl SlotBook {
             slot.base_url = None;
             slot.failure = None;
 
-            let serial = self.begin(key, interactive, attempt_id);
+            let serial = self.begin(key, interactive, attempt_id, primary);
 
-            // A caller from before the retarget asked for the OLD backend: it
-            // must fail rather than adopt a session to a different host.
-            self.slots
-                .get_mut(key)
-                .expect("the retargeted slot exists")
-                .origin = serial;
+            // A caller from before the retarget asked for a different backend,
+            // and who retargeted decides whether it may stay quiet about it.
+            let slot = self.slots.get_mut(key).expect("the retargeted slot exists");
+
+            slot.origin = serial;
+            slot.origin_primary = primary;
 
             return Action::Supersede {
                 serial,
@@ -408,7 +459,7 @@ impl SlotBook {
                 // A person asking must not wait on a dial that cannot ask them.
                 Some(dial) if interactive && !dial.interactive => {
                     let previous = Self::supersede(slot);
-                    let serial = self.begin(key, interactive, attempt_id);
+                    let serial = self.begin(key, interactive, attempt_id, primary);
 
                     Action::Supersede {
                         serial,
@@ -419,7 +470,7 @@ impl SlotBook {
                 _ => Action::Join,
             },
             _ => Action::Dial {
-                serial: self.begin(key, interactive, attempt_id),
+                serial: self.begin(key, interactive, attempt_id, primary),
             },
         }
     }
@@ -447,12 +498,12 @@ impl SlotBook {
             .unwrap_or_else(|| key.to_string());
 
         let action = if self.slots.contains_key(&key) {
-            self.request(&key, spec, true, interactive, attempt_id)
+            self.request(&key, spec, true, interactive, attempt_id, false)
         } else {
             self.slots.insert(key.clone(), Slot::new(spec));
 
             Action::Dial {
-                serial: self.begin(&key, interactive, attempt_id),
+                serial: self.begin(&key, interactive, attempt_id, false),
             }
         };
 
@@ -485,12 +536,12 @@ impl SlotBook {
             .unwrap_or_else(|| key.to_string());
 
         let action = if self.slots.contains_key(&key) {
-            self.request(&key, spec, alive, interactive, attempt_id)
+            self.request(&key, spec, alive, interactive, attempt_id, true)
         } else {
             self.slots.insert(key.clone(), Slot::new(spec));
 
             Action::Dial {
-                serial: self.begin(&key, interactive, attempt_id),
+                serial: self.begin(&key, interactive, attempt_id, true),
             }
         };
 
@@ -733,7 +784,7 @@ impl SlotBook {
             return None;
         }
 
-        Some(self.begin(key, false, attempt_id))
+        Some(self.begin(key, false, attempt_id, slot.primary))
     }
 
     /// "Restart backend": the explicit respawn, keeping every holder. A restart
@@ -743,8 +794,9 @@ impl SlotBook {
             return Action::None;
         };
 
+        let primary = slot.primary;
         let previous = Self::supersede(slot);
-        let serial = self.begin(key, true, attempt_id);
+        let serial = self.begin(key, true, attempt_id, primary);
 
         match previous {
             Some(previous) => Action::Supersede {
@@ -1160,26 +1212,33 @@ pub(crate) fn is_current(app: &AppHandle, key: &str, serial: u64) -> bool {
     })
 }
 
-/// A caller whose dial `serial` ended: if a newer dial superseded it, the
-/// successor's outcome to wait on, subscribed in the same book section as the
-/// check. `None` when the slot was removed instead — the caller fails.
-pub(crate) fn join_if_superseded(
+/// What a caller does with a dial that ended: the book's verdict, with the
+/// successor's outcome subscribed in the same section as the check.
+pub(crate) enum Joined {
+    /// Wait for this, then read what the key installed.
+    Successor(watch::Receiver<Outcome>),
+    /// Fail with the caller's own error.
+    Fail,
+    /// Fail as `superseded`: a newer primary attempt owns this connection.
+    Quiet,
+}
+
+/// Who the key belongs to now, for a caller whose dial ended. A `Join` verdict
+/// also re-asserts a primary's hold, under the same book lock.
+pub(crate) fn join_dial(
     app: &AppHandle,
     key: &str,
     serial: u64,
-) -> Option<watch::Receiver<Outcome>> {
+    fingerprint: &str,
+    primary: bool,
+) -> Joined {
     locked(app, |inner| {
-        inner
-            .book
-            .superseded(key, serial)
-            .then(|| signal(inner, key).subscribe())
+        match inner.book.join(key, serial, fingerprint, primary) {
+            Verdict::Join => Joined::Successor(signal(inner, key).subscribe()),
+            Verdict::Fail => Joined::Fail,
+            Verdict::Quiet => Joined::Quiet,
+        }
     })
-}
-
-/// Whether dial `serial` at `key` asked for a target the slot has since been
-/// retargeted away from.
-pub(crate) fn retargeted(app: &AppHandle, key: &str, serial: u64) -> bool {
-    locked(app, |inner| inner.book.retargeted(key, serial))
 }
 
 /// Wait for a single-flight dial to settle.
@@ -1833,7 +1892,7 @@ pub async fn tunnel_acquire(
     // replaced, because it waits on the SLOT's signal — subscribed in `begun`,
     // under the same book section that began the dial — and only a current dial
     // ever settles that signal. A refactor that returned this dial's own result
-    // instead would have to call `join_if_superseded`, as the primary paths do.
+    // instead would have to call `join_dial`, as the primary paths do.
     wait(rx).await
 }
 
@@ -2453,46 +2512,131 @@ mod tests {
     }
 
     #[test]
-    fn i28_a_retargeted_dial_is_neither_joined_nor_allowed_to_tear_down() {
-        let mut book = pages();
-        let (key, old) = book
-            .hold_primary("conn:a::default", ssh("a"), false, false, "p")
-            .unwrap();
-
-        assert!(!book.retargeted(&key, serial_of(&old)), "its own target");
-
+    fn i28_the_verdict_says_who_the_key_belongs_to_now() {
+        let target = |spec: &SlotSpec| spec.fingerprint.clone();
+        let a = ssh("a");
         let mut moved = ssh("a");
 
         moved.fingerprint = ssh_fingerprint("deploy", "box2", 22, None, None);
 
-        let (_, retarget) = book.hold_primary(&key, moved, true, false, "p2").unwrap();
+        // 1. No slot at all, and a dial nothing newer replaced: the caller fails.
+        let mut book = pages();
 
-        assert!(book.retargeted(&key, serial_of(&old)));
-        assert!(
-            !book.superseded(&key, serial_of(&old)),
-            "a retargeted caller is never joined"
+        assert_eq!(
+            book.join("conn:a::default", 1, &target(&a), true),
+            Verdict::Fail
         );
-        assert!(
-            !book.retargeted(&key, serial_of(&retarget)),
+
+        let (key, own) = book
+            .hold_primary("conn:a::default", a.clone(), false, false, "p")
+            .unwrap();
+
+        assert_eq!(
+            book.join(&key, serial_of(&own), &target(&a), true),
+            Verdict::Fail,
+            "its own dial is still the key's"
+        );
+
+        // 2. Superseded within the same origin era: join.
+        let restart = book.restart(&key, "restart");
+
+        assert_eq!(
+            book.join(&key, serial_of(&own), &target(&a), true),
+            Verdict::Join
+        );
+        assert_eq!(
+            book.join(&key, serial_of(&restart), &target(&a), true),
+            Verdict::Fail,
             "the current dial"
         );
 
-        // Removed, re-created, and drained: there is no slot to be stale against.
+        // 3. Older than origin, same target (a re-creation): join, and the
+        // primary's hold comes back — the removal dropped it.
         book.remove_slot(&key);
 
-        assert!(!book.retargeted(&key, serial_of(&old)));
+        let (_, fresh) = acquire(&mut book, &key, a.clone(), lease("l1"));
 
-        let (_, fresh) = acquire(&mut book, &key, ssh("a"), lease("l1"));
-
-        assert!(!book.retargeted(&key, serial_of(&fresh)));
         assert!(
-            book.retargeted(&key, serial_of(&old)),
-            "a slot re-created at the key is not this caller's either"
+            !book.slot(&key).unwrap().primary,
+            "the re-created slot is a lease's"
+        );
+        assert_eq!(
+            book.join(&key, serial_of(&own), &target(&a), true),
+            Verdict::Join
+        );
+        assert!(
+            book.slot(&key).unwrap().primary,
+            "a joining primary holds the key again"
+        );
+        assert_eq!(
+            book.join(&key, serial_of(&fresh), &target(&a), true),
+            Verdict::Fail,
+            "the re-created slot's own dial"
         );
 
+        // 4. Older than origin, a different target the PRIMARY moved to: quiet,
+        // because that attempt publishes its own result.
+        let mut book = pages();
+        let (key, own) = book
+            .hold_primary("conn:a::default", a.clone(), false, false, "p")
+            .unwrap();
+
+        book.hold_primary(&key, moved.clone(), true, false, "p2")
+            .unwrap();
+
+        assert_eq!(
+            book.join(&key, serial_of(&own), &target(&a), true),
+            Verdict::Quiet
+        );
+        // A caller that asked for the target the key now serves joins instead.
+        assert_eq!(
+            book.join(&key, serial_of(&own), &target(&moved), true),
+            Verdict::Join
+        );
+
+        // 5. Older than origin, a different target a LEASE moved to: the caller
+        // fails with its own kind, so its UI resolves. Its hold stands until it
+        // releases, and the lease's holder keeps the slot either way.
+        let mut book = pages();
+        let (key, own) = book
+            .hold_primary("conn:a::default", a.clone(), false, false, "p")
+            .unwrap();
+
+        acquire(&mut book, &key, moved.clone(), lease("l2"));
+
+        assert_eq!(
+            book.join(&key, serial_of(&own), &target(&a), true),
+            Verdict::Fail
+        );
+        assert!(
+            book.slot(&key).unwrap().primary,
+            "the hold stands until its caller releases"
+        );
+        assert_eq!(book.release_primary(&key), Some(Action::None));
+        assert!(book.slot(&key).is_some(), "the lease keeps the slot");
+
+        // Local never reaches Quiet: it has one constant fingerprint, so a
+        // re-created local key is always a Join for the caller it displaced.
+        let mut book = pages();
+        let (local_key, first) = book
+            .hold_primary(LOCAL_SLOT, local(), false, false, "p")
+            .unwrap();
+
+        book.remove_slot(&local_key);
+        acquire(&mut book, &local_key, local(), lease("l3"));
+
+        assert_eq!(
+            book.join(&local_key, serial_of(&first), LOCAL_INSTANCE_KEY, true),
+            Verdict::Join
+        );
+
+        // Quit leaves no key to belong to.
         book.quit();
 
-        assert!(!book.retargeted(&key, serial_of(&old)));
+        assert_eq!(
+            book.join(&local_key, serial_of(&first), LOCAL_INSTANCE_KEY, true),
+            Verdict::Fail
+        );
     }
 
     #[test]
@@ -2744,7 +2888,12 @@ mod tests {
         let (_, after) = m.book.hold_primary(&r, moved, true, false, "p2").unwrap();
 
         m.check();
-        assert!(m.book.retargeted(&r, serial_of(&before)));
+        assert_eq!(
+            m.book
+                .join(&r, serial_of(&before), &ssh("r").fingerprint, true),
+            Verdict::Quiet,
+            "a primary retarget"
+        );
         assert!(!m.book.superseded(&r, serial_of(&before)));
         assert!(
             !token(&m.book, &r).is_cancelled(),

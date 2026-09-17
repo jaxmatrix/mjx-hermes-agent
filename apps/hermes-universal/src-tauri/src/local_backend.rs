@@ -497,7 +497,14 @@ mod imp {
             Err(error) => error,
         };
 
-        let Some(successor) = crate::tunnels::join_if_superseded(app, &key, serial) else {
+        // The same verdict the SSH tail takes. `LOCAL_INSTANCE_KEY` is one
+        // constant fingerprint, so a local key re-created under this caller is
+        // always a Join: it adopts the new child instead of failing into a stop
+        // that would remove that slot and cancel its dial. Quiet is unreachable
+        // here, for the same reason.
+        let crate::tunnels::Joined::Successor(successor) =
+            crate::tunnels::join_dial(app, &key, serial, LOCAL_INSTANCE_KEY, true)
+        else {
             return Err(error.message);
         };
 

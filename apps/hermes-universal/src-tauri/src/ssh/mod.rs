@@ -967,7 +967,7 @@ pub async fn ssh_connect(
         connection_id: slot_connection_id.clone(),
         kind: SlotKind::Ssh,
         instance_key,
-        fingerprint,
+        fingerprint: fingerprint.clone(),
     };
     // A live slot of this connection is adopted whatever profile it was dialled
     // for: one backend serves every profile.
@@ -1053,19 +1053,19 @@ pub async fn ssh_connect(
         return settled;
     };
 
-    // Superseded (an interactive Connect, a restart): never fail the primary —
-    // its JS would release the hold under the successor. Wait for that dial and
-    // adopt its session. Only a removal or quit fails the caller.
-    let Some(successor) = crate::tunnels::join_if_superseded(&app, &dial.key, dial.serial) else {
-        // A retarget: this dial asked for a target the slot no longer serves, so
-        // it cannot adopt the successor's session either. It fails as
-        // `superseded`, which tells JS a newer attempt owns this connection and
-        // that tearing anything down would take the retarget's own dial with it.
-        return Err(retarget_error(
-            error,
-            crate::tunnels::retargeted(&app, &dial.key, dial.serial),
-        ));
-    };
+    // Who the key belongs to now. Joining is how a supersede, a restart or a
+    // re-creation of the same target keeps the primary from failing and
+    // releasing its hold under the dial that replaced it.
+    let successor =
+        match crate::tunnels::join_dial(&app, &dial.key, dial.serial, &fingerprint, true) {
+            crate::tunnels::Joined::Successor(successor) => successor,
+            // A newer PRIMARY attempt pointed the key at a different target: it
+            // publishes its own result, so this caller says nothing and releases
+            // nothing. A lease-driven retarget gets the error as it is, because its
+            // own holder keeps the slot and this caller must resolve its UI.
+            crate::tunnels::Joined::Quiet => return Err(retarget_error(error, true)),
+            crate::tunnels::Joined::Fail => return Err(error),
+        };
 
     crate::tunnels::wait(successor)
         .await
