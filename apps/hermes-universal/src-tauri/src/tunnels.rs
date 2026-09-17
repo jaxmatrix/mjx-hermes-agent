@@ -1390,30 +1390,61 @@ pub(crate) async fn drop_connection(app: &AppHandle, connection_id: &str) {
     apply(app, effects).await;
 }
 
-/// `RunEvent::Exit`: the local child is killed first, with no timeout, so a
-/// hanging SSH close can never orphan it. Then every tunnel goes.
+/// One step of the exit sequence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShutdownStep {
+    /// Kill the local child, whether or not a slot holds it. Unbounded.
+    KillLocal,
+    /// Close an SSH scope's session. Bounded by the shared close deadline.
+    CloseSsh(String),
+}
+
+/// The exit order: the local child first, then every SSH close. A hanging SSH
+/// close runs into its deadline; it must never stand between the app and the
+/// kill that keeps `hermes serve` from outliving it.
+pub fn shutdown_plan(slots: &[(String, SlotKind)]) -> Vec<ShutdownStep> {
+    std::iter::once(ShutdownStep::KillLocal)
+        .chain(
+            slots
+                .iter()
+                .filter(|(_, kind)| *kind == SlotKind::Ssh)
+                .map(|(key, _)| ShutdownStep::CloseSsh(key.clone())),
+        )
+        .collect()
+}
+
+/// `RunEvent::Exit`: runs `shutdown_plan` in its order.
 pub fn shutdown(app: &AppHandle) {
-    let slots = locked(app, |inner| {
+    let slots: Vec<(String, SlotKind)> = locked(app, |inner| {
         inner.signals.clear();
-        inner.book.drain()
+        inner
+            .book
+            .drain()
+            .into_iter()
+            .map(|(key, slot)| (key, slot.spec.kind))
+            .collect()
     });
 
     let app = app.clone();
 
     tauri::async_runtime::block_on(async move {
-        crate::local_backend::kill_child(&app).await;
+        // A session close sends a disconnect; a dead network must not hold the
+        // process open, so all the closes share one deadline.
+        let mut deadline = None;
 
-        let work = async {
-            for (key, slot) in slots {
-                if slot.spec.kind == SlotKind::Ssh {
-                    crate::ssh::teardown_scope(&app, &key).await;
+        for step in shutdown_plan(&slots) {
+            match step {
+                ShutdownStep::KillLocal => crate::local_backend::kill_child(&app).await,
+                ShutdownStep::CloseSsh(key) => {
+                    let until = *deadline.get_or_insert_with(|| {
+                        tokio::time::Instant::now() + Duration::from_secs(3)
+                    });
+
+                    let _ = tokio::time::timeout_at(until, crate::ssh::teardown_scope(&app, &key))
+                        .await;
                 }
             }
-        };
-
-        // A session close sends a disconnect; a dead network must not hold the
-        // process open.
-        let _ = tokio::time::timeout(Duration::from_secs(3), work).await;
+        }
     });
 }
 
@@ -1773,6 +1804,27 @@ mod tests {
         // A tray-hidden window whose timers stopped for a day still holds it.
         assert!(book.expire(24 * 60 * 60_000).is_empty());
         assert!(book.slot(&key).unwrap().holders.contains(&lease("cold")));
+    }
+
+    #[test]
+    fn quit_kills_the_local_child_before_any_ssh_close() {
+        // The drained book is key-ordered: `conn:*` sorts before `local`.
+        let slots = vec![
+            ("conn:a::default".to_string(), SlotKind::Ssh),
+            (LOCAL_SLOT.to_string(), SlotKind::Local),
+            ("conn:b::default".to_string(), SlotKind::Ssh),
+        ];
+
+        assert_eq!(
+            shutdown_plan(&slots),
+            vec![
+                ShutdownStep::KillLocal,
+                ShutdownStep::CloseSsh("conn:a::default".to_string()),
+                ShutdownStep::CloseSsh("conn:b::default".to_string()),
+            ]
+        );
+        // No local slot: the child may still be running, so it is killed anyway.
+        assert_eq!(shutdown_plan(&[]), vec![ShutdownStep::KillLocal]);
     }
 
     #[test]
