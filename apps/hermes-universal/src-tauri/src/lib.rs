@@ -368,7 +368,7 @@ pub fn run() {
             if tunnels::reaps_on_page_load(&payload.event()) {
                 use tauri::Manager;
 
-                tunnels::reap_window(webview.app_handle(), webview.label());
+                tunnels::page_started(webview.app_handle(), webview.label());
             }
         })
         .setup(|app| {
@@ -527,6 +527,7 @@ pub fn run() {
             local_backend_kill,
             tunnels::tunnel_acquire,
             tunnels::tunnel_release,
+            tunnels::tunnel_page_epoch,
             tunnels::tunnel_status,
             local_install_detect,
             local_install_start,
@@ -670,7 +671,7 @@ pub fn run() {
 
                 transport::reap_window_sockets(app_handle, label);
                 // …and so do the tunnel leases it held (MJXHRM-592).
-                tunnels::reap_window(app_handle, label);
+                tunnels::window_destroyed(app_handle, label);
                 appearance::reap_window(app_handle, label);
                 // …and so do the guest webviews it hosted (MJXHRM-447): a child
                 // webview dies with its window, but the Rust-side registry

@@ -240,6 +240,10 @@ pub enum Action {
 #[derive(Debug, Default)]
 pub struct SlotBook {
     slots: BTreeMap<String, Slot>,
+    /// Each live window's page epoch. A page load bumps it; a destroyed window
+    /// loses it. A hold carries the epoch its page read, so one issued by a page
+    /// that is already gone is refused instead of outliving it.
+    epochs: HashMap<String, u64>,
     /// Serials are unique across the book, so a recreated slot can never
     /// credit a dial that belonged to its predecessor.
     serial: u64,
@@ -363,6 +367,10 @@ impl SlotBook {
     }
 
     /// A lease joins the connection's live slot, or creates one at `key`.
+    ///
+    /// `None`, with nothing inserted, when `page_epoch` is not the holder
+    /// window's current epoch: the page that asked has reloaded or its window is
+    /// gone, and no lifecycle event would ever end the hold.
     pub fn acquire(
         &mut self,
         key: &str,
@@ -370,7 +378,12 @@ impl SlotBook {
         holder: Holder,
         interactive: bool,
         attempt_id: &str,
-    ) -> (String, Action) {
+        page_epoch: u64,
+    ) -> Option<(String, Action)> {
+        if self.epochs.get(&holder.window) != Some(&page_epoch) {
+            return None;
+        }
+
         let key = self
             .key_for(&spec.connection_id)
             .unwrap_or_else(|| key.to_string());
@@ -390,7 +403,7 @@ impl SlotBook {
         slot.holders.insert(holder);
         slot.unheld_since = None;
 
-        (key, action)
+        Some((key, action))
     }
 
     /// The active connection's own dial. `alive` is the caller's liveness read
@@ -470,6 +483,28 @@ impl SlotBook {
         }
 
         lingering
+    }
+
+    /// A page started loading in `label`: the previous page's holds end, and the
+    /// window's epoch moves on. Returns the new epoch.
+    pub fn page_started(&mut self, label: &str, now: u64) -> u64 {
+        let epoch = self.epochs.get(label).map_or(1, |epoch| epoch + 1);
+
+        self.epochs.insert(label.to_string(), epoch);
+        self.reap_window(label, now);
+
+        epoch
+    }
+
+    /// `label` was destroyed: its holds end and no epoch is current for it.
+    pub fn window_destroyed(&mut self, label: &str, now: u64) {
+        self.epochs.remove(label);
+        self.reap_window(label, now);
+    }
+
+    /// The epoch a page in `label` holds tunnels under, if the window is live.
+    pub fn page_epoch(&self, label: &str) -> Option<u64> {
+        self.epochs.get(label).copied()
     }
 
     /// A window reloaded or went away: its leases end, and a slot that leaves
@@ -1378,11 +1413,18 @@ pub(crate) fn slots_for(app: &AppHandle, connection_id: &str) -> Vec<String> {
     locked(app, |inner| inner.book.slots_for(connection_id))
 }
 
-/// A window reloaded (`PageLoadEvent::Started`) or was destroyed: its leases
-/// end, and whatever that leaves unheld lingers one reaper tick.
-pub fn reap_window(app: &AppHandle, label: &str) {
+/// `PageLoadEvent::Started`: the old page's leases end (a slot it alone held
+/// lingers one reaper tick) and the window's page epoch moves on.
+pub fn page_started(app: &AppHandle, label: &str) {
     locked(app, |inner| {
-        inner.book.reap_window(label, now_ms());
+        inner.book.page_started(label, now_ms());
+    });
+}
+
+/// `WindowEvent::Destroyed`: the window's leases end and its epoch is gone.
+pub fn window_destroyed(app: &AppHandle, label: &str) {
+    locked(app, |inner| {
+        inner.book.window_destroyed(label, now_ms());
     });
 }
 
@@ -1509,6 +1551,7 @@ pub async fn tunnel_acquire(
     installation_id: Option<String>,
     interactive: bool,
     attempt_id: Option<String>,
+    page_epoch: Option<u64>,
 ) -> Result<TunnelDescriptor, TunnelError> {
     let target = crate::connections::tunnel_target(&app, &connection_id).ok_or_else(|| {
         TunnelError::new(
@@ -1557,14 +1600,15 @@ pub async fn tunnel_acquire(
         .unwrap_or_else(|| format!("tunnel-{connection_id}"));
     let holder = Holder::new(webview.window().label(), lease_id);
 
-    let (hold, spec, installation_id) = locked(&app, |inner| {
+    let acquired = locked(&app, |inner| {
         if installation_id.is_some() {
             inner.installation_id = installation_id.clone();
         }
 
-        let (key, action) = inner
-            .book
-            .acquire(&key, spec, holder, interactive, &attempt_id);
+        let (key, action) =
+            inner
+                .book
+                .acquire(&key, spec, holder, interactive, &attempt_id, page_epoch?)?;
         let spec = inner
             .book
             .slot(&key)
@@ -1573,8 +1617,15 @@ pub async fn tunnel_acquire(
             .clone();
         let hold = hold_for(&app, inner, key, action);
 
-        (hold, spec, inner.installation_id.clone())
+        Some((hold, spec, inner.installation_id.clone()))
     });
+
+    let Some((hold, spec, installation_id)) = acquired else {
+        return Err(TunnelError::new(
+            FailureKind::Unavailable,
+            "this page no longer holds tunnels",
+        ));
+    };
 
     let rx = match hold {
         Hold::Reuse(key) => {
@@ -1611,6 +1662,15 @@ pub async fn tunnel_release(
     Ok(())
 }
 
+/// The page epoch this webview's page holds tunnels under. Read once, before a
+/// page's first acquire; `None` when the window is not live.
+#[tauri::command]
+pub async fn tunnel_page_epoch(app: AppHandle, webview: Webview<Wry>) -> Option<u64> {
+    let label = webview.label().to_string();
+
+    locked(&app, |inner| inner.book.page_epoch(&label))
+}
+
 #[tauri::command]
 pub async fn tunnel_status(app: AppHandle, connection_id: String) -> Option<TunnelStatus> {
     locked(&app, |inner| {
@@ -1643,6 +1703,16 @@ mod tests {
         }
     }
 
+    /// A book whose test windows each have a live page at epoch 1.
+    fn pages() -> SlotBook {
+        let mut book = SlotBook::default();
+
+        book.page_started("main", 0);
+        book.page_started("session-x", 0);
+
+        book
+    }
+
     fn lease(lease: &str) -> Holder {
         Holder::new("main", lease)
     }
@@ -1655,7 +1725,8 @@ mod tests {
     }
 
     fn acquire(book: &mut SlotBook, key: &str, spec: SlotSpec, holder: Holder) -> (String, Action) {
-        book.acquire(key, spec, holder, false, "tunnel-x")
+        book.acquire(key, spec, holder, false, "tunnel-x", 1)
+            .expect("a live page acquires")
     }
 
     /// Land a dial successfully.
@@ -1668,7 +1739,7 @@ mod tests {
 
     #[test]
     fn r1_two_holders_share_one_dial_and_the_last_release_tears_down() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
 
         let (key, first) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
         let (joined, second) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l2"));
@@ -1694,7 +1765,7 @@ mod tests {
 
     #[test]
     fn gap1_the_primary_adopts_a_lease_slot_whatever_the_profile() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, dial) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
 
         ready(&mut book, &key, &dial);
@@ -1709,7 +1780,7 @@ mod tests {
 
     #[test]
     fn r3_releasing_the_primary_keeps_a_leased_slot() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, dial) = book.hold_primary("conn:a::default", ssh("a"), false, false, "p");
 
         ready(&mut book, &key, &dial);
@@ -1725,7 +1796,7 @@ mod tests {
 
     #[test]
     fn gap2_a_result_from_a_dial_the_slot_no_longer_waits_on_is_stale() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, old) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
 
         // Released mid-dial and reaped, then acquired again: a new dial for a
@@ -1751,7 +1822,7 @@ mod tests {
 
     #[test]
     fn gap3_a_restart_during_a_dial_supersedes_it() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, first) = book.hold_primary(LOCAL_SLOT, local(), false, false, "p");
 
         let restart = book.restart(&key, "restart");
@@ -1775,7 +1846,7 @@ mod tests {
 
     #[test]
     fn gap4_a_different_target_is_never_reused_and_ends_its_leases() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, dial) = book.hold_primary("", ssh("legacy"), false, false, "p");
 
         ready(&mut book, &key, &dial);
@@ -1801,15 +1872,26 @@ mod tests {
 
     #[test]
     fn gap5_a_reloading_window_keeps_its_slot_for_one_tick() {
-        let mut book = SlotBook::default();
-        let (key, dial) = book.acquire("conn:a::default", ssh("a"), lease("old-page"), false, "t");
+        let mut book = pages();
+        let (key, dial) = book
+            .acquire(
+                "conn:a::default",
+                ssh("a"),
+                lease("old-page"),
+                false,
+                "t",
+                1,
+            )
+            .expect("a live page acquires");
 
         ready(&mut book, &key, &dial);
 
         assert_eq!(book.reap_window("main", 1_000), vec![key.clone()]);
         assert!(book.slot(&key).is_some(), "not torn down at once");
 
-        let (_, again) = book.acquire(&key, ssh("a"), lease("new-page"), false, "t");
+        let (_, again) = book
+            .acquire(&key, ssh("a"), lease("new-page"), false, "t", 1)
+            .expect("a live page acquires");
 
         assert_eq!(again, Action::Reuse);
         assert!(book.expire(1_000 + LINGER_MS).is_empty());
@@ -1827,8 +1909,10 @@ mod tests {
 
     #[test]
     fn a_hold_never_ages_out_during_its_dial_or_after() {
-        let mut book = SlotBook::default();
-        let (key, dial) = book.acquire("conn:a::default", ssh("a"), lease("cold"), false, "t");
+        let mut book = pages();
+        let (key, dial) = book
+            .acquire("conn:a::default", ssh("a"), lease("cold"), false, "t", 1)
+            .expect("a live page acquires");
 
         // A cold spawn, or a Connect waiting on a passphrase, for ten minutes.
         assert!(book.expire(10 * 60_000).is_empty());
@@ -1863,6 +1947,48 @@ mod tests {
     }
 
     #[test]
+    fn a_hold_from_a_page_that_is_gone_is_refused() {
+        let mut book = SlotBook::default();
+
+        assert_eq!(book.page_started("a", 0), 1);
+
+        let holder = Holder::new("a", "old-page");
+
+        // The page reloads before its acquire runs.
+        assert_eq!(book.page_started("a", 10), 2);
+        assert!(book
+            .acquire("conn:x::default", ssh("x"), holder.clone(), false, "t", 1)
+            .is_none());
+        assert!(book.slot("conn:x::default").is_none(), "no holder, no slot");
+
+        let (key, action) = book
+            .acquire(
+                "conn:x::default",
+                ssh("x"),
+                Holder::new("a", "new-page"),
+                false,
+                "t",
+                2,
+            )
+            .expect("the current page acquires");
+
+        assert!(matches!(action, Action::Dial { .. }));
+
+        // The window is destroyed: no epoch is current for it any more.
+        book.window_destroyed("a", 20);
+
+        assert_eq!(book.page_epoch("a"), None);
+        assert!(book
+            .acquire(&key, ssh("x"), Holder::new("a", "late"), false, "t", 2)
+            .is_none());
+        assert!(!book
+            .slot(&key)
+            .unwrap()
+            .holders
+            .contains(&Holder::new("a", "late")));
+    }
+
+    #[test]
     fn only_a_page_load_that_starts_reaps() {
         assert!(reaps_on_page_load(&tauri::webview::PageLoadEvent::Started));
         assert!(!reaps_on_page_load(
@@ -1872,13 +1998,14 @@ mod tests {
 
     #[test]
     fn a_superseded_dial_is_cancelled_by_the_book_itself() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, _) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
         let background = book.slot(&key).unwrap().dial.clone().unwrap().cancel;
 
         // Whether the background dial's task has registered its attempt yet or
         // not, its token is already cancelled when the book supersedes it.
-        book.acquire(&key, ssh("a"), lease("l2"), true, "connect-1");
+        book.acquire(&key, ssh("a"), lease("l2"), true, "connect-1", 1)
+            .expect("a live page acquires");
 
         assert!(background.is_cancelled());
 
@@ -1894,10 +2021,12 @@ mod tests {
 
     #[test]
     fn gap8_an_interactive_request_supersedes_a_background_dial_only() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, background) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
 
-        let (_, connect) = book.acquire(&key, ssh("a"), lease("l2"), true, "connect-1");
+        let (_, connect) = book
+            .acquire(&key, ssh("a"), lease("l2"), true, "connect-1", 1)
+            .expect("a live page acquires");
 
         assert!(
             matches!(&connect, Action::Supersede { previous: Some(previous), retarget: false, .. } if previous.serial == serial_of(&background) && !previous.interactive),
@@ -1911,14 +2040,16 @@ mod tests {
         );
 
         // An interactive dial in flight is joined, not superseded again.
-        let (_, second) = book.acquire(&key, ssh("a"), lease("l3"), true, "connect-2");
+        let (_, second) = book
+            .acquire(&key, ssh("a"), lease("l3"), true, "connect-2", 1)
+            .expect("a live page acquires");
 
         assert_eq!(second, Action::Join);
     }
 
     #[test]
     fn r4_a_destroyed_window_drops_only_its_own_holders() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, _) = acquire(
             &mut book,
             "conn:a::default",
@@ -1939,7 +2070,7 @@ mod tests {
 
     #[test]
     fn r5_a_dead_leased_slot_redials_with_capped_backoff_until_a_terminal_error() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, dial) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
 
         ready(&mut book, &key, &dial);
@@ -1990,7 +2121,7 @@ mod tests {
 
     #[test]
     fn r6_rust_never_redials_a_slot_the_primary_holds() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, dial) = book.hold_primary("conn:a::default", ssh("a"), false, false, "p");
 
         ready(&mut book, &key, &dial);
@@ -2019,7 +2150,7 @@ mod tests {
             ssh_fingerprint("deploy", "box", 22, Some("~/.ssh/b"), None)
         );
 
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, dial) = book.hold_primary("conn:a::default", ssh("a"), false, false, "p");
 
         ready(&mut book, &key, &dial);
@@ -2084,7 +2215,7 @@ mod tests {
 
     #[test]
     fn r9_the_local_child_is_reused_and_shutdown_takes_a_held_slot() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, dial) = acquire(&mut book, LOCAL_SLOT, local(), lease("l1"));
 
         ready(&mut book, &key, &dial);
@@ -2099,7 +2230,7 @@ mod tests {
 
     #[test]
     fn r10_dropping_a_connection_ends_its_leased_slots() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (a, dial_a) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
         let (b, dial_b) = acquire(&mut book, "conn:b::default", ssh("b"), lease("l2"));
 
@@ -2116,7 +2247,7 @@ mod tests {
 
     #[test]
     fn a_failed_first_dial_ends_the_slot_instead_of_looping() {
-        let mut book = SlotBook::default();
+        let mut book = pages();
         let (key, dial) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
 
         assert_eq!(
