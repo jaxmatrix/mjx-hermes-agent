@@ -160,17 +160,34 @@ function subscribe(connectionId: string, entry: Held): Promise<UnlistenFn[]> {
   ]).catch(() => [])
 }
 
-let pageEpoch: null | Promise<null | number> = null
+let pageOpen: null | Promise<number> = null
 
 /**
- * The epoch this page holds tunnels under, read once before its first acquire
- * (MJXHRM-592). Rust refuses a hold whose page has since reloaded or closed, so
- * a late command from a gone page cannot leave a hold nothing would ever end.
+ * This page declares its start and gets the epoch its holds carry (MJXHRM-592).
+ * Rust ends every hold an earlier page of the window took, and refuses a hold
+ * whose page has since reloaded or closed, so a late command from a gone page
+ * cannot leave a hold nothing would ever end. One open per page; a failure is
+ * never kept, so the next acquire asks again.
  */
-function currentPageEpoch(): Promise<null | number> {
-  pageEpoch ??= invoke<null | number>('tunnel_page_epoch').catch(() => null)
+function ensurePageOpen(): Promise<number> {
+  if (!pageOpen) {
+    const opening = invoke<unknown>('tunnel_page_open').then(epoch => {
+      if (typeof epoch !== 'number') {
+        throw tunnelError('unavailable', 'this page has no tunnel epoch')
+      }
 
-  return pageEpoch
+      return epoch
+    })
+
+    pageOpen = opening
+    opening.catch(() => {
+      if (pageOpen === opening) {
+        pageOpen = null
+      }
+    })
+  }
+
+  return pageOpen
 }
 
 async function dial(
@@ -186,7 +203,8 @@ async function dial(
   const detach = attemptId ? await attachSshPrompts(attemptId) : null
 
   try {
-    const [installationId, pageEpoch] = await Promise.all([getInstallationId(), currentPageEpoch()])
+    // Awaited before the acquire: the epoch has to exist before any hold does.
+    const [installationId, pageEpoch] = await Promise.all([getInstallationId(), ensurePageOpen()])
 
     return await invoke<TunnelDescriptor>('tunnel_acquire', {
       attemptId,
@@ -469,7 +487,7 @@ export function connectionBase(rowUrl: null | string | undefined, connectionId: 
 
 export const __testing = {
   reset(): void {
-    pageEpoch = null
+    pageOpen = null
     held.clear()
     $tunnelStatus.set({})
   }

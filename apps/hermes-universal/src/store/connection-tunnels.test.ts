@@ -61,6 +61,12 @@ const descriptor = {
 
 const calls = (command: string) => invoke.mock.calls.filter(([name]) => name === command)
 
+/** Stub every command but `tunnel_page_open`, which opens at epoch 3. */
+const withPageOpen = (implementation: (command: string, args: never) => unknown) =>
+  invoke.mockImplementation((command: string, args: never) =>
+    command === 'tunnel_page_open' ? Promise.resolve(3) : implementation(command, args)
+  )
+
 beforeEach(() => {
   __testing.reset()
   handlers.clear()
@@ -71,7 +77,7 @@ beforeEach(() => {
   $notifications.set([])
   answerListeners.clear()
   invoke.mockImplementation(async (command: string) =>
-    command === 'tunnel_acquire' ? descriptor : command === 'tunnel_page_epoch' ? 3 : undefined
+    command === 'tunnel_acquire' ? descriptor : command === 'tunnel_page_open' ? 3 : undefined
   )
 })
 
@@ -148,12 +154,68 @@ describe('acquireTunnel', () => {
   })
 
   // MJXHRM-592: Rust refuses a hold from a page that has reloaded or closed.
-  it('reads the page epoch once and sends it with every acquire', async () => {
+  it('opens the page once and sends its epoch with every acquire', async () => {
     await acquireTunnel('ssh1')
     await acquireTunnel('ssh2')
 
-    expect(calls('tunnel_page_epoch')).toHaveLength(1)
+    expect(calls('tunnel_page_open')).toHaveLength(1)
     expect(calls('tunnel_acquire').map(([, args]) => (args as { pageEpoch: number }).pageEpoch)).toEqual([3, 3])
+  })
+
+  it('never keeps a failed page open: the next acquire opens again', async () => {
+    let opens = 0
+
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'tunnel_page_open') {
+        opens += 1
+
+        if (opens === 1) {
+          throw { kind: 'unavailable', message: 'refused', terminal: true }
+        }
+
+        return 9
+      }
+
+      return command === 'tunnel_acquire' ? descriptor : undefined
+    })
+
+    await expect(acquireTunnel('ssh1')).rejects.toMatchObject({ kind: 'unavailable' })
+    expect(calls('tunnel_acquire')).toHaveLength(0)
+
+    await acquireTunnel('ssh1')
+
+    expect(calls('tunnel_page_open')).toHaveLength(2)
+    expect(calls('tunnel_acquire')[0]?.[1]).toMatchObject({ pageEpoch: 9 })
+  })
+
+  it('never acquires before the page has opened', async () => {
+    let open = (_epoch: number) => {}
+
+    invoke.mockImplementation((command: string) =>
+      command === 'tunnel_page_open'
+        ? new Promise<number>(resolve => (open = resolve))
+        : Promise.resolve(command === 'tunnel_acquire' ? descriptor : undefined)
+    )
+
+    const acquiring = acquireTunnel('ssh1')
+
+    await vi.waitFor(() => expect(calls('tunnel_page_open')).toHaveLength(1))
+    // Every other await in the acquire has had its turn.
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(calls('tunnel_acquire')).toHaveLength(0)
+
+    open(4)
+    await acquiring
+
+    expect(calls('tunnel_acquire')[0]?.[1]).toMatchObject({ pageEpoch: 4 })
+  })
+
+  it('forgets the page open on a test reset', async () => {
+    await acquireTunnel('ssh1')
+    __testing.reset()
+    await acquireTunnel('ssh1')
+
+    expect(calls('tunnel_page_open')).toHaveLength(2)
   })
 
   it('J6: an interactive acquire attaches the prompts before it dials', async () => {
@@ -208,7 +270,7 @@ describe('acquireTunnel', () => {
     lease.onClosed(closed)
     await vi.advanceTimersByTimeAsync(60 * 60_000)
 
-    expect(invoke.mock.calls.map(([name]) => name)).toEqual(['tunnel_page_epoch', 'tunnel_acquire'])
+    expect(invoke.mock.calls.map(([name]) => name)).toEqual(['tunnel_page_open', 'tunnel_acquire'])
     expect(closed).not.toHaveBeenCalled()
   })
 
@@ -233,7 +295,7 @@ describe('acquireTunnel', () => {
   })
 
   it('says Needs sign-in once per connection, with a Connect that only connects', async () => {
-    invoke.mockImplementation(async (command: string, args: { interactive?: boolean }) => {
+    withPageOpen(async (command: string, args: { interactive?: boolean }) => {
       if (command !== 'tunnel_acquire') {
         return undefined
       }
@@ -265,7 +327,7 @@ describe('acquireTunnel', () => {
 
   // A changed host key is refused under every policy: there is nothing to Connect.
   it('warns about a changed host key once, with no Connect', async () => {
-    invoke.mockImplementation(async (command: string) => {
+    withPageOpen(async (command: string) => {
       if (command === 'tunnel_acquire') {
         throw { kind: 'host-key-changed', message: 'remove the old key with ssh-keygen -R box', terminal: true }
       }
@@ -289,7 +351,7 @@ describe('acquireTunnel', () => {
   })
 
   it('raises nothing for a failure that retrying can fix', async () => {
-    invoke.mockImplementation(async (command: string) => {
+    withPageOpen(async (command: string) => {
       if (command === 'tunnel_acquire') {
         throw { kind: 'transient', message: 'unreachable', terminal: false }
       }
@@ -301,7 +363,7 @@ describe('acquireTunnel', () => {
 
   describe('a Connect that fails', () => {
     const failWith = (error: object) =>
-      invoke.mockImplementation(async (command: string) => {
+      withPageOpen(async (command: string) => {
         if (command === 'tunnel_acquire') {
           throw error
         }
@@ -370,7 +432,7 @@ describe('acquireTunnel', () => {
 
       let finish = (_value: unknown) => {}
 
-      invoke.mockImplementation((command: string) =>
+      withPageOpen((command: string) =>
         command === 'tunnel_acquire' ? new Promise(resolve => (finish = resolve)) : Promise.resolve(undefined)
       )
 
@@ -397,7 +459,7 @@ describe('acquireTunnel', () => {
   })
 
   it('lets its hold go when the dial fails', async () => {
-    invoke.mockImplementation(async (command: string) => {
+    withPageOpen(async (command: string) => {
       if (command === 'tunnel_acquire') {
         throw { kind: 'credentials-needed', message: 'needs a passphrase', terminal: true }
       }

@@ -987,7 +987,9 @@ pub async fn ssh_connect(
         alive,
         config.interactive,
         &attempt_id,
-    ) {
+    )
+    .map_err(|e| SshError::new(SshErrorKind::Cancelled, e.message))?
+    {
         Hold::Reuse(key) => return live_connection(&state, &key).await,
         Hold::Join(key, rx) => {
             crate::tunnels::wait(rx)

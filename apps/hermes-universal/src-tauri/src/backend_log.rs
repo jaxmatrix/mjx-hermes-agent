@@ -281,6 +281,18 @@ fn write_lines(path: &Path, limits: Limits, lines: std::sync::mpsc::Receiver<Str
     }
 }
 
+/// Wait for a killed child's drains until `until` at most. A drain can still be
+/// reading the child's last lines after the kill, and the log must not close
+/// under it; a grandchild holding the pipe open is what the deadline is for.
+pub async fn await_drains(drains: Vec<tokio::task::JoinHandle<()>>, until: tokio::time::Instant) {
+    let _ = tokio::time::timeout_at(until, async {
+        for drain in drains {
+            let _ = drain.await;
+        }
+    })
+    .await;
+}
+
 /// Read a stream to its end, feeding every line to `log`.
 pub async fn drain<R: AsyncRead + Unpin>(stream: R, log: std::sync::Arc<BackendLog>) {
     let mut lines = BufReader::new(stream).lines();
@@ -406,6 +418,51 @@ mod tests {
 
         assert_eq!(written.lines().count(), 4, "{written}");
         assert!(written.lines().last().unwrap().ends_with("queued line 03"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn quit_waits_for_a_drain_still_reading_the_killed_childs_last_line() {
+        let dir = std::env::temp_dir().join(format!(
+            "hermes-backend-log-drain-{}-{}",
+            std::process::id(),
+            crate::ssh::clock::now_iso8601().replace(':', "")
+        ));
+        let live = dir.join(FILE_NAME);
+        let log = std::sync::Arc::new(BackendLog::new(Some(live.clone())));
+        let (mut child_pipe, drained_end) = tokio::io::duplex(64);
+
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let drain = tokio::spawn(drain(drained_end, std::sync::Arc::clone(&log)));
+        let until = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let waiting = await_drains(vec![drain], until);
+
+        tokio::pin!(waiting);
+
+        // Quit is already waiting when the killed child's last line arrives.
+        assert!(
+            tokio::time::timeout(std::time::Duration::ZERO, &mut waiting)
+                .await
+                .is_err(),
+            "the drain is still reading"
+        );
+
+        {
+            use tokio::io::AsyncWriteExt;
+
+            child_pipe.write_all(b"the last line\n").await.unwrap();
+        }
+        drop(child_pipe);
+
+        waiting.await;
+
+        assert!(log.close_and_join(std::time::Duration::from_secs(5)));
+
+        let written = std::fs::read_to_string(&live).unwrap_or_default();
+
+        assert!(written.ends_with("the last line\n"), "{written:?}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

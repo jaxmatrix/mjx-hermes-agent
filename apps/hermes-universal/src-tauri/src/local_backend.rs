@@ -52,7 +52,12 @@ mod imp {
         pub backend: LocalBackend,
         /// Which spawn this is, so a death watcher never reports a successor.
         pub serial: u64,
+        /// The tasks draining the child's stdout and stderr. Quit waits for them
+        /// before closing the log, so the child's last lines reach the file.
+        pub drains: Vec<Drain>,
     }
+
+    pub type Drain = tokio::task::JoinHandle<()>;
 
     /// The one live local backend (at most one at a time), shared by the
     /// primary and every background lease (MJXHRM-592).
@@ -128,7 +133,9 @@ mod imp {
     ///
     /// A binary that cannot be started at all is terminal; anything after it
     /// started is worth retrying.
-    async fn start(log: &Arc<BackendLog>) -> Result<(Child, LocalBackend), (FailureKind, String)> {
+    async fn start(
+        log: &Arc<BackendLog>,
+    ) -> Result<(Child, LocalBackend, Vec<Drain>), (FailureKind, String)> {
         let transient = |message: String| (FailureKind::Transient, log.with_tail(message));
         let token = random_token();
         let program = std::env::var("HERMES_BIN").unwrap_or_else(|_| "hermes".to_string());
@@ -154,7 +161,7 @@ mod imp {
         })?;
 
         // Stage 1: wait (≤90s) for the port announcement on stdout.
-        let port = announce(&mut child, log).await.map_err(transient)?;
+        let (port, drains) = announce(&mut child, log).await.map_err(transient)?;
 
         let base_url = format!("http://127.0.0.1:{port}");
 
@@ -172,7 +179,7 @@ mod imp {
             ),
         };
 
-        Ok((child, backend))
+        Ok((child, backend, drains))
     }
 
     /// Always `--profile default`: the backend's unified server, which serves
@@ -199,9 +206,14 @@ mod imp {
     /// stderr is drained on its own task from the start: a backend that writes
     /// more than a pipe's worth before it is ready would otherwise block forever
     /// and never print the line we are waiting for.
-    pub(super) async fn announce(child: &mut Child, log: &Arc<BackendLog>) -> Result<u16, String> {
+    pub(super) async fn announce(
+        child: &mut Child,
+        log: &Arc<BackendLog>,
+    ) -> Result<(u16, Vec<Drain>), String> {
+        let mut drains = Vec::new();
+
         if let Some(stderr) = child.stderr.take() {
-            tokio::spawn(backend_log::drain(stderr, Arc::clone(log)));
+            drains.push(tokio::spawn(backend_log::drain(stderr, Arc::clone(log))));
         }
 
         let stdout = child
@@ -227,9 +239,11 @@ mod imp {
         let rest = lines.into_inner();
         let log = Arc::clone(log);
 
-        tokio::spawn(async move { backend_log::drain(rest, log).await });
+        drains.push(tokio::spawn(
+            async move { backend_log::drain(rest, log).await },
+        ));
 
-        Ok(port)
+        Ok((port, drains))
     }
 
     /// Spawn a child for dial `serial` and install it if the slot still waits
@@ -265,7 +279,7 @@ mod imp {
             kill(app, state).await;
         }
 
-        let (mut child, backend) = match start(&state.log).await {
+        let (mut child, backend, drains) = match start(&state.log).await {
             Ok(started) => started,
             Err((kind, message)) => {
                 let error = TunnelError::new(kind, message);
@@ -310,6 +324,7 @@ mod imp {
             child,
             backend: backend.clone(),
             serial: spawn,
+            drains,
         });
         drop(running);
 
@@ -377,12 +392,17 @@ mod imp {
     }
 
     /// Kill the child. Its credential is forgotten before the port is freed.
-    pub async fn kill(app: &AppHandle, state: &LocalBackendState) {
-        if let Some(mut running) = state.running.lock().await.take() {
-            app.state::<crate::transport::TransportState>()
-                .forget_tunnel_auth(&running.backend.base_url);
-            let _ = running.child.start_kill();
-        }
+    /// Returns its drains, which may still be reading its last lines.
+    pub async fn kill(app: &AppHandle, state: &LocalBackendState) -> Vec<Drain> {
+        let Some(mut running) = state.running.lock().await.take() else {
+            return Vec::new();
+        };
+
+        app.state::<crate::transport::TransportState>()
+            .forget_tunnel_auth(&running.backend.base_url);
+        let _ = running.child.start_kill();
+
+        running.drains
     }
 
     pub async fn status(state: &LocalBackendState) -> LocalBackendStatus {
@@ -425,27 +445,31 @@ pub async fn running_base_url(_state: &LocalBackendState) -> Option<String> {
 #[cfg(desktop)]
 pub async fn stop(app: &AppHandle) {
     crate::tunnels::remove_slot(app, LOCAL_SLOT);
-    imp::kill(app, &app.state::<imp::LocalBackendState>()).await;
+    let _ = imp::kill(app, &app.state::<imp::LocalBackendState>()).await;
 }
 
-/// The tunnel book's teardown and exit door. No-op on mobile.
+/// The tunnel book's teardown and exit door. Returns the killed child's pipe
+/// drains, for quit to wait on. No-op on mobile.
 #[cfg(desktop)]
-pub(crate) async fn kill_child(app: &AppHandle) {
-    if let Some(state) = app.try_state::<imp::LocalBackendState>() {
-        imp::kill(app, &state).await;
+pub(crate) async fn kill_child(app: &AppHandle) -> Vec<tokio::task::JoinHandle<()>> {
+    match app.try_state::<imp::LocalBackendState>() {
+        Some(state) => imp::kill(app, &state).await,
+        None => Vec::new(),
     }
 }
 
 #[cfg(mobile)]
-pub(crate) async fn kill_child(_app: &tauri::AppHandle) {}
+pub(crate) async fn kill_child(_app: &tauri::AppHandle) -> Vec<tokio::task::JoinHandle<()>> {
+    Vec::new()
+}
 
-/// Quit: flush the child's log, waiting at most a moment for its writer.
+/// Quit: flush the child's log, waiting for its writer until `until` at most.
 #[cfg(desktop)]
-pub(crate) fn close_log(app: &AppHandle) {
+pub(crate) fn close_log(app: &AppHandle, until: tokio::time::Instant) {
     if let Some(state) = app.try_state::<imp::LocalBackendState>() {
         state
             .log
-            .close_and_join(std::time::Duration::from_millis(500));
+            .close_and_join(until.saturating_duration_since(tokio::time::Instant::now()));
 
         let dropped = state.log.dropped();
 
@@ -458,7 +482,7 @@ pub(crate) fn close_log(app: &AppHandle) {
 }
 
 #[cfg(mobile)]
-pub(crate) fn close_log(_app: &tauri::AppHandle) {}
+pub(crate) fn close_log(_app: &tauri::AppHandle, _until: tokio::time::Instant) {}
 
 /// Spawn the child for a background lease (MJXHRM-592).
 #[cfg(desktop)]
@@ -502,7 +526,9 @@ pub async fn local_backend_spawn(
         fingerprint: LOCAL_INSTANCE_KEY.to_string(),
     };
 
-    match crate::tunnels::hold_primary(&app, LOCAL_SLOT, spec, alive, false, "local-primary") {
+    match crate::tunnels::hold_primary(&app, LOCAL_SLOT, spec, alive, false, "local-primary")
+        .map_err(|e| e.message)?
+    {
         Hold::Reuse(_) => {}
         Hold::Join(_, rx) => {
             crate::tunnels::wait(rx).await.map_err(|e| e.message)?;
@@ -558,7 +584,7 @@ pub async fn local_backend_stop(
     state: tauri::State<'_, imp::LocalBackendState>,
 ) -> Result<(), String> {
     if !crate::tunnels::release_primary(&app, LOCAL_SLOT).await {
-        imp::kill(&app, &state).await;
+        let _ = imp::kill(&app, &state).await;
     }
 
     Ok(())
@@ -652,7 +678,7 @@ mod tests {
         .await
         .expect("the ready line arrives while stderr is drained");
 
-        assert_eq!(port, Ok(4321));
+        assert_eq!(port.map(|(port, _)| port), Ok(4321));
     }
 
     #[test]
