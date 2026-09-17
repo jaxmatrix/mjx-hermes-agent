@@ -26,6 +26,21 @@ pub const BACKUP_COUNT: usize = 3;
 pub const DISCARD_BYTES: u64 = MAX_BYTES * 4;
 pub const FILE_NAME: &str = "universal-backend.log";
 
+/// When the live file rotates, how many backups it keeps, and when it is
+/// discarded outright.
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    pub max_bytes: u64,
+    pub backups: usize,
+    pub discard_bytes: u64,
+}
+
+pub const LIMITS: Limits = Limits {
+    max_bytes: MAX_BYTES,
+    backups: BACKUP_COUNT,
+    discard_bytes: DISCARD_BYTES,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RotateOp {
     Remove(PathBuf),
@@ -40,23 +55,28 @@ pub fn backup_path(live: &Path, n: usize) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// The ordered, best-effort file operations that bound a live log of `size`.
-/// Upstream's `planDesktopLogRotation`.
+/// The ordered, best-effort file operations that bound a live log of `size`
+/// under the production limits. Upstream's `planDesktopLogRotation`.
+#[cfg(test)]
 pub fn plan_rotation(live: &Path, size: u64) -> Vec<RotateOp> {
-    if size < MAX_BYTES {
+    plan_rotation_with(live, size, LIMITS)
+}
+
+pub fn plan_rotation_with(live: &Path, size: u64, limits: Limits) -> Vec<RotateOp> {
+    if size < limits.max_bytes {
         return Vec::new();
     }
 
-    if size > DISCARD_BYTES {
+    if size > limits.discard_bytes {
         return std::iter::once(live.to_path_buf())
-            .chain((1..=BACKUP_COUNT).map(|n| backup_path(live, n)))
+            .chain((1..=limits.backups).map(|n| backup_path(live, n)))
             .map(RotateOp::Remove)
             .collect();
     }
 
-    let mut ops = vec![RotateOp::Remove(backup_path(live, BACKUP_COUNT))];
+    let mut ops = vec![RotateOp::Remove(backup_path(live, limits.backups))];
 
-    for n in (1..BACKUP_COUNT).rev() {
+    for n in (1..limits.backups).rev() {
         ops.push(RotateOp::Rename(
             backup_path(live, n),
             backup_path(live, n + 1),
@@ -70,15 +90,35 @@ pub fn plan_rotation(live: &Path, size: u64) -> Vec<RotateOp> {
 
 pub struct BackendLog {
     ring: Mutex<VecDeque<String>>,
-    path: Option<PathBuf>,
+    /// Feeds the one writer thread, which alone touches the file.
+    writer: Option<std::sync::mpsc::Sender<String>>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl BackendLog {
     /// `path` of `None` keeps the ring only.
     pub fn new(path: Option<PathBuf>) -> Self {
+        Self::with_limits(path, LIMITS)
+    }
+
+    pub fn with_limits(path: Option<PathBuf>, limits: Limits) -> Self {
+        let (writer, thread) = match path {
+            Some(path) => {
+                let (tx, rx) = std::sync::mpsc::channel::<String>();
+                let thread = std::thread::Builder::new()
+                    .name("hermes-backend-log".to_string())
+                    .spawn(move || write_lines(&path, limits, rx))
+                    .ok();
+
+                (thread.as_ref().map(|_| tx), thread)
+            }
+            None => (None, None),
+        };
+
         Self {
             ring: Mutex::new(VecDeque::with_capacity(RING_LINES)),
-            path,
+            writer,
+            thread,
         }
     }
 
@@ -86,6 +126,8 @@ impl BackendLog {
         Self::new(crate::plugins::hermes_home().map(|home| home.join("logs").join(FILE_NAME)))
     }
 
+    /// Never touches the disk: the line is queued for the writer thread, so a
+    /// chatty backend cannot stall the async runtime that drains it.
     pub fn push(&self, line: &str) {
         let line = format!(
             "{} {}",
@@ -93,8 +135,8 @@ impl BackendLog {
             crate::transport::redact_message(line.trim_end().to_string())
         );
 
-        if let Some(path) = &self.path {
-            append(path, &line);
+        if let Some(writer) = &self.writer {
+            let _ = writer.send(line.clone());
         }
 
         let mut ring = self.ring.lock().unwrap_or_else(|p| p.into_inner());
@@ -128,27 +170,64 @@ impl BackendLog {
     }
 }
 
-/// Logging must never block or fail the backend: every step is best-effort.
-fn append(path: &Path, line: &str) {
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
+impl Drop for BackendLog {
+    /// Close the queue and let the writer finish what it was sent.
+    fn drop(&mut self) {
+        self.writer.take();
 
-    if let Ok(meta) = std::fs::metadata(path) {
-        for op in plan_rotation(path, meta.len()) {
-            let _ = match op {
-                RotateOp::Remove(target) => std::fs::remove_file(target),
-                RotateOp::Rename(from, to) => std::fs::rename(from, to),
-            };
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
         }
     }
+}
 
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        let _ = writeln!(file, "{line}");
+fn rotate(path: &Path, size: u64, limits: Limits) {
+    for op in plan_rotation_with(path, size, limits) {
+        let _ = match op {
+            RotateOp::Remove(target) => std::fs::remove_file(target),
+            RotateOp::Rename(from, to) => std::fs::rename(from, to),
+        };
+    }
+}
+
+/// The writer thread: the only code that opens, sizes, rotates or writes the
+/// file, so no two rotations can ever run at once. Logging must never block or
+/// fail the backend, so every step is best-effort.
+fn write_lines(path: &Path, limits: Limits, lines: std::sync::mpsc::Receiver<String>) {
+    let mut file: Option<std::fs::File> = None;
+    let mut size = 0u64;
+
+    for line in lines {
+        if file.is_none() {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+
+            // A file a previous run left too large is bounded before appending.
+            rotate(
+                path,
+                std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
+                limits,
+            );
+            size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+            file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .ok();
+        }
+
+        if let Some(handle) = file.as_mut() {
+            if writeln!(handle, "{line}").is_ok() {
+                size += line.len() as u64 + 1;
+            }
+        }
+
+        if size >= limits.max_bytes {
+            file = None;
+            rotate(path, size, limits);
+            size = 0;
+        }
     }
 }
 
@@ -198,6 +277,38 @@ mod tests {
                 RotateOp::Remove(PathBuf::from("/l/x.log.3")),
             ]
         );
+    }
+
+    #[test]
+    fn one_writer_rotates_the_file_it_owns() {
+        let dir = std::env::temp_dir().join(format!(
+            "hermes-backend-log-{}-{}",
+            std::process::id(),
+            crate::ssh::clock::now_iso8601().replace(':', "")
+        ));
+        let live = dir.join(FILE_NAME);
+        let limits = Limits {
+            max_bytes: 200,
+            backups: 2,
+            discard_bytes: 800,
+        };
+
+        let _ = std::fs::remove_dir_all(&dir);
+
+        {
+            let log = BackendLog::with_limits(Some(live.clone()), limits);
+
+            for n in 0..40 {
+                log.push(&format!("backend line {n:02}"));
+            }
+        }
+
+        assert!(backup_path(&live, 1).exists(), "rotated at least once");
+        assert!(backup_path(&live, 2).exists(), "kept a second backup");
+        assert!(!backup_path(&live, 3).exists(), "never more than two");
+        assert!(std::fs::metadata(backup_path(&live, 1)).unwrap().len() >= limits.max_bytes);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
