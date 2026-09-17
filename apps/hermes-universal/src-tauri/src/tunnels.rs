@@ -426,31 +426,24 @@ impl SlotBook {
         Some(Action::None)
     }
 
-    pub fn release(&mut self, connection_id: &str, holder: &Holder) -> Vec<(String, Action)> {
-        let keys: Vec<String> = self
-            .slots
-            .iter()
-            .filter(|(_, slot)| {
-                slot.spec.connection_id == connection_id && slot.holders.contains_key(holder)
-            })
-            .map(|(key, _)| key.clone())
-            .collect();
+    /// A lease let go. A slot that leaves unheld lingers one reaper tick, so a
+    /// Connect that releases once it is up, or a consumer re-acquiring right
+    /// away, finds the tunnel still there. Returns the slots now lingering.
+    pub fn release(&mut self, connection_id: &str, holder: &Holder, now: u64) -> Vec<String> {
+        let mut lingering = Vec::new();
 
-        keys.into_iter()
-            .map(|key| {
-                let slot = self.slots.get_mut(&key).expect("key was just listed");
+        for (key, slot) in &mut self.slots {
+            if slot.spec.connection_id != connection_id || slot.holders.remove(holder).is_none() {
+                continue;
+            }
 
-                slot.holders.remove(holder);
+            if slot.unheld() && slot.unheld_since.is_none() {
+                slot.unheld_since = Some(now);
+                lingering.push(key.clone());
+            }
+        }
 
-                if slot.unheld() {
-                    self.slots.remove(&key);
-
-                    (key, Action::Teardown)
-                } else {
-                    (key, Action::None)
-                }
-            })
-            .collect()
+        lingering
     }
 
     /// JS still holds this lease.
@@ -1550,14 +1543,9 @@ pub async fn tunnel_release(
 ) -> Result<(), TunnelError> {
     let holder = Holder::new(webview.window().label(), lease_id);
 
-    let effects = locked(&app, |inner| {
-        let before = snapshot(inner);
-        let actions = inner.book.release(&connection_id, &holder);
-
-        book_effects(&app, inner, before, actions)
+    locked(&app, |inner| {
+        inner.book.release(&connection_id, &holder, now_ms());
     });
-
-    apply(&app, effects).await;
 
     Ok(())
 }
@@ -1645,12 +1633,14 @@ mod tests {
 
         ready(&mut book, &key, &first);
 
-        assert_eq!(
-            book.release("a", &lease("l1")),
-            vec![(key.clone(), Action::None)]
+        assert!(book.release("a", &lease("l1"), 0).is_empty());
+        assert_eq!(book.release("a", &lease("l2"), 0), vec![key.clone()]);
+        assert!(
+            book.expire(LINGER_MS - 1).is_empty(),
+            "the last release lingers"
         );
         assert_eq!(
-            book.release("a", &lease("l2")),
+            book.expire(LINGER_MS),
             vec![(key.clone(), Action::Teardown)]
         );
         assert!(book.slot(&key).is_none());
@@ -1683,10 +1673,7 @@ mod tests {
         assert_eq!(action, Action::Reuse);
         assert_eq!(book.release_primary(&key), Some(Action::None));
         assert!(book.slot(&key).is_some());
-        assert_eq!(
-            book.release("a", &lease("l1")),
-            vec![(key, Action::Teardown)]
-        );
+        assert_eq!(book.release("a", &lease("l1"), 0), vec![key]);
         assert_eq!(book.release_primary("conn:b::default"), None);
     }
 
@@ -1695,8 +1682,10 @@ mod tests {
         let mut book = SlotBook::default();
         let (key, old) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
 
-        // Released mid-dial, then acquired again: a new dial for a new slot.
-        book.release("a", &lease("l1"));
+        // Released mid-dial and reaped, then acquired again: a new dial for a
+        // new slot.
+        book.release("a", &lease("l1"), 0);
+        book.expire(LINGER_MS);
         let (_, new) = acquire(&mut book, &key, ssh("a"), lease("l2"));
 
         assert_ne!(serial_of(&old), serial_of(&new));
