@@ -335,27 +335,30 @@ fn resolve_target(
     Ok((target, user, credentials))
 }
 
-/// Register an attempt the moment its dial begins, so `ssh_cancel` and a
-/// superseding dial can reach it through every step before the session opens —
-/// the supersede drain, the credential read and the unlock gate included.
+/// Register an attempt under `cancel` — the dial's own token, created by the
+/// tunnel book — so `ssh_cancel` reaches it through every step before the
+/// session opens: the supersede drain, the credential read, the unlock gate.
 ///
-/// An attempt already registered under the same id is the same logical dial
-/// being replaced, so it is cancelled rather than silently displaced.
-pub(crate) async fn begin_attempt(state: &SshState, attempt_id: &str) -> Arc<Attempt> {
+/// A superseding dial cancels its predecessor's token in the book, not here. A
+/// predecessor that registers late arrives already cancelled and does not take
+/// the id, so it can never displace (or cancel) the newer attempt sharing it.
+pub(crate) async fn begin_attempt(
+    state: &SshState,
+    attempt_id: &str,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Arc<Attempt> {
     let attempt = Arc::new(Attempt {
-        cancel: tokio_util::sync::CancellationToken::new(),
+        cancel,
         pending: Arc::new(Mutex::new(HashMap::new())),
         pending_host_key: Arc::new(Mutex::new(None)),
     });
 
-    let displaced = state
-        .attempts
-        .lock()
-        .await
-        .insert(attempt_id.to_string(), Arc::clone(&attempt));
-
-    if let Some(displaced) = displaced {
-        displaced.cancel.cancel();
+    if !attempt.cancel.is_cancelled() {
+        state
+            .attempts
+            .lock()
+            .await
+            .insert(attempt_id.to_string(), Arc::clone(&attempt));
     }
 
     attempt
@@ -374,18 +377,11 @@ async fn end_attempt(state: &SshState, attempt_id: &str, attempt: &Arc<Attempt>)
     }
 }
 
-/// Cancel the attempt registered under `attempt_id`, unless it is `own`.
-async fn cancel_in(state: &SshState, attempt_id: &str, own: Option<&Arc<Attempt>>) {
-    let mut attempts = state.attempts.lock().await;
+/// Cancel the attempt registered under `attempt_id` (`ssh_cancel`).
+async fn cancel_in(state: &SshState, attempt_id: &str) {
+    let attempt = state.attempts.lock().await.remove(attempt_id);
 
-    if attempts
-        .get(attempt_id)
-        .is_some_and(|held| own.is_some_and(|own| Arc::ptr_eq(held, own)))
-    {
-        return;
-    }
-
-    if let Some(attempt) = attempts.remove(attempt_id) {
+    if let Some(attempt) = attempt {
         attempt.cancel.cancel();
     }
 }
@@ -531,7 +527,7 @@ pub async fn ssh_test(
     credentials.passphrase = auth::nonempty(config.passphrase.clone());
     credentials.password = auth::nonempty(config.password.clone());
 
-    let attempt = begin_attempt(&state, &attempt_id).await;
+    let attempt = begin_attempt(&state, &attempt_id, Default::default()).await;
     let (prompter, policy) = arm_prompts(&app, &attempt_id, &attempt, config.interactive);
     let known_hosts_path = known_hosts_path(&app)?;
 
@@ -618,7 +614,7 @@ pub async fn ssh_install(
     credentials.passphrase = auth::nonempty(config.passphrase.clone());
     credentials.password = auth::nonempty(config.password.clone());
 
-    let attempt = begin_attempt(&state, &attempt_id).await;
+    let attempt = begin_attempt(&state, &attempt_id, Default::default()).await;
     let (prompter, policy) = arm_prompts(&app, &attempt_id, &attempt, config.interactive);
     let known_hosts_path = known_hosts_path(&app)?;
 
@@ -796,7 +792,7 @@ pub async fn ssh_trust_host_key(
 /// Abandon an in-flight attempt.
 #[tauri::command]
 pub async fn ssh_cancel(state: State<'_, SshState>, attempt_id: String) -> Result<(), SshError> {
-    cancel_in(&state, &attempt_id, None).await;
+    cancel_in(&state, &attempt_id).await;
 
     Ok(())
 }
@@ -1002,11 +998,11 @@ pub async fn ssh_connect(
     };
 
     // Registered before the supersede drain, so a cancel during it is heard.
-    let attempt = begin_attempt(&state, &attempt_id).await;
+    let attempt = begin_attempt(&state, &attempt_id, dial.cancel.clone()).await;
 
     let result = match race_cancel(
         &attempt.cancel,
-        crate::tunnels::prepare(&app, &mut dial, SlotKind::Ssh, Some(&attempt)),
+        crate::tunnels::prepare(&app, &mut dial, SlotKind::Ssh),
     )
     .await
     {
@@ -1118,12 +1114,6 @@ pub(crate) fn identity_for(input: &SshTargetInput) -> Result<(String, String), S
     ))
 }
 
-/// Cancel a superseded dial's attempt by id — never `own`, the dial doing the
-/// superseding.
-pub(crate) async fn cancel_attempt(app: &AppHandle, attempt_id: &str, own: Option<&Arc<Attempt>>) {
-    cancel_in(&app.state::<SshState>(), attempt_id, own).await;
-}
-
 /// Dial a registered SSH connection for a background lease (MJXHRM-592), and
 /// settle the result.
 ///
@@ -1144,18 +1134,12 @@ pub(crate) async fn dial_tunnel(
     // Registered before anything that waits: the supersede drain, the keyring
     // read and the unlock gate all race it, so a dismissed prompt or a newer
     // dial stops this one at any of them.
-    let attempt = begin_attempt(&state, attempt_id).await;
+    let attempt = begin_attempt(&state, attempt_id, dial.cancel.clone()).await;
     let scope = dial.key.clone();
     let serial = dial.serial;
 
     let prepared = race_cancel(&attempt.cancel, async {
-        crate::tunnels::prepare(
-            app,
-            &mut dial,
-            crate::tunnels::SlotKind::Ssh,
-            Some(&attempt),
-        )
-        .await;
+        crate::tunnels::prepare(app, &mut dial, crate::tunnels::SlotKind::Ssh).await;
 
         let Some(TunnelTarget::Ssh { input, .. }) =
             crate::connections::tunnel_target(app, connection_id)
@@ -2084,11 +2068,11 @@ mod tests {
     #[tokio::test]
     async fn a_cancel_before_the_session_opens_still_stops_the_dial() {
         let state = SshState::default();
-        let attempt = begin_attempt(&state, "a1").await;
+        let attempt = begin_attempt(&state, "a1", Default::default()).await;
 
         // `ssh_cancel` lands while the dial is still draining its predecessor
         // or waiting on the unlock gate.
-        cancel_in(&state, "a1", None).await;
+        cancel_in(&state, "a1").await;
 
         let outcome = tokio::time::timeout(
             std::time::Duration::from_secs(2),
@@ -2098,16 +2082,25 @@ mod tests {
         .expect("a cancelled attempt stops waiting");
 
         assert!(outcome.is_none());
-
-        // A superseding dial never cancels itself, and ends only its own attempt.
-        let own = begin_attempt(&state, "a2").await;
-
-        cancel_attempt_in_place(&state, "a2", &own).await;
-        assert!(!own.cancel.is_cancelled());
     }
 
-    async fn cancel_attempt_in_place(state: &SshState, id: &str, own: &Arc<Attempt>) {
-        cancel_in(state, id, Some(own)).await;
+    #[tokio::test]
+    async fn a_late_superseded_attempt_never_takes_the_newer_ones_id() {
+        let state = SshState::default();
+        let superseded = tokio_util::sync::CancellationToken::new();
+
+        // The newer dial registered first; the superseded one registers late,
+        // its token already cancelled by the book.
+        let newer = begin_attempt(&state, "tunnel-box", Default::default()).await;
+        superseded.cancel();
+        let late = begin_attempt(&state, "tunnel-box", superseded).await;
+
+        assert!(!newer.cancel.is_cancelled());
+        assert!(late.cancel.is_cancelled());
+
+        // `ssh_cancel` for the id still reaches the newer attempt.
+        cancel_in(&state, "tunnel-box").await;
+        assert!(newer.cancel.is_cancelled());
     }
 
     #[tokio::test]

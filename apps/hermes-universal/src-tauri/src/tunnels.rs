@@ -144,12 +144,26 @@ pub struct SlotSpec {
 }
 
 /// The dial a slot is waiting on.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct InFlight {
     pub serial: u64,
     pub interactive: bool,
     pub attempt_id: String,
+    /// Created with the dial and cancelled under the book lock when a newer dial
+    /// supersedes it, so the cancel never depends on when the dial's own task
+    /// got round to registering its attempt.
+    pub cancel: tokio_util::sync::CancellationToken,
 }
+
+impl PartialEq for InFlight {
+    fn eq(&self, other: &Self) -> bool {
+        self.serial == other.serial
+            && self.interactive == other.interactive
+            && self.attempt_id == other.attempt_id
+    }
+}
+
+impl Eq for InFlight {}
 
 #[derive(Debug, Clone)]
 pub struct Slot {
@@ -278,9 +292,22 @@ impl SlotBook {
             serial,
             interactive,
             attempt_id: attempt_id.to_string(),
+            cancel: tokio_util::sync::CancellationToken::new(),
         });
 
         serial
+    }
+
+    /// Take the slot's in-flight dial to supersede it, cancelling it here, under
+    /// the book lock.
+    fn supersede(slot: &mut Slot) -> Option<InFlight> {
+        let previous = slot.dial.take();
+
+        if let Some(previous) = &previous {
+            previous.cancel.cancel();
+        }
+
+        previous
     }
 
     /// What an existing slot does for a request (a lease or the primary).
@@ -297,7 +324,7 @@ impl SlotBook {
         // A different target at the same key is a different backend: never
         // reuse it, and end the leases that were riding the old one.
         if slot.spec.fingerprint != spec.fingerprint {
-            let previous = slot.dial.take();
+            let previous = Self::supersede(slot);
 
             slot.spec = spec;
             slot.holders.clear();
@@ -318,7 +345,7 @@ impl SlotBook {
             Phase::Connecting => match &slot.dial {
                 // A person asking must not wait on a dial that cannot ask them.
                 Some(dial) if interactive && !dial.interactive => {
-                    let previous = slot.dial.take();
+                    let previous = Self::supersede(slot);
                     let serial = self.begin(key, interactive, attempt_id);
 
                     Action::Supersede {
@@ -603,7 +630,7 @@ impl SlotBook {
             return Action::None;
         };
 
-        let previous = slot.dial.take();
+        let previous = Self::supersede(slot);
         let serial = self.begin(key, true, attempt_id);
 
         match previous {
@@ -805,6 +832,8 @@ enum Effect {
 pub(crate) struct Dial {
     pub key: String,
     pub serial: u64,
+    /// This dial's cancel token; its SSH attempt adopts it.
+    pub cancel: tokio_util::sync::CancellationToken,
     /// Subscribed under the same lock that began the dial, so no settle can
     /// land before the caller is listening.
     pub outcome: watch::Receiver<Outcome>,
@@ -907,10 +936,17 @@ fn begun(
 
         (dial, drained)
     });
+    let cancel = inner
+        .book
+        .slot(&key)
+        .and_then(|slot| slot.dial.as_ref())
+        .map(|dial| dial.cancel.clone())
+        .unwrap_or_default();
 
     Dial {
         key,
         serial,
+        cancel,
         outcome,
         previous,
         retarget,
@@ -937,17 +973,10 @@ fn hold_for(app: &AppHandle, inner: &mut Inner, key: String, action: Action) -> 
 
 /// Wait out a superseded dial, and drop a retargeted slot's old resources,
 /// before running this one.
-pub(crate) async fn prepare(
-    app: &AppHandle,
-    dial: &mut Dial,
-    kind: SlotKind,
-    own_attempt: Option<&Arc<crate::ssh::Attempt>>,
-) {
-    if let Some((previous, drained)) = dial.previous.take() {
-        if kind == SlotKind::Ssh {
-            crate::ssh::cancel_attempt(app, &previous.attempt_id, own_attempt).await;
-        }
-
+pub(crate) async fn prepare(app: &AppHandle, dial: &mut Dial, kind: SlotKind) {
+    // The superseded dial's token was cancelled when the book superseded it; all
+    // that is left is to let it drain.
+    if let Some((_previous, drained)) = dial.previous.take() {
         if let Some(mut drained) = drained {
             let _ = drained.wait_for(|done| *done).await;
         }
@@ -1253,7 +1282,7 @@ async fn run(
             .await
         }
         SlotKind::Local => {
-            prepare(app, &mut dial, spec.kind, None).await;
+            prepare(app, &mut dial, spec.kind).await;
             crate::local_backend::dial_tunnel(app, dial.serial).await
         }
     }
@@ -1839,6 +1868,28 @@ mod tests {
         assert!(!reaps_on_page_load(
             &tauri::webview::PageLoadEvent::Finished
         ));
+    }
+
+    #[test]
+    fn a_superseded_dial_is_cancelled_by_the_book_itself() {
+        let mut book = SlotBook::default();
+        let (key, _) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
+        let background = book.slot(&key).unwrap().dial.clone().unwrap().cancel;
+
+        // Whether the background dial's task has registered its attempt yet or
+        // not, its token is already cancelled when the book supersedes it.
+        book.acquire(&key, ssh("a"), lease("l2"), true, "connect-1");
+
+        assert!(background.is_cancelled());
+
+        let connect = book.slot(&key).unwrap().dial.clone().unwrap().cancel;
+
+        assert!(!connect.is_cancelled(), "the new dial keeps a live token");
+
+        // A restart supersedes the same way.
+        book.restart(&key, "restart");
+
+        assert!(connect.is_cancelled());
     }
 
     #[test]
