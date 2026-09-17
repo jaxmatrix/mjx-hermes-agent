@@ -1480,6 +1480,9 @@ pub(crate) async fn drop_connection(app: &AppHandle, connection_id: &str) {
 pub enum ShutdownStep {
     /// Kill the local child, whether or not a slot holds it. Unbounded.
     KillLocal,
+    /// Close the local backend's log and wait, briefly, for its writer: managed
+    /// state is never dropped at exit, so nothing else flushes it.
+    CloseLog,
     /// Close an SSH scope's session. Bounded by the shared close deadline.
     CloseSsh(String),
 }
@@ -1488,7 +1491,8 @@ pub enum ShutdownStep {
 /// close runs into its deadline; it must never stand between the app and the
 /// kill that keeps `hermes serve` from outliving it.
 pub fn shutdown_plan(slots: &[(String, SlotKind)]) -> Vec<ShutdownStep> {
-    std::iter::once(ShutdownStep::KillLocal)
+    [ShutdownStep::KillLocal, ShutdownStep::CloseLog]
+        .into_iter()
         .chain(
             slots
                 .iter()
@@ -1520,6 +1524,7 @@ pub fn shutdown(app: &AppHandle) {
         for step in shutdown_plan(&slots) {
             match step {
                 ShutdownStep::KillLocal => crate::local_backend::kill_child(&app).await,
+                ShutdownStep::CloseLog => crate::local_backend::close_log(&app),
                 ShutdownStep::CloseSsh(key) => {
                     let until = *deadline.get_or_insert_with(|| {
                         tokio::time::Instant::now() + Duration::from_secs(3)
@@ -1946,12 +1951,16 @@ mod tests {
             shutdown_plan(&slots),
             vec![
                 ShutdownStep::KillLocal,
+                ShutdownStep::CloseLog,
                 ShutdownStep::CloseSsh("conn:a::default".to_string()),
                 ShutdownStep::CloseSsh("conn:b::default".to_string()),
             ]
         );
         // No local slot: the child may still be running, so it is killed anyway.
-        assert_eq!(shutdown_plan(&[]), vec![ShutdownStep::KillLocal]);
+        assert_eq!(
+            shutdown_plan(&[]),
+            vec![ShutdownStep::KillLocal, ShutdownStep::CloseLog]
+        );
     }
 
     #[test]

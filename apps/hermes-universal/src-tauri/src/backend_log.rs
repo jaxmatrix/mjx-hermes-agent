@@ -88,11 +88,18 @@ pub fn plan_rotation_with(live: &Path, size: u64, limits: Limits) -> Vec<RotateO
     ops
 }
 
+/// How many lines may wait for the writer. Past this a line is dropped and
+/// counted, so a backend printing faster than the disk takes it can never block
+/// the task draining its pipe.
+pub const QUEUE_LINES: usize = 4096;
+
 pub struct BackendLog {
     ring: Mutex<VecDeque<String>>,
-    /// Feeds the one writer thread, which alone touches the file.
-    writer: Option<std::sync::mpsc::Sender<String>>,
-    thread: Option<std::thread::JoinHandle<()>>,
+    /// Feeds the one writer thread, which alone touches the file. Taken on close.
+    writer: Mutex<Option<std::sync::mpsc::SyncSender<String>>>,
+    /// Signalled by the writer once everything queued before close is on disk.
+    finished: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    dropped: std::sync::atomic::AtomicU64,
 }
 
 impl BackendLog {
@@ -102,23 +109,67 @@ impl BackendLog {
     }
 
     pub fn with_limits(path: Option<PathBuf>, limits: Limits) -> Self {
-        let (writer, thread) = match path {
-            Some(path) => {
-                let (tx, rx) = std::sync::mpsc::channel::<String>();
-                let thread = std::thread::Builder::new()
-                    .name("hermes-backend-log".to_string())
-                    .spawn(move || write_lines(&path, limits, rx))
-                    .ok();
+        Self::with_queue(path, limits, QUEUE_LINES, None)
+    }
 
-                (thread.as_ref().map(|_| tx), thread)
+    /// `gate`: the writer waits for it before writing anything (tests only).
+    fn with_queue(
+        path: Option<PathBuf>,
+        limits: Limits,
+        queue: usize,
+        gate: Option<std::sync::mpsc::Receiver<()>>,
+    ) -> Self {
+        let (writer, finished) = match path {
+            Some(path) => {
+                let (tx, rx) = std::sync::mpsc::sync_channel::<String>(queue);
+                let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+                let spawned = std::thread::Builder::new()
+                    .name("hermes-backend-log".to_string())
+                    .spawn(move || {
+                        if let Some(gate) = gate {
+                            let _ = gate.recv();
+                        }
+
+                        write_lines(&path, limits, rx);
+                        let _ = done_tx.send(());
+                    });
+
+                match spawned {
+                    Ok(_) => (Some(tx), Some(done_rx)),
+                    Err(_) => (None, None),
+                }
             }
             None => (None, None),
         };
 
         Self {
             ring: Mutex::new(VecDeque::with_capacity(RING_LINES)),
-            writer,
-            thread,
+            writer: Mutex::new(writer),
+            finished: Mutex::new(finished),
+            dropped: Default::default(),
+        }
+    }
+
+    /// Lines dropped because the writer's queue was full.
+    pub fn dropped(&self) -> u64 {
+        self.dropped.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Stop accepting lines and wait, at most `deadline`, for the writer to put
+    /// what is queued on disk. Managed state is never dropped at exit, so quit
+    /// calls this. True when everything queued was written.
+    pub fn close_and_join(&self, deadline: std::time::Duration) -> bool {
+        self.writer.lock().unwrap_or_else(|p| p.into_inner()).take();
+
+        let finished = self
+            .finished
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+
+        match finished {
+            Some(finished) => finished.recv_timeout(deadline).is_ok(),
+            None => true,
         }
     }
 
@@ -135,8 +186,11 @@ impl BackendLog {
             crate::transport::redact_message(line.trim_end().to_string())
         );
 
-        if let Some(writer) = &self.writer {
-            let _ = writer.send(line.clone());
+        if let Some(writer) = &*self.writer.lock().unwrap_or_else(|p| p.into_inner()) {
+            if let Err(std::sync::mpsc::TrySendError::Full(_)) = writer.try_send(line.clone()) {
+                self.dropped
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
 
         let mut ring = self.ring.lock().unwrap_or_else(|p| p.into_inner());
@@ -173,11 +227,7 @@ impl BackendLog {
 impl Drop for BackendLog {
     /// Close the queue and let the writer finish what it was sent.
     fn drop(&mut self) {
-        self.writer.take();
-
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        self.close_and_join(std::time::Duration::from_secs(5));
     }
 }
 
@@ -307,6 +357,55 @@ mod tests {
         assert!(backup_path(&live, 2).exists(), "kept a second backup");
         assert!(!backup_path(&live, 3).exists(), "never more than two");
         assert!(std::fs::metadata(backup_path(&live, 1)).unwrap().len() >= limits.max_bytes);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_full_queue_drops_instead_of_blocking_and_close_flushes_the_rest() {
+        let dir = std::env::temp_dir().join(format!(
+            "hermes-backend-log-queue-{}-{}",
+            std::process::id(),
+            crate::ssh::clock::now_iso8601().replace(':', "")
+        ));
+        let live = dir.join(FILE_NAME);
+        let (open_gate, gate) = std::sync::mpsc::channel::<()>();
+        let log = std::sync::Arc::new(BackendLog::with_queue(
+            Some(live.clone()),
+            LIMITS,
+            4,
+            Some(gate),
+        ));
+        let (pushed_tx, pushed) = std::sync::mpsc::channel::<()>();
+
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // The writer is held at its gate, so the queue fills after four lines.
+        let pusher = std::sync::Arc::clone(&log);
+        std::thread::spawn(move || {
+            for n in 0..50 {
+                pusher.push(&format!("queued line {n:02}"));
+            }
+
+            let _ = pushed_tx.send(());
+        });
+
+        assert!(
+            pushed
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .is_ok(),
+            "a full queue must never block the pusher"
+        );
+        assert_eq!(log.dropped(), 46);
+
+        open_gate.send(()).unwrap();
+
+        assert!(log.close_and_join(std::time::Duration::from_secs(5)));
+
+        let written = std::fs::read_to_string(&live).unwrap_or_default();
+
+        assert_eq!(written.lines().count(), 4, "{written}");
+        assert!(written.lines().last().unwrap().ends_with("queued line 03"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

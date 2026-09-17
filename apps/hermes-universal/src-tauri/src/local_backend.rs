@@ -439,6 +439,27 @@ pub(crate) async fn kill_child(app: &AppHandle) {
 #[cfg(mobile)]
 pub(crate) async fn kill_child(_app: &tauri::AppHandle) {}
 
+/// Quit: flush the child's log, waiting at most a moment for its writer.
+#[cfg(desktop)]
+pub(crate) fn close_log(app: &AppHandle) {
+    if let Some(state) = app.try_state::<imp::LocalBackendState>() {
+        state
+            .log
+            .close_and_join(std::time::Duration::from_millis(500));
+
+        let dropped = state.log.dropped();
+
+        if dropped > 0 {
+            log::warn!(
+                "[tunnel] the local backend log dropped {dropped} lines it could not keep up with"
+            );
+        }
+    }
+}
+
+#[cfg(mobile)]
+pub(crate) fn close_log(_app: &tauri::AppHandle) {}
+
 /// Spawn the child for a background lease (MJXHRM-592).
 #[cfg(desktop)]
 pub(crate) async fn dial_tunnel(app: &AppHandle, serial: u64) {
