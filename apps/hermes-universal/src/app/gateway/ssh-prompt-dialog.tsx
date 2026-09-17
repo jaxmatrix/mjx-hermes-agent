@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
 import { useStore } from '@/store/atom'
@@ -8,8 +16,8 @@ import {
   $sshHostKey,
   $sshPrompt,
   answerActiveSshPrompt,
-  decideActiveSshHostKey,
-  type SshPromptEvent
+  cancelActiveSshPrompt,
+  decideActiveSshHostKey
 } from '@/store/ssh-backend'
 
 // The two questions an SSH operation can stop and ask: a credential, and whether
@@ -21,17 +29,15 @@ import {
 // on the remote, which authenticates exactly like a connect) the panel-owned
 // version left it asking into a void until the 60s timeout killed it.
 //
-// Mount this ONCE per surface. Two mounted copies would both render the same
-// pending question, and the first answer would clear the atom out from under the
-// second.
+// Mounted ONCE per window, in `app.tsx` beside `<ConfirmHost/>` (MJXHRM-592): a
+// switch, a tunnel's Connect or an install can ask from anywhere, and a dialog
+// that lived inside the configurator left every other caller asking into a void
+// until the 60 s timeout. Two mounted copies would both render the same pending
+// question, and the first answer would clear the atom out from under the second.
+// A surface that wants to keep an answer subscribes with
+// `addSshPromptAnswerListener`.
 
-export function SshPromptDialog({
-  onAnswered
-}: {
-  /** Lets the settings form keep an answer, so the next launch — which cannot
-   *  prompt — has something to authenticate with. */
-  onAnswered?: (kind: SshPromptEvent['kind'], answer: string) => void
-}) {
+export function SshPromptDialog() {
   const { t } = useI18n()
   const g = t.settings.gateway
   const prompt = useStore($sshPrompt)
@@ -51,58 +57,65 @@ export function SshPromptDialog({
     }
 
     void answerActiveSshPrompt(answer)
-    onAnswered?.(prompt.kind, answer)
     setAnswer('')
   }
 
-  if (!prompt && !hostKey) {
+  // Trust-on-first-use. A CHANGED key never reaches here — it is refused
+  // outright in Rust, under every policy. Asked first: the host key is checked
+  // before any credential is.
+  if (hostKey) {
+    return (
+      <Dialog onOpenChange={open => !open && void decideActiveSshHostKey(false)} open>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{g.sshHostKeyTitle}</DialogTitle>
+            <DialogDescription>{g.sshHostKeyDesc(hostKey.host, hostKey.fingerprint)}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => void decideActiveSshHostKey(false)} variant="ghost">
+              {g.sshHostKeyReject}
+            </Button>
+            <Button onClick={() => void decideActiveSshHostKey(true)}>{g.sshHostKeyTrust}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
+  if (!prompt) {
     return null
   }
 
   return (
-    <>
-      {/* Trust-on-first-use. A CHANGED key never reaches here — it is refused
-          outright in Rust, under every policy. */}
-      {hostKey ? (
-        <div className="mt-3 grid gap-2 rounded-md border border-(--ui-border) p-3">
-          <div className="text-sm font-medium">{g.sshHostKeyTitle}</div>
-          <p className="text-xs text-(--ui-text-secondary)">{g.sshHostKeyDesc(hostKey.host, hostKey.fingerprint)}</p>
-          <div className="flex justify-end gap-2">
-            <Button onClick={() => void decideActiveSshHostKey(false)} size="sm" variant="outline">
-              {g.sshHostKeyReject}
-            </Button>
-            <Button onClick={() => void decideActiveSshHostKey(true)} size="sm">
-              {g.sshHostKeyTrust}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
-      {prompt ? (
-        <div className="mt-3 grid gap-2 rounded-md border border-(--ui-border) p-3">
-          <div className="text-sm font-medium">{g.sshPromptTitle}</div>
-          <p className="text-xs text-(--ui-text-secondary)">{prompt.label}</p>
-          <Input
-            autoFocus
-            className="font-normal"
-            onChange={event => setAnswer(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter') {
-                submit()
-              }
-            }}
-            // Per QUESTION, not per kind: keyboard-interactive is the one
-            // exchange that legitimately asks things the server wants echoed.
-            type={prompt.secret ? 'password' : 'text'}
-            value={answer}
-          />
-          <div className="flex justify-end">
-            <Button onClick={submit} size="sm">
-              {g.sshConnect}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-    </>
+    // Dismissing is a decision, like the Cancel button: the attempt stops rather
+    // than waiting out its timeout.
+    <Dialog onOpenChange={open => !open && void cancelActiveSshPrompt()} open>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{g.sshPromptTitle}</DialogTitle>
+          <DialogDescription>{prompt.label}</DialogDescription>
+        </DialogHeader>
+        <Input
+          autoFocus
+          className="font-normal"
+          onChange={event => setAnswer(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === 'Enter') {
+              submit()
+            }
+          }}
+          // Per QUESTION, not per kind: keyboard-interactive is the one
+          // exchange that legitimately asks things the server wants echoed.
+          type={prompt.secret ? 'password' : 'text'}
+          value={answer}
+        />
+        <DialogFooter>
+          <Button onClick={() => void cancelActiveSshPrompt()} variant="ghost">
+            {t.common.cancel}
+          </Button>
+          <Button onClick={submit}>{g.sshConnect}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

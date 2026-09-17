@@ -11,7 +11,6 @@ import {
   sshSecretsFromForm,
   sshTargetFromForm
 } from '@/app/gateway/ssh-panel'
-import { SshPromptDialog } from '@/app/gateway/ssh-prompt-dialog'
 import { ListRow, Pill } from '@/app/settings/primitives'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -75,6 +74,7 @@ import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
 import { stepBackInLocalInstall } from '@/store/local-install'
 import { notify, notifyError } from '@/store/notifications'
 import {
+  addSshPromptAnswerListener,
   attachSshPrompts,
   isSshError,
   newAttemptId,
@@ -575,6 +575,20 @@ export function GatewayConfigurator({
     void mergeSshSecrets(kind === 'password' ? { password: answer } : { passphrase: answer }).catch(() => {})
   }
 
+  // The prompt dialog is the window's (app.tsx); this form only listens, and
+  // only while it is the SSH form on screen.
+  const rememberRef = useRef(rememberSshPromptAnswer)
+
+  rememberRef.current = rememberSshPromptAnswer
+
+  useEffect(() => {
+    if (!showPanels || pendingMode !== 'ssh') {
+      return
+    }
+
+    return addSshPromptAnswerListener((prompt, answer) => rememberRef.current(prompt.kind, answer))
+  }, [showPanels, pendingMode])
+
   const doConnectSsh = async () => {
     if (!trimmedSshHost) {
       notify({ kind: 'warning', title: g.incompleteTitle, message: g.sshIncompleteHost })
@@ -845,7 +859,6 @@ export function GatewayConfigurator({
           offer: a connect and a remote install each authenticate, each can stop
           to ask, and only one question is ever pending. Two copies would race to
           answer it. */}
-      {showPanels && pendingMode === 'ssh' ? <SshPromptDialog onAnswered={rememberSshPromptAnswer} /> : null}
 
       {/* Sits beside the SSH panel rather than inside it: the offer is
           about the remote HOST, not about the connection form. */}

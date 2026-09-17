@@ -287,6 +287,21 @@ export async function attachSshPrompts(attemptId: string): Promise<UnlistenFn> {
   }
 }
 
+const answerListeners = new Set<(prompt: ActiveSshPrompt, answer: string) => void>()
+
+/**
+ * Hear every answer given to a prompt. The settings form keeps a passphrase or
+ * password this way, so the next launch — which cannot prompt — has something
+ * to authenticate with. Returns an idempotent unregister.
+ */
+export function addSshPromptAnswerListener(handler: (prompt: ActiveSshPrompt, answer: string) => void): () => void {
+  answerListeners.add(handler)
+
+  return () => {
+    answerListeners.delete(handler)
+  }
+}
+
 /** Answer whatever is currently being asked. */
 export async function answerActiveSshPrompt(answer: string): Promise<void> {
   const prompt = $sshPrompt.get()
@@ -299,9 +314,30 @@ export async function answerActiveSshPrompt(answer: string): Promise<void> {
   // dialog still on screen would look like it was ignored.
   $sshPrompt.set(null)
 
+  for (const listener of answerListeners) {
+    try {
+      listener(prompt, answer)
+    } catch {
+      // A listener failing to keep the answer must not stop it reaching Rust.
+    }
+  }
+
   // A rejection here means the attempt is already gone (cancelled, or timed
   // out), which the attempt's own error reports far better than a toast would.
   await answerSshPrompt(prompt.attemptId, prompt.promptId, answer).catch(() => {})
+}
+
+/** Decline the question being asked: the attempt stops instead of timing out. */
+export async function cancelActiveSshPrompt(): Promise<void> {
+  const prompt = $sshPrompt.get()
+
+  if (!prompt) {
+    return
+  }
+
+  $sshPrompt.set(null)
+
+  await cancelSsh(prompt.attemptId).catch(() => {})
 }
 
 /** Accept or refuse the host key currently in question. */
