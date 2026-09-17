@@ -45,6 +45,7 @@ import {
   acquireTunnel,
   connectionBase,
   connectTunnel,
+  isTunnelSignInError,
   needsInteraction,
   setTunnelAnswerSaver,
   type TunnelStatus
@@ -271,6 +272,8 @@ describe('acquireTunnel', () => {
       title: 'Box'
     })
     expect(shown[0]?.action).toBeUndefined()
+    // Not a sign-in either, so the session router never reports it as one.
+    expect(isTunnelSignInError({ kind: 'host-key-changed', message: '', terminal: true })).toBe(false)
   })
 
   it('raises nothing for a failure that retrying can fix', async () => {
