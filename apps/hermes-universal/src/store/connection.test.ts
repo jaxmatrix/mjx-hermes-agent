@@ -57,6 +57,7 @@ import { httpRequest } from '@/transport/http'
 import {
   $connection,
   $connectionError,
+  $connectionPhase,
   beginGatewaySwitch,
   connect,
   connectCloud,
@@ -170,6 +171,29 @@ describe('connectLocal — desktop local spawn', () => {
     expect(spawnLocalBackend).toHaveBeenCalled()
     expect(vi.mocked(connectGateway)).toHaveBeenCalled()
     expect($connection.get()).toMatchObject({ mode: 'local', authMode: 'token', token: 'LT' })
+  })
+
+  // MJXHRM-592: a restart during the primary's cold start supersedes its dial.
+  // Rust answers the superseded spawn with the restarted backend; releasing the
+  // hold here would tear that backend down.
+  it('adopts the restarted backend when a restart supersedes its cold start', async () => {
+    let answer = (_backend: { baseUrl: string; token: string; wsUrl: string }) => {}
+
+    vi.mocked(stopLocalBackend).mockClear()
+    vi.mocked(spawnLocalBackend).mockReturnValue(new Promise(resolve => (answer = resolve)))
+
+    const connecting = connectLocal()
+
+    answer({
+      baseUrl: 'http://127.0.0.1:6062',
+      token: 'RESTARTED',
+      wsUrl: 'ws://127.0.0.1:6062/api/ws?token=RESTARTED'
+    })
+    await connecting
+
+    expect($connection.get()).toMatchObject({ baseUrl: 'http://127.0.0.1:6062', mode: 'local', token: 'RESTARTED' })
+    expect($connectionPhase.get()).toBe('ready')
+    expect(stopLocalBackend).not.toHaveBeenCalled()
   })
 
   it('stops the child if the spawn/connect fails', async () => {

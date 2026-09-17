@@ -1038,7 +1038,7 @@ pub async fn ssh_connect(
     end_attempt(&state, &attempt_id, &attempt).await;
 
     // The legacy owner's reattach token is written by JS for its own dials.
-    settle_scope(
+    let settled = settle_scope(
         &app,
         &state,
         &dial.key,
@@ -1047,7 +1047,24 @@ pub async fn ssh_connect(
         registered.is_some(),
         result,
     )
-    .await
+    .await;
+
+    let Err(error) = settled else {
+        return settled;
+    };
+
+    // Superseded (an interactive Connect, a restart): never fail the primary —
+    // its JS would release the hold under the successor. Wait for that dial and
+    // adopt its session. Only a removal or quit fails the caller.
+    let Some(successor) = crate::tunnels::join_if_superseded(&app, &dial.key, dial.serial) else {
+        return Err(error);
+    };
+
+    crate::tunnels::wait(successor)
+        .await
+        .map_err(|e| SshError::new(ssh_kind_of(e.kind), e.message))?;
+
+    live_connection(&state, &dial.key).await
 }
 
 fn cancelled_error() -> SshError {

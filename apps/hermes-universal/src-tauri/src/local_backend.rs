@@ -481,6 +481,35 @@ mod imp {
         respawn(app, state, dial.serial, cancel).await
     }
 
+    /// The primary's dial. A dial a newer one superseded (a restart, an
+    /// interactive request) never fails its caller — failing would release the
+    /// hold and tear down the successor. It waits for the successor instead and
+    /// hands back the child that dial installed. Only a removal or quit fails it.
+    pub async fn run_dial_or_join(
+        app: &AppHandle,
+        state: &LocalBackendState,
+        dial: Dial,
+    ) -> Result<LocalBackend, String> {
+        let (key, serial) = (dial.key.clone(), dial.serial);
+
+        let error = match run_dial(app, state, dial).await {
+            Ok(backend) => return Ok(backend),
+            Err(error) => error,
+        };
+
+        let Some(successor) = crate::tunnels::join_if_superseded(app, &key, serial) else {
+            return Err(error.message);
+        };
+
+        crate::tunnels::wait(successor)
+            .await
+            .map_err(|e| e.message)?;
+
+        current(state)
+            .await
+            .ok_or_else(|| "the local backend stopped before it could be adopted".to_string())
+    }
+
     /// Start a child for dial `serial` and promote it if the slot still waits on
     /// that dial; report the outcome to the tunnel book either way.
     async fn respawn(
@@ -794,11 +823,7 @@ pub async fn local_backend_spawn(
         Hold::Join(_, rx) => {
             crate::tunnels::wait(rx).await.map_err(|e| e.message)?;
         }
-        Hold::Dial(dial) => {
-            return imp::run_dial(&app, &state, dial)
-                .await
-                .map_err(|e| e.message);
-        }
+        Hold::Dial(dial) => return imp::run_dial_or_join(&app, &state, dial).await,
     }
 
     imp::current(&state)
@@ -819,9 +844,7 @@ pub async fn local_backend_restart(
         return local_backend_spawn(app, state, None).await;
     };
 
-    imp::run_dial(&app, &state, dial)
-        .await
-        .map_err(|e| e.message)
+    imp::run_dial_or_join(&app, &state, dial).await
 }
 
 #[cfg(desktop)]
