@@ -429,6 +429,7 @@ export function releaseParkedTunnels(revision: number): void {
 
 export const __testing = {
   liveScopeKeys: (): string[] => [...live.keys()],
+  openingCount: (): number => opening.size,
   parkedCount: (): number => parked.length,
   /**
    * Every module map back to empty. The revisions end settled (settled = open),

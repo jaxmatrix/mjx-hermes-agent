@@ -382,6 +382,8 @@ describe('opening a secondary', () => {
 
     __testing.reset()
 
+    expect(__testing.openingCount()).toBe(0)
+
     await leaseSecondary('conn:a::default', 'a')
 
     expect(invoke).toHaveBeenCalledTimes(2)
