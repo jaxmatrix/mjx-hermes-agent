@@ -188,6 +188,27 @@ describe('acquireTunnel', () => {
     expect(calls('tunnel_acquire')[0]?.[1]).toMatchObject({ pageEpoch: 9 })
   })
 
+  it('never acquires with a page open that returned no epoch', async () => {
+    let opens = 0
+
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'tunnel_page_open') {
+        opens += 1
+
+        return opens === 1 ? null : 5
+      }
+
+      return command === 'tunnel_acquire' ? descriptor : undefined
+    })
+
+    await expect(acquireTunnel('ssh1')).rejects.toMatchObject({ kind: 'unavailable' })
+    expect(calls('tunnel_acquire')).toHaveLength(0)
+
+    await acquireTunnel('ssh1')
+
+    expect(calls('tunnel_acquire')[0]?.[1]).toMatchObject({ pageEpoch: 5 })
+  })
+
   it('never acquires before the page has opened', async () => {
     let open = (_epoch: number) => {}
 

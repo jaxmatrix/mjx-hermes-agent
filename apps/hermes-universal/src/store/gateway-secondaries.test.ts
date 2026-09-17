@@ -242,6 +242,8 @@ describe('opening a secondary', () => {
     const refused = new Error('refused')
 
     await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1))
+    // Still connecting: not in live, so no lease can reach a half-open socket.
+    expect(__testing.liveScopeKeys()).toEqual([])
     dial.reject(refused)
 
     await expect(first).rejects.toBe(refused)
