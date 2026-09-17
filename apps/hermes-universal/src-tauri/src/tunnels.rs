@@ -793,6 +793,10 @@ pub struct TunnelError {
     pub kind: FailureKind,
     pub message: String,
     pub terminal: bool,
+    /// The SSH failure this came from, so the UI picks the same localized copy
+    /// the configurator shows. Additive; absent for a failure outside SSH.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_kind: Option<SshErrorKind>,
 }
 
 impl TunnelError {
@@ -801,11 +805,15 @@ impl TunnelError {
             kind,
             message: message.into(),
             terminal: kind.is_terminal(),
+            ssh_kind: None,
         }
     }
 
     pub fn from_ssh(error: &crate::ssh::error::SshError) -> Self {
-        Self::new(FailureKind::from_ssh(error.kind), error.message.clone())
+        Self {
+            ssh_kind: Some(error.kind),
+            ..Self::new(FailureKind::from_ssh(error.kind), error.message.clone())
+        }
     }
 }
 
@@ -1986,6 +1994,28 @@ mod tests {
             .unwrap()
             .holders
             .contains(&Holder::new("a", "late")));
+    }
+
+    #[test]
+    fn a_tunnel_error_carries_the_ssh_kind_it_came_from() {
+        let timeout = TunnelError::from_ssh(&crate::ssh::error::SshError::new(
+            SshErrorKind::Timeout,
+            "timed out",
+        ));
+
+        assert_eq!(
+            serde_json::to_value(&timeout).unwrap(),
+            serde_json::json!({
+                "kind": "transient",
+                "message": "timed out",
+                "terminal": false,
+                "sshKind": "timeout"
+            })
+        );
+
+        let locked = serde_json::to_value(TunnelError::new(FailureKind::Locked, "locked")).unwrap();
+
+        assert!(locked.get("sshKind").is_none(), "{locked}");
     }
 
     #[test]
