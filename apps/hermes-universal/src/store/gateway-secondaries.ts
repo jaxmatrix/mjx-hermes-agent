@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 
 import { type GatewayEvent, JsonRpcGatewayClient, type WebSocketLike } from '@/gateway'
+import { acquireTunnel, type TunnelLease } from '@/store/connection-tunnels'
 import { TauriWebSocket } from '@/transport/tauri-websocket'
 
 /**
@@ -54,6 +55,8 @@ interface Secondary {
   inFlight: number
   lastUsed: number
   reaper: null | ReturnType<typeof setTimeout>
+  /** Held for the secondary's life when the source is local or SSH (MJXHRM-592). */
+  tunnel: null | TunnelLease
 }
 
 const live = new Map<string, Secondary>()
@@ -67,10 +70,7 @@ const listeners = new Map<string, Set<(event: GatewayEvent) => void>>()
  * unregister. It exists because a secondary's events have to go SOMEWHERE and
  * rule 7 says the default is nowhere.
  */
-export function addConnectionEventListener(
-  connectionId: string,
-  handler: (event: GatewayEvent) => void
-): () => void {
+export function addConnectionEventListener(connectionId: string, handler: (event: GatewayEvent) => void): () => void {
   const held = listeners.get(connectionId) ?? new Set()
 
   held.add(handler)
@@ -121,8 +121,14 @@ function close(secondary: Secondary): void {
     clearTimeout(secondary.reaper)
   }
 
-  live.delete(secondary.scopeKey)
+  // Only this secondary's own entry: a replacement may already sit at the key.
+  if (live.get(secondary.scopeKey) === secondary) {
+    live.delete(secondary.scopeKey)
+  }
+
   secondary.client.close()
+  secondary.tunnel?.release()
+  secondary.tunnel = null
 }
 
 function evictLeastRecentlyUsed(): void {
@@ -165,14 +171,21 @@ export async function leaseSecondary(scopeKey: string, connectionId: string): Pr
     evictLeastRecentlyUsed()
   }
 
-  const resolved = await invoke<{ baseUrl?: string; dialConnectionId?: string; profile?: string }>(
+  const resolved = await invoke<{ baseUrl?: string; dialConnectionId?: string; kind?: string; profile?: string }>(
     'connections_resolve',
     { connectionId, profile: null }
   )
 
-  if (!resolved.baseUrl) {
-    // `local` and `ssh` are reached by CONNECTING to them; there is no address a
-    // second socket could dial from a descriptor alone.
+  // `local` and `ssh` have no address of their own: they are reached through a
+  // tunnel Rust holds for as long as this secondary does.
+  const tunnel =
+    !resolved.baseUrl && (resolved.kind === 'local' || resolved.kind === 'ssh')
+      ? await acquireTunnel(connectionId)
+      : null
+
+  const baseUrl = resolved.baseUrl ?? tunnel?.baseUrl()
+
+  if (!baseUrl) {
     throw new Error(`no addressable gateway for ${connectionId}`)
   }
 
@@ -186,13 +199,18 @@ export async function leaseSecondary(scopeKey: string, connectionId: string): Pr
     inFlight: 0,
     lastUsed: Date.now(),
     reaper: null,
-    scopeKey
+    scopeKey,
+    tunnel
   }
 
   client.onAny(event => deliver(connectionId, event))
   live.set(scopeKey, secondary)
 
-  const wsUrl = `${resolved.baseUrl.replace(/^http/, 'ws')}/api/ws`
+  // A redial moved the tunnel to a new port: this socket is dead weight, and the
+  // next request opens a fresh one against the new base.
+  tunnel?.onChange(() => close(secondary))
+
+  const wsUrl = tunnel ? tunnel.wsUrl() : `${baseUrl.replace(/^http/, 'ws')}/api/ws`
 
   try {
     await client.connect(wsUrl)

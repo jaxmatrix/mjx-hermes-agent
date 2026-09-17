@@ -17,6 +17,7 @@ import {
 import { atom, computed } from '@/store/atom'
 import { connect, connectCloud, connectLocal, connectSsh } from '@/store/connection'
 import { isLatched, releaseLatch } from '@/store/connection-latches'
+import { connectionBase } from '@/store/connection-tunnels'
 import type { AuthMode, Connection, GatewayMode } from '@/store/gateway-config'
 import { loadGatewayTarget } from '@/store/gateway-restore'
 import { softSwitchGateway } from '@/store/gateway-soft-switch'
@@ -90,13 +91,7 @@ export interface ProbeLeg {
 }
 
 export type ProbeVerdict =
-  | 'ok'
-  | 'credential-rejected'
-  | 'unreachable'
-  | 'auth-required'
-  | 'skipped-no-token'
-  | 'ws-unreachable'
-  | 'timeout'
+  'ok' | 'credential-rejected' | 'unreachable' | 'auth-required' | 'skipped-no-token' | 'ws-unreachable' | 'timeout'
 
 export interface ProbeResult {
   ok: boolean
@@ -175,10 +170,7 @@ export const $connectionsRegistry = atom<RegistryView>(EMPTY)
  * everything" are ABSENT — not disabled, not collapsed. Acceptance criterion 1
  * is that such an install looks exactly like today's.
  */
-export const $hasMultipleConnections = computed(
-  $connectionsRegistry,
-  registry => registry.connections.length > 1
-)
+export const $hasMultipleConnections = computed($connectionsRegistry, registry => registry.connections.length > 1)
 
 const LAST_PROFILE_KEY = 'hermes.connections.lastProfileByConnection'
 const LAST_PROFILE_MAX = 64
@@ -334,8 +326,9 @@ setConnectionIdResolver(connection => {
 })
 
 // `api({connectionId})` asks here for the base URL. A hook rather than an import
-// because `lib/api.ts` is a leaf this module transitively depends on.
-setConnectionBaseResolver(connectionId => connectionById(connectionId)?.url ?? null)
+// because `lib/api.ts` is a leaf this module transitively depends on. A local or
+// SSH row has no URL; its live tunnel in this window stands in (MJXHRM-592).
+setConnectionBaseResolver(connectionId => connectionBase(connectionById(connectionId)?.url, connectionId))
 
 // --------------------------------------------------------------------------
 // Boot + switching

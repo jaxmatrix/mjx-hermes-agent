@@ -1,21 +1,46 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { connect, invoke, onAny, request, close: closeClient } = vi.hoisted(() => ({
+const {
+  acquireTunnel,
+  connect,
+  invoke,
+  onAny,
+  request,
+  close: closeClient,
+  sockets
+} = vi.hoisted(() => ({
+  acquireTunnel: vi.fn(),
   close: vi.fn(),
-  connect: vi.fn(async () => {}),
+  connect: vi.fn(async (_url: string) => {}),
   invoke: vi.fn(),
   onAny: vi.fn(),
-  request: vi.fn(async () => 'ok')
+  request: vi.fn(async () => 'ok'),
+  sockets: [] as { url: string; options: unknown }[]
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
-vi.mock('@/transport/tauri-websocket', () => ({ TauriWebSocket: class {} }))
+vi.mock('@/store/connection-tunnels', () => ({ acquireTunnel }))
+vi.mock('@/transport/tauri-websocket', () => ({
+  TauriWebSocket: class {
+    constructor(url: string, options: unknown) {
+      sockets.push({ options, url })
+    }
+  }
+}))
 vi.mock('@/gateway', () => ({
   JsonRpcGatewayClient: class {
     close = closeClient
-    connect = connect
+    connect = async (url: string) => {
+      this.factory(url)
+      await connect(url)
+    }
     onAny = onAny
     request = request
+    factory: (url: string) => unknown
+
+    constructor(options: { socketFactory: (url: string) => unknown }) {
+      this.factory = options.socketFactory
+    }
   }
 }))
 
@@ -33,9 +58,11 @@ beforeEach(() => {
   vi.useFakeTimers()
   __testing.reset()
 
-  for (const spy of [connect, invoke, onAny, request, closeClient]) {
+  for (const spy of [acquireTunnel, connect, invoke, onAny, request, closeClient]) {
     spy.mockClear()
   }
+
+  sockets.length = 0
 
   invoke.mockResolvedValue({ baseUrl: 'https://gw.test' })
 })
@@ -84,10 +111,45 @@ describe('leaseSecondary', () => {
   })
 
   it('refuses a source with no addressable URL rather than inventing one', async () => {
-    invoke.mockResolvedValue({})
+    invoke.mockResolvedValue({ kind: 'remote' })
 
-    await expect(leaseSecondary('conn:ssh::default', 'ssh')).rejects.toThrow(/no addressable gateway/)
+    await expect(leaseSecondary('conn:odd::default', 'odd')).rejects.toThrow(/no addressable gateway/)
+    expect(acquireTunnel).not.toHaveBeenCalled()
     expect(__testing.liveScopeKeys()).toEqual([])
+  })
+
+  it('reaches an ssh source through its tunnel, and lets the tunnel go on close', async () => {
+    const release = vi.fn()
+    const changed: (() => void)[] = []
+
+    invoke.mockResolvedValue({ kind: 'ssh' })
+    acquireTunnel.mockResolvedValue({
+      baseUrl: () => 'http://127.0.0.1:41000',
+      connectionId: 'ssh1',
+      instanceKey: 'ssh:deploy@box:22',
+      onChange: (handler: () => void) => changed.push(handler),
+      release,
+      wsUrl: () => 'ws://127.0.0.1:41000/api/ws'
+    })
+
+    await leaseSecondary('conn:ssh1::default', 'ssh1')
+
+    expect(acquireTunnel).toHaveBeenCalledWith('ssh1')
+    // No token in the URL: Rust attaches it for this connection id.
+    expect(sockets).toEqual([{ options: { connectionId: 'ssh1' }, url: 'ws://127.0.0.1:41000/api/ws' }])
+    expect(release).not.toHaveBeenCalled()
+
+    // A redial moved the port: the socket goes, and so does its hold.
+    changed.forEach(handler => handler())
+
+    expect(closeClient).toHaveBeenCalledTimes(1)
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(__testing.liveScopeKeys()).toEqual([])
+
+    await leaseSecondary('conn:ssh1::default', 'ssh1')
+    closeAllSecondaries()
+
+    expect(release).toHaveBeenCalledTimes(2)
   })
 })
 
