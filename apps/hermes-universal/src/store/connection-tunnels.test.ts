@@ -251,6 +251,8 @@ describe('acquireTunnel', () => {
     await vi.waitFor(() => expect(calls('tunnel_release')).toHaveLength(1))
     expect(calls('tunnel_acquire')).toHaveLength(1)
     expect(calls('tunnel_acquire')[0]?.[1]).toMatchObject({ interactive: true })
+    // Signed in: the warning goes.
+    expect($notifications.get()).toHaveLength(0)
   })
 
   it('raises nothing for a failure that retrying can fix', async () => {

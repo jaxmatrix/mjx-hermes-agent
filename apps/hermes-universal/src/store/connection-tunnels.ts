@@ -6,7 +6,7 @@ import { LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { IS_MOBILE } from '@/lib/platform'
 import { map } from '@/store/atom'
 import { getInstallationId } from '@/store/installation-id'
-import { notify, notifyError } from '@/store/notifications'
+import { dismissNotification, notify, notifyError } from '@/store/notifications'
 import { attachSshPrompts, newAttemptId, onSshProgress, type SshStep } from '@/store/ssh-backend'
 import { isActivityWindow, isSatelliteWindow } from '@/store/windows'
 
@@ -241,6 +241,10 @@ function leaseFor(connectionId: string, entry: Held): TunnelLease {
   }
 }
 
+function signInNotificationId(connectionId: string): string {
+  return `tunnel-signin:${connectionId}`
+}
+
 /**
  * Say a background tunnel needs sign-in, once per connection (MJXHRM-592).
  *
@@ -254,7 +258,12 @@ function notifySignIn(connectionId: string, label: string): void {
       label: translateNow('settings.connections.tunnelConnect'),
       onClick: () => {
         void acquireTunnel(connectionId, { interactive: true, label })
-          .then(lease => lease.release())
+          .then(lease => {
+            // Signed in: the warning has done its job. A failed Connect leaves it
+            // up to try again.
+            dismissNotification(signInNotificationId(connectionId))
+            lease.release()
+          })
           .catch(error => {
             if (!isTunnelSignInError(error)) {
               notifyError(error, translateNow('settings.connections.tunnelSignInTitle', label))
@@ -262,7 +271,7 @@ function notifySignIn(connectionId: string, label: string): void {
           })
       }
     },
-    id: `tunnel-signin:${connectionId}`,
+    id: signInNotificationId(connectionId),
     kind: 'warning',
     message: translateNow('settings.connections.tunnelSignInMessage'),
     title: translateNow('settings.connections.tunnelSignInTitle', label)
