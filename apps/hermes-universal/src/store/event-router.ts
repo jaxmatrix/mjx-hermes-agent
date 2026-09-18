@@ -84,6 +84,7 @@ import {
 } from '@/store/prompts'
 import { applyReactionEvent } from '@/store/reactions'
 import { EMPTY_USAGE, reduceSessionState } from '@/store/session-reducer'
+import { connectionEpoch, noteConnectionEpoch, noteReplaySeq } from '@/store/session-replay'
 import {
   $activeSessionKey,
   $sessionStates,
@@ -284,6 +285,13 @@ export function routeGatewayEvent(event: GatewayEvent): void {
   const connectionId = stamped ?? $activeConnectionId.get() ?? LOCAL_CONNECTION_ID
   const ambient = !stamped || stamped === $activeConnectionId.get()
 
+  // The replay epoch is read from EVERY socket's `gateway.ready`, ambient or
+  // not, and before the guard below: it is what tells a reconnect whether the
+  // watermark it holds still addresses anything (invariant 35).
+  if (event.type === 'gateway.ready') {
+    noteConnectionEpoch(connectionId, (event.payload as { replay_epoch?: string } | undefined)?.replay_epoch)
+  }
+
   if (!ambient && GLOBAL_EVENT_TYPES.has(event.type)) {
     // App-level frames — a pet, a toast, a watched-file tick, the session list's
     // own change events — describe the backend the app is pointed at. A
@@ -406,6 +414,10 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
     ensureSessionSlice(key)
   }
+
+  // The watermark this client can honestly resume from: the highest `seq` it has
+  // actually folded, under the epoch that stamped it.
+  noteReplaySeq(key, event.seq, connectionEpoch(connectionId))
 
   const isActive = key === $activeSessionKey.get()
 

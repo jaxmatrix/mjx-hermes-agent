@@ -28,6 +28,7 @@ vi.mock('@/lib/completion-sound', () => ({ playCompletionSound: vi.fn() }))
 
 import { $activeConnection } from '@/store/active-connection'
 import { resetUnscopedStreamPin, routeGatewayEvent } from '@/store/event-router'
+import { connectionEpoch, replayCursor, __testing as replayTesting } from '@/store/session-replay'
 import {
   $activeSessionKey,
   $sessionStates,
@@ -60,6 +61,7 @@ const statusOf = (key: string) => $sessionStates.get()[key]?.statusLine ?? ''
 
 beforeEach(() => {
   $sessionStates.set({})
+  replayTesting.reset()
   resetUnscopedStreamPin()
   $activeConnection.set({ connectionId: 'conn-a', profile: 'default', scopeKey: 'conn-a' } as unknown as never)
 })
@@ -125,5 +127,39 @@ describe('invariant 36 — a frame is placed by its connection AND its id', () =
     routeGatewayEvent({ connectionId: 'conn-b', payload: { text: 'nobody' }, type: 'status.update' } as GatewayEvent)
 
     expect(statusOf(a)).toBe('')
+  })
+})
+
+describe('invariant 35 — the router records what a reconnect will need', () => {
+  it('takes each socket\u2019s replay epoch, background ones included', () => {
+    routeGatewayEvent({ payload: { replay_epoch: 'e-ambient' }, type: 'gateway.ready' } as GatewayEvent)
+    routeGatewayEvent({
+      connectionId: 'conn-b',
+      payload: { replay_epoch: 'e-b' },
+      type: 'gateway.ready'
+    } as GatewayEvent)
+
+    expect(connectionEpoch('conn-a')).toBe('e-ambient')
+    expect(connectionEpoch('conn-b')).toBe('e-b')
+  })
+
+  it('advances the watermark of the session a frame was folded into, and no other', () => {
+    const a = seed('conn-a')
+    const b = seed('conn-b')
+
+    $activeSessionKey.set(a)
+
+    routeGatewayEvent({
+      connectionId: 'conn-b',
+      payload: { replay_epoch: 'e-b' },
+      type: 'gateway.ready'
+    } as GatewayEvent)
+    routeGatewayEvent({ ...frame('status.update', { text: 'one' }, 'conn-b'), seq: 4 } as GatewayEvent)
+    routeGatewayEvent({ ...frame('status.update', { text: 'two' }, 'conn-b'), seq: 9 } as GatewayEvent)
+
+    expect(replayCursor(b)).toEqual({ epoch: 'e-b', seq: 9 })
+    // A's slice exists and has the same stored id: crediting a frame to every
+    // open session would hand it a watermark it never saw a frame under.
+    expect(replayCursor(a).seq).toBe(0)
   })
 })
