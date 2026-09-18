@@ -47,7 +47,6 @@ import { ackApprovalReceived, readApprovalPayload } from '@/store/approvals'
 import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block'
 import { noteMissedSteer } from '@/store/chat'
 import { normalizeQuestions, readChoices, readLockedAnswers } from '@/store/clarify'
-import { routeCompactionEvent } from '@/store/compaction'
 import { setConnectionEventSink, setConnectionStreamReset } from '@/store/connection-clients'
 import { addGatewayEventListener, requestGateway } from '@/store/gateway-client'
 import {
@@ -434,11 +433,6 @@ export function routeGatewayEvent(event: GatewayEvent): void {
   // reacting to, not the one from the frame before. Cheap: the fold returns the
   // same record unless something actually changed (store/turn-lifecycle.ts).
   routeTurnEvent(key, event)
-  // Compaction is silent on the wire — no `message.start`, no visible output —
-  // so its start/end is inferred from `status.update` kinds plus the first real
-  // output that follows (store/compaction.ts). Folded here, before the delta
-  // short-circuit, because that first output is usually a delta.
-  routeCompactionEvent(key, event.type, payload)
 
   // Streaming text is BATCHED (lib/stream-batch) — one React commit per flush
   // window instead of one per token, which matters most when several sessions

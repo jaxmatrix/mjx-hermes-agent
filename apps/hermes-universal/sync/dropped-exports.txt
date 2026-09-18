@@ -5,7 +5,7 @@
 #
 #   git show 9ce16c77f9:apps/hermes-universal/src/<path>
 #
-# 147 files, 572 symbols.
+# 146 files, 567 symbols.
 
 lib/gateway-rpc.ts
     MessageReactTarget
@@ -364,12 +364,6 @@ lib/reasoning-effort.ts
     REASONING_EFFORT_VALUES
     DEFAULT_REASONING_EFFORT
     isReasoningEffort
-store/compaction.ts
-    sessionCompactingSince
-    $activeSessionCompacting
-    turnCompacted
-    routeCompactionEvent
-    clearAllCompaction
 store/mcp-setup.ts
     readMcpSetupAction
     readMcpSetupRequest

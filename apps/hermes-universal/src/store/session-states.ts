@@ -40,7 +40,7 @@ import { readJson, writeJson } from '@/lib/storage'
 import { discardDeltas, disposeStreamBatch, flushDeltas } from '@/lib/stream-batch'
 import { beginDetached, endSpan } from '@/observability'
 import { requestClose } from '@/store/close-confirm'
-import { clearAllCompaction } from '@/store/compaction'
+import { clearAllCompaction } from '@/store/compaction-lifecycle'
 import {
   type ClientHold,
   holdConnectionClient,
