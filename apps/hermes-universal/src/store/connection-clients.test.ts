@@ -28,7 +28,12 @@ const {
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
-vi.mock('@/store/connection-tunnels', () => ({ acquireTunnel }))
+vi.mock('@/store/connection-tunnels', () => ({
+  acquireTunnel,
+  // 592's two "retrying cannot fix this" reads.
+  isTunnelSignInError: (error: unknown) => (error as { kind?: string })?.kind === 'credentials-needed',
+  needsInteraction: () => false
+}))
 vi.mock('@/store/session-request-router', () => ({
   SessionRouteError: class extends Error {
     constructor(
@@ -55,12 +60,16 @@ vi.mock('@/gateway', () => ({
 
 import { $activeConnection } from '@/store/active-connection'
 import {
+  $connectionClients,
   clientFor,
   __testing as clientTesting,
+  connectionClientState,
   connectionTabCount,
   holdConnectionClient,
   ownedConnections,
-  releaseConnectionClient
+  releaseConnectionClient,
+  retryConnectionClient,
+  setConnectionClientTransport
 } from '@/store/connection-clients'
 import { __testing, IDLE_REAP_MS, leaseSecondary, MAX_SECONDARIES, releaseSecondary } from '@/store/gateway-secondaries'
 
@@ -71,8 +80,8 @@ const activeOn = (connectionId: null | string) =>
 
 beforeEach(() => {
   vi.useFakeTimers()
-  clientTesting.reset()
   __testing.reset()
+  clientTesting.reset()
 
   for (const spy of [acquireTunnel, connect, invoke, onAny, request, closeClient]) {
     spy.mockClear()
@@ -173,5 +182,199 @@ describe('invariant 34 — the last tab demotes the socket, it does not kill it'
     expect(connect).toHaveBeenCalledTimes(1)
     expect(closeClient).not.toHaveBeenCalled()
     expect(__testing.isPinned('conn:conn-b::default')).toBe(true)
+  })
+})
+
+/**
+ * MJXHRM-591, invariant 35's other half — the ladder and the catch-up.
+ *
+ * A socket a tab is streaming on can go away: its tunnel moves, the host sleeps,
+ * the gateway restarts. The tabs keep their slices and their runtime ids —
+ * that is what makes a catch-up possible — and the client climbs a full-jitter
+ * ladder while a tab still wants it. A tunnel that needs a credential is the one
+ * failure retrying cannot fix, so the ladder stops and the surface says so.
+ */
+describe('the reconnect ladder', () => {
+  it('goes degraded and climbs when a pinned socket is lost', async () => {
+    await holdConnectionClient('conn-b')
+
+    expect(connectionClientState('conn-b')).toMatchObject({ phase: 'live' })
+
+    const { __testing: secondaries } = await import('@/store/gateway-secondaries')
+
+    // The socket goes: a tunnel move, a host asleep. Nothing else changes.
+    secondaries.closePinned('conn:conn-b::default')
+
+    expect(connectionClientState('conn-b')).toMatchObject({ phase: 'degraded' })
+
+    connect.mockClear()
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect(connect).toHaveBeenCalled()
+    expect(connectionClientState('conn-b')).toMatchObject({ phase: 'live' })
+  })
+
+  it('stops the ladder on a failure retrying cannot fix, and offers a retry', async () => {
+    invoke.mockRejectedValueOnce({ kind: 'credentials-needed', message: 'sign in' })
+
+    await holdConnectionClient('conn-b')
+
+    expect(connectionClientState('conn-b')).toMatchObject({ phase: 'lost', terminal: true })
+
+    connect.mockClear()
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    // No ladder: a credential is the user's to give.
+    expect(connect).not.toHaveBeenCalled()
+
+    invoke.mockResolvedValue({ baseUrl: 'https://gw.test' })
+    retryConnectionClient('conn-b')
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(connectionClientState('conn-b')).toMatchObject({ phase: 'live' })
+  })
+
+  it('stops climbing once the last tab has gone', async () => {
+    await holdConnectionClient('conn-b')
+
+    const { __testing: secondaries } = await import('@/store/gateway-secondaries')
+
+    // Lost, ladder armed — and then the user closes the tab that wanted it. A
+    // ladder climbing against a gateway nobody is watching is exactly what
+    // `gateway-secondaries` refuses to do on its own (rule 6).
+    secondaries.closePinned('conn:conn-b::default')
+    expect(connectionClientState('conn-b')).toMatchObject({ phase: 'degraded' })
+
+    releaseConnectionClient('conn-b')
+
+    connect.mockClear()
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(connect).not.toHaveBeenCalled()
+    expect($connectionClients.get()['conn-b']).toBeUndefined()
+  })
+})
+
+describe('the catch-up a reconnect runs', () => {
+  const seedBound = async () => {
+    const { $sessionStates, emptySessionState, publishSessionState, runtimeKeyFor } =
+      await import('@/store/session-state-types')
+
+    const key = runtimeKeyFor('conn-b', 'run-b')
+
+    $sessionStates.set({})
+    publishSessionState(key, {
+      ...emptySessionState('abc12345'),
+      connectionId: 'conn-b',
+      profile: 'default',
+      runtimeSessionId: 'run-b'
+    })
+    // A live session on ANOTHER connection, with the same stored id: this
+    // client's catch-up is none of its business.
+    publishSessionState(runtimeKeyFor('conn-c', 'run-c'), {
+      ...emptySessionState('abc12345'),
+      connectionId: 'conn-c',
+      profile: 'default',
+      runtimeSessionId: 'run-c'
+    })
+
+    return key
+  }
+
+  it('asks from the watermark, re-delivers open requests, and folds the frames', async () => {
+    const { __testing: replayTesting, noteConnectionEpoch, noteReplaySeq } = await import('@/store/session-replay')
+    const key = await seedBound()
+
+    replayTesting.reset()
+    noteConnectionEpoch('conn-b', 'e1')
+    noteReplaySeq(key, 7, 'e1')
+
+    const asked: { method: string; params: Record<string, unknown> }[] = []
+    const folded: unknown[] = []
+    const rebound: string[] = []
+
+    setConnectionClientTransport({
+      rebind: async sessionKey => {
+        rebound.push(sessionKey)
+      },
+      request: async (_scope, method, params) => {
+        asked.push({ method, params })
+
+        return {
+          epoch: 'e1',
+          events: [{ seq: 8, session_id: 'run-b', type: 'status.update' }],
+          open_requests: [{ session_id: 'run-b', type: 'clarify.request' }],
+          truncated: false
+        }
+      }
+    })
+
+    const { setConnectionEventSink } = await import('@/store/connection-clients')
+
+    setConnectionEventSink(event => folded.push(event))
+
+    await holdConnectionClient('conn-b')
+
+    // ONE ask, for this connection's own session — not the identically-named one
+    // on conn-c, whose socket knows nothing about this watermark.
+    expect(asked).toEqual([{ method: 'session.events.since', params: { last_seen: 7, session_id: 'run-b' } }])
+    // The parked question FIRST, then the frames it was waiting behind.
+    expect((folded[0] as { type: string }).type).toBe('clarify.request')
+    expect(folded[1] as { connectionId: string; type: string }).toMatchObject({
+      connectionId: 'conn-b',
+      type: 'status.update'
+    })
+    expect(rebound).toEqual([])
+  })
+
+  it('re-binds instead of asking when the epoch moved', async () => {
+    const { __testing: replayTesting, noteConnectionEpoch, noteReplaySeq } = await import('@/store/session-replay')
+    const key = await seedBound()
+
+    replayTesting.reset()
+    noteReplaySeq(key, 7, 'e1')
+    // The backend restarted its log while we were away.
+    noteConnectionEpoch('conn-b', 'e2')
+
+    const asked: string[] = []
+    const rebound: string[] = []
+
+    setConnectionClientTransport({
+      rebind: async sessionKey => {
+        rebound.push(sessionKey)
+      },
+      request: async (_scope, method) => {
+        asked.push(method)
+
+        return {}
+      }
+    })
+
+    await holdConnectionClient('conn-b')
+
+    expect(asked).toEqual([])
+    expect(rebound).toEqual([key])
+  })
+
+  it('re-binds when the ring could not cover the gap', async () => {
+    const { __testing: replayTesting, noteConnectionEpoch, noteReplaySeq } = await import('@/store/session-replay')
+    const key = await seedBound()
+
+    replayTesting.reset()
+    noteConnectionEpoch('conn-b', 'e1')
+    noteReplaySeq(key, 7, 'e1')
+
+    const rebound: string[] = []
+
+    setConnectionClientTransport({
+      rebind: async sessionKey => {
+        rebound.push(sessionKey)
+      },
+      request: async () => ({ epoch: 'e1', events: [{ seq: 99 }], truncated: true })
+    })
+
+    await holdConnectionClient('conn-b')
+
+    expect(rebound).toEqual([key])
   })
 })

@@ -40,7 +40,7 @@ import {
   takeVoicePlaybackInterrupted
 } from '@/lib/voice-playback'
 import { type ChatMessage, interruptSession, nextId } from '@/store/chat'
-import { holdConnectionClient } from '@/store/connection-clients'
+import { holdConnectionClient, setConnectionClientTransport } from '@/store/connection-clients'
 import { notifyError } from '@/store/notifications'
 import {
   $sessions,
@@ -60,6 +60,7 @@ import {
   ensureSessionSlice,
   hydratingKeyFor,
   isPlaceholderKey,
+  LOCAL_SESSION_SCOPE,
   parseSessionKey,
   rekeySession,
   runtimeKeyFor,
@@ -344,6 +345,37 @@ async function submitTextToSession(runtimeId: string, text: string, displayText?
     notifyError(err, 'Message failed to send')
   }
 }
+
+/**
+ * How a reconnecting owning client asks, and how it re-binds a session it cannot
+ * catch up incrementally (MJXHRM-591, invariant 35).
+ *
+ * Registered here because both answers live in this layer: the request goes out
+ * on the tab's own route, and "re-bind" is the same hydrate a tab does when it
+ * opens — which is what a changed epoch or a truncated ring means. A refetch and
+ * a resume take the same path: the hydrate fetches the transcript and resumes in
+ * one step, so the difference is only why it ran.
+ */
+setConnectionClientTransport({
+  rebind: async (sessionKey, _mode) => {
+    const slice = $sessionStates.get()[sessionKey]
+
+    if (!slice?.storedSessionId) {
+      return
+    }
+
+    // Drop the stale slice first: `resumeSessionToState` adopts a warm one as-is,
+    // and the whole point here is that this one can no longer be trusted.
+    dropSessionState(sessionKey)
+
+    await hydrateSessionToState({
+      connectionId: slice.connectionId ?? LOCAL_SESSION_SCOPE,
+      profile: slice.profile ?? DEFAULT_SESSION_PROFILE,
+      storedSessionId: slice.storedSessionId
+    })
+  },
+  request: (scope, method, params) => requestForConnection(scope, method, params)
+})
 
 setSessionTileDelegate({
   /**

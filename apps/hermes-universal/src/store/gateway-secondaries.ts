@@ -79,6 +79,20 @@ let openRevision = 0
 /** The newest switch that has settled: nothing it closed stays parked. */
 let settledRevision = 0
 const listeners = new Map<string, Set<(event: GatewayEvent) => void>>()
+/**
+ * Told when a PINNED socket goes away — its tunnel moved or closed, a hard stop,
+ * a quit (MJXHRM-591).
+ *
+ * Rule 6 stands: this module still never reconnects anything. It only reports,
+ * because the tabs streaming on that socket are the reason to try again, and
+ * they are not this module's to know about.
+ */
+let onPinnedClosed: ((scopeKey: string, connectionId: string) => void) | null = null
+
+export function setPinnedSecondaryClosedListener(handler: (scopeKey: string, connectionId: string) => void): void {
+  onPinnedClosed = handler
+}
+
 /** Scopes some tab is streaming on. Held here rather than on the `Secondary`
  *  alone, so a pin taken while the socket is still opening survives the open. */
 const pinnedScopes = new Set<string>()
@@ -224,6 +238,16 @@ function close(secondary: Secondary, parkAt?: number): void {
   }
 
   secondary.client.close()
+
+  if (secondary.pinned) {
+    // Reported AFTER the socket is down and out of `live`, so a listener that
+    // re-leases sees the real state rather than the one being dismantled.
+    try {
+      onPinnedClosed?.(secondary.scopeKey, secondary.connectionId)
+    } catch {
+      // A listener must not break a teardown.
+    }
+  }
 
   if (parkAt !== undefined && secondary.tunnel) {
     park(secondary.tunnel, parkAt)
@@ -504,6 +528,14 @@ export function releaseParkedTunnels(revision: number): void {
 }
 
 export const __testing = {
+  /** Take a pinned socket away, as a tunnel move or a host asleep does. */
+  closePinned: (scopeKey: string): void => {
+    const secondary = live.get(scopeKey)
+
+    if (secondary) {
+      close(secondary)
+    }
+  },
   isPinned: (scopeKey: string): boolean => Boolean(live.get(scopeKey)?.pinned),
   liveScopeKeys: (): string[] => [...live.keys()],
   openingCount: (): number => opening.size,
@@ -514,6 +546,7 @@ export const __testing = {
    * pending captured an old revision, and must still see that it was switched.
    */
   reset: (): void => {
+    onPinnedClosed = null
     pinnedScopes.clear()
 
     for (const secondary of live.values()) {
