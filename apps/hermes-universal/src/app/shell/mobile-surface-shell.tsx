@@ -19,7 +19,7 @@ import { useI18n } from '@/i18n'
 import { useStore } from '@/store/atom'
 import { $connectionPhase, $hasConnected } from '@/store/connection'
 import { $gatewaySwitching } from '@/store/gateway-switch'
-import { deleteSessionLocal } from '@/store/session'
+import { deleteSessionLocal } from '@/store/session-lifecycle'
 import { activitySurfaceForPath } from '@/store/windows'
 
 // The shared mobile chrome for a windowable surface (Settings / Command Center /

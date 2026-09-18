@@ -32,7 +32,7 @@ vi.mock('@/hermes', () => ({
 // the backend flag AND the lineage-root-keyed local pin set). Here it is a
 // controllable stub: what this file has to prove is that the dialog renders the
 // keep-flag warning exactly when the predicate says the row is pinned.
-vi.mock('@/store/session', () => ({
+vi.mock('@/store/session-lifecycle', () => ({
   refreshSessions: vi.fn(async () => undefined),
   isSessionPinned: vi.fn(() => false)
 }))
@@ -44,7 +44,7 @@ import { ConfirmHost } from '@/components/confirm-host'
 import { deleteSession, setSessionArchived } from '@/hermes'
 import { I18nProvider } from '@/i18n'
 import { $confirmRequest } from '@/store/confirm'
-import { isSessionPinned } from '@/store/session'
+import { isSessionPinned } from '@/store/session-lifecycle'
 
 import { ArchivedSection } from './archived-section'
 

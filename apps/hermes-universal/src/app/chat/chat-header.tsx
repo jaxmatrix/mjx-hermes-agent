@@ -6,7 +6,7 @@ import { useStore } from '@/store/atom'
 import { $sessionId } from '@/store/chat'
 import { $leftEdgeOpen, $panesFlipped, $terminalOpen } from '@/store/layout'
 import { $reviewOpen } from '@/store/review'
-import { $activeStoredSessionId } from '@/store/session'
+import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import { isSatelliteWindow, isSecondaryWindow } from '@/store/windows'
 
 // The chat title header — ported from desktop's in-pane ChatHeader

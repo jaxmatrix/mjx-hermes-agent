@@ -21,7 +21,8 @@ vi.mock('@/store/gateway', async () => {
 
 import type { SessionInfo } from '@/types/hermes'
 
-import { $activeStoredSessionId, $messagingSessions, $sessions, markAllSessionsRead } from './session'
+import { $messagingSessions, $sessions } from './session'
+import { $activeStoredSessionId, markAllSessionsReadDurable } from './session-lifecycle'
 import { $sessionSeenCounts, $unreadFinishedMarkers, watchPersistedUnread } from './session-unread'
 
 const row = (id: string, count: number): SessionInfo => ({ id, message_count: count }) as SessionInfo
@@ -33,7 +34,7 @@ beforeEach(() => {
   $unreadFinishedMarkers.set({})
 })
 
-describe('markAllSessionsRead', () => {
+describe('markAllSessionsReadDurable', () => {
   it('advances the watermarks so the next refresh does not repaint the dots', () => {
     watchPersistedUnread()
 
@@ -42,7 +43,7 @@ describe('markAllSessionsRead', () => {
     $sessionSeenCounts.set({ default: { a: 1, b: 1 } })
     $unreadFinishedMarkers.set({ default: ['a', 'b'] })
 
-    markAllSessionsRead()
+    markAllSessionsReadDurable()
 
     expect($sessionSeenCounts.get()).toEqual({ default: { a: 9, b: 5 } })
     expect($unreadFinishedMarkers.get()).toEqual({})

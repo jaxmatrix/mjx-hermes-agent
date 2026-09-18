@@ -43,15 +43,15 @@ import { type ChatMessage, interruptSession, nextId } from '@/store/chat'
 import { setConnectionClientTransport } from '@/store/connection-clients'
 import { $tunnelStatus } from '@/store/connection-tunnels'
 import { notifyError } from '@/store/notifications'
+import { $sessions } from '@/store/session'
 import {
-  $sessions,
   archiveSessionLocal,
   branchStoredSession,
   deleteSessionLocal,
-  knownSessionProfile,
+  knownSessionProfileFor,
   resolveSessionProfile,
   sessionProfileIsAmbiguous
-} from '@/store/session'
+} from '@/store/session-lifecycle'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
 import { requestForConnection } from '@/store/session-request-router'
 import {
@@ -172,7 +172,8 @@ async function hydrateSessionToState(ref: SessionRef): Promise<string> {
   // single-profile install; a by-id probe only when the answer can actually
   // differ (see resolveSessionProfile).
   const profile =
-    knownSessionProfile(storedId) ?? (sessionProfileIsAmbiguous() ? await resolveSessionProfile(storedId) : undefined)
+    knownSessionProfileFor(storedId) ??
+    (sessionProfileIsAmbiguous() ? await resolveSessionProfile(storedId) : undefined)
 
   const stored = $sessions.get().find(session => session.id === storedId)
   const key = hydratingKeyFor(ref)

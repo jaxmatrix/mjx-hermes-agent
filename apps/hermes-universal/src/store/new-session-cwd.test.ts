@@ -36,7 +36,7 @@ import { $defaultProjectDir } from '@/store/default-project-dir'
 import { requestGateway } from '@/store/gateway'
 import { NO_PROJECT_ID } from '@/store/project-scope'
 import { $projectScope, $projectTree, ALL_PROJECTS, resolveNewSessionCwd } from '@/store/projects'
-import { $activeStoredSessionId, newSession } from '@/store/session'
+import { $activeStoredSessionId, newSession } from '@/store/session-lifecycle'
 import { resetSessionStates } from '@/test-sessions'
 
 const project = (id: string, path: null | string, repoPath?: string) => ({

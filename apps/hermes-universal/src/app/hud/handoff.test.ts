@@ -33,7 +33,7 @@ vi.mock('@/lib/route-nav', () => ({ navigateTo }))
 vi.mock('@/store/notifications', () => ({ notifyError }))
 vi.mock('@/lib/composer-draft-bus', () => ({ requestComposerDraftSync }))
 vi.mock('@/store/composer', () => ({ reloadPersistedDrafts }))
-vi.mock('@/store/session', () => ({
+vi.mock('@/store/session-lifecycle', () => ({
   $activeStoredSessionId: { get: () => activeStoredSessionId },
   openSession
 }))

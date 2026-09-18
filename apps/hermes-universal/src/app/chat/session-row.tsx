@@ -6,7 +6,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from '@/components/ui/input'
 import { Archive, MoreVertical, Pencil, Trash } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import { archiveSessionLocal, deleteSessionLocal, openSession, renameSessionLocal } from '@/store/session'
+import { archiveSessionLocal, deleteSessionLocal, openSession, renameSessionLocal } from '@/store/session-lifecycle'
 import type { SessionInfo } from '@/types/hermes'
 
 function relTime(value: number): string {

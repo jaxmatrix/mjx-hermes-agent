@@ -23,9 +23,9 @@ vi.mock('./transcript-cache-sync', async importOriginal => {
   return { ...actual, awaitSessionPainted: (...args: unknown[]) => awaitSessionPainted(...args) }
 })
 
-vi.mock('./session', () => ({
+vi.mock('./session-lifecycle', () => ({
   adoptLiveSession: (input: unknown) => adoptLiveSession(input),
-  knownSessionProfile: (id: string) => knownSessionProfile(id),
+  knownSessionProfileFor: (id: string) => knownSessionProfile(id),
   markPluginOwnedSession: (id: string) => markPluginOwnedSession(id),
   openSession: (id: string) => openSession(id),
   rememberSessionProfile: (id: string, owner: string) => rememberSessionProfile(id, owner),

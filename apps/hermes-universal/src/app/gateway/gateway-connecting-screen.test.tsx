@@ -10,7 +10,7 @@ import { queryClient } from '@/lib/query-client'
 import { __resetTranscriptTailCache, saveTranscriptTail } from '@/lib/transcript-tail-cache'
 import { $connectionError } from '@/store/connection'
 import { $restorePaintEnabled } from '@/store/restore-paint'
-import { $activeStoredSessionId, forgetLastSessionMarkers } from '@/store/session'
+import { $activeStoredSessionId, forgetLastSessionMarkers } from '@/store/session-lifecycle'
 import { __resetTranscriptPaint } from '@/store/transcript-paint'
 import * as windows from '@/store/windows'
 

@@ -57,7 +57,8 @@ vi.mock('./session-row-state', async importOriginal => {
 import { $pinnedSessionIds, $sidebarAgentsGrouped } from '@/store/layout'
 import { $showAllProfiles } from '@/store/profile'
 import { $projectScope, $projectTree, ALL_PROJECTS } from '@/store/projects'
-import { $activeStoredSessionId, $searchLoading, $sessions } from '@/store/session'
+import { $sessions } from '@/store/session'
+import { $activeStoredSessionId, $searchLoading } from '@/store/session-lifecycle'
 
 import { SidebarSessionRow } from './session-row'
 import { SidebarScrollBody } from './sidebar-content'

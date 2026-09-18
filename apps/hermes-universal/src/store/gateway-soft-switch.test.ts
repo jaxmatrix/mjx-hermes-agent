@@ -73,7 +73,7 @@ vi.mock('@/lib/query-client', () => ({ queryClient: { invalidateQueries: vi.fn()
 // artifact registry" is only worth asserting against the real registry. It reaches
 // the native staging commands through `invoke`, which needs a stub outside Tauri.
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }))
-vi.mock('@/store/session', async () => {
+vi.mock('@/store/session-lifecycle', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -117,18 +117,15 @@ import { killLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import { notify, notifyError } from '@/store/notifications'
 import { $projectTree } from '@/store/project-scope'
 import { resetPullRequestsForBackendSwitch } from '@/store/pull-requests'
+import { $messagingSessions, $sessions, $sessionsLoading, $unreadFinishedSessionIds } from '@/store/session'
 import {
   $activeStoredSessionId,
-  $messagingSessions,
-  $sessions,
-  $sessionsLoading,
   $sessionsTotal,
-  $unreadFinishedSessionIds,
   clearPinnedSessionCache,
   forgetLastSessionMarkers,
   refreshMessagingSessions,
   refreshSessions
-} from '@/store/session'
+} from '@/store/session-lifecycle'
 import { dropUnheldSessionStates } from '@/store/session-states'
 import { disconnectSsh } from '@/store/ssh-backend'
 import type { SessionInfo } from '@/types/hermes'

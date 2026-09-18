@@ -11,7 +11,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/store/session', async () => {
+vi.mock('@/store/session-lifecycle', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -32,7 +32,7 @@ import {
   migrateLegacyBubbles
 } from '@/store/chat-bubbles'
 import { $activeProfile } from '@/store/profiles'
-import { $activeStoredSessionId } from '@/store/session'
+import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import { $sessionStates, emptySessionState, publishSessionState, runtimeKeyFor } from '@/store/session-state-types'
 import { setTabRefResolver, tabKeyFor } from '@/store/tab-ref'
 

@@ -10,7 +10,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { $removedSessionIds, tombstoneSessions, untombstoneSessions } from '@/store/session'
+import { $removedSessionIds, tombstoneSessions, untombstoneSessions } from '@/store/session-removal'
 import { $archivedSessions, $archivedSessionsFetched } from '@/store/sidebar-archive'
 import type { SessionInfo } from '@/types/hermes'
 

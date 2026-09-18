@@ -64,8 +64,11 @@ store/session-states.*
 store/session-tile-delegate.*
 store/session-tiles-binding.*
 store/ssh-backend.*
-store/session.ts
-store/session.test.ts
+# Universal's session LIST/LIFECYCLE layer (list, paging, pins, tombstones,
+# branching, opening) is built on the connection scoping above and has no
+# desktop counterpart — desktop's `store/session.ts` is the session STATE store
+# and lands verbatim as an AUTO file, so only the lifecycle half is protected.
+store/session-lifecycle.*
 store/gateway.ts
 store/chat.ts
 store/transcript-paint.*

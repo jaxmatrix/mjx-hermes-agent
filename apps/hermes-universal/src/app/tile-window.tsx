@@ -22,7 +22,7 @@ import { $connectionPhase } from '@/store/connection'
 import { sessionMissingFromCurrentGateway } from '@/store/gateway-soft-switch'
 import { $gatewaySwitching } from '@/store/gateway-switch'
 import { notify } from '@/store/notifications'
-import { newSession, openSession, refreshSessions } from '@/store/session'
+import { newSession, openSession, refreshSessions } from '@/store/session-lifecycle'
 import { detachedTileId } from '@/store/windows'
 
 import { NEW_CHAT_ROUTE, routeSessionId } from './routes'

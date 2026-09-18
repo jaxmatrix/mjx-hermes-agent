@@ -31,7 +31,7 @@ import {
   isAmbientConnection,
   releaseConnectionClient
 } from '@/store/connection-clients'
-import { $activeStoredSessionId, newSession, openSession, sameStoredSession } from '@/store/session'
+import { $activeStoredSessionId, newSession, openSession, sameStoredSession } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
   DEFAULT_SESSION_PROFILE,

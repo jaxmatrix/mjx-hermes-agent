@@ -23,7 +23,7 @@ import { $busy, $messages } from '@/store/chat'
 import { $attachmentMenuDropdownOpen } from '@/store/composer'
 import { $connectionError, $connectionPhase } from '@/store/connection'
 import { $modelMenuDropdownOpen } from '@/store/model'
-import { $activeStoredSessionId, openSession, refreshSessions } from '@/store/session'
+import { $activeStoredSessionId, openSession, refreshSessions } from '@/store/session-lifecycle'
 import { showAppWindow } from '@/store/windows'
 
 import { reportHudSession } from './handoff'

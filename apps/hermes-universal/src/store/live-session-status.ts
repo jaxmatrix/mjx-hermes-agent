@@ -62,13 +62,13 @@ import { $gatewayState, requestGateway } from '@/store/gateway'
 import { clearLiveSessionStatuses, type LiveSessionStatus, setLiveSessionStatuses } from '@/store/live-session-registry'
 import { $changeEventsAvailable, $sessionsChangeTick } from '@/store/live-sync'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
+import { $unreadFinishedSessionIds } from '@/store/session'
 import {
-  $unreadFinishedSessionIds,
   refreshMessagingSessions,
   refreshSessions,
   sameStoredSession,
   unreadPersistenceHooks
-} from '@/store/session'
+} from '@/store/session-lifecycle'
 import {
   $focusedStoredSessionId,
   $sessionStates,
@@ -91,7 +91,7 @@ const LIVE_STATUS_BACKSTOP_MS = 30_000
  * Deliberately slower than desktop's 1_500 ms. That number exists because
  * desktop ALWAYS polled this and needed a compaction id rotation to look
  * instantaneous; universal learns about rotations from the event stream
- * (`setActiveSessionStoredIdRotation`), so here the snapshot is purely a
+ * (`applyActiveSessionStoredIdRotation`), so here the snapshot is purely a
  * safety net for turns started somewhere else — and a 1.5s radio wake on a
  * phone is exactly the cost this ticket exists to remove.
  */

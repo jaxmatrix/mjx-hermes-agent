@@ -21,20 +21,22 @@ import { closeAllPreviewTabs } from '@/store/preview'
 import { $projectTree } from '@/store/project-scope'
 import { resetPullRequestsForBackendSwitch } from '@/store/pull-requests'
 import {
-  $activeStoredSessionId,
   $messagingSessions,
   $sessions,
-  $sessionSearch,
   $sessionsLoading,
-  $sessionsTotal,
   $unreadFinishedSessionIds,
+  sessionMatchesStoredId
+} from '@/store/session'
+import {
+  $activeStoredSessionId,
+  $sessionSearch,
+  $sessionsTotal,
   clearPinnedSessionCache,
   forgetLastSessionMarkers,
   refreshMessagingSessions,
   refreshSessions,
-  resetSessionsPaging,
-  sessionMatchesStoredId
-} from '@/store/session'
+  resetSessionsPaging
+} from '@/store/session-lifecycle'
 import { resetSessionPinMirror } from '@/store/session-pin-sync'
 import { $sessionTiles, dropUnheldSessionStates, heldSessionKeys } from '@/store/session-states'
 import { resetArchivedSessionsForBackendSwitch } from '@/store/sidebar-archive'

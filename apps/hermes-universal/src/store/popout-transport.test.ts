@@ -37,7 +37,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   }
 }))
 vi.mock('@/store/notifications', () => ({ notifyError }))
-vi.mock('@/store/session', () => ({ reclaimSessionTransport }))
+vi.mock('@/store/session-lifecycle', () => ({ reclaimSessionTransport }))
 
 // Pop-outs are a desktop/iOS affordance; `canOpenNewWindow()` gates the openers
 // off otherwise and nothing would be recorded at all.
