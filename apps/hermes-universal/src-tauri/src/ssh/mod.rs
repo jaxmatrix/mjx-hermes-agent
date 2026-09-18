@@ -1056,23 +1056,36 @@ pub async fn ssh_connect(
     // Who the key belongs to now. Joining is how a supersede, a restart or a
     // newer PRIMARY attempt at the same target keeps the primary from failing
     // and releasing its hold under the dial that replaced it.
-    let successor = match crate::tunnels::join_dial(&app, &dial.key, dial.serial, &fingerprint) {
-        crate::tunnels::Joined::Successor(successor) => successor,
-        // A newer PRIMARY attempt pointed the key at a different target: it
-        // publishes its own result, so this caller says nothing and releases
-        // nothing. The book's witness is what says so; the kind is left alone.
-        crate::tunnels::Joined::Quiet(witness) => return Err(SshError::quiet(witness, error)),
-        // A key a LEASE owns now: the error goes back exactly as it came, so this
-        // caller tears down and resolves its own UI. Safe whatever kind
-        // `settle_scope` chose, because no kind can imply the quiet flag.
-        crate::tunnels::Joined::Fail => return Err(error),
-    };
+    let successor = verdict_outcome(
+        crate::tunnels::join_dial(&app, &dial.key, dial.serial, &fingerprint),
+        error,
+    )?;
 
     crate::tunnels::wait(successor)
         .await
         .map_err(|e| SshError::new(ssh_kind_of(e.kind), e.message))?;
 
     live_connection(&state, &dial.key).await
+}
+
+/// What the book's verdict does with a caller whose dial failed: a successor to
+/// wait on, or the error to fail with.
+///
+/// Pure, and the tail's only copy of this mapping, so the one thing that must
+/// never drift is testable without an app: a QUIET verdict fails with the
+/// witness attached — that attempt publishes, so JS neither tears down nor
+/// writes atoms over the live connection — while a FAIL hands back the error
+/// byte for byte, whatever kind `settle_scope` chose, so its caller resolves its
+/// own UI.
+fn verdict_outcome(
+    joined: crate::tunnels::Joined,
+    error: SshError,
+) -> Result<tokio::sync::watch::Receiver<crate::tunnels::Outcome>, SshError> {
+    match joined {
+        crate::tunnels::Joined::Successor(successor) => Ok(successor),
+        crate::tunnels::Joined::Quiet(witness) => Err(SshError::quiet(witness, error)),
+        crate::tunnels::Joined::Fail => Err(error),
+    }
 }
 
 fn cancelled_error() -> SshError {
@@ -2165,6 +2178,38 @@ mod tests {
                 "quiet": true
             })
         );
+    }
+
+    #[test]
+    fn only_a_quiet_verdict_marks_the_error_quiet() {
+        let failed = || SshError::new(SshErrorKind::Timeout, "the dial timed out");
+        let wire = |error: &SshError| serde_json::to_value(error).unwrap();
+
+        // QUIET: the newer primary attempt publishes, so JS must neither tear
+        // down nor write phase/connection atoms over the live connection. The
+        // witness is the whole signal — dropping it here is invisible in Rust
+        // and turns a silent caller into one that clobbers the UI.
+        let quiet = verdict_outcome(
+            crate::tunnels::Joined::Quiet(crate::tunnels::Quiet::for_test()),
+            failed(),
+        )
+        .expect_err("a quiet verdict fails");
+
+        assert_eq!(
+            wire(&quiet),
+            serde_json::json!({
+                "kind": "timeout",
+                "message": "the dial timed out",
+                "quiet": true
+            })
+        );
+
+        // FAIL: the error comes back byte for byte, so its caller tears down.
+        let loud = verdict_outcome(crate::tunnels::Joined::Fail, failed())
+            .expect_err("a fail verdict fails");
+
+        assert_eq!(wire(&loud), wire(&failed()));
+        assert!(wire(&loud).get("quiet").is_none(), "{loud:?}");
     }
 
     #[tokio::test]
