@@ -51,6 +51,12 @@ export interface SecondaryLease {
 
 interface Secondary {
   scopeKey: string
+  /** A tab is streaming on this socket (MJXHRM-591). A pinned secondary is the
+   *  connection's OWNING client: exempt from the LRU cap and from the idle reap,
+   *  and kept across a gateway switch. Unpinned on the last tab's close, which
+   *  DEMOTES it to an ordinary request-only secondary rather than closing it —
+   *  the existing idle window then makes a reopen inside a minute warm. */
+  pinned: boolean
   connectionId: string
   client: JsonRpcGatewayClient
   inFlight: number
@@ -73,6 +79,57 @@ let openRevision = 0
 /** The newest switch that has settled: nothing it closed stays parked. */
 let settledRevision = 0
 const listeners = new Map<string, Set<(event: GatewayEvent) => void>>()
+/** Scopes some tab is streaming on. Held here rather than on the `Secondary`
+ *  alone, so a pin taken while the socket is still opening survives the open. */
+const pinnedScopes = new Set<string>()
+
+/** How many live sockets the {@link MAX_SECONDARIES} cap governs. */
+function requestOnlyCount(): number {
+  let count = 0
+
+  for (const secondary of live.values()) {
+    if (!secondary.pinned) {
+      count += 1
+    }
+  }
+
+  return count
+}
+
+/**
+ * This scope now carries a tab's live stream: never evicted, never idle-reaped,
+ * and kept across a gateway switch (MJXHRM-591, invariants 32-34).
+ */
+export function pinSecondary(scopeKey: string): void {
+  pinnedScopes.add(scopeKey)
+
+  const secondary = live.get(scopeKey)
+
+  if (secondary) {
+    secondary.pinned = true
+
+    if (secondary.reaper) {
+      clearTimeout(secondary.reaper)
+      secondary.reaper = null
+    }
+  }
+}
+
+/**
+ * The last tab on this scope closed: DEMOTE, do not close. The socket becomes an
+ * ordinary request-only secondary and leaves on the existing idle reap, so a
+ * reopen inside that window is warm and a slower one pays for a fresh dial.
+ */
+export function unpinSecondary(scopeKey: string): void {
+  pinnedScopes.delete(scopeKey)
+
+  const secondary = live.get(scopeKey)
+
+  if (secondary?.pinned) {
+    secondary.pinned = false
+    armReap(secondary)
+  }
+}
 
 /**
  * Hear one source's events.
@@ -119,6 +176,13 @@ function deliver(connectionId: string, event: GatewayEvent): void {
 function armReap(secondary: Secondary): void {
   if (secondary.reaper) {
     clearTimeout(secondary.reaper)
+    secondary.reaper = null
+  }
+
+  // A hold never ages out. Evicting a socket a visible tab is streaming on is
+  // the failure this module's header already warns about, one rung worse.
+  if (secondary.pinned) {
+    return
   }
 
   secondary.reaper = setTimeout(() => {
@@ -175,8 +239,9 @@ function evictLeastRecentlyUsed(): void {
 
   for (const secondary of live.values()) {
     // An in-flight request is never the victim: evicting it would reject a call
-    // the caller is already awaiting.
-    if (secondary.inFlight > 0) {
+    // the caller is already awaiting. Neither is a PINNED one: it is some tab's
+    // live stream, and the cap counts request-only sockets.
+    if (secondary.inFlight > 0 || secondary.pinned) {
       continue
     }
 
@@ -240,7 +305,9 @@ async function openSecondary(scopeKey: string, connectionId: string, revision: n
   // same answer a routed request gets mid-switch.
   const switched = () => revision !== openRevision
 
-  if (live.size >= MAX_SECONDARIES) {
+  // The cap counts REQUEST-ONLY sockets: owning clients are bounded by
+  // "connections with at least one open tab", which the user chose.
+  if (requestOnlyCount() >= MAX_SECONDARIES) {
     evictLeastRecentlyUsed()
   }
 
@@ -288,6 +355,7 @@ async function openSecondary(scopeKey: string, connectionId: string, revision: n
     connectionId,
     inFlight: 0,
     lastUsed: Date.now(),
+    pinned: pinnedScopes.has(scopeKey),
     reaper: null,
     scopeKey,
     stale: false,
@@ -400,6 +468,14 @@ export function closeAllSecondaries(): number {
   const revision = openRevision
 
   for (const secondary of [...live.values()]) {
+    // A PINNED socket is a connection's owning client: tabs are streaming on it,
+    // and a switch touches only what it leaves (invariant 37). It keeps its
+    // tunnel hold too, so nothing is parked for it and 592's invariant 13 is
+    // unaffected.
+    if (secondary.pinned) {
+      continue
+    }
+
     // The tunnel hold outlives the socket until the switch settles: switching
     // ONTO a connection a secondary was riding must adopt its tunnel, not watch
     // it torn down a moment before the new dial (MJXHRM-592).
@@ -428,6 +504,7 @@ export function releaseParkedTunnels(revision: number): void {
 }
 
 export const __testing = {
+  isPinned: (scopeKey: string): boolean => Boolean(live.get(scopeKey)?.pinned),
   liveScopeKeys: (): string[] => [...live.keys()],
   openingCount: (): number => opening.size,
   parkedCount: (): number => parked.length,
@@ -437,6 +514,12 @@ export const __testing = {
    * pending captured an old revision, and must still see that it was switched.
    */
   reset: (): void => {
+    pinnedScopes.clear()
+
+    for (const secondary of live.values()) {
+      secondary.pinned = false
+    }
+
     releaseParkedTunnels(closeAllSecondaries())
     opening.clear()
     listeners.clear()

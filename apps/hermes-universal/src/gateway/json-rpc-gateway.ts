@@ -4,10 +4,13 @@
 // `JsonRpcGatewayError{code,data}`, so the two now agree on the CONTRACT and
 // differ only in the class name — keep both fields when touching either.
 //
-// The other shared-side field this copy deliberately omits is `connectionId` on
-// GatewayEvent: it tags frames by entry in desktop's multi-connection registry,
-// and universal holds one gateway socket at a time (store/gateway-switch.ts
-// tears the old one down), so there is nothing here for it to disambiguate.
+// `GatewayEvent`'s renderer-side tags — `connectionId`, `profile`, `seq` — were
+// omitted here on the premise that universal holds one gateway socket at a time.
+// MJXHRM-591 makes that false: a tab bound to a background connection streams on
+// that connection's own client, so a frame has to say which socket delivered it
+// and where it sits in that session's sequence. The three fields are taken from
+// `apps/shared/src/gateway-events.ts`, verbatim in meaning — this CONVERGES the
+// vendored copy with the shared contract rather than diverging from it.
 import { GatewayRpcError } from './rpc-error'
 
 export type GatewayEventName =
@@ -36,7 +39,16 @@ export type GatewayEventName =
   | (string & {})
 
 export interface GatewayEvent<P = unknown> {
+  /** The registry connection whose socket delivered this frame (renderer-side
+   *  tag; absent on the ambient/legacy path, which is the active connection). */
+  connectionId?: string
   payload?: P
+  /** Renderer-side source tag, as the desktop registry stamps it. */
+  profile?: string
+  /** Per-session monotonic counter stamped by
+   *  `tui_gateway/event_replay.py::_stamp_event`; absent on session-less
+   *  broadcasts. The replay watermark (MJXHRM-591) is this number. */
+  seq?: number
   session_id?: string
   type: GatewayEventName
 }

@@ -28,6 +28,7 @@ import '@/store/turn-hydration'
 import { burstVibeHearts } from '@/components/chat/vibe-hearts'
 import type { GatewayEvent } from '@/gateway'
 import { translateNow } from '@/i18n'
+import { LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { coerceText } from '@/lib/chat-messages'
 import { coerceThinkingText } from '@/lib/chat-runtime'
 import { type GatewayToolPayload, toolIdFromPayload } from '@/lib/chat-tool-parts'
@@ -47,6 +48,7 @@ import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block'
 import { noteMissedSteer } from '@/store/chat'
 import { normalizeQuestions, readChoices, readLockedAnswers } from '@/store/clarify'
 import { routeCompactionEvent } from '@/store/compaction'
+import { setConnectionEventSink } from '@/store/connection-clients'
 import { addGatewayEventListener, requestGateway } from '@/store/gateway'
 import {
   notifyCronChanged,
@@ -86,6 +88,7 @@ import {
   $activeSessionKey,
   $sessionStates,
   ensureSessionSlice,
+  runtimeKeyFor,
   runtimeKeyForStoredSession,
   updateSession
 } from '@/store/session-state-types'
@@ -105,16 +108,26 @@ import type { ContextBreakdown, MessageReaction } from '@/types/hermes'
 // there reorders module init and trips the `@/hermes` `_apiProfile` TDZ cycle in
 // tests), which is why registration is pushed rather than pulled.
 addGatewayEventListener(event => routeGatewayEvent(event))
+// …and the same router for every connection that owns a client (MJXHRM-591).
+// `deliver()` offers a background connection's frames to whoever claims them and
+// drops the rest (rule 7); this is that claim, made once, for the one consumer
+// that knows how to place a frame in its own connection's slice.
+setConnectionEventSink(event => routeGatewayEvent(event))
 
 // The session that owns the current unscoped stream — pinned on message.start,
 // released on message.complete/error (see lib/gateway-events).
-let unscopedStreamSessionId: null | string = null
+//
+// PER CONNECTION (MJXHRM-591): two sockets stream at once now, and one pin
+// shared between them is a cross-connection collision — connection B's
+// `message.start` would claim the stream connection A is mid-way through, and
+// A's next unscoped delta would land in B's transcript.
+const unscopedStreamByConnection = new Map<string, null | string>()
 
 /** Forget the unscoped-stream pin. Called on chat reset, session promote,
  *  gateway reconnect and profile switch — anywhere the stream's owner is no
  *  longer meaningful. */
 export function resetUnscopedStreamPin(): void {
-  unscopedStreamSessionId = null
+  unscopedStreamByConnection.clear()
 }
 
 /** Events that are about the app, not about one conversation — they are handled
@@ -258,14 +271,23 @@ function applySessionTitle(payload: Record<string, unknown>): void {
 
 /** Fold one gateway event into the session that owns it. */
 export function routeGatewayEvent(event: GatewayEvent): void {
-  // A frame stamped with a connection id that is not the ACTIVE one belongs to a
-  // secondary socket (MJXHRM-446), and its consumers were already offered it by
-  // `addConnectionEventListener`. Dropping it here is rule 7: another machine's
-  // session id must not reach `$sessionStates`, where ids can collide across
-  // backends. An unstamped frame is the ambient socket's and routes as always.
-  const stamped = (event as { connectionId?: string }).connectionId
+  // WHICH SOCKET delivered this frame. An unstamped one is the ambient client's,
+  // which is by definition the active connection; a stamped one came from a
+  // connection's own owning client, through `addConnectionEventListener`.
+  //
+  // It used to be dropped here — rule 7, "another machine's session id must not
+  // reach `$sessionStates`, where ids can collide across backends". The ids no
+  // longer collide: a session key carries its connection (MJXHRM-591), so the
+  // frame can be routed instead of discarded, which is the whole point of a tab
+  // bound to a background connection.
+  const stamped = event.connectionId
+  const connectionId = stamped ?? $activeConnectionId.get() ?? LOCAL_CONNECTION_ID
+  const ambient = !stamped || stamped === $activeConnectionId.get()
 
-  if (stamped && stamped !== $activeConnectionId.get()) {
+  if (!ambient && GLOBAL_EVENT_TYPES.has(event.type)) {
+    // App-level frames — a pet, a toast, a watched-file tick, the session list's
+    // own change events — describe the backend the app is pointed at. A
+    // background connection's copy must not act on the app around it.
     return
   }
 
@@ -342,20 +364,37 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
   // Resolve the owning session. `activeSessionId` is the never-null map KEY, so
   // the fallback for an unscoped stream event can never resolve to nothing.
+  //
+  // The explicit id is SCOPED before anything else sees it, so every value
+  // downstream — the pin, the fallback, the map key — is already a session key
+  // rather than a bare id two backends could both mint. A frame from a
+  // background connection has no "active session" to fall back to: an unscoped
+  // one that its own pin cannot claim belongs to no tab, and is dropped.
   const route = resolveGatewayEventSessionId({
-    activeSessionId: $activeSessionKey.get(),
+    activeSessionId: ambient ? $activeSessionKey.get() : null,
     eventType: event.type,
-    explicitSessionId: event.session_id || '',
-    unscopedStreamSessionId
+    explicitSessionId: event.session_id ? runtimeKeyFor(connectionId, event.session_id) : '',
+    unscopedStreamSessionId: unscopedStreamByConnection.get(connectionId) ?? null
   })
 
-  unscopedStreamSessionId = route.nextUnscopedStreamSessionId
+  unscopedStreamByConnection.set(connectionId, route.nextUnscopedStreamSessionId)
 
   if (route.drop || !route.sessionId) {
     return
   }
 
   const key = route.sessionId
+
+  // A background connection has no "focused chat" of its own, so its socket's
+  // unscoped frames can only belong to the stream that last started on it. The
+  // pin is therefore taken from an EXPLICIT `message.start` too — but only
+  // there: doing it on the ambient socket would let a background session's start
+  // capture the pin and drag the focused chat's unscoped deltas into it, which
+  // is the bug `UNSCOPED_STREAM_EVENT_TYPES` exists to prevent (#47709).
+  if (!ambient && event.type === 'message.start') {
+    unscopedStreamByConnection.set(connectionId, key)
+  }
+
   const isBlockingPrompt = BLOCKING_PROMPT_TYPES.has(event.type)
 
   if (!(key in $sessionStates.get())) {
