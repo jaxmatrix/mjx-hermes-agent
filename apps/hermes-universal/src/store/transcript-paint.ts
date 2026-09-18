@@ -36,7 +36,7 @@
 import type { ChatMessage } from '@/lib/chat-messages'
 import { readTranscriptTail } from '@/lib/transcript-tail-cache'
 import { atom } from '@/store/atom'
-import { $sessionStates, connectionOfSessionKey, storedKeyFor } from '@/store/session-state-types'
+import { $sessionStates, scopedStoredKey } from '@/store/session-state-types'
 
 export interface PaintedTail {
   /** The slice key this paint belongs to — `hydrating:<storedId>` for a cold
@@ -79,11 +79,7 @@ export const $transcriptPaint = atom<Record<string, PaintedTail>>({})
  * local connection's default profile it is the bare id, so a single-source
  * install's entries are byte-identical to the ones already on disk.
  */
-export function transcriptTailKey(sliceKey: string, storedSessionId: string): string {
-  const slice = $sessionStates.get()[sliceKey]
-
-  return storedKeyFor(slice?.connectionId ?? connectionOfSessionKey(sliceKey), slice?.profile, storedSessionId)
-}
+export const transcriptTailKey = scopedStoredKey
 
 export function paintCachedTail(key: string, storedSessionId: null | string): boolean {
   if (!key || !storedSessionId) {

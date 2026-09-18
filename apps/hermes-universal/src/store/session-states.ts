@@ -288,7 +288,10 @@ export function clearAllSessionStates() {
  * teardown (`dropSessionState`) takes the timers, prompts and queued deltas with
  * each slice, exactly as an eviction does.
  */
-export function dropUnheldSessionStates(leavingConnectionId: null | string): void {
+/** Every session key an open tab depends on: its live slice, and the durable
+ *  key its tail and its artifacts are filed under (which a resume does not
+ *  move). What a switch may not drop. */
+export function heldSessionKeys(): Set<string> {
   const held = new Set<string>()
 
   for (const tile of $sessionTiles.get()) {
@@ -297,10 +300,19 @@ export function dropUnheldSessionStates(leavingConnectionId: null | string): voi
     if (key) {
       held.add(key)
     }
+
+    // …and the durable key its artifacts and its tail are filed under, which a
+    // resume does not move.
+    held.add(tileKeyFor(tileRef(tile)))
   }
 
   held.add($activeSessionKey.get())
 
+  return held
+}
+
+export function dropUnheldSessionStates(leavingConnectionId: null | string): void {
+  const held = heldSessionKeys()
   const leaving = leavingConnectionId ?? LOCAL_SESSION_SCOPE
 
   for (const [key, state] of Object.entries($sessionStates.get())) {

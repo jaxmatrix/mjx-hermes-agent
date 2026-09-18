@@ -325,3 +325,55 @@ describe('invariant 43 — a tab keeps its name when the rows go', () => {
     expect($sessionTiles.get()[0].title).toBe('Deploy notes')
   })
 })
+
+describe('v1.2 \u00a74 addenda \u2014 the artifact registry and the boot marker', () => {
+  it('drops only the leaving connection\u2019s artifacts, keeping an open tab\u2019s', async () => {
+    const { $artifactRegistry, dropArtifactsForConnection, upsertArtifact } = await import('@/store/artifacts')
+
+    $artifactRegistry.set({})
+
+    const open = tile('conn-a', 'default', 'abc12345')
+
+    saveSessionTiles([open])
+    upsertArtifact(open.tileKey, { kind: 'html', language: 'html', title: 'Held' }, '<html>held</html>')
+    upsertArtifact('@conn-a|default|loose', { kind: 'html', language: 'html', title: 'Loose' }, '<html>loose</html>')
+    upsertArtifact('@conn-b|default|abc12345', { kind: 'html', language: 'html', title: 'Other' }, '<html>other</html>')
+
+    const { heldSessionKeys } = await import('@/store/session-states')
+
+    dropArtifactsForConnection('conn-a', heldSessionKeys())
+
+    const keys = Object.keys($artifactRegistry.get())
+
+    expect(keys).toContain(open.tileKey)
+    expect(keys).toContain('@conn-b|default|abc12345')
+    expect(keys).not.toContain('@conn-a|default|loose')
+  })
+
+  it('remembers the boot chat per connection, and forgets only the one left', async () => {
+    const { $activeConnection } = await import('@/store/active-connection')
+    const { $activeStoredSessionId, forgetLastSessionMarkers, lastOpenedSessionId } = await import('@/store/session')
+
+    forgetLastSessionMarkers()
+
+    $activeConnection.set({ connectionId: 'conn-a', profile: 'default', scopeKey: 'conn-a' } as unknown as never)
+    $activeStoredSessionId.set('a-chat')
+
+    $activeConnection.set({ connectionId: 'conn-b', profile: 'default', scopeKey: 'conn-b' } as unknown as never)
+    $activeStoredSessionId.set('b-chat')
+
+    expect(lastOpenedSessionId()).toBe('b-chat')
+
+    // Leaving B forgets B's place and leaves A's, so coming back to A lands
+    // where the user was — and B's id can never be opened on A.
+    forgetLastSessionMarkers('conn-b')
+
+    expect(lastOpenedSessionId()).toBeNull()
+
+    $activeConnection.set({ connectionId: 'conn-a', profile: 'default', scopeKey: 'conn-a' } as unknown as never)
+
+    expect(lastOpenedSessionId()).toBe('a-chat')
+
+    $activeConnection.set(null)
+  })
+})

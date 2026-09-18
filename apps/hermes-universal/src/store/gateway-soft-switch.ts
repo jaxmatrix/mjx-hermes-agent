@@ -1,7 +1,7 @@
 import { translateNow } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 import { $activeConnection, $activeConnectionId } from '@/store/active-connection'
-import { clearArtifactRegistry } from '@/store/artifacts'
+import { dropArtifactsForConnection } from '@/store/artifacts'
 import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import { resetChat } from '@/store/chat'
 import { resetRepoStatusForBackendSwitch } from '@/store/coding-status'
@@ -36,7 +36,7 @@ import {
   sessionMatchesStoredId
 } from '@/store/session'
 import { resetSessionPinMirror } from '@/store/session-pin-sync'
-import { $sessionTiles, dropUnheldSessionStates } from '@/store/session-states'
+import { $sessionTiles, dropUnheldSessionStates, heldSessionKeys } from '@/store/session-states'
 import { resetArchivedSessionsForBackendSwitch } from '@/store/sidebar-archive'
 import { disconnectSsh } from '@/store/ssh-backend'
 import { resetSystemStatusForBackendSwitch } from '@/store/system-status'
@@ -144,7 +144,9 @@ export function wipeSessionListsForGatewaySwitch(leavingConnectionId?: null | st
   // artifact tab survives the switch naming an id the new gateway has never
   // heard of, and re-opens as "artifact unavailable" — or worse, silently
   // collides with a same-shaped id over there.
-  clearArtifactRegistry()
+  // …except the ones an open tab is still showing. The registry is keyed by the
+  // scoped session key, so this drops the leaving connection's and nothing else.
+  dropArtifactsForConnection(leaving, heldSessionKeys())
 
   // The tails STAY (MJXHRM-591). The wipe was here because "another backend can
   // recycle stored ids, so a cached tail from the previous one would paint
@@ -159,7 +161,7 @@ export function wipeSessionListsForGatewaySwitch(leavingConnectionId?: null | st
   // The remembered-chat marker still goes: setting `$activeStoredSessionId` to
   // null below does not clear it (the subscriber ignores null), so without this
   // the next boot opens backend A's id on backend B.
-  forgetLastSessionMarkers()
+  forgetLastSessionMarkers(leaving)
 
   // BEFORE `resetChat`, which reads it. The project tree is the OLD gateway's
   // filesystem — `projects.tree` is a gateway RPC — and the sidebar only

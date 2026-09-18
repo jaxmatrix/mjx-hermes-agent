@@ -179,6 +179,22 @@ export const connectionOfSessionKey = (key: string): string => parseSessionKey(k
 export const hydratingKeyFor = (ref: SessionRef): string =>
   `${HYDRATING_KEY_PREFIX}${storedKeyFor(ref.connectionId, ref.profile, ref.storedSessionId)}`
 
+/**
+ * The scoped stored key for the session a slice holds.
+ *
+ * The one place that answers "what do I file this session's durable state
+ * under?" — its transcript tail, its artifacts, anything else keyed by stored id
+ * that has to survive a resume. Derived from the slice, which carries its scope
+ * from its first write, so two backends' identical stored ids are two files and
+ * never one. Bare for the local connection's default profile, so every entry
+ * already on disk keeps resolving.
+ */
+export function scopedStoredKey(sliceKey: string, storedSessionId: string): string {
+  const slice = $sessionStates.get()[sliceKey]
+
+  return storedKeyFor(slice?.connectionId ?? connectionOfSessionKey(sliceKey), slice?.profile, storedSessionId)
+}
+
 /** The local connection's hydrating key — the bare, legacy spelling. */
 export const hydratingKey = (storedSessionId: string): string =>
   hydratingKeyFor({ connectionId: LOCAL_SESSION_SCOPE, profile: DEFAULT_SESSION_PROFILE, storedSessionId })

@@ -40,7 +40,8 @@ vi.mock('@/store/session-states', async () => {
       { connectionId: 'conn-old', profile: 'work', storedSessionId: 'abc12345', tileKey: 'k1' },
       { connectionId: 'conn-other', profile: 'default', storedSessionId: 'def67890', tileKey: 'k2' }
     ]),
-    dropUnheldSessionStates: vi.fn()
+    dropUnheldSessionStates: vi.fn(),
+    heldSessionKeys: () => new Set<string>()
   }
 })
 // Both of these key their caches by the GATEWAY's absolute repo paths. What the
@@ -265,16 +266,31 @@ describe('gateway soft switch', () => {
   // across a switch, an open artifact tab names an id the new backend has never
   // heard of — and the registry keeps the old backend's generated pages alive
   // for the rest of the process.
-  it('drops the artifact registry and its tabs', async () => {
-    const artifact = upsertArtifact('s1', { kind: 'html', language: 'html', title: 'Dashboard' }, '<html>v1</html>')!
+  // MJXHRM-591: the registry is keyed by the SCOPED session key, so the switch
+  // drops the leaving connection's artifacts and leaves every other
+  // connection's alone — a bound tab goes on showing the artifact it was
+  // showing, which the old wholesale clear made impossible.
+  it('drops the leaving connection\u2019s artifacts and its tabs, and no others', async () => {
+    const leaving = upsertArtifact(
+      '@conn-old|default|s1',
+      { kind: 'html', language: 'html', title: 'Dashboard' },
+      '<html>v1</html>'
+    )!
 
-    openArtifact(artifact.artifactId)
+    const elsewhere = upsertArtifact(
+      '@conn-other|default|s2',
+      { kind: 'html', language: 'html', title: 'Elsewhere' },
+      '<html>other</html>'
+    )!
+
+    openArtifact(leaving.artifactId)
 
     expect($previewTabs.get()).toHaveLength(1)
 
     await softSwitchGateway('remote', vi.fn().mockResolvedValue(undefined))
 
-    expect(artifactsForSession('s1')).toEqual([])
+    expect(artifactsForSession('@conn-old|default|s1')).toEqual([])
+    expect(artifactsForSession('@conn-other|default|s2').map(a => a.id)).toEqual([elsewhere.artifactId])
     expect($previewTabs.get()).toEqual([])
     expect($activePreviewPath.get()).toBeNull()
   })
