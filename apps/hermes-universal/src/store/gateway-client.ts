@@ -24,10 +24,10 @@
  * (see the TDZ note below).
  */
 import { emitGatewayEvent } from '@/contrib/events'
-import { type ConnectionState, type GatewayEvent, JsonRpcGatewayClient, type WebSocketLike } from '@/gateway'
+import { type GatewayEvent, JsonRpcGatewayClient, type WebSocketLike } from '@/gateway'
 import type { HermesGateway } from '@/hermes'
-import { atom } from '@/store/atom'
 import { type Connection, resolveWsUrl } from '@/store/gateway-config'
+import { setGatewayState } from '@/store/session'
 import { TauriWebSocket } from '@/transport/tauri-websocket'
 
 // Whole-stream event listeners. THE session event router registers here (see
@@ -51,7 +51,17 @@ export function addGatewayEventListener(listener: (event: GatewayEvent) => void)
 
 let client: JsonRpcGatewayClient | null = null
 
-export const $gatewayState = atom<ConnectionState>('idle')
+// Re-exported, not redeclared. Desktop's store/session.ts owns the atom and its
+// setter, and store/session.ts is byte-identical to desktop's so it cannot be
+// changed. Declaring a second atom of the same name here left 29 files reading
+// desktop's — which nothing in universal ever writes, so they would have shown
+// "disconnected" forever — while 17 read this one. Same bug class as `$gateway`,
+// but the opposite resolution: this client IS what connects in universal, so it
+// must write through to the atom the ported components read.
+//
+// Safe to import: desktop's session.ts value-imports neither @/hermes nor the
+// gateway, so this edge does not close the _apiProfile TDZ cycle.
+export { $gatewayState } from '@/store/session'
 
 export async function connectGateway(conn: Connection): Promise<void> {
   client?.close()
@@ -65,7 +75,7 @@ export async function connectGateway(conn: Connection): Promise<void> {
     socketFactory: (url: string) => new TauriWebSocket(url) as unknown as WebSocketLike
   })
 
-  next.onState(state => $gatewayState.set(state))
+  next.onState(state => setGatewayState(state))
   next.onAny(event => {
     // Plugins first (contrib/events.ts) — the tap is documented as "before the
     // app's own dispatch", so a plugin observes the raw stream in order and can
@@ -101,7 +111,7 @@ export function lastGatewayCloseCode(): number | undefined {
 export function closeGateway(): void {
   client?.close()
   client = null
-  $gatewayState.set('closed')
+  setGatewayState('closed')
 }
 
 export function requestGateway<T = unknown>(
