@@ -14,6 +14,7 @@ import {
   $sessionStates,
   ensureSessionSlice,
   hydratingKey,
+  hydratingKeyFor,
   updateSession
 } from '@/store/session-state-types'
 import {
@@ -21,7 +22,8 @@ import {
   __resetTranscriptPaint,
   BOOT_PAINT_KEY,
   clearTranscriptPaint,
-  paintCachedTail
+  paintCachedTail,
+  transcriptTailKey
 } from '@/store/transcript-paint'
 
 const row = (id: string, body: string): ChatMessage => ({ id, parts: [{ text: body, type: 'text' }], role: 'user' })
@@ -159,5 +161,45 @@ describe('$paintedMessages', () => {
 
     expect($paintedMessages.get()).toEqual([])
     expect($paintedMessagesEmpty.get()).toBe(true)
+  })
+})
+
+/**
+ * MJXHRM-591 — the cache key carries the connection.
+ *
+ * Two backends mint the same `uuid4().hex[:8]`. A cache keyed by the bare id
+ * would paint another machine's conversation under a same-named session, which
+ * is why the switch used to wipe every tail — at the cost of every bound tab's.
+ * Scoping the key closes both halves: no bleed, and nothing to lose.
+ */
+describe('the tail cache key', () => {
+  const refA = { connectionId: 'conn-a', profile: 'default', storedSessionId: 'abc12345' }
+  const refB = { connectionId: 'conn-b', profile: 'default', storedSessionId: 'abc12345' }
+
+  it('keeps two connections\u2019 same-named sessions apart', () => {
+    const keyA = hydratingKeyFor(refA)
+    const keyB = hydratingKeyFor(refB)
+
+    ensureSessionSlice(keyA, { busy: true, connectionId: 'conn-a', profile: 'default', storedSessionId: 'abc12345' })
+    ensureSessionSlice(keyB, { busy: true, connectionId: 'conn-b', profile: 'default', storedSessionId: 'abc12345' })
+
+    saveTranscriptTail(transcriptTailKey(keyA, 'abc12345'), [row('m1', 'from A')])
+
+    expect(paintCachedTail(keyA, 'abc12345')).toBe(true)
+    expect($transcriptPaint.get()[keyA].messages.map(m => m.id)).toEqual(['m1'])
+    // B has no tail of its own, and must not be handed A's.
+    expect(paintCachedTail(keyB, 'abc12345')).toBe(false)
+    expect($transcriptPaint.get()[keyB]).toBeUndefined()
+  })
+
+  it('leaves the local connection\u2019s entries byte-identical to the legacy ones', () => {
+    const key = hydratingKey('abc12345')
+
+    ensureSessionSlice(key, { busy: true, storedSessionId: 'abc12345' })
+    // Written under the BARE id, as every entry already on disk is.
+    saveTranscriptTail('abc12345', [row('m1', 'legacy')])
+
+    expect(transcriptTailKey(key, 'abc12345')).toBe('abc12345')
+    expect(paintCachedTail(key, 'abc12345')).toBe(true)
   })
 })

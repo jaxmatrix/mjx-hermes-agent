@@ -31,7 +31,7 @@ import {
   isPlaceholderKey,
   runtimeKeyForStoredSession
 } from '@/store/session-state-types'
-import { $transcriptPaint } from '@/store/transcript-paint'
+import { $transcriptPaint, transcriptTailKey } from '@/store/transcript-paint'
 import { observeTurnLifecycle } from '@/store/turn-lifecycle'
 
 /** The journal uses 400 ms because it IS on the token path. This is not. */
@@ -76,17 +76,19 @@ function flushSave(key: string): void {
 
   const previous = savedAs.get(key)
 
-  if (saveTranscriptTail(storedSessionId, state.messages) !== 'saved') {
+  const tailKey = transcriptTailKey(key, storedSessionId)
+
+  if (saveTranscriptTail(tailKey, state.messages) !== 'saved') {
     return
   }
 
-  savedAs.set(key, storedSessionId)
+  savedAs.set(key, tailKey)
 
   // An auto-compaction rotates the stored id (MJX-133) and every tile, pane id
   // and persisted blob still names the id from before it. One hop keeps them
   // resolving, exactly as `aliasStoredSessionId` does in memory.
-  if (previous && previous !== storedSessionId) {
-    aliasTranscriptTail(previous, storedSessionId)
+  if (previous && previous !== tailKey) {
+    aliasTranscriptTail(previous, tailKey)
   }
 }
 

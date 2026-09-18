@@ -2,7 +2,6 @@ import { isGatewayReauthRequired, isGatewaySignInBusy, isGatewaySignInRequired }
 import { oauthStatus } from '@/lib/auth'
 import { loadString, removeKey, saveString } from '@/lib/persist'
 import { reconnectBackoffDelayMs } from '@/lib/reconnect-backoff'
-import { clearTranscriptTails } from '@/lib/transcript-tail-cache'
 import { atom } from '@/store/atom'
 import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import {
@@ -106,11 +105,10 @@ export function loadGatewayTarget(): GatewayTarget | null {
 /** Forget the saved target (an explicit "use a different gateway" / reset). */
 export function clearGatewayTarget(): void {
   removeKey(TARGET_KEY)
-  // The user is LEAVING this backend, by hand — the same re-home
-  // `wipeSessionListsForGatewaySwitch()` covers for a soft switch. Stored ids are
-  // unique per backend database, so a tail left behind here can only paint the
-  // wrong machine's conversation on the next launch.
-  clearTranscriptTails()
+  // The tails stay, for the reason `wipeSessionListsForGatewaySwitch` gives: the
+  // cache key carries the connection now (MJXHRM-591), so a tail left behind
+  // cannot paint the wrong machine's conversation — it can only make the right
+  // one open instantly when the user comes back.
   // Same reasoning for the in-app browser's tab and its SSH forward leases
   // (MJXHRM-447/G4): this is the OTHER wipe door, and a lease that survives
   // "use a different gateway" is a tunnel into a machine the user has left.

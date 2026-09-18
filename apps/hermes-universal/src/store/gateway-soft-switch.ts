@@ -1,6 +1,5 @@
 import { translateNow } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
-import { clearTranscriptTails } from '@/lib/transcript-tail-cache'
 import { $activeConnection, $activeConnectionId } from '@/store/active-connection'
 import { clearArtifactRegistry } from '@/store/artifacts'
 import { forgetBrowserForGatewaySwitch } from '@/store/browser'
@@ -147,14 +146,19 @@ export function wipeSessionListsForGatewaySwitch(leavingConnectionId?: null | st
   // collides with a same-shaped id over there.
   clearArtifactRegistry()
 
-  // Another backend can recycle stored ids, so a cached tail from the previous
-  // one would paint ANOTHER MACHINE'S conversation under a same-named id — worse
-  // than a loader. The remembered-chat marker goes with it: setting
-  // `$activeStoredSessionId` to null below does not clear it (the subscriber
-  // ignores null), so without this the next boot opens backend A's id on
-  // backend B.
-  clearTranscriptTails()
+  // The tails STAY (MJXHRM-591). The wipe was here because "another backend can
+  // recycle stored ids, so a cached tail from the previous one would paint
+  // ANOTHER MACHINE'S conversation under a same-named id" — true of a cache
+  // keyed by the bare id, and no longer true of one keyed by
+  // `storedKeyFor(connection, profile, id)`: the two spellings cannot collide.
+  // Keeping them is what lets a bound tab reopen instantly after a switch
+  // instead of staring at a loader, and closes the loss half of the same
+  // hazard. The painted copies go: a paint is a picture of a slice being
+  // hydrated, and the slices this switch drops are not being hydrated by anyone.
   clearTranscriptPaint()
+  // The remembered-chat marker still goes: setting `$activeStoredSessionId` to
+  // null below does not clear it (the subscriber ignores null), so without this
+  // the next boot opens backend A's id on backend B.
   forgetLastSessionMarkers()
 
   // BEFORE `resetChat`, which reads it. The project tree is the OLD gateway's

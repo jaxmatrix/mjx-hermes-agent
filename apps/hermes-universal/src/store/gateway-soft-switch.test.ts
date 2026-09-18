@@ -198,22 +198,28 @@ describe('gateway soft switch', () => {
     expect(clearedDuringDial).toBe(true)
   })
 
-  // ANOTHER BACKEND CAN RECYCLE STORED IDS. A cached tail carried across paints
-  // another machine's conversation under a same-named id, which is worse than a
-  // loader — and the remembered-chat marker sends the next boot to open that id
-  // over there. `$activeStoredSessionId.set(null)` does not clear the marker (its
-  // subscriber ignores null), so it has to be wiped explicitly.
-  it('wipes the cached transcript tails and the remembered chat, which name ids on the old gateway', async () => {
-    saveTranscriptTail('s1', [{ id: 'm1', parts: [{ text: 'over there', type: 'text' }], role: 'user' }])
-    expect(readTranscriptTail('s1')).not.toBeNull()
+  // ANOTHER BACKEND CAN RECYCLE STORED IDS — which is why the tail cache is now
+  // keyed by `storedKeyFor(connection, profile, id)` rather than by the id
+  // alone (MJXHRM-591). With the two spellings unable to collide, the wipe that
+  // answered that hazard would only cost every bound tab its cache, so the tails
+  // STAY and the remembered-chat marker still goes: `$activeStoredSessionId.set(
+  // null)` does not clear the marker (its subscriber ignores null), so it has to
+  // be wiped explicitly or the next boot opens backend A's id on backend B.
+  it('keeps the cached transcript tails, and still forgets the remembered chat', async () => {
+    saveTranscriptTail('@conn-old|default|s1', [
+      { id: 'm1', parts: [{ text: 'over there', type: 'text' }], role: 'user' }
+    ])
 
-    let wipedDuringDial: boolean | null = null
+    let forgotDuringDial: boolean | null = null
 
     await softSwitchGateway('remote', async () => {
-      wipedDuringDial = readTranscriptTail('s1') === null && vi.mocked(forgetLastSessionMarkers).mock.calls.length > 0
+      forgotDuringDial = vi.mocked(forgetLastSessionMarkers).mock.calls.length > 0
     })
 
-    expect(wipedDuringDial).toBe(true)
+    expect(forgotDuringDial).toBe(true)
+    // The tail of a conversation on the connection we left is still there — it
+    // is what makes reopening its tab instant instead of a loader.
+    expect(readTranscriptTail('@conn-old|default|s1')).not.toBeNull()
   })
 
   // A repo path is not gateway-scoped: `/home/me/work` exists on the laptop AND
