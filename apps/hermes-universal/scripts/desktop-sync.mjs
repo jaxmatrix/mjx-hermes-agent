@@ -120,6 +120,25 @@ const sha = (file) => createHash('sha256').update(fs.readFileSync(file)).digest(
 const PATCH_MARKERS =
   /@tauri-apps|@\/transport|@\/voice|@\/observability|observability\/|IS_MOBILE|isMobile|is-mobile|keyboard-inset|safe-area|visualViewport|visual-viewport|webkit|WKWebView/i
 
+/**
+ * The export surface of a module. Desktop reorganises constantly — a symbol
+ * universal still calls can move to a different file, or stop existing.
+ * Overwriting is right either way, but the caller has to be re-pointed, and
+ * nothing else in this script would notice: the file compiles, the import
+ * fails somewhere else entirely. This is how `lib/platform.ts` quietly lost
+ * IS_MOBILE and `lib/query-client.ts` lost the helper `test-setup.ts` calls.
+ */
+const EXPORT_RE =
+  /^export\s+(?:async\s+)?(?:const|let|var|function|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/gm
+
+function exportedNames(file) {
+  try {
+    return new Set([...fs.readFileSync(file, 'utf8').matchAll(EXPORT_RE)].map((m) => m[1]))
+  } catch {
+    return new Set()
+  }
+}
+
 function carriesPatch(file) {
   // Binary assets never do, and reading them as text is wasteful.
   if (/\.(png|jpe?g|gif|svg|woff2?|ttf|mp3|wav|ico)$/i.test(file)) return false
@@ -159,10 +178,18 @@ for (const src of desktopFiles) {
 
   // An AUTO file that overwrites universal platform work is still overwritten,
   // but it has to be re-patched in phase 3 — flag it rather than lose it.
-  const patch =
-    bucket === 'AUTO' && exists && !identical && carriesPatch(path.join(UNIVERSAL_SRC, dest))
+  const overwriting = bucket === 'AUTO' && exists && !identical
+  const patch = overwriting && carriesPatch(path.join(UNIVERSAL_SRC, dest))
 
-  rows.push({ bucket, src, dest, identical, exists, patch })
+  // Symbols universal exported that desktop's replacement does not. Computed
+  // here, before the copy, because afterwards the evidence is gone.
+  let dropped = []
+  if (overwriting && /\.tsx?$/.test(dest)) {
+    const after = exportedNames(path.join(DESKTOP_SRC, src))
+    dropped = [...exportedNames(path.join(UNIVERSAL_SRC, dest))].filter((n) => !after.has(n))
+  }
+
+  rows.push({ bucket, src, dest, identical, exists, patch, dropped })
   counts[bucket] += 1
 }
 
@@ -205,6 +232,18 @@ fs.writeFileSync(
     '\n'
 )
 
+const losing = rows.filter((r) => r.dropped?.length)
+fs.writeFileSync(
+  path.join(SYNC_DIR, 'dropped-exports.txt'),
+  '# Symbols universal exported that desktop\'s version of the same file does not.\n' +
+    '# Each is either a symbol desktop MOVED (re-point the caller at its new home)\n' +
+    '# or one that is genuinely universal-only (restore it). Either way a caller\n' +
+    '# somewhere still names it. Recover the old file with:\n' +
+    '#   git show <before-the-import>:apps/hermes-universal/<path>\n' +
+    losing.map((r) => `\n${r.dest}\n` + r.dropped.map((n) => `    ${n}`).join('\n')).join('') +
+    '\n'
+)
+
 const added = rows.filter((r) => r.bucket === 'AUTO' && !r.exists).length
 const churn = rows.filter((r) => r.bucket === 'AUTO' && r.exists && !r.identical).length
 const noop = counts.AUTO - added - churn
@@ -220,9 +259,13 @@ console.log(`REVIEW      ${counts.REVIEW}\tdesktop-only inside a protected area`
 console.log(`KEEP        ${counts.KEEP}\tuniversal-only, untouched`)
 console.log('')
 console.log(`PATCH       ${patched.length}\tof the overwritten carry platform work — phase 3`)
+console.log(
+  `DROPPED     ${losing.length}\tof the overwritten lose ${losing.reduce((n, r) => n + r.dropped.length, 0)} exported symbols`
+)
 console.log('')
 console.log(`report      sync/report.tsv`)
 console.log(`worklist    sync/patch-worklist.txt`)
+console.log(`dropped     sync/dropped-exports.txt`)
 
 if (!apply) {
   console.log('\ndry run — pass --apply to write files')
