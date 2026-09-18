@@ -126,6 +126,9 @@ const scopeOf = (connectionId: null | string | undefined): string =>
 const profileOf = (profile: null | string | undefined): string =>
   String(profile ?? '').trim() || DEFAULT_SESSION_PROFILE
 
+/** Whether a key already names its scope — `@conn|id`, minted by the helpers. */
+export const isScopedKey = (key: string): boolean => key.startsWith(SCOPED_KEY_MARKER)
+
 const scopedKey = (parts: readonly string[]): string =>
   SCOPED_KEY_MARKER + parts.map(encodeURIComponent).join(SCOPED_KEY_SEPARATOR)
 
@@ -169,6 +172,34 @@ export function parseSessionKey(key: string): { connectionId: string; id: string
   return parts.length >= 3
     ? { connectionId: parts[0], id: parts[2], profile: parts[1] }
     : { connectionId: parts[0], id: parts[1] ?? '', profile: null }
+}
+
+/**
+ * The scope the AMBIENT chat's sessions live under (MJXHRM-591, invariant 45).
+ *
+ * The app's own chat belongs to whichever connection the app is pointed at, so
+ * a lookup with no scope of its own means "the ambient one" — NOT "the bare
+ * id", which is the collision the key scheme exists to close. Injected, because
+ * this is a leaf and the active connection lives three layers up; it answers
+ * local/default until something registers, which is what a single-source
+ * install and every unit test have.
+ */
+type AmbientScope = (storedSessionId?: null | string) => { connectionId: string; profile: string }
+
+let ambientScope: AmbientScope | null = null
+
+export function setAmbientSessionScope(resolve: AmbientScope): void {
+  ambientScope = resolve
+}
+
+/**
+ * `storedSessionId` matters: a stored id lives in ONE profile's database, and
+ * that profile is the session's own, not whichever the rail happens to show. The
+ * writer and the reader both come through here, so the index cannot disagree
+ * with itself.
+ */
+export function ambientSessionScope(storedSessionId?: null | string): { connectionId: string; profile: string } {
+  return ambientScope?.(storedSessionId) ?? { connectionId: LOCAL_SESSION_SCOPE, profile: DEFAULT_SESSION_PROFILE }
 }
 
 /** The connection a session key belongs to — what routing and teardown ask. */
@@ -379,7 +410,8 @@ export function runtimeKeyForStoredSession(
     return null
   }
 
-  const indexKey = storedKeyFor(scope?.connectionId, scope?.profile, storedSessionId)
+  const at = scope ?? ambientSessionScope(storedSessionId)
+  const indexKey = storedKeyFor(at.connectionId, at.profile, storedSessionId)
   const key = keyByStoredId.get(indexKey)
 
   if (!key) {
@@ -404,8 +436,9 @@ export function aliasStoredSessionId(
   liveStoredId: string,
   scope?: Pick<SessionRef, 'connectionId' | 'profile'>
 ): void {
-  const key = runtimeKeyForStoredSession(liveStoredId, scope)
-  const indexKey = storedKeyFor(scope?.connectionId, scope?.profile, aliasStoredId)
+  const at = scope ?? ambientSessionScope(liveStoredId)
+  const key = runtimeKeyForStoredSession(liveStoredId, at)
+  const indexKey = storedKeyFor(at.connectionId, at.profile, aliasStoredId)
 
   if (key && !keyByStoredId.has(indexKey)) {
     keyByStoredId.set(indexKey, key)
@@ -442,11 +475,62 @@ function keepScope(prev: ClientSessionState | null, next: ClientSessionState): C
   return { ...next, connectionId: prev.connectionId ?? next.connectionId, profile: prev.profile ?? next.profile }
 }
 
+/** The site a KEY names, for the two paths that hold a key and no ref: a write
+ *  to a session that should already exist, and the router's blocking-prompt
+ *  seed. A placeholder key is a draft site; anything else is its key's scope. */
+export function siteOfKey(key: string): SessionSliceSite {
+  if (isPlaceholderKey(key)) {
+    return { draftKey: key }
+  }
+
+  const parsed = parseSessionKey(key)
+
+  return {
+    ref: {
+      connectionId: parsed.connectionId,
+      profile: parsed.profile ?? DEFAULT_SESSION_PROFILE,
+      storedSessionId: ''
+    },
+    runtimeId: parsed.id
+  }
+}
+
+/**
+ * A runtime key's slice must carry the scope its key encodes (invariant 45).
+ *
+ * The key IS the address: a slice claiming another connection under it would be
+ * routed, indexed and cached as that connection's, which is the collision the
+ * key scheme exists to close. A scopeless slice under a runtime key adopts the
+ * key's scope — that is the mint; a DISAGREEING one keeps the key's and says so,
+ * because the write is the thing that is wrong, not the address it arrived at.
+ */
+function scopeToKey(key: string, state: ClientSessionState): ClientSessionState {
+  if (isPlaceholderKey(key)) {
+    return state
+  }
+
+  const parsed = parseSessionKey(key)
+  const profile = parsed.profile ?? state.profile ?? DEFAULT_SESSION_PROFILE
+
+  if (state.connectionId === parsed.connectionId && (state.profile ?? profile) === profile) {
+    return state
+  }
+
+  if (state.connectionId && state.connectionId !== parsed.connectionId) {
+    console.warn('[sessions] refusing a slice whose scope disagrees with its key', {
+      key,
+      slice: state.connectionId
+    })
+  }
+
+  return { ...state, connectionId: parsed.connectionId, profile: state.profile ?? profile }
+}
+
 /** Publish one session's state, firing the transition side-effects by diffing
  *  previous vs next. */
 export function publishSessionState(key: string, state: ClientSessionState): ClientSessionState {
   const prev = $sessionStates.get()[key] ?? null
-  const next = keepScope(prev, { ...state, lastTouchedAt: Date.now() })
+  const next = scopeToKey(key, keepScope(prev, { ...state, lastTouchedAt: Date.now() }))
   $sessionStates.set({ ...$sessionStates.get(), [key]: next })
   indexStoredId(prev, next, key)
   transitionHook?.(prev, next, key)
@@ -454,16 +538,44 @@ export function publishSessionState(key: string, state: ClientSessionState): Cli
   return next
 }
 
+/**
+ * WHERE a slice is being created (MJXHRM-591, invariant 45).
+ *
+ * A runtime slice may not exist without a scope, so the site carries it and the
+ * key is minted here rather than by the caller: there is no way to ask for a
+ * scoped key without the scope in hand, and no way to seed a slice under one
+ * without it. The only sites with no scope are the ones that genuinely have
+ * none — an unbound draft, which binds at its first `session.create`.
+ */
+export type SessionSliceSite = { draftKey: string } | { ref: SessionRef; runtimeId?: string }
+
+/** The key a site names: a live session's, a cold open's placeholder, or the
+ *  draft's own. */
+export function sliceKeyFor(site: SessionSliceSite): string {
+  if ('draftKey' in site) {
+    return site.draftKey
+  }
+
+  return site.runtimeId ? runtimeKeyFor(site.ref.connectionId, site.runtimeId) : hydratingKeyFor(site.ref)
+}
+
 /** Create a session's slice if absent, and return it either way. Every write
  *  path goes through here, so no caller can land on a missing slice. */
-export function ensureSessionSlice(key: string, seed?: Partial<ClientSessionState>): ClientSessionState {
+export function ensureSessionSlice(site: SessionSliceSite, seed?: Partial<ClientSessionState>): ClientSessionState {
+  const key = sliceKeyFor(site)
   const current = $sessionStates.get()[key]
 
   if (current) {
     return current
   }
 
-  return publishSessionState(key, { ...emptySessionState(seed?.storedSessionId ?? null), ...seed })
+  const scope = 'draftKey' in site ? null : site.ref
+
+  return publishSessionState(key, {
+    ...emptySessionState(seed?.storedSessionId ?? (scope ? scope.storedSessionId : null)),
+    ...(scope ? { connectionId: scope.connectionId, profile: scope.profile } : {}),
+    ...seed
+  })
 }
 
 /** THE per-session write path: apply an updater to one session's slice and
@@ -474,7 +586,10 @@ export function updateSession(
   key: string,
   updater: (state: ClientSessionState) => ClientSessionState
 ): ClientSessionState {
-  const current = $sessionStates.get()[key] ?? ensureSessionSlice(key)
+  // A slice created here inherits the KEY's scope, which `publishSessionState`
+  // would enforce anyway — this is the one path that reaches a key without a
+  // site, because it is a write to a session that should already exist.
+  const current = $sessionStates.get()[key] ?? ensureSessionSlice(siteOfKey(key))
   const next = updater(current)
 
   return next === current ? current : publishSessionState(key, next)
@@ -492,6 +607,44 @@ export function updateSession(
  * has to exist under its real id before the first streamed event for it arrives.
  */
 export function rekeySession(fromKey: string, toKey: string, patch?: Partial<ClientSessionState>): ClientSessionState {
+  // THE ONE SEAM the seven rekey sites inherit their scope through (invariant
+  // 45). A rekey moves a session onto a fresh runtime id — a not-found
+  // recovery, a resume rotation — and the session does not change connection by
+  // being re-keyed, so the outgoing slice's scope comes with it. Where the
+  // target key names a scope of its own, `publishSessionState` has the last
+  // word: the key is the address.
+  const outgoing = $sessionStates.get()[fromKey]
+
+  // The seven rekey sites hand over the RUNTIME ID the wire gave them — a
+  // not-found recovery, a resume rotation, a draft taking its issued id — and
+  // the seam mints the key, so none of them has to remember the scope. A target
+  // that is already a key (`@conn|id`, or a placeholder) is left alone.
+  if (outgoing?.connectionId && !isPlaceholderKey(toKey) && !isScopedKey(toKey)) {
+    toKey = runtimeKeyFor(outgoing.connectionId, toKey)
+  }
+
+  // …and where the caller DID name a scope, it has to agree: a rekey across
+  // connections would be a session handed to another backend, which is not a
+  // thing that happens. The named key wins — it is the address — but silently
+  // would leave a slice nobody could explain.
+  const target = isPlaceholderKey(toKey) ? null : parseSessionKey(toKey)
+
+  if (outgoing?.connectionId && target && target.connectionId !== outgoing.connectionId) {
+    console.warn('[sessions] refusing a rekey across connections', {
+      from: outgoing.connectionId,
+      fromKey,
+      to: target.connectionId,
+      toKey
+    })
+  }
+
+  const inherited: Partial<ClientSessionState> =
+    outgoing?.connectionId && !patch?.connectionId
+      ? { connectionId: target?.connectionId ?? outgoing.connectionId, profile: patch?.profile ?? outgoing.profile }
+      : {}
+
+  patch = { ...inherited, ...patch }
+
   // Anything queued under the old key is this session's own output, so apply it
   // before the move rather than letting the teardown below discard it.
   flushDeltas(fromKey)

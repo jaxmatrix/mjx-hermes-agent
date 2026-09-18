@@ -20,6 +20,12 @@ import { routeGatewayEvent } from '@/store/event-router'
 import { $activeSessionKey, $sessionStates, ensureSessionSlice } from '@/store/session-state-types'
 import { $subagentsBySession, allSubagents } from '@/store/subagents'
 
+/** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
+const localSite = (runtimeId: string) => ({
+  ref: { connectionId: 'local', profile: 'default', storedSessionId: runtimeId },
+  runtimeId
+})
+
 const event = (type: string, payload: Record<string, unknown>, sid = 's1'): GatewayEvent =>
   ({ type, session_id: sid, payload }) as GatewayEvent
 
@@ -38,8 +44,8 @@ describe('event-router → subagent spawn tree', () => {
     $sessionStates.set({})
     // The router fails closed on a key it has no slice for, so both sessions
     // have to exist before any of them can own a subagent.
-    ensureSessionSlice('s1')
-    ensureSessionSlice('other-session')
+    ensureSessionSlice(localSite('s1'))
+    ensureSessionSlice(localSite('other-session'))
     $activeSessionKey.set('s1')
   })
 

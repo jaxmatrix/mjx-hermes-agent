@@ -1965,7 +1965,7 @@ export function resetChat(cwd?: string): void {
   // meant each of them had to remember, and only two ever did — which is the
   // whole shape of this ticket. Desktop resolves it in the one place too
   // (`startFreshSessionDraft`).
-  ensureSessionSlice(draftKey, { cwd: cwd?.trim() || resolveNewSessionCwd() })
+  ensureSessionSlice({ draftKey }, { cwd: cwd?.trim() || resolveNewSessionCwd() })
   $activeSessionKey.set(draftKey)
 
   // Drop the OLD draft — an unsaved chat the user walked away from has nothing

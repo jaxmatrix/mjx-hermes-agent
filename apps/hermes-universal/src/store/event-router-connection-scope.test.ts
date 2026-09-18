@@ -163,3 +163,42 @@ describe('invariant 35 — the router records what a reconnect will need', () =>
     expect(replayCursor(a).seq).toBe(0)
   })
 })
+
+/**
+ * MJXHRM-591, invariant 45 — the ORDINARY chat path scopes its slices too.
+ *
+ * Review 1 named this file's `seed` as the reason invariant 36 passed while the
+ * app was broken: it minted every slice already scoped, which no production
+ * path did for the sidebar. This seeds through `adoptLiveSession` — the real
+ * ambient path — with the app pointed at a registered connection, and asserts
+ * the frames that follow actually land.
+ */
+describe('invariant 45 — a slice from the ordinary chat path', () => {
+  it('carries the active connection, so its frames route', async () => {
+    const { adoptLiveSession } = await import('@/store/session')
+
+    // The app is on a REGISTERED connection, which is where the bug lived: the
+    // sidebar minted `run-1` bare, and the router built `@conn-a|run-1`.
+    adoptLiveSession({ runtimeSessionId: 'run-1', storedSessionId: 'abc12345' })
+
+    const key = runtimeKeyFor('conn-a', 'run-1')
+
+    expect($sessionStates.get()[key]).toMatchObject({ connectionId: 'conn-a', runtimeSessionId: 'run-1' })
+    // …and the bare key, which is what an unscoped mint would have produced, is
+    // not there at all.
+    expect($sessionStates.get()['run-1']).toBeUndefined()
+
+    routeGatewayEvent({ payload: { text: 'streams' }, session_id: 'run-1', type: 'status.update' } as GatewayEvent)
+
+    expect($sessionStates.get()[key]?.statusLine).toBe('streams')
+  })
+
+  it('finds that slice again by its durable id, under the ambient scope', async () => {
+    const { adoptLiveSession } = await import('@/store/session')
+    const { runtimeKeyForStoredSession } = await import('@/store/session-state-types')
+
+    adoptLiveSession({ runtimeSessionId: 'run-1', storedSessionId: 'abc12345' })
+
+    expect(runtimeKeyForStoredSession('abc12345')).toBe(runtimeKeyFor('conn-a', 'run-1'))
+  })
+})

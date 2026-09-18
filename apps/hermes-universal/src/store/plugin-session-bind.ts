@@ -1,11 +1,12 @@
-import { requestForSession } from '@/store/session-request-router'
+import { requestForSession, routeScopeForSession } from '@/store/session-request-router'
 import {
   $sessionStates,
   dropSessionState,
   ensureSessionSlice,
-  hydratingKey,
+  hydratingKeyFor,
   rekeySession,
-  runtimeKeyForStoredSession
+  runtimeKeyForStoredSession,
+  type SessionRef
 } from '@/store/session-state-types'
 
 /**
@@ -56,8 +57,7 @@ export interface BoundMessage {
 }
 
 export type BindSessionResult =
-  | { error: string; ok: false }
-  | { messages?: BoundMessage[]; ok: true; sessionKey: string }
+  { error: string; ok: false } | { messages?: BoundMessage[]; ok: true; sessionKey: string }
 
 /**
  * Idempotent: a session already bound resolves its existing key without a
@@ -84,9 +84,13 @@ export async function bindSessionSlice(
   }
 
   const run = (async (): Promise<BindSessionResult> => {
-    const placeholder = hydratingKey(storedSessionId)
+    // The ROUTE this bind resolved, not the bare id: a plugin binds a session on
+    // whichever connection owns it, and the slice has to say so (invariant 45).
+    const route = routeScopeForSession(storedSessionId, options.profile)
+    const ref: SessionRef = { connectionId: route.connectionId, profile: route.profile, storedSessionId }
+    const placeholder = hydratingKeyFor(ref)
 
-    ensureSessionSlice(placeholder, { busy: false, storedSessionId })
+    ensureSessionSlice({ ref }, { busy: false, storedSessionId })
 
     try {
       const res = await requestForSession<{ messages?: BoundMessage[]; session_id?: string }>(
@@ -111,7 +115,11 @@ export async function bindSessionSlice(
 
       rekeySession(placeholder, runtimeSessionId, { runtimeSessionId, storedSessionId })
 
-      return { ...(options.withHistory ? { messages: res.messages ?? [] } : {}), ok: true, sessionKey: runtimeSessionId }
+      return {
+        ...(options.withHistory ? { messages: res.messages ?? [] } : {}),
+        ok: true,
+        sessionKey: runtimeSessionId
+      }
     } catch (error) {
       // The placeholder is dropped rather than left behind: a slice with no
       // transport is exactly the lie this module exists to avoid.

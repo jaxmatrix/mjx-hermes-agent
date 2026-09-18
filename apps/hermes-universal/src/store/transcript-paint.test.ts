@@ -26,6 +26,12 @@ import {
   transcriptTailKey
 } from '@/store/transcript-paint'
 
+/** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
+const localSite = (runtimeId: string) => ({
+  ref: { connectionId: 'local', profile: 'default', storedSessionId: runtimeId },
+  runtimeId
+})
+
 const row = (id: string, body: string): ChatMessage => ({ id, parts: [{ text: body, type: 'text' }], role: 'user' })
 
 beforeEach(() => {
@@ -39,7 +45,7 @@ beforeEach(() => {
 describe('paintCachedTail', () => {
   it('paints a cached tail under the slice key', () => {
     saveTranscriptTail('stored-1', [row('m1', 'hello')])
-    ensureSessionSlice(hydratingKey('stored-1'), { busy: true, storedSessionId: 'stored-1' })
+    ensureSessionSlice({ draftKey: hydratingKey('stored-1') }, { busy: true, storedSessionId: 'stored-1' })
 
     expect(paintCachedTail(hydratingKey('stored-1'), 'stored-1')).toBe(true)
     expect($transcriptPaint.get()[hydratingKey('stored-1')].messages.map(m => m.id)).toEqual(['m1'])
@@ -54,7 +60,7 @@ describe('paintCachedTail', () => {
 
     const key = hydratingKey('stored-1')
 
-    ensureSessionSlice(key, { busy: true, storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite(key), { busy: true, storedSessionId: 'stored-1' })
     paintCachedTail(key, 'stored-1')
 
     expect($sessionStates.get()[key].messages).toEqual([])
@@ -77,7 +83,7 @@ describe('paintCachedTail', () => {
   // paint there is a flicker on top of the right answer.
   it('refuses to paint over a slice that already has messages', () => {
     saveTranscriptTail('stored-1', [row('cached', 'stale')])
-    ensureSessionSlice('runtime-1', { storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite('runtime-1'), { storedSessionId: 'stored-1' })
     updateSession('runtime-1', state => ({ ...state, messages: [row('live', 'fresh')] }))
 
     expect(paintCachedTail('runtime-1', 'stored-1')).toBe(false)
@@ -122,7 +128,7 @@ describe('$paintedMessages', () => {
   // would break nanostores' dedupe and re-render every transcript in the app on
   // every streamed token.
   it('returns the IDENTICAL array reference as $messages when the lane is empty', () => {
-    ensureSessionSlice('runtime-1', { storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite('runtime-1'), { storedSessionId: 'stored-1' })
     updateSession('runtime-1', state => ({ ...state, messages: [row('live', 'fresh')] }))
     $activeSessionKey.set('runtime-1')
 
@@ -137,7 +143,7 @@ describe('$paintedMessages', () => {
 
     const key = hydratingKey('stored-1')
 
-    ensureSessionSlice(key, { busy: true, storedSessionId: 'stored-1' })
+    ensureSessionSlice(localSite(key), { busy: true, storedSessionId: 'stored-1' })
     $activeSessionKey.set(key)
     paintCachedTail(key, 'stored-1')
 
@@ -180,8 +186,18 @@ describe('the tail cache key', () => {
     const keyA = hydratingKeyFor(refA)
     const keyB = hydratingKeyFor(refB)
 
-    ensureSessionSlice(keyA, { busy: true, connectionId: 'conn-a', profile: 'default', storedSessionId: 'abc12345' })
-    ensureSessionSlice(keyB, { busy: true, connectionId: 'conn-b', profile: 'default', storedSessionId: 'abc12345' })
+    ensureSessionSlice(localSite(keyA), {
+      busy: true,
+      connectionId: 'conn-a',
+      profile: 'default',
+      storedSessionId: 'abc12345'
+    })
+    ensureSessionSlice(localSite(keyB), {
+      busy: true,
+      connectionId: 'conn-b',
+      profile: 'default',
+      storedSessionId: 'abc12345'
+    })
 
     saveTranscriptTail(transcriptTailKey(keyA, 'abc12345'), [row('m1', 'from A')])
 
@@ -195,7 +211,7 @@ describe('the tail cache key', () => {
   it('leaves the local connection\u2019s entries byte-identical to the legacy ones', () => {
     const key = hydratingKey('abc12345')
 
-    ensureSessionSlice(key, { busy: true, storedSessionId: 'abc12345' })
+    ensureSessionSlice(localSite(key), { busy: true, storedSessionId: 'abc12345' })
     // Written under the BARE id, as every entry already on disk is.
     saveTranscriptTail('abc12345', [row('m1', 'legacy')])
 

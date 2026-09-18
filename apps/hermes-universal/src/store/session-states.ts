@@ -329,7 +329,7 @@ export function dropUnheldSessionStates(leavingConnectionId: null | string): voi
  *  active key never dangles at a slice that no longer exists. */
 export function startFreshActiveSession(): string {
   const key = newDraftKey()
-  ensureSessionSlice(key)
+  ensureSessionSlice({ draftKey: key })
   $activeSessionKey.set(key)
   resetUnscopedStreamPin()
 

@@ -197,7 +197,7 @@ describe('pruneSessionStates', () => {
   })
 
   it('never evicts a draft — its unsent text cannot be re-fetched', () => {
-    ensureSessionSlice('draft:9', { runtimeSessionId: null })
+    ensureSessionSlice({ draftKey: 'draft:9' }, { runtimeSessionId: null })
     fill(MAX_CACHED_SESSIONS + 4)
     pruneSessionStates()
 

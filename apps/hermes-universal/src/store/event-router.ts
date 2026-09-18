@@ -91,6 +91,7 @@ import {
   ensureSessionSlice,
   runtimeKeyFor,
   runtimeKeyForStoredSession,
+  siteOfKey,
   updateSession
 } from '@/store/session-state-types'
 import { pruneFinishedSessionSubagents, upsertSubagent } from '@/store/subagents'
@@ -412,7 +413,9 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       return
     }
 
-    ensureSessionSlice(key)
+    // The key was built from this frame's connection a few lines up, so the
+    // seeded slice carries that scope rather than inventing one (invariant 45).
+    ensureSessionSlice(siteOfKey(key))
   }
 
   // The watermark this client can honestly resume from: the highest `seq` it has

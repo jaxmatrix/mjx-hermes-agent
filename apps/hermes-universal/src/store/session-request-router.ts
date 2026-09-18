@@ -287,6 +287,22 @@ export async function requestForSession<T>(
  * or re-merged by a switch under it. Same re-read discipline — resolve and
  * dispatch with no await between them.
  */
+/**
+ * The connection and profile a session's requests would be routed to.
+ *
+ * For a caller that has to SCOPE something — a slice it is about to create —
+ * with the same answer its RPCs will use (MJXHRM-591, invariant 45). It is the
+ * router's own `resolve`, so the scope and the socket cannot disagree.
+ */
+export function routeScopeForSession(
+  storedSessionId: null | string,
+  ownerProfile?: null | string
+): { connectionId: string; profile: string } {
+  const route = $currentRouter.get().resolve({ ownerProfile, storedSessionId })
+
+  return { connectionId: route.connectionId, profile: route.profile }
+}
+
 export function requestForConnection<T>(
   ref: { connectionId: string; profile: null | string },
   method: string,

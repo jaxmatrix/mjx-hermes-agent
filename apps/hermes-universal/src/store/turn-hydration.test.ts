@@ -24,6 +24,12 @@ import {
   updateSession
 } from '@/store/session-state-types'
 
+/** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
+const localSite = (runtimeId: string) => ({
+  ref: { connectionId: 'local', profile: 'default', storedSessionId: runtimeId },
+  runtimeId
+})
+
 // A session recovers ONCE per process, so every test needs its own stored id —
 // otherwise the second one silently measures the guard instead of the fold.
 let seq = 0
@@ -67,7 +73,7 @@ function journalALiveTurn(): void {
 function coldOpen(committed: ChatMessage[], stillRunning: boolean): void {
   const key = hydratingKey(stored)
 
-  ensureSessionSlice(key, { storedSessionId: stored, busy: true })
+  ensureSessionSlice(localSite(key), { storedSessionId: stored, busy: true })
   rekeySession(key, runtime, {
     runtimeSessionId: runtime,
     storedSessionId: stored,
@@ -145,7 +151,7 @@ describe('the journaling pass', () => {
   // so — otherwise nothing ever bounds the store.
   it('clears a session whose turn has genuinely finished', async () => {
     journalALiveTurn()
-    ensureSessionSlice(runtime, { storedSessionId: stored })
+    ensureSessionSlice(localSite(runtime), { storedSessionId: stored })
     updateSession(runtime, state => ({ ...state, busy: false, awaitingResponse: false, streamId: null }))
     await Promise.resolve()
 
@@ -156,7 +162,7 @@ describe('the journaling pass', () => {
   // session inline on every publish put the bookkeeping for N idle sessions on
   // the token path of the one that is streaming.
   it('does not re-journal a session whose slice did not change', async () => {
-    ensureSessionSlice(runtime, { storedSessionId: stored })
+    ensureSessionSlice(localSite(runtime), { storedSessionId: stored })
     await Promise.resolve()
 
     const readTarget = (
@@ -167,7 +173,7 @@ describe('the journaling pass', () => {
 
     // Twenty deltas' worth of republishes, none of them this session's.
     for (let i = 0; i < 20; i += 1) {
-      ensureSessionSlice(`noise-${seq}-${i}`, {})
+      ensureSessionSlice(localSite(`noise-${seq}-${i}`), {})
       await Promise.resolve()
     }
 
@@ -175,7 +181,6 @@ describe('the journaling pass', () => {
     getItem.mockRestore()
   })
 })
-
 
 // ---------------------------------------------------------------------------
 // I2 / I3 (MJXHRM-480): the paint lane is structurally invisible here.
@@ -200,7 +205,7 @@ describe('a painted cold open', () => {
     const key = hydratingKey(storedId)
 
     saveTranscriptTail(storedId, [user('cached-u', 'a question from last week')])
-    ensureSessionSlice(key, { busy: true, storedSessionId: storedId })
+    ensureSessionSlice(localSite(key), { busy: true, storedSessionId: storedId })
     expect(paintCachedTail(key, storedId)).toBe(true)
 
     // The placeholder slice is `busy: true`, which is exactly the condition the
@@ -211,7 +216,10 @@ describe('a painted cold open', () => {
 
     rekeySession(key, 'runtime-painted', {
       busy: false,
-      messages: [user('h1', 'a completely different question'), { id: 'h2', parts: [{ text: 'the real answer', type: 'text' }], role: 'assistant' }],
+      messages: [
+        user('h1', 'a completely different question'),
+        { id: 'h2', parts: [{ text: 'the real answer', type: 'text' }], role: 'assistant' }
+      ],
       runtimeSessionId: 'runtime-painted',
       storedSessionId: storedId
     })

@@ -179,14 +179,17 @@ async function hydrateSessionToState(ref: SessionRef): Promise<string> {
   const stored = $sessions.get().find(session => session.id === storedId)
   const key = hydratingKeyFor(ref)
 
-  ensureSessionSlice(key, {
-    connectionId: ref.connectionId,
-    profile: ref.profile,
-    storedSessionId: storedId,
-    busy: true,
-    cwd: stored?.cwd ?? '',
-    model: stored?.model ?? ''
-  })
+  ensureSessionSlice(
+    { ref },
+    {
+      connectionId: ref.connectionId,
+      profile: ref.profile,
+      storedSessionId: storedId,
+      busy: true,
+      cwd: stored?.cwd ?? '',
+      model: stored?.model ?? ''
+    }
+  )
 
   // BEFORE ANY I/O, per tile: a QUAD layout restored at boot paints each cold
   // tile's own cached tail rather than leaving four blank panes. Pixels, never

@@ -9,7 +9,7 @@
  *               take a key as a string; only `parseSessionKey` reads its shape.
  */
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   $sessionStates,
@@ -20,6 +20,7 @@ import {
   hydratingKeyFor,
   parseSessionKey,
   publishSessionState,
+  rekeySession,
   runtimeKeyFor,
   runtimeKeyForStoredSession,
   storedKeyFor
@@ -172,5 +173,82 @@ describe('a slice\u2019s scope is written once', () => {
     publishSessionState('draft:9', { ...emptySessionState(), connectionId: 'conn-a', profile: 'work' })
 
     expect($sessionStates.get()['draft:9']).toMatchObject({ connectionId: 'conn-a', profile: 'work' })
+  })
+})
+
+describe('invariant 45 — a runtime key\u2019s slice carries its key\u2019s scope', () => {
+  it('mints the scope for a slice published without one', () => {
+    const key = runtimeKeyFor('conn-a', 'run-1')
+
+    publishSessionState(key, { ...emptySessionState('abc12345'), runtimeSessionId: 'run-1' })
+
+    expect($sessionStates.get()[key]).toMatchObject({ connectionId: 'conn-a', profile: 'default' })
+  })
+
+  it('refuses one that claims another connection, and keeps the key\u2019s', () => {
+    const key = runtimeKeyFor('conn-a', 'run-1')
+
+    publishSessionState(key, {
+      ...emptySessionState('abc12345'),
+      // The write is the thing that is wrong; the key is the address.
+      connectionId: 'conn-b',
+      profile: 'default',
+      runtimeSessionId: 'run-1'
+    })
+
+    expect($sessionStates.get()[key]?.connectionId).toBe('conn-a')
+  })
+
+  it('leaves a placeholder alone — a draft has no scope yet, by design', () => {
+    publishSessionState('draft:77', emptySessionState())
+
+    expect($sessionStates.get()['draft:77']?.connectionId).toBeNull()
+  })
+
+  it('refuses a rekey that would hand a session to another connection', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      const from = hydratingKeyFor({ connectionId: 'conn-a', profile: 'work', storedSessionId: 'abc12345' })
+
+      publishSessionState(from, { ...emptySessionState('abc12345'), connectionId: 'conn-a', profile: 'work' })
+      rekeySession(from, runtimeKeyFor('conn-b', 'run-1'), { runtimeSessionId: 'run-1' })
+
+      // The key is the address, so it wins — but silently would leave a slice
+      // nobody could explain.
+      expect(warn).toHaveBeenCalledWith('[sessions] refusing a rekey across connections', expect.anything())
+      expect($sessionStates.get()[runtimeKeyFor('conn-b', 'run-1')]?.connectionId).toBe('conn-b')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('mints the target key for a rekey handed a bare runtime id', () => {
+    const from = hydratingKeyFor({ connectionId: 'conn-a', profile: 'work', storedSessionId: 'abc12345' })
+
+    publishSessionState(from, { ...emptySessionState('abc12345'), connectionId: 'conn-a', profile: 'work' })
+    // What every recovery path hands over: the id the wire gave it.
+    rekeySession(from, 'run-1', { runtimeSessionId: 'run-1' })
+
+    expect($sessionStates.get()[runtimeKeyFor('conn-a', 'run-1')]).toMatchObject({
+      connectionId: 'conn-a',
+      profile: 'work'
+    })
+    expect($sessionStates.get()['run-1']).toBeUndefined()
+  })
+
+  it('carries the outgoing scope through a rekey', () => {
+    const from = hydratingKeyFor({ connectionId: 'conn-a', profile: 'work', storedSessionId: 'abc12345' })
+    const to = runtimeKeyFor('conn-a', 'run-1')
+
+    publishSessionState(from, {
+      ...emptySessionState('abc12345'),
+      connectionId: 'conn-a',
+      profile: 'work'
+    })
+    rekeySession(from, to, { runtimeSessionId: 'run-1' })
+
+    // The seven rekey sites inherit through this one seam.
+    expect($sessionStates.get()[to]).toMatchObject({ connectionId: 'conn-a', profile: 'work' })
   })
 })
