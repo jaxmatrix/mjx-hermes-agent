@@ -273,6 +273,17 @@ export const ja = defineLocale({
     }
   },
 
+  chatConnection: {
+    lostTitle: '接続が切断されました',
+    lostMessage: label => `このチャットは ${label} 上にありますが、現在接続できません。`,
+    retry: '再試行',
+    changedTitle: '会話を利用できません',
+    changedMessage: 'このチャットのバックエンドが変更されたため、このタブは閉じることしかできません。',
+    notOnThisDevice: 'このデバイスではローカル接続を利用できないため、このタブは閉じることしかできません。',
+    close: 'タブを閉じる',
+    reconnectToLoad: '再接続してこの会話を読み込んでください。'
+  },
+
   billingBlock: {
     titleNous: 'Nous クレジットが不足しています',
     titleProvider: provider => `クレジット不足 — ${provider}`,

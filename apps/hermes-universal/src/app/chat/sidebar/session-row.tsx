@@ -1,6 +1,7 @@
 import type * as React from 'react'
 import { memo, useRef } from 'react'
 
+import { ConnectionDot } from '@/components/chat/connection-accent'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { type Translations, useI18n } from '@/i18n'
@@ -343,6 +344,10 @@ function SidebarSessionRowImpl({
             </SidebarRowGrab>
           ) : (
             <SidebarRowLead className="overflow-hidden">
+              {/* A merged row names its own source (`connection_id`), so the dot
+                  says which machine this conversation is on before you tap it
+                  (MJXHRM-591). Local rows stay neutral. */}
+              <ConnectionDot connectionId={(session as { connection_id?: string }).connection_id ?? null} />
               <SessionStatusDot branchStem={branchStem} session={session} storedSessionId={session.id} />
             </SidebarRowLead>
           )}

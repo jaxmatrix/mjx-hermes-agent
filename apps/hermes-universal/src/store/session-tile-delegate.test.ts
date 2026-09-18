@@ -33,6 +33,12 @@ vi.mock('@/hermes', () => ({
   setApiRequestProfile: vi.fn()
 }))
 
+// MJXHRM-591: a LOCAL tab on a phone is `unsupported_platform` — the delegate
+// has to ask before it dials, not after a transport error a minute later.
+vi.mock('@/store/tab-connection', () => ({
+  tabIsUnsupportedHere: (connectionId: null | string) => connectionId === 'cannot-host'
+}))
+
 vi.mock('@/store/notifications', () => ({
   clearNotifications: vi.fn(),
   notifyError: (...args: unknown[]) => notifyError(...args),
@@ -376,6 +382,17 @@ describe('a tab bound to a background connection', () => {
     await delegate.submitToSession(key, 'hello')
 
     expect(routes).toEqual([{ connectionId: 'conn-a', method: 'prompt.submit', profile: 'work' }])
+  })
+
+  it('refuses to resume a tab this device cannot host, before any dial', async () => {
+    const { $sessionTiles, tileKeyFor } = await import('@/store/session-states')
+    const ref = { connectionId: 'cannot-host', profile: 'default', storedSessionId: 'abc12345' }
+
+    $sessionTiles.set([{ ...ref, tileKey: tileKeyFor(ref) }] as never)
+
+    await expect(delegate.resumeTile(tileKeyFor(ref))).rejects.toThrow()
+    expect(routes).toEqual([])
+    expect(getSessionMessages).not.toHaveBeenCalled()
   })
 
   it('refuses to resume a tab whose backend changed under it', async () => {

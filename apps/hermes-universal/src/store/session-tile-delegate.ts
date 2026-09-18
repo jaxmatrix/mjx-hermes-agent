@@ -75,6 +75,7 @@ import {
   tileRef,
   updateSession
 } from '@/store/session-states'
+import { tabIsUnsupportedHere } from '@/store/tab-connection'
 import { clearTranscriptPaint, paintCachedTail } from '@/store/transcript-paint'
 import { adoptResumedTurn, beginTurn, resumedTurnIsLive, settleTurn } from '@/store/turn-lifecycle'
 import type { SessionResumeResponse } from '@/types/hermes'
@@ -390,6 +391,16 @@ setSessionTileDelegate({
 
     if (tile?.unavailable) {
       return Promise.reject(new Error('this conversation belongs to a backend that is no longer there'))
+    }
+
+    const parsedScope = parseSessionKey(tileKey)
+
+    // A LOCAL connection on a phone is `unsupported_platform` (592): there is no
+    // child to spawn, so the tab opens straight into unavailable rather than
+    // dialling something that cannot exist and reporting a transport error a
+    // minute later (Design v1 §7).
+    if (tabIsUnsupportedHere(tile?.connectionId ?? parsedScope.connectionId)) {
+      return Promise.reject(new Error('local connections are not available on this device'))
     }
 
     // The tab record when there is one; otherwise the key itself, which IS the
