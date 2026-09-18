@@ -1,6 +1,7 @@
 import { backendScopeKey, LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { $activeConnection } from '@/store/active-connection'
 import { migrateLegacyBubbles } from '@/store/chat-bubbles'
+import { connectionScopeKey } from '@/store/connection-clients'
 import { isTunnelSignInError } from '@/store/connection-tunnels'
 import { $connectionsRegistry } from '@/store/connections'
 import { $gatewayState, requestGateway, setGatewayRequestProfile } from '@/store/gateway'
@@ -121,7 +122,13 @@ export const registrySessionRouter: SessionRequestRouter = {
     let lease: Awaited<ReturnType<typeof leaseSecondary>>
 
     try {
-      lease = await leaseSecondary(route.scopeKey, route.connectionId)
+      // ONE socket per CONNECTION (MJXHRM-591, Design v1.3 N2), not per
+      // connection+profile: `connections_resolve` is already called with
+      // `profile: null`, so the socket was never profile-specific, and the call
+      // below names its profile anyway. Two pool keys for two profiles of one
+      // connection meant two sockets, two streams of the same events and two
+      // tunnel holds.
+      lease = await leaseSecondary(connectionScopeKey(route.connectionId), route.connectionId)
     } catch (error) {
       throw new SessionRouteError(isTunnelSignInError(error) ? 'needs-sign-in' : 'no-gateway', route.scopeKey)
     }

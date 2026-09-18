@@ -25,6 +25,12 @@
 import { readJson, writeJson } from '@/lib/storage'
 import { atom, computed } from '@/store/atom'
 import { requestClose } from '@/store/close-confirm'
+import {
+  type ClientHold,
+  holdConnectionClient,
+  isAmbientConnection,
+  releaseConnectionClient
+} from '@/store/connection-clients'
 import { $activeStoredSessionId, newSession, openSession, sameStoredSession } from '@/store/session'
 import {
   $activeSessionKey,
@@ -156,8 +162,37 @@ function persistBubbles() {
   writeJson(BUBBLES_KEY, storedBubbles.length === 0 ? null : storedBubbles)
 }
 
+/** The bubble half of the hold ledger (invariant 47) — same rule, same commit. */
+const holdsByTab = new Map<string, ClientHold>()
+
+function commitTabHolds(next: readonly ChatBubble[]): void {
+  const wanted = new Map(
+    next
+      .filter(bubble => bubble.storedSessionId && bubble.tabKey !== DRAFT_BUBBLE_KEY)
+      .map(bubble => [bubble.tabKey, bubble])
+  )
+
+  for (const [tabKey, bubble] of wanted) {
+    if (!holdsByTab.has(tabKey)) {
+      const hold = holdConnectionClient(bubble.connectionId, { ambient: isAmbientConnection(bubble.connectionId) })
+
+      if (hold) {
+        holdsByTab.set(tabKey, hold)
+      }
+    }
+  }
+
+  for (const [tabKey, hold] of [...holdsByTab]) {
+    if (!wanted.has(tabKey)) {
+      holdsByTab.delete(tabKey)
+      releaseConnectionClient(hold)
+    }
+  }
+}
+
 function setBubbles(bubbles: ChatBubble[]) {
   $chatBubbles.set(bubbles)
+  commitTabHolds(bubbles)
   storedBubbles = bubbles
     .filter((b): b is ChatBubble & { storedSessionId: string } => Boolean(b.storedSessionId))
     .map(b => ({ connectionId: b.connectionId, profile: b.profile, storedSessionId: b.storedSessionId }))
@@ -170,7 +205,7 @@ function setBubbles(bubbles: ChatBubble[]) {
 export const __testing = {
   reset: (): void => {
     storedBubbles = []
-    $chatBubbles.set([])
+    setBubbles([])
   }
 }
 

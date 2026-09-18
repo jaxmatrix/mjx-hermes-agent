@@ -48,7 +48,7 @@ import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block'
 import { noteMissedSteer } from '@/store/chat'
 import { normalizeQuestions, readChoices, readLockedAnswers } from '@/store/clarify'
 import { routeCompactionEvent } from '@/store/compaction'
-import { setConnectionEventSink } from '@/store/connection-clients'
+import { setConnectionEventSink, setConnectionStreamReset } from '@/store/connection-clients'
 import { addGatewayEventListener, requestGateway } from '@/store/gateway'
 import {
   notifyCronChanged,
@@ -115,6 +115,10 @@ addGatewayEventListener(event => routeGatewayEvent(event))
 // drops the rest (rule 7); this is that claim, made once, for the one consumer
 // that knows how to place a frame in its own connection's slice.
 setConnectionEventSink(event => routeGatewayEvent(event))
+// …and the pin a connection's stream held is pruned by the same release that
+// gives its client back (Design v1.3, N10): a connection nothing holds has no
+// stream to pin, and a map that only grows is a map that outlives its entries.
+setConnectionStreamReset(connectionId => unscopedStreamByConnection.delete(connectionId))
 
 // The session that owns the current unscoped stream — pinned on message.start,
 // released on message.complete/error (see lib/gateway-events).

@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 
 import { readTranscriptTail } from '@/lib/transcript-tail-cache'
 import { useStore } from '@/store/atom'
-import { $connectionClients, retryConnectionClient } from '@/store/connection-clients'
+import { $connectionClients, isAmbientConnection, retryConnectionClient } from '@/store/connection-clients'
 import { $connectionsRegistry } from '@/store/connections'
 import { $sessionStates, scopedStoredKey } from '@/store/session-state-types'
 import { $sessionTiles, closeSessionTile, tileKeyFor } from '@/store/session-states'
@@ -34,14 +34,17 @@ export function useTabConnection(sessionKey: string): {
   return useMemo(() => {
     const slice = states[sessionKey]
     const connectionId = slice?.connectionId ?? null
+
     const ref =
       connectionId && slice?.storedSessionId
         ? { connectionId, profile: slice.profile ?? 'default', storedSessionId: slice.storedSessionId }
         : null
+
     const tileKey = ref ? tileKeyFor(ref) : null
     const tile = tileKey ? tiles.find(open => open.tileKey === tileKey) : undefined
 
     const state = tabConnectionFor({
+      ambient: connectionId ? isAmbientConnection(connectionId) : true,
       client: connectionId ? clients[connectionId] : undefined,
       connectionId,
       tile
@@ -65,7 +68,7 @@ export function useTabConnection(sessionKey: string): {
       label: registry.connections.find(one => one.id === connectionId)?.label ?? connectionId ?? '',
       retry: () => {
         if (connectionId) {
-          retryConnectionClient(connectionId, slice?.profile ?? null)
+          retryConnectionClient(connectionId)
         }
       },
       state,

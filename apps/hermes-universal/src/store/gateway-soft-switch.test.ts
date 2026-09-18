@@ -26,9 +26,28 @@ vi.mock('@/store/gateway-secondaries', () => ({ closeAllSecondaries: vi.fn(() =>
 vi.mock('@/store/chat', () => ({ resetChat: vi.fn() }))
 vi.mock('@/store/cron', () => ({ setCronJobs: vi.fn() }))
 vi.mock('@/store/workspace-events', () => ({ resetWorkspaceCwd: vi.fn() }))
-// MJXHRM-591: the tabs on the connection being left are handed to its own
-// client, so the switch has to name that connection.
-vi.mock('@/store/connection-clients', () => ({ holdConnectionClient: vi.fn().mockResolvedValue(undefined) }))
+// MJXHRM-591 B2: NOT mocked. Review 1 named the wholesale mock here as the
+// reason a broken hand-over passed — it asserted that a function was called,
+// which is true of a hand-over that hands over nothing. The real module runs
+// over a fake secondary (the `@/store/gateway-secondaries` mock below), so the
+// assertion is that A's frames land in A's slice after the switch.
+vi.mock('@/store/gateway-secondaries', async importActual => {
+  const actual = await importActual<Record<string, unknown>>()
+
+  return {
+    ...actual,
+    closeAllSecondaries: vi.fn(actual.closeAllSecondaries as () => number),
+    leaseSecondary: vi.fn(async (_scopeKey: string, connectionId: string) => ({
+      connectionId,
+      request: vi.fn(),
+      scopeKey: _scopeKey
+    })),
+    pinSecondary: vi.fn(),
+    releaseParkedTunnels: vi.fn(actual.releaseParkedTunnels as (revision: number) => void),
+    setPinnedSecondaryClosedListener: vi.fn(),
+    unpinSecondary: vi.fn()
+  }
+})
 vi.mock('@/store/session-states', async () => {
   const { atom } = await import('@/store/atom')
 
@@ -89,7 +108,7 @@ import { $activeConnection } from '@/store/active-connection'
 import { resetChat } from '@/store/chat'
 import { resetRepoStatusForBackendSwitch } from '@/store/coding-status'
 import { $connection, beginGatewaySwitch, disconnect, endGatewaySwitch } from '@/store/connection'
-import { holdConnectionClient } from '@/store/connection-clients'
+import { $connectionClients, connectionHoldCount } from '@/store/connection-clients'
 import { closeGateway } from '@/store/gateway'
 import type { Connection } from '@/store/gateway-config'
 import { dialSavedTarget, type GatewayTarget, loadGatewayTarget } from '@/store/gateway-restore'
@@ -158,6 +177,7 @@ describe('gateway soft switch', () => {
 
   it('wipes gateway-bound session state before dialling', async () => {
     let wipedDuringDial = false
+    let handedOverDuringDial: { held: boolean; phase: boolean } | null = null
 
     await softSwitchGateway('remote', async () => {
       wipedDuringDial =
@@ -167,6 +187,10 @@ describe('gateway soft switch', () => {
         $unreadFinishedSessionIds.get().length === 0 &&
         $activeStoredSessionId.get() === null &&
         $sessionsLoading.get()
+      handedOverDuringDial = {
+        held: connectionHoldCount('conn-old') > 0,
+        phase: Boolean($connectionClients.get()['conn-old'])
+      }
     })
 
     expect(wipedDuringDial).toBe(true)
@@ -177,10 +201,11 @@ describe('gateway soft switch', () => {
     // …and it is told WHICH connection is being left: passing nothing would drop
     // every connection's loose slices, including ones this switch never touched.
     expect(vi.mocked(dropUnheldSessionStates).mock.calls[0][0]).toBe('conn-old')
-    // …and the tabs bound to it are handed to its own client, keeping their
-    // runtime ids: the ambient socket was carrying them, and is about to be
-    // somebody else's.
-    expect(holdConnectionClient).toHaveBeenCalledWith('conn-old', 'work')
+    // …and the tabs bound to it were handed to its OWN client DURING the gap:
+    // the hold and the phase exist while the ambient socket is gone and the new
+    // one is not yet up, which is only true if the hand-over named A explicitly
+    // rather than asking who is active (invariant 46).
+    expect(handedOverDuringDial).toEqual({ held: true, phase: true })
     // Skeletons stop once the refresh has landed.
     expect($sessionsLoading.get()).toBe(false)
   })
@@ -386,8 +411,11 @@ describe('gateway soft switch', () => {
     finishDial()
     await switching
 
-    // The revision this switch began, not whatever is newest by now.
-    expect(releaseParkedTunnels).toHaveBeenCalledExactlyOnceWith(7)
+    // The revision THIS switch began — the one `closeAllSecondaries` answered
+    // with — not whatever is newest by the time the dial lands.
+    expect(releaseParkedTunnels).toHaveBeenCalledExactlyOnceWith(
+      vi.mocked(closeAllSecondaries).mock.results[0]?.value as number
+    )
   })
 
   it('leaves a remote backend alone', async () => {

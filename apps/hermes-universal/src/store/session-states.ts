@@ -41,6 +41,12 @@ import { discardDeltas, disposeStreamBatch, flushDeltas } from '@/lib/stream-bat
 import { beginDetached, endSpan } from '@/observability'
 import { requestClose } from '@/store/close-confirm'
 import { clearAllCompaction } from '@/store/compaction'
+import {
+  type ClientHold,
+  holdConnectionClient,
+  isAmbientConnection,
+  releaseConnectionClient
+} from '@/store/connection-clients'
 import { resetUnscopedStreamPin } from '@/store/event-router'
 import { clearLiveSessionStatuses } from '@/store/live-session-registry'
 import { clearAllPrompts } from '@/store/prompts'
@@ -290,11 +296,27 @@ export function clearAllSessionStates() {
 /** Every session key an open tab depends on: its live slice, and the durable
  *  key its tail and its artifacts are filed under (which a resume does not
  *  move). What a switch may not drop. */
+/** A draft tab's slice: the placeholder it was opened under, whether or not it
+ *  is the one on screen. */
+function draftSliceKeyOf(tile: SessionTile): null | string {
+  const active = $activeSessionKey.get()
+
+  if (isPlaceholderKey(active) && tileRuntimeKey(tile.tileKey) === active) {
+    return active
+  }
+
+  return tile.runtimeId ?? null
+}
+
 export function heldSessionKeys(): Set<string> {
   const held = new Set<string>()
 
   for (const tile of $sessionTiles.get()) {
-    const key = tileRuntimeKey(tile.tileKey)
+    // EVERY record's slice key, focused or not (Design v1.3, N8): the draft
+    // tile's resolver answers for the ACTIVE placeholder only, so a background
+    // draft — a second tab the user started and moved away from — was not in
+    // this set and a switch could drop the slice under it.
+    const key = tile.tileKey === DRAFT_TILE_KEY ? draftSliceKeyOf(tile) : tileRuntimeKey(tile.tileKey)
 
     if (key) {
       held.add(key)
@@ -319,7 +341,11 @@ export function dropUnheldSessionStates(leavingConnectionId: null | string): voi
       continue
     }
 
-    if ((state.connectionId ?? connectionOfSessionKey(key)) === leaving) {
+    const scope = state.connectionId ?? connectionOfSessionKey(key)
+
+    // An UNSCOPED slice is an unbound draft (invariant 42): it belongs to no
+    // connection, so no connection's departure may take it (N8).
+    if (scope !== null && scope === leaving) {
       dropSessionState(key)
     }
   }
@@ -699,6 +725,43 @@ export function migrateLegacyTiles(primaryConnectionId: string): void {
  * caller that assembles a list — a merge, a restore, a reorder — cannot smuggle
  * a repointed tab past the type system by rebuilding the record.
  */
+/**
+ * THE HOLD LEDGER (MJXHRM-591, invariant 47).
+ *
+ * A hold belongs to the tab RECORD, not to a network path: this map is written
+ * by the commit below and by nothing else, so "how many tabs want this
+ * connection" is the set of tab records, counted where that set changes. A
+ * rebind is no change in presence and cannot double-count; a failed resume
+ * cannot leak, because it never took one; and an UNAVAILABLE tab gives its hold
+ * back, because it will never use that connection again.
+ */
+const holdsByTab = new Map<string, ClientHold>()
+
+/** Which records are entitled to a hold: present, and still usable. */
+const heldTabs = (tiles: readonly SessionTile[]): Map<string, SessionTile> =>
+  new Map(tiles.filter(tile => !tile.unavailable && tile.tileKey !== DRAFT_TILE_KEY).map(tile => [tile.tileKey, tile]))
+
+function commitTabHolds(next: readonly SessionTile[]): void {
+  const wanted = heldTabs(next)
+
+  for (const [tabKey, tile] of wanted) {
+    if (!holdsByTab.has(tabKey)) {
+      const hold = holdConnectionClient(tile.connectionId, { ambient: isAmbientConnection(tile.connectionId) })
+
+      if (hold) {
+        holdsByTab.set(tabKey, hold)
+      }
+    }
+  }
+
+  for (const [tabKey, hold] of [...holdsByTab]) {
+    if (!wanted.has(tabKey)) {
+      holdsByTab.delete(tabKey)
+      releaseConnectionClient(hold)
+    }
+  }
+}
+
 export function saveSessionTiles(tiles: SessionTile[]) {
   // A write may not repoint a tab. `patchSessionTile` makes a repoint impossible
   // to COMPILE; this catches one assembled dynamically — a merged list, a
@@ -718,6 +781,8 @@ export function saveSessionTiles(tiles: SessionTile[]) {
   })
 
   $sessionTiles.set(guarded)
+  // …and the holds follow the records, in the same commit.
+  commitTabHolds(guarded)
   // The draft tile is never persisted: `draft` names no session, so restoring it
   // would reopen an empty tab pointing at nothing. Same rule the bubble row
   // already applies to its draft.

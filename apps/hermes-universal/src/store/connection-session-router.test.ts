@@ -8,7 +8,11 @@ const { getGatewayClient, leaseSecondary, releaseSecondary, requestGateway } = v
 }))
 
 vi.mock('@/hermes', () => ({ setApiRequestProfile: vi.fn() }))
-vi.mock('@/store/gateway-secondaries', () => ({ leaseSecondary, releaseSecondary }))
+vi.mock('@/store/gateway-secondaries', async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  leaseSecondary,
+  releaseSecondary
+}))
 vi.mock('@/store/gateway', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getGatewayClient,
@@ -52,11 +56,14 @@ describe('the registry router', () => {
     expect($activeSessionRoute.get().connectionId).toBe('studio')
 
     publishActiveConnection(
-      describeConnection({ ...REMOTE, profile: 'work' }, {
-        connectionId: 'laptop',
-        dialConnectionId: 'laptop',
-        label: 'Laptop'
-      })
+      describeConnection(
+        { ...REMOTE, profile: 'work' },
+        {
+          connectionId: 'laptop',
+          dialConnectionId: 'laptop',
+          label: 'Laptop'
+        }
+      )
     )
 
     expect($activeSessionRoute.get().connectionId).toBe('laptop')
@@ -100,7 +107,11 @@ describe('the registry router', () => {
 
     leaseSecondary.mockResolvedValue({ connectionId: 'laptop', request, scopeKey: 'conn:laptop::default' })
     // The merged rows' tag is what says where a session lives.
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
     await expect(requestForSession('s9', 'session.resume', { cols: 96 })).resolves.toBe('remote-answer')
 
@@ -119,7 +130,11 @@ describe('the registry router', () => {
       }),
       scopeKey: 'conn:laptop::default'
     })
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
     await expect(requestForSession('s9', 'session.resume')).rejects.toThrow('boom')
     expect(releaseSecondary).toHaveBeenCalledTimes(1)
@@ -127,7 +142,11 @@ describe('the registry router', () => {
 
   it('reports an unreachable foreign source as a route failure, not a gateway error', async () => {
     leaseSecondary.mockRejectedValue(new Error('unreachable'))
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
     await expect(requestForSession('s9', 'session.resume')).rejects.toMatchObject({ kind: 'no-gateway' })
   })
@@ -136,7 +155,11 @@ describe('the registry router', () => {
   // why it failed so callers stay quiet about it.
   it('reports a foreign tunnel that needs sign-in as needs-sign-in', async () => {
     leaseSecondary.mockRejectedValue({ kind: 'credentials-needed', message: 'needs a passphrase', terminal: true })
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
     const failure = requestForSession('s9', 'session.resume')
 
@@ -180,7 +203,11 @@ describe('the registry router', () => {
       request: vi.fn(async () => 'x'),
       scopeKey: 'conn:laptop::default'
     })
-    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+    spliceRegistrySessionRows(
+      [],
+      [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never],
+      'studio'
+    )
 
     await requestForSession('s9', 'session.resume')
 

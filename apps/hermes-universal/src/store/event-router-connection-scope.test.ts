@@ -119,6 +119,53 @@ describe('invariant 36 — a frame is placed by its connection AND its id', () =
     expect(statusOf(b)).toBe('b-tail')
   })
 
+  /**
+   * N6 — the `!ambient` guard on the explicit-start pin, which had no test.
+   *
+   * A background socket has no focused chat, so its unscoped frames can only
+   * belong to the stream that last started on it: an explicit `message.start`
+   * takes the pin. The AMBIENT socket must not do that — a background session's
+   * start would capture the pin and drag the focused chat's unscoped deltas into
+   * it, which is #47709, the bug `UNSCOPED_STREAM_EVENT_TYPES` exists for.
+   */
+  it('lets a BACKGROUND explicit start take the pin', () => {
+    const b = seed('conn-b')
+
+    $activeSessionKey.set(seed('conn-a'))
+
+    routeGatewayEvent(frame('message.start', {}, 'conn-b'))
+    routeGatewayEvent({ connectionId: 'conn-b', payload: { text: 'b-tail' }, type: 'status.update' } as GatewayEvent)
+
+    expect(statusOf(b)).toBe('b-tail')
+  })
+
+  it('does NOT let an ambient explicit start take the pin', () => {
+    const a = seed('conn-a')
+    const other = runtimeKeyFor('conn-a', 'background')
+
+    publishSessionState(other, {
+      ...emptySessionState('other-id'),
+      connectionId: 'conn-a',
+      profile: 'default',
+      runtimeSessionId: 'background'
+    })
+    $activeSessionKey.set(a)
+
+    // A BACKGROUND session on the ambient socket starts a turn…
+    routeGatewayEvent({
+      connectionId: undefined,
+      payload: {},
+      session_id: 'background',
+      type: 'message.start'
+    } as GatewayEvent)
+    // …and the focused chat's own unscoped frame must still be the focused
+    // chat's, not dragged into the session that just started.
+    routeGatewayEvent({ payload: { text: 'mine' }, type: 'status.update' } as GatewayEvent)
+
+    expect(statusOf(a)).toBe('mine')
+    expect(statusOf(other)).toBe('')
+  })
+
   it('drops an unscoped frame from a background connection that owns no stream', () => {
     const a = seed('conn-a')
 

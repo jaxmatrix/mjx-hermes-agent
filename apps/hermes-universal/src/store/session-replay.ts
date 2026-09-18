@@ -35,11 +35,14 @@ export interface ReplayCursor {
 /** What a reconnect should do for one bound session. */
 export type ReplayPlan =
   /** Ask `session.events.since(session_id, seq)` and fold what comes back. */
-  | { kind: 'since'; seq: number }
+  | { epoch: null | string; kind: 'since'; seq: number }
   /** The log is a different one: forget the watermark and resume the session. */
   | { kind: 'resume' }
   /** More was lost than the backend kept: refetch the transcript whole. */
   | { kind: 'refetch' }
+
+/** What `readEventsSince` answers: keep going with this cursor, or re-bind. */
+export type ReplayVerdict = { cursor: ReplayCursor; kind: 'since' } | { kind: 'refetch' } | { kind: 'resume' }
 
 const cursors = new Map<string, ReplayCursor>()
 /** The `replay_epoch` each connection's socket last advertised. */
@@ -103,22 +106,32 @@ export function forgetReplayCursor(key: string): void {
 export function planReplay(key: string, epoch: null | string | undefined): ReplayPlan {
   const cursor = replayCursor(key)
 
+  // PURE (Design v1.3, N10): planning does not move the watermark. The caller
+  // commits after it has folded what came back, so a plan that never runs — a
+  // throw, a socket that went again — cannot leave a cursor claiming frames
+  // this client never applied.
   if (cursor.seq <= 0 || !cursor.epoch || (epoch ?? null) !== cursor.epoch) {
-    cursors.set(key, { epoch: epoch ?? null, seq: 0 })
-
     return { kind: 'resume' }
   }
 
-  return { kind: 'since', seq: cursor.seq }
+  return { epoch: cursor.epoch, kind: 'since', seq: cursor.seq }
+}
+
+/** Commit a cursor the caller has finished folding. */
+export function commitReplayCursor(key: string, cursor: ReplayCursor): void {
+  cursors.set(key, cursor)
 }
 
 /** The shape `session.events.since` answers with. */
 export interface SessionEventsSince {
+  /** The replay log these seqs belong to (`er.replay_epoch()`). */
+  epoch?: null | string
   events?: { seq?: number }[]
   /** The backend kept fewer frames than the gap this asked to cover. */
   truncated?: boolean
-  /** Re-delivered blocking requests: the shared channel promises these arrive
-   *  BEFORE the result, so a prompt parked in `_block` is answerable again. */
+  /** Server→client REQUESTS still unanswered — `{id, method, params}`, not
+   *  events (`tui_gateway/server_requests.py`). Universal has no path for one,
+   *  so this is read as a signal to re-bind, never forwarded. */
   open_requests?: unknown[]
 }
 
@@ -128,22 +141,44 @@ export interface SessionEventsSince {
  * `truncated` outranks everything: partial frames on top of a gap would paint a
  * transcript with a hole in it, which reads as the agent having skipped work.
  */
-export function readEventsSince(key: string, answer: SessionEventsSince | null | undefined): ReplayPlan | null {
+export function readEventsSince(
+  key: string,
+  answer: SessionEventsSince | null | undefined,
+  askedUnder: null | string
+): ReplayVerdict {
   if (!answer) {
-    return null
-  }
-
-  if (answer.truncated) {
-    cursors.set(key, { epoch: replayCursor(key).epoch, seq: 0 })
-
     return { kind: 'refetch' }
   }
 
-  for (const event of answer.events ?? []) {
-    noteReplaySeq(key, event.seq)
+  // The answer names the log it came FROM (`epoch`, `methods_session.py:2221`).
+  // A backend that restarted between this connection's `gateway.ready` and this
+  // request answers under a different one, and every seq in it addresses a ring
+  // this client has never seen — so there is nothing to fold incrementally.
+  if (answer.epoch !== undefined && (answer.epoch ?? null) !== askedUnder) {
+    return { kind: 'resume' }
   }
 
-  return null
+  if (answer.truncated) {
+    return { kind: 'refetch' }
+  }
+
+  // `open_requests` is a SIGNAL, not a frame source (Design v1.3, B4): a parked
+  // question cannot be replayed out of the ring, and universal restores one from
+  // the RESUME payload. A non-empty list therefore means re-bind, which is the
+  // path that already works.
+  if ((answer.open_requests ?? []).length > 0) {
+    return { kind: 'resume' }
+  }
+
+  let cursor = replayCursor(key)
+
+  for (const event of answer.events ?? []) {
+    if (typeof event.seq === 'number' && Number.isFinite(event.seq)) {
+      cursor = { epoch: cursor.epoch, seq: Math.max(cursor.seq, event.seq) }
+    }
+  }
+
+  return { cursor, kind: 'since' }
 }
 
 export const __testing = {

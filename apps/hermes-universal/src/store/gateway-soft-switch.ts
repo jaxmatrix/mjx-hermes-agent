@@ -6,7 +6,7 @@ import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import { resetChat } from '@/store/chat'
 import { resetRepoStatusForBackendSwitch } from '@/store/coding-status'
 import { $connection, beginGatewaySwitch, disconnect, endGatewaySwitch } from '@/store/connection'
-import { holdConnectionClient } from '@/store/connection-clients'
+import { type ClientHold, holdConnectionClient, releaseConnectionClient } from '@/store/connection-clients'
 import { setCronJobs } from '@/store/cron'
 import { closeGateway } from '@/store/gateway'
 import type { Connection, GatewayMode } from '@/store/gateway-config'
@@ -75,21 +75,33 @@ import { resetWorkspaceCwd } from '@/store/workspace-events'
  * Tabs on every OTHER connection were never on the ambient socket, and are not
  * touched.
  */
+let handOverHold: ClientHold | null = null
+
+/** Give the hand-over's bridging hold back. The tab records keep their own. */
+function releaseHandOverHold(): void {
+  releaseConnectionClient(handOverHold)
+  handOverHold = null
+}
+
 function handOverTabsToOwningClient(leaving: null | string): void {
   if (!leaving) {
     return
   }
 
-  const handed = new Set<string>()
-
-  for (const tile of $sessionTiles.get()) {
-    if (tile.connectionId !== leaving || handed.has(tile.profile)) {
-      continue
-    }
-
-    handed.add(tile.profile)
-    void holdConnectionClient(tile.connectionId, tile.profile).catch(() => undefined)
+  if (!$sessionTiles.get().some(tile => tile.connectionId === leaving && !tile.unavailable)) {
+    return
   }
+
+  // `ambient: false`, explicitly (invariant 46): at this moment the leaving
+  // connection is STILL the active one, so a client that asked the store would
+  // short-circuit and hand these tabs nothing. The tab records already hold
+  // their own client; this is the extra hold that keeps the socket up for the
+  // window in which the ambient one is gone and the new one is not yet there —
+  // it is given back on the next commit of the tab list.
+  // Given back once the tab list commits again — the records' own holds carry
+  // the connection from there.
+  releaseConnectionClient(handOverHold)
+  handOverHold = holdConnectionClient(leaving, { ambient: false })
 }
 
 export function wipeSessionListsForGatewaySwitch(leavingConnectionId?: null | string): number {
@@ -126,18 +138,19 @@ export function wipeSessionListsForGatewaySwitch(leavingConnectionId?: null | st
   dropUnheldSessionStates(leaving)
   // …and the runtime bindings STAY. They used to be dropped because every id
   // belonged to the socket being torn down; a bound tab's ids belong to its own
-  // connection's client, which this switch does not touch. The tabs on the
-  // connection being left are handed over to it here: the ambient socket was
-  // carrying them, and from now on their own client does.
-  handOverTabsToOwningClient(leaving)
+  // connection's client, which this switch does not touch. The hand-over itself
+  // happens later, in `softSwitchGateway`, where the ambient socket is already
+  // closed and the new one is not yet up — see invariant 46.
   // The new gateway re-advertises `change_events` on its own gateway.ready. A
   // stale `true` would leave every consumer on its slow backstop against a
   // backend that never broadcasts (store/live-sync.ts).
   resetLiveSync()
-  // The live-runtime ids the rehydrate snapshot remembers belong to the old
-  // backend's registry, and `clearAllSessionStates()` just dropped the slices
-  // they point at — keeping them could only reap sessions that no longer exist.
-  resetLiveRuntimeTracking()
+  // The live-runtime ids the LEAVING connection's snapshot remembers belong to a
+  // registry we are walking away from. Only that connection's, and no wipe of
+  // the statuses themselves (Design v1.3, N4): a background tab's row is lit by
+  // its OWN connection's snapshot, and clearing the lot would darken it to
+  // answer a switch it had no part in.
+  resetLiveRuntimeTracking(leaving)
   resetSessionsPaging()
   // Artifacts are keyed by sessions on the PREVIOUS backend, so both the
   // registry and any preview tab pointing into it go with them. Without this an
@@ -316,6 +329,9 @@ export async function softSwitchGateway(mode: GatewayMode, dial: () => Promise<v
   // $connection itself, and a connect* only persists its target once it has succeeded,
   // so after this point neither is still the old one.
   const previous = $connection.get()
+  // The connection we are LEAVING, captured before any teardown: the hand-over
+  // names it rather than asking the store, which by then answers about B.
+  const previousConnectionId = $activeConnectionId.get()
   const previousTarget = loadGatewayTarget()
   // The wipe nulls this, so grab it first: it is what tells us, once the new
   // gateway's list has landed, whether the chat the user was on came across.
@@ -340,8 +356,17 @@ export async function softSwitchGateway(mode: GatewayMode, dial: () => Promise<v
     }
 
     closeGateway()
+    // THE HAND-OVER (invariant 46), here and not in the wipe: A's ambient socket
+    // is gone and B is not yet active, which is the one window where "the tabs
+    // on A move to A's own client" is unambiguous. It names A explicitly —
+    // captured in `previous` before any teardown — so it is correct whatever the
+    // store says about who is active.
+    handOverTabsToOwningClient(previousConnectionId)
     $gatewayMode.set(mode)
     await dial()
+    // B is up and A's tabs are carried by their own records now: the extra hold
+    // the hand-over took for the gap is given back.
+    releaseHandOverHold()
     // Universal doesn't refresh session lists on gateway open, so the switch does it.
     let listed = true
     await Promise.all([

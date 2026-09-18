@@ -458,3 +458,31 @@ describe('a foreign tab\u2019s live turn', () => {
     expect($sessionStates.get()[own]?.busy).toBe(false)
   })
 })
+
+describe('invariant 37 / N4 — a switch forgets only the connection it leaves', () => {
+  it('keeps a background connection\u2019s live-runtime tracking', () => {
+    const foreign = runtimeKeyFor('conn-b', 'rt-keep')
+
+    seed(foreign, {
+      busy: true,
+      connectionId: 'conn-b',
+      profile: 'default',
+      runtimeSessionId: 'rt-keep',
+      storedSessionId: 'keep-id'
+    })
+
+    rehydrateLiveSessionStatuses(
+      snapshot({ id: 'rt-keep', session_key: 'keep-id', status: 'working' }),
+      Date.now(),
+      'default',
+      'conn-b'
+    )
+
+    // The app leaves conn-a. B's bookkeeping is not this switch's to forget…
+    resetLiveRuntimeTracking('conn-a')
+    // …so when B's own snapshot next says the run ended, it still reaps it.
+    rehydrateLiveSessionStatuses(snapshot(), Date.now(), 'default', 'conn-b')
+
+    expect($sessionStates.get()[foreign]?.busy).toBe(false)
+  })
+})

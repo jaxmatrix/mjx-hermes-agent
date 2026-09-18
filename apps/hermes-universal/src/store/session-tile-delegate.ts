@@ -40,7 +40,7 @@ import {
   takeVoicePlaybackInterrupted
 } from '@/lib/voice-playback'
 import { type ChatMessage, interruptSession, nextId } from '@/store/chat'
-import { holdConnectionClient, setConnectionClientTransport } from '@/store/connection-clients'
+import { setConnectionClientTransport } from '@/store/connection-clients'
 import { $tunnelStatus } from '@/store/connection-tunnels'
 import { notifyError } from '@/store/notifications'
 import {
@@ -154,11 +154,9 @@ async function resumeSessionToState(ref: SessionRef): Promise<string> {
 async function hydrateSessionToState(ref: SessionRef): Promise<string> {
   const { storedSessionId: storedId } = ref
 
-  // The tab's own socket, before any I/O: held for as long as the tab is open,
-  // pinned so nothing reaps it under a visible stream, and demoted when the last
-  // tab on this connection closes (invariants 32-34). A tab on the ACTIVE
-  // connection holds nothing — the app already owns that socket.
-  await holdConnectionClient(ref.connectionId, ref.profile).catch(() => undefined)
+  // NO HOLD HERE (invariant 47). The tab's socket is held by the tab RECORD, in
+  // the store's own commit — a resume is not a hold, and counting one here is
+  // how a rebind double-counted and a failed resume leaked.
 
   // WHICH BACKEND answered. The first one a tab sees is its binding; a different
   // one later is a different machine, and the tab goes unavailable rather than
@@ -378,17 +376,22 @@ setConnectionClientTransport({
       return
     }
 
-    // Drop the stale slice first: `resumeSessionToState` adopts a warm one as-is,
-    // and the whole point here is that this one can no longer be trusted.
-    dropSessionState(sessionKey)
-
-    await hydrateSessionToState({
+    // HYDRATE FIRST, replace second (Design v1.3, N1). Dropping the stale slice
+    // up front made a transient failure — a timeout, a socket that went again —
+    // cost the tab its transcript, with nothing to put back. The hydrate builds
+    // the replacement under its own placeholder key; only once it has landed is
+    // the old slice let go.
+    const rebuilt = await hydrateSessionToState({
       connectionId: slice.connectionId ?? LOCAL_SESSION_SCOPE,
       profile: slice.profile ?? DEFAULT_SESSION_PROFILE,
       storedSessionId: slice.storedSessionId
     })
+
+    if (rebuilt !== sessionKey) {
+      dropSessionState(sessionKey)
+    }
   },
-  request: (scope, method, params) => requestForConnection(scope, method, params)
+  request: (scope, method, params) => requestForConnection({ ...scope, profile: null }, method, params)
 })
 
 setSessionTileDelegate({

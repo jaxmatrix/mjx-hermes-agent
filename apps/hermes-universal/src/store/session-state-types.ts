@@ -202,8 +202,15 @@ export function ambientSessionScope(storedSessionId?: null | string): { connecti
   return ambientScope?.(storedSessionId) ?? { connectionId: LOCAL_SESSION_SCOPE, profile: DEFAULT_SESSION_PROFILE }
 }
 
-/** The connection a session key belongs to — what routing and teardown ask. */
-export const connectionOfSessionKey = (key: string): string => parseSessionKey(key).connectionId
+/**
+ * The connection a session key belongs to — what routing and teardown ask.
+ *
+ * NULL for a draft or hydrating placeholder (Design v1.3, N8): it has no
+ * connection yet, and answering `local` made a switch away from local drop a
+ * background draft that was bound to nothing at all.
+ */
+export const connectionOfSessionKey = (key: string): null | string =>
+  isPlaceholderKey(key) ? null : parseSessionKey(key).connectionId
 
 /** The key a stored session hydrates under until its resume returns a runtime
  *  id. Scoped, so two connections hydrating the same stored id are two slices. */

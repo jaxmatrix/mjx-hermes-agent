@@ -22,7 +22,9 @@ import { tabConnectionFor, tabIsBroken, tabIsUnsupportedHere } from '@/store/tab
 
 describe('a tab on a healthy connection', () => {
   it('says nothing at all', () => {
-    expect(tabConnectionFor({ client: { attempt: 0, phase: 'live' }, connectionId: 'conn-a' })).toEqual({ kind: 'ok' })
+    expect(tabConnectionFor({ ambient: false, client: { attempt: 0, phase: 'live' }, connectionId: 'conn-a' })).toEqual(
+      { kind: 'ok' }
+    )
     // A tab on the ACTIVE connection has no owning client: it rides the ambient
     // socket, whose state the app already shows everywhere else.
     expect(tabConnectionFor({ connectionId: 'conn-a' })).toEqual({ kind: 'ok' })
@@ -30,6 +32,21 @@ describe('a tab on a healthy connection', () => {
     expect(tabConnectionFor({ client: { attempt: 2, phase: 'opening' }, connectionId: 'conn-a' })).toEqual({
       kind: 'ok'
     })
+  })
+})
+
+describe('invariant 46 — a missing hold is not health', () => {
+  it('shows a non-ambient tab with no client as not connected', () => {
+    // The hold IS the serving: no hold means nothing is carrying this tab's
+    // frames, and a tab that looks fine and cannot send is the failure.
+    expect(tabConnectionFor({ ambient: false, connectionId: 'conn-a' })).toMatchObject({
+      connectionId: 'conn-a',
+      kind: 'lost'
+    })
+  })
+
+  it('leaves an AMBIENT tab alone, which has no hold by design', () => {
+    expect(tabConnectionFor({ ambient: true, connectionId: 'conn-a' })).toEqual({ kind: 'ok' })
   })
 })
 

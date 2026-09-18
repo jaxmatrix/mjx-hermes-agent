@@ -12,9 +12,11 @@
  *
  * The rules, and why:
  *
- *  * ONE socket per connection (invariant 32). `clientFor` answers `ambient` for
- *    the active connection, so a tab there opens nothing — the app already holds
- *    that socket, and a second one would double every frame.
+ *  * ONE socket per CONNECTION (invariant 32, Design v1.3 N2) — not per
+ *    connection+profile. The backend serves every profile over one socket
+ *    (592's unified mode) and a cross-profile call already names `profile` on
+ *    the request, so a second socket for a second profile would be a second
+ *    stream of the same events and a second tunnel hold.
  *  * PINNED means never evicted and never reaped (invariant 33). Evicting the
  *    socket a visible tab streams on is the failure `gateway-secondaries`'
  *    header warns about, one rung worse; the cap goes on governing request-only
@@ -24,8 +26,14 @@
  *    reopening a tab inside that window is warm. An immediate close is only for
  *    a connection that was removed or edited, and for quit.
  *
- * Refcounted by TAB, not by request: `hold`/`release` are the two verbs, and a
- * connection with one tab open holds one socket however many requests ride it.
+ * WHO holds: the tab RECORD (invariant 47). `holdConnectionClient` hands back an
+ * opaque {@link ClientHold} and the tab stores keep it beside the record that
+ * earned it, released by the same diff that took it — so "how many tabs want
+ * this connection" is never a number anybody increments.
+ *
+ * And it never asks who is ACTIVE (invariant 46): the caller passes `ambient`,
+ * because the one caller that is not a tab — the switch's hand-over — runs at
+ * the moment when the connection it is handing over is still the active one.
  */
 
 import type { GatewayEvent } from '@/gateway'
@@ -41,16 +49,21 @@ import {
   setPinnedSecondaryClosedListener,
   unpinSecondary
 } from '@/store/gateway-secondaries'
-import { normalizeProfileKey } from '@/store/profile'
-import { connectionEpoch, planReplay, readEventsSince, type SessionEventsSince } from '@/store/session-replay'
-import { $sessionStates } from '@/store/session-state-types'
+import {
+  commitReplayCursor,
+  connectionEpoch,
+  planReplay,
+  readEventsSince,
+  type SessionEventsSince
+} from '@/store/session-replay'
+import { $sessionStates, DEFAULT_SESSION_PROFILE } from '@/store/session-state-types'
 
 /** What a tab's work goes through. */
 export type ConnectionClient =
   /** The app's own socket: the tab is on the active connection. */
   | { kind: 'ambient' }
   /** This connection's own socket, held for as long as a tab needs it. */
-  | { kind: 'owning'; connectionId: string; scopeKey: string }
+  | { connectionId: string; kind: 'owning'; scopeKey: string }
 
 /**
  * What a tab on this connection can say about its socket.
@@ -68,11 +81,11 @@ export type ConnectionClient =
 export type ConnectionClientPhase = 'degraded' | 'live' | 'lost' | 'opening'
 
 export interface ConnectionClientState {
-  phase: ConnectionClientPhase
   /** Which rung of the backoff ladder we are on; 0 while live. */
   attempt: number
   /** Why it is lost, for the error box. */
   error?: string
+  phase: ConnectionClientPhase
   /** A terminal failure: retrying cannot fix it, the user must act. */
   terminal?: boolean
 }
@@ -81,7 +94,84 @@ export interface ConnectionClientState {
  *  in the store layer branches on it. */
 export const $connectionClients = atom<Record<string, ConnectionClientState>>({})
 
-function setPhase(connectionId: string, state: ConnectionClientState): void {
+/**
+ * A HOLD on a connection's client — opaque, and the only thing that keeps one
+ * open (Design v1.3, B3).
+ *
+ * Branded so it cannot be forged or counted: the tab store files it beside the
+ * record that earned it, and hands it back when that record leaves the held set.
+ */
+declare const holdBrand: unique symbol
+
+export interface ClientHold {
+  readonly [holdBrand]: true
+  readonly connectionId: string
+}
+
+interface Hold {
+  /** Which rung the ladder is on. */
+  attempt: number
+  connectionId: string
+  /** The open in flight, if any — so two tabs binding at once share it. */
+  opening: null | Promise<void>
+  /** The backoff timer, while the ladder is climbing. */
+  retry: null | ReturnType<typeof setTimeout>
+  scopeKey: string
+  /** Live holds. The socket lives while it is > 0. */
+  holders: number
+  /** Undoes the event listener, so a demoted client stops routing frames. */
+  unlisten: null | (() => void)
+}
+
+const holds = new Map<string, Hold>()
+
+/** How a frame from a connection's own socket reaches the app. Registered by the
+ *  owning client alone: `deliver()` drops anything nobody claims (rule 7). */
+let sink: ((event: GatewayEvent) => void) | null = null
+
+export function setConnectionEventSink(next: (event: GatewayEvent) => void): void {
+  sink = next
+}
+
+/**
+ * The pool key for a connection's ONE socket (Design v1.3, N2).
+ *
+ * Per connection, not per connection+profile: `connections_resolve` is already
+ * called with `profile: null`, so the socket was never profile-specific — only
+ * its pool key was, which made two profiles of one connection open two.
+ */
+export const connectionScopeKey = (connectionId: string): string =>
+  backendScopeKey(connectionId, DEFAULT_SESSION_PROFILE)
+
+/** Whether `connectionId` is the one the app itself is pointed at. For a TAB,
+ *  which may ask; the hand-over passes its own answer instead (invariant 46). */
+export function isAmbientConnection(connectionId: string): boolean {
+  return $activeConnection.get()?.connectionId === connectionId
+}
+
+/**
+ * The client a tab on `connectionId` works through.
+ *
+ * A tab on the ACTIVE connection opens nothing: `ambient` names the socket the
+ * app already holds. Every other connection gets exactly one owning client,
+ * whether one tab uses it or six.
+ */
+export function clientFor(connectionId: string): ConnectionClient {
+  if (isAmbientConnection(connectionId)) {
+    return { kind: 'ambient' }
+  }
+
+  return { connectionId, kind: 'owning', scopeKey: connectionScopeKey(connectionId) }
+}
+
+function setPhase(connectionId: string, hold: Hold, state: ConnectionClientState): void {
+  // IDENTITY FIRST (Design v1.3, N3): a settle from a dial whose hold has since
+  // been released — or replaced by a later one — must not publish a phase that
+  // outlives it, leaving a banner for a connection nothing is holding.
+  if (holds.get(connectionId) !== hold) {
+    return
+  }
+
   $connectionClients.set({ ...$connectionClients.get(), [connectionId]: state })
 }
 
@@ -97,99 +187,101 @@ export function connectionClientState(connectionId: string): ConnectionClientSta
   return $connectionClients.get()[connectionId]
 }
 
-interface Hold {
-  connectionId: string
-  scopeKey: string
-  profile: null | string
-  /** The backoff timer, while the ladder is climbing. */
-  retry: null | ReturnType<typeof setTimeout>
-  attempt: number
-  /** Open tabs bound to this connection. The socket lives while it is > 0. */
-  tabs: number
-  /** Undoes the event listener, so a demoted client stops routing frames. */
-  unlisten: null | (() => void)
-  /** The open in flight, if any — so two tabs binding at once share it. */
-  opening: null | Promise<void>
-}
-
-const holds = new Map<string, Hold>()
-
-/** How a frame from a connection's own socket reaches the app. Registered by the
- *  owning client alone: `deliver()` drops anything nobody claims (rule 7). */
-let sink: ((event: GatewayEvent) => void) | null = null
-
-export function setConnectionEventSink(next: (event: GatewayEvent) => void): void {
-  sink = next
-}
-
-const scopeOf = (connectionId: string, profile: null | string | undefined): string =>
-  backendScopeKey(connectionId, normalizeProfileKey(profile ?? 'default'))
-
-/** Whether `connectionId` is the one the app itself is pointed at. */
-export function isAmbientConnection(connectionId: string): boolean {
-  return $activeConnection.get()?.connectionId === connectionId
-}
-
 /**
- * The client a tab on `connectionId` works through.
+ * A tab bound to `connectionId` wants its client.
  *
- * A tab on the ACTIVE connection opens nothing: `ambient` names the socket the
- * app already holds. Every other connection gets exactly one owning client,
- * whether one tab uses it or six.
+ * `ambient` is the CALLER's answer to "is this the connection the app is on?" —
+ * never a read of the active connection (invariant 46). A tab asks the store;
+ * the switch's hand-over passes `false` for the connection it is handing over,
+ * because at that moment that connection is still the active one and a
+ * short-circuit would hand it nothing.
+ *
+ * The first hold on a connection pins its scope and opens its socket; later
+ * holds share it, including one taken while the first is still opening (a cold
+ * SSH dial is 45-90 s, and two tabs restored together must not start two dials).
  */
-export function clientFor(connectionId: string, profile?: null | string): ConnectionClient {
-  if (isAmbientConnection(connectionId)) {
-    return { kind: 'ambient' }
+export function holdConnectionClient(connectionId: string, options: { ambient: boolean }): ClientHold | null {
+  if (options.ambient) {
+    return null
   }
 
-  return { connectionId, kind: 'owning', scopeKey: scopeOf(connectionId, profile) }
-}
-
-/**
- * A tab bound to `connectionId` opened.
- *
- * Idempotent per tab: the caller holds once and releases once. The first hold on
- * a non-ambient connection pins the scope and opens its socket; later holds
- * share it, including one taken while the first is still opening (a cold SSH
- * dial is 45–90 s, and two tabs restored together must not start two dials).
- */
-export async function holdConnectionClient(connectionId: string, profile?: null | string): Promise<void> {
-  const client = clientFor(connectionId, profile)
-
-  if (client.kind === 'ambient') {
-    return
-  }
-
-  const { scopeKey } = client
-  const existing = holds.get(scopeKey)
+  const existing = holds.get(connectionId)
 
   if (existing) {
-    existing.tabs += 1
+    existing.holders += 1
 
-    return existing.opening ?? undefined
+    return { connectionId } as ClientHold
   }
 
   const hold: Hold = {
     attempt: 0,
     connectionId,
+    holders: 1,
     opening: null,
-    profile: profile ?? null,
     retry: null,
-    scopeKey,
-    tabs: 1,
+    scopeKey: connectionScopeKey(connectionId),
     unlisten: null
   }
 
-  holds.set(scopeKey, hold)
+  holds.set(connectionId, hold)
   // BEFORE the open: a pin taken while the socket is still opening survives it,
   // so a slow dial cannot be evicted by an unrelated request-only lease landing
   // in the meantime.
-  pinSecondary(scopeKey)
+  pinSecondary(hold.scopeKey)
 
   hold.unlisten = addConnectionEventListener(connectionId, event => sink?.(event))
   hold.opening = dial(hold)
 
-  return hold.opening
+  return { connectionId } as ClientHold
+}
+
+/**
+ * Give a hold back.
+ *
+ * The last one DEMOTES the socket to request-only: it stops routing frames (no
+ * tab is listening) and joins the ordinary idle reap, so a reopen inside the
+ * minute finds it warm. It is not closed here — that is a connection being
+ * removed or edited, or quit.
+ */
+export function releaseConnectionClient(hold: ClientHold | null | undefined): void {
+  if (!hold) {
+    return
+  }
+
+  const live = holds.get(hold.connectionId)
+
+  if (!live) {
+    return
+  }
+
+  live.holders -= 1
+
+  if (live.holders > 0) {
+    return
+  }
+
+  holds.delete(hold.connectionId)
+  live.unlisten?.()
+  live.unlisten = null
+
+  if (live.retry) {
+    clearTimeout(live.retry)
+    live.retry = null
+  }
+
+  clearPhase(hold.connectionId)
+  unpinSecondary(live.scopeKey)
+  // …and the stream bookkeeping the router kept for it (Design v1.3, N10): a
+  // connection nothing holds has no stream to pin.
+  forgetStream?.(hold.connectionId)
+}
+
+/** How the router forgets a connection's unscoped-stream pin. Injected, because
+ *  the router imports this module rather than the other way round. */
+let forgetStream: null | ((connectionId: string) => void) = null
+
+export function setConnectionStreamReset(reset: (connectionId: string) => void): void {
+  forgetStream = reset
 }
 
 /**
@@ -202,12 +294,12 @@ export async function holdConnectionClient(connectionId: string, profile?: null 
  * chat that silently stops.
  */
 function dial(hold: Hold): Promise<void> {
-  setPhase(hold.connectionId, { attempt: hold.attempt, phase: 'opening' })
+  setPhase(hold.connectionId, hold, { attempt: hold.attempt, phase: 'opening' })
 
   const open = leaseSecondary(hold.scopeKey, hold.connectionId)
     .then(async () => {
       hold.attempt = 0
-      setPhase(hold.connectionId, { attempt: 0, phase: 'live' })
+      setPhase(hold.connectionId, hold, { attempt: 0, phase: 'live' })
       await catchUp(hold)
     })
     .catch((error: unknown) => {
@@ -215,7 +307,7 @@ function dial(hold: Hold): Promise<void> {
       // being retried: stop the ladder and let the surface offer Connect.
       const terminal = isTunnelSignInError(error) || needsInteraction((error as { status?: never })?.status)
 
-      setPhase(hold.connectionId, {
+      setPhase(hold.connectionId, hold, {
         attempt: hold.attempt,
         error: error instanceof Error ? error.message : String(error),
         phase: terminal ? 'lost' : 'degraded',
@@ -236,7 +328,7 @@ function dial(hold: Hold): Promise<void> {
 /** Climb one rung, while a tab still wants this socket. Full-jitter backoff, so
  *  N clients of one restarted gateway do not redial in lockstep. */
 function scheduleRetry(hold: Hold): void {
-  if (hold.retry || hold.tabs <= 0) {
+  if (hold.retry || hold.holders <= 0) {
     return
   }
 
@@ -246,7 +338,7 @@ function scheduleRetry(hold: Hold): void {
   hold.retry = setTimeout(() => {
     hold.retry = null
 
-    if (hold.tabs > 0 && holds.get(hold.scopeKey) === hold) {
+    if (hold.holders > 0 && holds.get(hold.connectionId) === hold) {
       hold.opening = dial(hold)
     }
   }, delay)
@@ -254,8 +346,8 @@ function scheduleRetry(hold: Hold): void {
 
 /** Retry now — the error box's button. Cancels the pending rung so the user's
  *  ask is not queued behind a long one. */
-export function retryConnectionClient(connectionId: string, profile?: null | string): void {
-  const hold = holds.get(scopeOf(connectionId, profile))
+export function retryConnectionClient(connectionId: string): void {
+  const hold = holds.get(connectionId)
 
   if (!hold || hold.opening) {
     return
@@ -280,9 +372,13 @@ export function retryConnectionClient(connectionId: string, profile?: null | str
  * through the ordinary router — the same path a live frame takes, so nothing
  * needs a second reducer.
  *
- * `open_requests` FIRST: the ring cannot carry "a question still waiting", so a
- * clarify or an approval parked in `_block` is re-delivered before the frames
- * that follow it, exactly as the shared channel's contract promises.
+ * `open_requests` is a SIGNAL, not a frame source (Design v1.3, B4). A snapshot
+ * is a JSON-RPC REQUEST (`{id, method, params}`), universal has no server→client
+ * request path — its client handles `frame.method === 'event'` and nothing else
+ * — and a parked prompt is restored from the RESUME payload. So a non-empty
+ * `open_requests` means "this client cannot reconstruct a parked question from
+ * the ring", which is the rebind verdict; nothing is synthesised and no
+ * unstamped frame can reach the router.
  */
 async function catchUp(hold: Hold): Promise<void> {
   const epoch = connectionEpoch(hold.connectionId)
@@ -294,38 +390,39 @@ async function catchUp(hold: Hold): Promise<void> {
 
     const plan = planReplay(key, epoch)
 
-    if (plan.kind !== 'since') {
-      // A different log, or a session this client never stamped a seq for:
-      // there is nothing to resume from incrementally.
-      await rebind?.(key, plan.kind)
-
-      continue
-    }
-
     try {
-      const answer = await request?.(hold, 'session.events.since', {
-        last_seen: plan.seq,
-        session_id: slice.runtimeSessionId
-      })
-
-      for (const open of (answer as SessionEventsSince | undefined)?.open_requests ?? []) {
-        sink?.(open as GatewayEvent)
-      }
-
-      const verdict = readEventsSince(key, answer as SessionEventsSince | undefined)
-
-      if (verdict?.kind === 'refetch') {
-        await rebind?.(key, 'refetch')
+      if (plan.kind !== 'since') {
+        // A different log, or a session this client never stamped a seq for:
+        // there is nothing to catch up from incrementally.
+        await rebind?.(key, plan.kind)
 
         continue
       }
 
-      for (const event of (answer as SessionEventsSince | undefined)?.events ?? []) {
+      const answer = (await request?.(hold, 'session.events.since', {
+        last_seen: plan.seq,
+        session_id: slice.runtimeSessionId
+      })) as SessionEventsSince | undefined
+
+      const verdict = readEventsSince(key, answer, plan.epoch)
+
+      if (verdict.kind !== 'since') {
+        await rebind?.(key, verdict.kind)
+
+        continue
+      }
+
+      for (const event of answer?.events ?? []) {
+        // Every frame carries the connection that delivered it, and every frame
+        // came from the backend's ring — this loop cannot invent one.
         sink?.({ ...(event as GatewayEvent), connectionId: hold.connectionId })
       }
+
+      commitReplayCursor(key, verdict.cursor)
     } catch {
-      // A catch-up that cannot run is not a reason to tear anything down: the
-      // socket is live, and the next frame arrives as usual.
+      // A catch-up that cannot run marks the SESSION, not the client (Design
+      // v1.3, N1): the socket is live, the next frame arrives as usual, and the
+      // other bound sessions still get their turn.
     }
   }
 }
@@ -338,78 +435,38 @@ let rebind: null | ((sessionKey: string, mode: 'refetch' | 'resume') => Promise<
 
 export function setConnectionClientTransport(next: {
   rebind: (sessionKey: string, mode: 'refetch' | 'resume') => Promise<void>
-  request: (
-    scope: { connectionId: string; profile: null | string },
-    method: string,
-    params: Record<string, unknown>
-  ) => Promise<unknown>
+  request: (scope: { connectionId: string }, method: string, params: Record<string, unknown>) => Promise<unknown>
 }): void {
   rebind = next.rebind
-  request = (hold, method, params) =>
-    next.request({ connectionId: hold.connectionId, profile: hold.profile }, method, params)
-}
-
-/**
- * A tab bound to `connectionId` closed.
- *
- * The last one DEMOTES the socket to request-only: it stops routing frames (no
- * tab is listening) and joins the ordinary idle reap, so a reopen inside the
- * minute finds it warm. It is not closed here — that is a connection being
- * removed or edited, or quit.
- */
-export function releaseConnectionClient(connectionId: string, profile?: null | string): void {
-  const scopeKey = scopeOf(connectionId, profile)
-  const hold = holds.get(scopeKey)
-
-  if (!hold) {
-    return
-  }
-
-  hold.tabs -= 1
-
-  if (hold.tabs > 0) {
-    return
-  }
-
-  holds.delete(scopeKey)
-  hold.unlisten?.()
-  hold.unlisten = null
-
-  if (hold.retry) {
-    clearTimeout(hold.retry)
-    hold.retry = null
-  }
-
-  clearPhase(connectionId)
-  unpinSecondary(scopeKey)
+  request = (hold, method, params) => next.request({ connectionId: hold.connectionId }, method, params)
 }
 
 // A pinned socket went away — its tunnel moved or closed, or something stopped
 // it. The tabs on it keep their slices and their runtime ids, which is what
 // makes the catch-up possible when it comes back; the ladder starts here.
 function watchPinnedCloses(): void {
-  setPinnedSecondaryClosedListener(scopeKey => {
-    const hold = holds.get(scopeKey)
+  setPinnedSecondaryClosedListener((_scopeKey, connectionId) => {
+    const hold = holds.get(connectionId)
 
-    if (!hold || hold.tabs <= 0) {
+    if (!hold || hold.holders <= 0) {
       return
     }
 
-    setPhase(hold.connectionId, { attempt: hold.attempt, phase: 'degraded' })
+    setPhase(connectionId, hold, { attempt: hold.attempt, phase: 'degraded' })
     scheduleRetry(hold)
   })
 }
 
 watchPinnedCloses()
 
-/** Open tabs on this connection — what makes its client an owning one. */
-export function connectionTabCount(connectionId: string, profile?: null | string): number {
-  return holds.get(scopeOf(connectionId, profile))?.tabs ?? 0
+/** Live holds on this connection — what makes its client an owning one. */
+export function connectionHoldCount(connectionId: string): number {
+  return holds.get(connectionId)?.holders ?? 0
 }
 
 /** Every connection currently holding an owning client. */
 export function ownedConnections(): string[] {
-  return [...holds.values()].map(hold => hold.connectionId)
+  return [...holds.keys()]
 }
 
 export const __testing = {
@@ -432,5 +489,6 @@ export const __testing = {
     sink = null
     rebind = null
     request = null
+    forgetStream = null
   }
 }

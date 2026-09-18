@@ -55,6 +55,8 @@ export function tabIsUnsupportedHere(connectionId: null | string | undefined): b
  * rides the ambient socket whose state the app already shows everywhere else.
  */
 export function tabConnectionFor(input: {
+  /** Whether this tab is on the connection the app itself is pointed at. */
+  ambient?: boolean
   client?: ConnectionClientState | undefined
   connectionId: null | string | undefined
   tile?: Pick<SessionTile, 'unavailable'> | undefined
@@ -69,15 +71,25 @@ export function tabConnectionFor(input: {
 
   const client = input.client
 
-  if (!client || client.phase === 'live' || client.phase === 'opening') {
+  if (client?.phase === 'live' || client?.phase === 'opening') {
+    return OK
+  }
+
+  // A tab on the ACTIVE connection rides the ambient socket, whose state the
+  // app already shows everywhere else — it has no hold, and that is correct.
+  // Any OTHER connection with no hold is not connected, and the banner says so
+  // rather than claiming health it cannot vouch for (invariant 46): a missing
+  // hold used to read as `ok`, which is exactly the tab that looks fine and
+  // cannot send.
+  if (!client && input.ambient !== false) {
     return OK
   }
 
   return {
     connectionId: input.connectionId ?? LOCAL_SESSION_SCOPE,
-    error: client.error,
+    error: client?.error,
     kind: 'lost',
-    terminal: Boolean(client.terminal)
+    terminal: Boolean(client?.terminal)
   }
 }
 

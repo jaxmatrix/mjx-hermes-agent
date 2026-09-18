@@ -444,10 +444,12 @@ export function startLiveSessionSync(): () => void {
       return
     }
 
-    // The ids from the previous episode named runs on a socket that is gone;
-    // `invalidateRuntimeBindings` (app/contrib/controller) has already cleared
-    // the busy flags they pointed at, so keeping them could only mis-reap.
-    resetLiveRuntimeTracking()
+    // The ids from the previous episode named runs on the AMBIENT socket, which
+    // is the one that just re-opened; `invalidateRuntimeBindings`
+    // (app/contrib/controller) has already cleared the busy flags they pointed
+    // at, so keeping them could only mis-reap. A background connection's own
+    // client has its own episode and is not this one's to forget (N4).
+    resetLiveRuntimeTracking($activeConnectionId.get())
     void pullLiveSessionStatuses()
 
     // The on-connect reseed universal never had. `wipeSessionListsForGatewaySwitch`
