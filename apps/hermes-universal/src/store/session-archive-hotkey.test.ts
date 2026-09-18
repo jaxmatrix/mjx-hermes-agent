@@ -14,7 +14,7 @@ import type * as SessionStore from '@/store/session-lifecycle'
 
 const archiveSessionLocal = vi.fn(async (_id: string) => {})
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {

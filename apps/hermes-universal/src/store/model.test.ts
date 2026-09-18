@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -18,7 +18,7 @@ vi.mock('@/hermes', async importOriginal => ({
 import { getGlobalModelInfo } from '@/hermes'
 import { modelOptionsQueryKey } from '@/lib/model-options'
 import { queryClient } from '@/lib/query-client'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import type { NotificationInput } from '@/store/notifications'
 import { notify } from '@/store/notifications'
 import { $activeGatewayProfile } from '@/store/profile'

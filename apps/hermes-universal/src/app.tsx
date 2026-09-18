@@ -161,3 +161,11 @@ function AppRoot() {
   // shell/overlays entirely (MJX-104, generalized in MJXHRM-173).
   return isTileWindow() ? <TileWindowRoot /> : <MobileController />
 }
+
+// Desktop's main.tsx does `import App from './app'`, where `./app` resolves to
+// its src/app/index.tsx. Universal has a real src/app.tsx — this shell, with the
+// mobile controller and the satellite surfaces — and a file wins over a sibling
+// directory, so the same specifier lands here. Exporting App as the default too
+// is what lets main.tsx stay byte-identical to desktop's rather than becoming a
+// merge target over one import line.
+export default App

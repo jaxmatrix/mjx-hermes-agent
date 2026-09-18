@@ -33,7 +33,7 @@ const h = vi.hoisted(() => {
 })
 
 vi.mock('@/hermes', () => ({
-  apiRequestProfile: () => null,
+  getApiRequestProfile: () => null,
   // Reached via useOnProfileSwitch → store/profile → store/profiles, which syncs
   // the REST scope at import time.
   setApiRequestProfile: vi.fn(),

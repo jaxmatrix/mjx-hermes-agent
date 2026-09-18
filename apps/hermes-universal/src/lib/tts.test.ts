@@ -43,10 +43,10 @@ const { connectionRef, FakeSocket, mintWsTicket, speakText } = vi.hoisted(() => 
   }
 })
 
-// `apiRequestProfile` is reached through `@/store/voice-prefs`, which lib/tts
+// `getApiRequestProfile` is reached through `@/store/voice-prefs`, which lib/tts
 // imports for the output volume; the config read/write are never called here.
 vi.mock('@/hermes', () => ({
-  apiRequestProfile: () => null,
+  getApiRequestProfile: () => null,
   getHermesConfigRecord: vi.fn(),
   saveHermesConfig: vi.fn(),
   speakText

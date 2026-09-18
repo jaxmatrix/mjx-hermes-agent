@@ -13,7 +13,7 @@ vi.mock('@/store/gateway-secondaries', async importOriginal => ({
   leaseSecondary,
   releaseSecondary
 }))
-vi.mock('@/store/gateway', async importOriginal => ({
+vi.mock('@/store/gateway-client', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getGatewayClient,
   requestGateway
@@ -28,7 +28,7 @@ import { $activeConnection, describeConnection, publishActiveConnection } from '
 // and turns every cross-source assertion here into a green lie. (Verified: drop
 // the `registrySessionRouter.active()` assertion and four of these go red.)
 import { registrySessionRouter } from './connection-session-router'
-import { $gatewayState, withGatewayProfile } from './gateway'
+import { $gatewayState, withGatewayProfile } from './gateway-client'
 import { $gatewaySwitching } from './gateway-switch'
 import { $activeProfile } from './profiles'
 import { $activeSessionRoute, requestForSession, SessionRouteError } from './session-request-router'

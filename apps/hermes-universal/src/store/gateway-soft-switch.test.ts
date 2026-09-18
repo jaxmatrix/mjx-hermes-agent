@@ -11,7 +11,7 @@ vi.mock('@/store/connection', async () => {
     disconnect: vi.fn()
   }
 })
-vi.mock('@/store/gateway', () => ({ closeGateway: vi.fn() }))
+vi.mock('@/store/gateway-client', () => ({ closeGateway: vi.fn() }))
 vi.mock('@/store/gateway-restore', () => ({
   dialSavedTarget: vi.fn().mockResolvedValue(undefined),
   loadGatewayTarget: vi.fn().mockReturnValue(null)
@@ -109,7 +109,7 @@ import { resetChat } from '@/store/chat'
 import { resetRepoStatusForBackendSwitch } from '@/store/coding-status'
 import { $connection, beginGatewaySwitch, disconnect, endGatewaySwitch } from '@/store/connection'
 import { $connectionClients, connectionHoldCount } from '@/store/connection-clients'
-import { closeGateway } from '@/store/gateway'
+import { closeGateway } from '@/store/gateway-client'
 import type { Connection } from '@/store/gateway-config'
 import { dialSavedTarget, type GatewayTarget, loadGatewayTarget } from '@/store/gateway-restore'
 import { closeAllSecondaries, releaseParkedTunnels } from '@/store/gateway-secondaries'

@@ -19,7 +19,7 @@ vi.mock('@/hermes', () => ({
 // park a promise and every pinned-delete test would time out. Default: yes.
 vi.mock('@/store/confirm', () => ({ confirm: vi.fn(async () => true) }))
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -37,7 +37,7 @@ import type { ChatMessage } from '@/lib/chat-messages'
 import { __resetTranscriptTailCache, readTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
 import { $busy, $currentCwd, $messages, $sessionId } from '@/store/chat'
 import { confirm } from '@/store/confirm'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import * as notifications from '@/store/notifications'
 import { $showAllProfiles } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'

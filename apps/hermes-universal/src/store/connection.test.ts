@@ -11,7 +11,7 @@ vi.mock('@/lib/auth', () => ({
   portalLogout: vi.fn().mockResolvedValue(undefined),
   portalAgentSignIn: vi.fn().mockResolvedValue({ connected: true, baseUrl: 'https://a1' })
 }))
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -73,7 +73,7 @@ import {
 } from '@/lib/auth'
 import { clearSecrets, saveSecrets } from '@/lib/secure-store'
 import { clearSessionJar, suspendSessionCookiePersistence } from '@/lib/session-persist'
-import { $gatewayState, connectGateway } from '@/store/gateway'
+import { $gatewayState, connectGateway } from '@/store/gateway-client'
 import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
 import { connectSshBackend, disconnectSsh } from '@/store/ssh-backend'
 import { httpRequest } from '@/transport/http'

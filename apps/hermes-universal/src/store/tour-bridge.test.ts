@@ -21,7 +21,7 @@ const stream = vi.hoisted(() => ({ route: null as ((event: { payload?: unknown; 
 
 const windows = vi.hoisted(() => ({ owns: true }))
 
-vi.mock('@/store/gateway', () => ({
+vi.mock('@/store/gateway-client', () => ({
   addGatewayEventListener: (listener: (event: { payload?: unknown; type: string }) => void) => {
     stream.route = listener
 
@@ -49,7 +49,7 @@ vi.mock('@/store/pane-focus', () => ({
   }
 }))
 
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 
 import { __resetAgentReadRequests } from './agent-read-requests'
 import { installTourDriver } from './tour-bridge'

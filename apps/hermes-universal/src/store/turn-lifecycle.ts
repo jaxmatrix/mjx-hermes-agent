@@ -37,7 +37,7 @@ import { appendLiveSessionProjection } from '@/lib/session-history'
 import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { applyResumedApproval } from '@/store/approvals'
 import { applyResumedClarify } from '@/store/clarify'
-import { $gatewayState } from '@/store/gateway'
+import { $gatewayState } from '@/store/gateway-client'
 import { applyResumedMcpSetup } from '@/store/mcp-setup'
 import { requestForSession } from '@/store/session-request-router'
 import {

@@ -31,7 +31,7 @@ import {
 import { $activeConnectionId } from '@/store/active-connection'
 import { replayPendingApproval } from '@/store/approvals'
 import { atom, computed } from '@/store/atom'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { newSessionOverrides } from '@/store/model'
 import { clearNotifications, notifyError } from '@/store/notifications'
 import { setPetActivity } from '@/store/pet'

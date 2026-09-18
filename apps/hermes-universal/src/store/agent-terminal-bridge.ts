@@ -23,7 +23,7 @@
 
 import { writeAgentTerminalChunk } from '@/app/right-pane/terminal/agent-terminal-stream'
 import type { GatewayEvent } from '@/gateway'
-import { addGatewayEventListener } from '@/store/gateway'
+import { addGatewayEventListener } from '@/store/gateway-client'
 import { closeAgentTerminalByProc, ensureAgentTerminal } from '@/store/terminals'
 
 function routeAgentTerminalEvent(event: GatewayEvent): void {

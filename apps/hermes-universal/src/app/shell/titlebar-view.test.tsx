@@ -29,7 +29,7 @@ vi.mock('@/lib/surface', () => ({
   surfaceCapabilities: async () => caps
 }))
 
-import { Titlebar } from './titlebar'
+import { Titlebar } from './titlebar-view'
 
 const renderTitlebar = () =>
   render(

@@ -18,7 +18,7 @@ vi.mock('@/store/system-status', async () => {
 
 import { registry } from '@/contrib/registry'
 import { resetChat } from '@/store/chat'
-import { $gatewayState } from '@/store/gateway'
+import { $gatewayState } from '@/store/gateway-client'
 import { $statusbarHiddenIds, STATUSBAR_HIDDEN_BY_DEFAULT } from '@/store/statusbar-prefs'
 import { $statusSnapshot } from '@/store/system-status'
 import { $workspaceCwd } from '@/store/workspace-events'

@@ -26,11 +26,17 @@ import { HapticsProvider } from './components/haptics-provider'
 import { RootTooltipProvider } from './components/ui/tooltip'
 import { I18nProvider } from './i18n'
 import { installClipboardShim } from './lib/clipboard'
+import { installHermesDesktopBridge } from './lib/hermes-desktop'
 import { queryClient } from './lib/query-client'
 import { installRendererAnimationPauseState } from './lib/renderer-loop-pause'
 import { installSelectionCopyColorGuard } from './lib/selection-copy-colors'
 import { ThemeProvider } from './themes/context'
 
+// FIRST: desktop's whole API layer reaches the backend through
+// `window.hermesDesktop.api`, and the store modules imported above for their
+// side effects can issue a request during evaluation. Installing the bridge
+// after them would let a boot-time call hit an undefined global.
+installHermesDesktopBridge()
 installClipboardShim()
 // Chromium serializes selection copies (Cmd+C, right-click Copy) with the
 // theme's computed colors inlined; without this guard a dark-theme selection

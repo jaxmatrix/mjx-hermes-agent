@@ -11,7 +11,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -28,7 +28,7 @@ vi.mock('@/store/notifications', () => ({
 
 import { $activeConnection } from '@/store/active-connection'
 import { ensureSession } from '@/store/chat'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { $activeProfile } from '@/store/profiles'
 import {
   $activeSessionKey,

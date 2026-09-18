@@ -244,6 +244,25 @@ export default defineConfig(({ command }) => ({
       // runtime-loaded one gets the same object through sdk/runtime.ts's blob
       // shims. Same alias desktop's vite.config.ts declares.
       '@hermes/plugin-sdk': fileURLToPath(new URL('./src/sdk/index.ts', import.meta.url)),
+      // @hermes/shared is a workspace package whose exports map does not list
+      // every module the ported desktop code imports (translucency is the one
+      // that bit). Desktop resolves the package by ALIAS rather than through
+      // the exports field for exactly this reason, so do the same: the prefix
+      // alias covers every subpath whose filename matches, and the two below it
+      // cover the ones whose filename does not.
+      '@hermes/shared/billing': fileURLToPath(new URL('../shared/src/billing-types.ts', import.meta.url)),
+      '@hermes/shared/color': fileURLToPath(new URL('../shared/src/color.ts', import.meta.url)),
+      '@hermes/shared': fileURLToPath(new URL('../shared/src', import.meta.url)),
+      // The tour injects driver.js's prebuilt IIFE into a guest page as raw
+      // source, and the package's exports map does not expose that dist file.
+      // Resolve the main entry and point at its sibling. Both keys on purpose:
+      // alias matching is exact, and the id keeps the `?raw` query in dev but
+      // loses it on some build paths.
+      'driver.js/dist/driver.js.iife.js?raw': `${join(
+        dirname(require.resolve('driver.js')),
+        'driver.js.iife.js'
+      )}?raw`,
+      'driver.js/dist/driver.js.iife.js': join(dirname(require.resolve('driver.js')), 'driver.js.iife.js'),
       // React MUST be a singleton: sdk/runtime.ts hands plugins the app's own
       // React namespace, and a second copy reaching the bundle would break every
       // plugin hook with an unhelpful "invalid hook call".
@@ -388,10 +407,20 @@ export default defineConfig(({ command }) => ({
     // as a missing dep at runtime and triggers Vite's "new dependencies
     // optimized" full page reload — mid-tour, which is the one moment a reload
     // is most visible. It is pure ESM with no CJS deps, so serving it
-    // unoptimized is free. Desktop also aliases `driver.js.iife.js?raw` for its
-    // preview surface; universal has no preview pane yet (MJXHRM-447), so the
-    // bare id is the only form that reaches the resolver here.
-    exclude: ['driver.js'],
+    // unoptimized is free.
+    //
+    // The `?raw` forms are here now too: desktop's preview surface landed with
+    // the resync (app/chat/right-rail/preview-tour.ts injects the prebuilt IIFE
+    // into the pane's guest page), so the bare id is no longer the only form
+    // that reaches the resolver. Prebundling a `?raw` id would hand the raw-text
+    // transform an ES module and fail with "does not provide an export named
+    // 'default'". Exclusion matches exact ids, hence every form.
+    exclude: [
+      'driver.js',
+      'driver.js/dist/driver.js.iife.js',
+      'driver.js/dist/driver.js.iife.js?raw',
+      'driver.js/dist/driver.css?raw'
+    ],
     include: [
       '@codemirror/commands',
       '@codemirror/language',

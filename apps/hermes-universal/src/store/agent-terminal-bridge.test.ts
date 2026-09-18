@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const stream = vi.hoisted(() => ({ route: null as ((event: { payload?: unknown; type: string }) => void) | null }))
 
-vi.mock('@/store/gateway', () => ({
+vi.mock('@/store/gateway-client', () => ({
   addGatewayEventListener: (listener: (event: { payload?: unknown; type: string }) => void) => {
     stream.route = listener
 

@@ -15,7 +15,7 @@ const requestGateway = vi.fn()
 const getSessionMessages = vi.fn(async (..._args: unknown[]) => ({ messages: [] as unknown[] }))
 const notifyError = vi.fn()
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {

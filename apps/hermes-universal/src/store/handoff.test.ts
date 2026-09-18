@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // $gatewayState must be present: store/connection subscribes to it at import
 // time, and it is pulled in transitively via store/chat.
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -14,7 +14,7 @@ vi.mock('@/store/gateway', async () => {
 })
 
 import { $messages } from '@/store/chat'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { resetSessionStates, seedActiveSession } from '@/test-sessions'
 
 import { handoffSession } from './handoff'

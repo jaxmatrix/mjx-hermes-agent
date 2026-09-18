@@ -8,7 +8,7 @@ vi.mock('@/hermes', () => ({
   listOAuthProviders: vi.fn(async () => ({ providers: [] })),
   getRecommendedDefaultModel: vi.fn(async () => ({ provider: 'qwen-oauth', model: 'qwen', free_tier: null }))
 }))
-vi.mock('@/store/gateway', () => ({
+vi.mock('@/store/gateway-client', () => ({
   addGatewayEventListener: () => () => {},
   requestGateway: vi.fn(async () => ({}))
 }))

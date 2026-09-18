@@ -31,7 +31,7 @@ vi.mock('@/hermes', () => ({
   setSessionArchived: vi.fn()
 }))
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -61,9 +61,7 @@ describe('moveSessionToProject', () => {
 
     await expect(moveSessionToProject('root', '/moved/app')).resolves.toBe(true)
 
-    expect(moveSessionWorkspace).toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: '/moved/app', sessionKey: 'tip' })
-    )
+    expect(moveSessionWorkspace).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/moved/app', sessionKey: 'tip' }))
   })
 
   // Captured from the frame the optimistic write publishes: `refreshSessions`

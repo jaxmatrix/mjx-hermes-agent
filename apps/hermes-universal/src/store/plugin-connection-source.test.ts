@@ -7,7 +7,7 @@ vi.mock('@/hermes', () => ({ getStatus: vi.fn(), setApiRequestProfile: vi.fn() }
 
 import { describeConnection, publishActiveConnection } from './active-connection'
 import { $connectionPhase, $hasConnected } from './connection'
-import { $gatewayState } from './gateway'
+import { $gatewayState } from './gateway-client'
 import { $restoring } from './gateway-restore'
 import { $gatewaySwitching } from './gateway-switch'
 import {
@@ -126,9 +126,7 @@ describe('setPluginConnectionSource', () => {
 
     const dispose = setPluginConnectionSource(registry)
 
-    expect(await pluginConnectionSource().connections()).toEqual([
-      { id: 'a', kind: 'ssh', label: 'A', primary: false }
-    ])
+    expect(await pluginConnectionSource().connections()).toEqual([{ id: 'a', kind: 'ssh', label: 'A', primary: false }])
 
     dispose()
 

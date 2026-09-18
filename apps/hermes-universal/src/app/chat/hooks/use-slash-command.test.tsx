@@ -3,7 +3,7 @@ import { atom, computed } from 'nanostores'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -22,7 +22,7 @@ import { $approvalModes } from '@/store/approval-mode'
 import type * as ChatStoreModule from '@/store/chat'
 import { $messages, $sessionId, resetChat, sendPrompt } from '@/store/chat'
 import { $compactingSessions, sessionCompacting } from '@/store/compaction'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { $modelPickerOpen } from '@/store/model'
 import { $sessions } from '@/store/session'
 import { $sessionStates, emptySessionState, publishSessionState, updateSession } from '@/store/session-state-types'

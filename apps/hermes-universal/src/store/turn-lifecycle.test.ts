@@ -358,7 +358,7 @@ describe('reconcileSessionTurn', () => {
       return { message_count: 0, messages: [], resumed: 'stored-1', running: false, session_id: 'runtime-1' }
     })
 
-    vi.doMock('@/store/gateway', () => ({
+    vi.doMock('@/store/gateway-client', () => ({
       $gatewayState: { get: () => 'open', subscribe: () => () => {} },
       requestGateway
     }))
@@ -386,7 +386,7 @@ describe('reconcileSessionTurn', () => {
     // Gateway says idle → the turn we thought was live is settled, not stranded.
     expect(lifecycle.isTurnLive('runtime-1')).toBe(false)
 
-    vi.doUnmock('@/store/gateway')
+    vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
   })
 
@@ -401,7 +401,7 @@ describe('reconcileSessionTurn', () => {
       session_id: 'runtime-10'
     }))
 
-    vi.doMock('@/store/gateway', () => ({
+    vi.doMock('@/store/gateway-client', () => ({
       $gatewayState: { get: () => 'open', subscribe: () => () => {} },
       addGatewayEventListener: () => () => {},
       requestGateway
@@ -425,12 +425,12 @@ describe('reconcileSessionTurn', () => {
       profile: 'research'
     })
 
-    vi.doUnmock('@/store/gateway')
+    vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
   })
 
   it('leaves the record alone when the probe itself fails', async () => {
-    vi.doMock('@/store/gateway', () => ({
+    vi.doMock('@/store/gateway-client', () => ({
       $gatewayState: { get: () => 'open', subscribe: () => () => {} },
       requestGateway: vi.fn(() => Promise.reject(new Error('socket down')))
     }))
@@ -445,7 +445,7 @@ describe('reconcileSessionTurn', () => {
     expect(await lifecycle.reconcileSessionTurn('runtime-2')).toBeNull()
     expect(lifecycle.isTurnLive('runtime-2')).toBe(true)
 
-    vi.doUnmock('@/store/gateway')
+    vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
   })
 
@@ -456,7 +456,7 @@ describe('reconcileSessionTurn', () => {
   // the layer exists to make a reconnect reconcile what the user sees, not a
   // record nothing renders (MJXHRM-356).
   it('clears the busy a settled reconnect would otherwise strand', async () => {
-    vi.doMock('@/store/gateway', () => ({
+    vi.doMock('@/store/gateway-client', () => ({
       $gatewayState: { get: () => 'open', subscribe: () => () => {} },
       requestGateway: vi.fn(async () => ({ message_count: 0, messages: [], running: false, session_id: 'runtime-6' }))
     }))
@@ -484,7 +484,7 @@ describe('reconcileSessionTurn', () => {
       turnStartedAt: null
     })
 
-    vi.doUnmock('@/store/gateway')
+    vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
   })
 
@@ -494,7 +494,7 @@ describe('reconcileSessionTurn', () => {
     // was `session.active_list` — which an older gateway does not serve and
     // which trails a poll behind. The tile rendered an idle composer over a
     // streaming turn until the next token happened to land.
-    vi.doMock('@/store/gateway', () => ({
+    vi.doMock('@/store/gateway-client', () => ({
       $gatewayState: { get: () => 'open', subscribe: () => () => {} },
       requestGateway: vi.fn(async () => ({
         message_count: 0,
@@ -522,7 +522,7 @@ describe('reconcileSessionTurn', () => {
     expect(states.$sessionStates.get()['runtime-7'].busy).toBe(true)
     expect(states.$sessionStates.get()['runtime-7'].turnStartedAt).not.toBeNull()
 
-    vi.doUnmock('@/store/gateway')
+    vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
   })
 
@@ -532,7 +532,7 @@ describe('reconcileSessionTurn', () => {
   // written for: the slice holds structure that exists nowhere else, and the
   // gateway holds everything the turn said while the socket was down.
   it('folds the inflight snapshot into a STREAMING tail on reconnect', async () => {
-    vi.doMock('@/store/gateway', () => ({
+    vi.doMock('@/store/gateway-client', () => ({
       $gatewayState: { get: () => 'open', subscribe: () => () => {} },
       requestGateway: vi.fn(async () => ({
         message_count: 0,
@@ -582,7 +582,7 @@ describe('reconcileSessionTurn', () => {
     // The user turn is not rendered twice by the projection.
     expect(messages.filter(message => message.role === 'user')).toHaveLength(1)
 
-    vi.doUnmock('@/store/gateway')
+    vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
   })
 
@@ -594,7 +594,7 @@ describe('reconcileSessionTurn', () => {
   // paired row and appending our longer copy beside it: the answer printed
   // twice, once truncated.
   it('does not double-print an UNSTRUCTURED tail that streamed past the snapshot', async () => {
-    vi.doMock('@/store/gateway', () => ({
+    vi.doMock('@/store/gateway-client', () => ({
       $gatewayState: { get: () => 'open', subscribe: () => () => {} },
       requestGateway: vi.fn(async () => ({
         message_count: 0,
@@ -639,7 +639,7 @@ describe('reconcileSessionTurn', () => {
     // The row is still the live tail, so the next delta keeps landing in it.
     expect(assistants[0].pending).toBe(true)
 
-    vi.doUnmock('@/store/gateway')
+    vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
   })
 
@@ -647,7 +647,7 @@ describe('reconcileSessionTurn', () => {
   // replay: `_fail_inflight_turn`'s retained snapshot is the only copy. The plan
   // settles the record; the tail fold is what puts the failure on screen.
   it('surfaces a failure the gateway retained while we were offline', async () => {
-    vi.doMock('@/store/gateway', () => ({
+    vi.doMock('@/store/gateway-client', () => ({
       $gatewayState: { get: () => 'open', subscribe: () => () => {} },
       requestGateway: vi.fn(async () => ({
         message_count: 0,
@@ -686,12 +686,12 @@ describe('reconcileSessionTurn', () => {
     expect(assistants[0].pending).toBe(false)
     expect(states.$sessionStates.get()['runtime-9'].busy).toBe(false)
 
-    vi.doUnmock('@/store/gateway')
+    vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
   })
 
   it('does not re-project a tail onto a turn the gateway has forgotten', async () => {
-    vi.doMock('@/store/gateway', () => ({
+    vi.doMock('@/store/gateway-client', () => ({
       $gatewayState: { get: () => 'open', subscribe: () => () => {} },
       requestGateway: vi.fn(async () => ({ message_count: 0, messages: [], running: false, session_id: 'runtime-4' }))
     }))
@@ -714,7 +714,7 @@ describe('reconcileSessionTurn', () => {
     expect(lifecycle.isTurnLive('runtime-4')).toBe(false)
     expect(states.$sessionStates.get()['runtime-4'].messages).toBe(messages)
 
-    vi.doUnmock('@/store/gateway')
+    vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
   })
 })
@@ -726,7 +726,7 @@ describe('reconcileSessionTurn on a RESTARTED gateway', () => {
   // dead id receives nothing — the probe would re-arm a turn whose entire stream
   // is then dropped.
   it('rebinds the slice onto the runtime id the resume issued', async () => {
-    vi.doMock('@/store/gateway', () => ({
+    vi.doMock('@/store/gateway-client', () => ({
       $gatewayState: { get: () => 'open', subscribe: () => () => {} },
       requestGateway: vi.fn(async () => ({
         message_count: 0,
@@ -759,7 +759,7 @@ describe('reconcileSessionTurn on a RESTARTED gateway', () => {
     expect(lifecycle.getInflightTurn('runtime-5-old')).toBeNull()
     expect(lifecycle.isTurnLive('runtime-5-new')).toBe(true)
 
-    vi.doUnmock('@/store/gateway')
+    vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
   })
 })

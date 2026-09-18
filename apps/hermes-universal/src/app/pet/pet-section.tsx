@@ -9,7 +9,7 @@ import { Loader2, Paw } from '@/lib/icons'
 import { selectableCardClass } from '@/lib/selectable-card'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
-import { $gatewayState } from '@/store/gateway'
+import { $gatewayState } from '@/store/gateway-client'
 import { $petInfo, $petRoam, setPetRoam } from '@/store/pet'
 import {
   $petBusy,
