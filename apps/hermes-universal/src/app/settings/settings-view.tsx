@@ -1,7 +1,7 @@
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { readFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { useEffect, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router'
 
 import { OverlayMain, OverlayNav, type OverlayNavGroup, OverlaySplitLayout } from '@/app/overlays/overlay-split-layout'
 import { type OverlayVariant, OverlayView } from '@/app/overlays/overlay-view'

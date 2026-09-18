@@ -1,4 +1,4 @@
-import { setTerminalTakeover } from '@/app/right-sidebar/store'
+import { setTerminalTakeover } from '@/app/right-pane/store'
 import { isLayoutNode, type LayoutNode } from '@/components/pane-shell/tree/model'
 import { applyLayoutPreset, LAYOUTS_AREA } from '@/components/pane-shell/tree/presets'
 import { revealTreePane } from '@/components/pane-shell/tree/store'

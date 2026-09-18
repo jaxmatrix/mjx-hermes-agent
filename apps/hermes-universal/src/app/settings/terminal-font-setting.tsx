@@ -5,7 +5,7 @@ import {
   resolveTerminalFontFamily,
   setTerminalFontFamilyFromConfig,
   TERMINAL_FONT_SUGGESTIONS
-} from '@/app/right-sidebar/terminal/terminal-font'
+} from '@/app/right-pane/terminal/terminal-font'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { saveHermesConfig } from '@/hermes'

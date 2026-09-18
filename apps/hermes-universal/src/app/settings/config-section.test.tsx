@@ -19,7 +19,7 @@ vi.mock('@/hermes', () => ({
 }))
 
 import { act } from 'react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 
 import { getHermesConfigRecord, getHermesConfigSchema, saveHermesConfig } from '@/hermes'
 import { I18nProvider } from '@/i18n'

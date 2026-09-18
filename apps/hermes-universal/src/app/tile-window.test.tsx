@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 // Type-only, so these are erased and cannot trip vi.mock's hoisting.
-import type * as RouterModule from 'react-router-dom'
+import type * as RouterModule from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as NotificationsModule from '@/store/notifications'
@@ -15,7 +15,7 @@ import type * as SessionModule from '@/store/session'
 
 const navigate = vi.fn()
 
-vi.mock('react-router-dom', async importActual => ({
+vi.mock('react-router', async importActual => ({
   ...(await importActual<typeof RouterModule>()),
   useNavigate: () => navigate
 }))

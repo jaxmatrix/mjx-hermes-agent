@@ -1,5 +1,5 @@
 import { fireEvent, render } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // ⌘N and ⌘T must go through the ONE helper every other new-session entry point

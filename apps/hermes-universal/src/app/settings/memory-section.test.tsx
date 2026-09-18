@@ -37,7 +37,7 @@ vi.mock('@/hermes', () => ({
   saveMemoryProviderConfig: vi.fn(async () => ({ ok: true }))
 }))
 
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 
 import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'

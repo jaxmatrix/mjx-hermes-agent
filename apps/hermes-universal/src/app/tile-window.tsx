@@ -3,7 +3,7 @@
 import '@/app/contrib/controller'
 
 import { useEffect, useRef } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router'
 
 import { ArtifactPreviewOverlay } from '@/app/artifact-preview-overlay'
 import { ChatScreen } from '@/app/chat/chat-screen'

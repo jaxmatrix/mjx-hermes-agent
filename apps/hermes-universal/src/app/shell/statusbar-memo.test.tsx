@@ -24,7 +24,7 @@
 
 import { render } from '@testing-library/react'
 import { act } from 'react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as StatusbarControls from '@/app/shell/statusbar-controls'

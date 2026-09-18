@@ -90,13 +90,24 @@ const renames = manifest('renames.txt')
   // Longest prefix first, so a more specific rename cannot be shadowed.
   .sort((a, b) => b.from.length - a.from.length)
 
-const protectedRes = manifest('protected.txt').map(globToRegExp)
+// A `!` line carves an exception out of a broader glob above it, so a whole
+// subsystem can be protected without having to spell out the one file inside it
+// that desktop should still own. Last match wins, as in .gitignore.
+const protectedRules = manifest('protected.txt').map((line) =>
+  line.startsWith('!')
+    ? { negate: true, re: globToRegExp(line.slice(1).trim()) }
+    : { negate: false, re: globToRegExp(line) }
+)
 
 const rename = (p) => {
   const hit = renames.find((r) => p.startsWith(r.from))
   return hit ? hit.to + p.slice(hit.from.length) : p
 }
-const isProtected = (p) => protectedRes.some((re) => re.test(p))
+const isProtected = (p) => {
+  let verdict = false
+  for (const rule of protectedRules) if (rule.re.test(p)) verdict = !rule.negate
+  return verdict
+}
 
 const sha = (file) => createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 
@@ -237,6 +248,53 @@ for (const r of rows) {
 }
 console.log(`\napplied     ${copied} files copied into src/`)
 console.log(`staged      ${staged} files under sync/incoming/ for review`)
+
+// ---------------------------------------------------------------------------
+// Renaming a file is only half the job: the imports that name it have to follow.
+// Desktop's source says `@/app/right-sidebar/store` and `@/components/pet/…`,
+// which resolve nowhere once those trees land under universal's names. Rewrite
+// every specifier through the same rename map, resolving relative ones to an
+// src-relative path first so that `../right-sidebar/store` is caught too.
+
+const SPEC_RE = /(\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)(['"])([^'"]+)\2/g
+
+function rewriteSpecifier(spec, fileDir) {
+  const alias = spec.startsWith('@/')
+  const relative = spec.startsWith('./') || spec.startsWith('../')
+  if (!alias && !relative) return spec
+
+  // Resolve to a path relative to src/, which is the space the rename map lives in.
+  const abs = alias ? spec.slice(2) : path.posix.normalize(path.posix.join(fileDir, spec))
+  // A directory rename also has to catch the bare form — `@/app/right-sidebar`
+  // resolving to that directory's index is just as common as naming a file in it.
+  const hit = renames.find((r) => abs.startsWith(r.from) || abs === r.from.replace(/\/$/, ''))
+  if (!hit) return spec
+  const moved = abs.startsWith(hit.from)
+    ? hit.to + abs.slice(hit.from.length)
+    : hit.to.replace(/\/$/, '')
+
+  if (alias) return `@/${moved}`
+  // Re-relativize against the importing file so the result still points at it.
+  const rel = path.posix.relative(fileDir, moved)
+  return rel.startsWith('.') ? rel : `./${rel}`
+}
+
+let rewritten = 0
+for (const rel of walk(UNIVERSAL_SRC)) {
+  if (!/\.(tsx?|mts|cts)$/.test(rel)) continue
+  const file = path.join(UNIVERSAL_SRC, rel)
+  const before = fs.readFileSync(file, 'utf8')
+  const dir = path.posix.dirname(rel)
+  const after = before.replace(SPEC_RE, (m, lead, q, spec) => {
+    const next = rewriteSpecifier(spec, dir)
+    return next === spec ? m : `${lead}${q}${next}${q}`
+  })
+  if (after !== before) {
+    fs.writeFileSync(file, after)
+    rewritten += 1
+  }
+}
+console.log(`rewrote     ${rewritten} files whose imports named a renamed path`)
 
 // ---------------------------------------------------------------------------
 // A handful of desktop's src/ files import pure type modules out of its

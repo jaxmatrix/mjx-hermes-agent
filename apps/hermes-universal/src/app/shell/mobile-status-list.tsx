@@ -1,6 +1,6 @@
 import { cva } from 'class-variance-authority'
 import { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 
 import { useStatusbarContributions } from '@/app/contrib/surfaces'
 import { useStatusbarItems } from '@/app/shell/hooks/use-statusbar-items'

@@ -1,5 +1,5 @@
 import { readActivePreview } from '@/app/chat/right-rail/preview-reader'
-import { readActiveTerminal } from '@/app/right-sidebar/terminal/buffer'
+import { readActiveTerminal } from '@/app/right-pane/terminal/buffer'
 import { pendingClarifyToolPayload } from '@/app/session/hooks/use-session-actions/restore-pending-clarify'
 import { translateNow } from '@/i18n'
 import { restorePendingClarifyToolCall } from '@/lib/chat-messages'

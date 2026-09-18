@@ -3,8 +3,8 @@ import { useLocation, useNavigate } from 'react-router'
 
 import { closeActiveTab } from '@/app/chat/close-tab'
 import { hudTargetSessionId } from '@/app/hud/handoff'
-import { setTerminalTakeover } from '@/app/right-sidebar/store'
-import { closeActiveTerminal, createTerminal, cycleTerminal } from '@/app/right-sidebar/terminal/terminals'
+import { setTerminalTakeover } from '@/app/right-pane/store'
+import { closeActiveTerminal, createTerminal, cycleTerminal } from '@/app/right-pane/terminal/terminals'
 import { appViewForPath, isOverlayView } from '@/app/routes'
 import {
   activateTreeTabSlot,

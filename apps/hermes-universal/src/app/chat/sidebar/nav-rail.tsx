@@ -1,7 +1,7 @@
 import '@/app/shell/nav-contrib' // side-effect: registers the app's own rail rows
 
 import { useEffect, useMemo, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router'
 
 import { type AppView, appViewForPath, SIDEBAR_NAV_AREA, type SidebarNavContribution } from '@/app/routes'
 import { NAV_ACTION_BY_VIEW } from '@/app/shell/nav-items'

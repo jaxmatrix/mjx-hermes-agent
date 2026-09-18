@@ -1,7 +1,7 @@
 import { Profiler, type ProfilerOnRenderCallback, type ReactNode } from 'react'
 
-import { $terminalTakeover, setTerminalTakeover } from '@/app/right-sidebar/store'
-import { writeAgentTerminalChunk } from '@/app/right-sidebar/terminal/agent-terminal-stream'
+import { $terminalTakeover, setTerminalTakeover } from '@/app/right-pane/store'
+import { writeAgentTerminalChunk } from '@/app/right-pane/terminal/agent-terminal-stream'
 import {
   $activeTerminalId,
   $terminals,
@@ -9,7 +9,7 @@ import {
   ensureAgentTerminal,
   selectTerminal,
   type TerminalEntry
-} from '@/app/right-sidebar/terminal/terminals'
+} from '@/app/right-pane/terminal/terminals'
 import { $repoStatusByCwd } from '@/store/coding-status'
 import { $gateway } from '@/store/gateway'
 import { $currentCwd, $messages, setBusy, setCurrentCwdTransient, setMessages } from '@/store/session'

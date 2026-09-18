@@ -1,5 +1,5 @@
-import { writeAgentTerminalChunk } from '@/app/right-sidebar/terminal/agent-terminal-stream'
-import { closeAgentTerminalByProc } from '@/app/right-sidebar/terminal/terminals'
+import { writeAgentTerminalChunk } from '@/app/right-pane/terminal/agent-terminal-stream'
+import { closeAgentTerminalByProc } from '@/app/right-pane/terminal/terminals'
 import { applyDesktopLayoutPreset, revealDesktopPane } from '@/store/pane-focus'
 import { recordAgentReaction } from '@/store/reactions-local'
 import { setMessages } from '@/store/session'

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 
 import { GatewayConfigurator } from '@/app/gateway/gateway-configurator'
 import { sshStepLabel } from '@/app/gateway/ssh-copy'

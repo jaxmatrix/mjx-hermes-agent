@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router'
 
 import { AgentsView } from '@/app/agents'
 import { CommandCenterView } from '@/app/command-center'

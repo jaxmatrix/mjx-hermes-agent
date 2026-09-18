@@ -91,7 +91,7 @@ import {
 } from '../chat/session-tile'
 import { AppContextMenu } from '../context-menu/app-context-menu'
 import { HudShell } from '../hud/hud-shell'
-import { $terminalTakeover, setTerminalTakeover } from '../right-sidebar/store'
+import { $terminalTakeover, setTerminalTakeover } from '../right-pane/store'
 import { $workspaceIsPage } from '../routes'
 
 import { DEFAULT_TREE, registerLayoutPresets } from './layout-presets'

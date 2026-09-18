@@ -48,6 +48,11 @@ store/connection-*.*
 store/connections.*
 store/tab-connection.*
 store/tab-ref.*
+# Desktop's registry atom is a different concern from universal's connection
+# scoping — it records the topology Electron publishes, which the Tauri shim
+# fills from the Rust roster instead. Eight imported files need it, and nothing
+# in universal's layer competes with it, so desktop owns this one.
+!store/connection-registry-state.ts
 store/event-router*.*
 store/gateway-secondaries.*
 store/gateway-soft-switch.*

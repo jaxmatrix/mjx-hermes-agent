@@ -7,7 +7,7 @@
  * `prefers-reduced-motion`.
  */
 
-import { PixelEggSprite } from '@/components/pet/pixel-egg-sprite'
+import { PixelEggSprite } from '@/app/pet/pixel-egg-sprite'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 

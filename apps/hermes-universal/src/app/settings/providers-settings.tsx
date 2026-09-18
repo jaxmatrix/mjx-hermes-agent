@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { runInTerminal } from '@/app/right-sidebar/store'
+import { runInTerminal } from '@/app/right-pane/store'
 import {
   FEATURED_ID,
   FeaturedProviderRow,

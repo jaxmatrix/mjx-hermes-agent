@@ -1,6 +1,6 @@
 import { type MutableRefObject, useCallback, useRef, useState } from 'react'
 
-import { setTerminalFontFamilyFromConfig } from '@/app/right-sidebar/terminal/terminal-font'
+import { setTerminalFontFamilyFromConfig } from '@/app/right-pane/terminal/terminal-font'
 import { getHermesConfig, getHermesConfigDefaults } from '@/hermes'
 import { BUILTIN_PERSONALITIES, normalizePersonalityValue, personalityNamesFromConfig } from '@/lib/chat-runtime'
 import { normalize } from '@/lib/text'

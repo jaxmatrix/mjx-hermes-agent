@@ -38,7 +38,7 @@ vi.mock('@/store/session', () => ({
 }))
 vi.mock('@/store/projects', () => ({ pickProjectFolder: vi.fn(async () => null) }))
 
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 
 import { ConfirmHost } from '@/components/confirm-host'
 import { deleteSession, setSessionArchived } from '@/hermes'

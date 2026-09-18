@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router'
 
 import { AgentsView } from '@/app/agents'
 import { CommandCenterView } from '@/app/command-center'

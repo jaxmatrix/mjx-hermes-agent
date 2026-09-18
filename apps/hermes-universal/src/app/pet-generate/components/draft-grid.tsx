@@ -1,4 +1,4 @@
-import { PixelEggSprite } from '@/components/pet/pixel-egg-sprite'
+import { PixelEggSprite } from '@/app/pet/pixel-egg-sprite'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { Tip } from '@/components/ui/tooltip'

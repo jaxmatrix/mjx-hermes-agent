@@ -1,5 +1,5 @@
 import { mainChatOccupied } from '@/app/open-session'
-import { closeActiveTerminal } from '@/app/right-sidebar/terminal/terminals'
+import { closeActiveTerminal } from '@/app/right-pane/terminal/terminals'
 import { $workspaceIsPage } from '@/app/routes'
 import { closeFocusedSessionTab, closeFocusedToolTab } from '@/components/pane-shell/tree/store'
 import { isFocusWithin } from '@/lib/keybinds/combo'

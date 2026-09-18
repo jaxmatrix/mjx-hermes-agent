@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 
-import { PetSprite } from '@/components/pet/pet-sprite'
-import { PetStarShower } from '@/components/pet/pet-star-shower'
-import { PixelEggSprite } from '@/components/pet/pixel-egg-sprite'
+import { PetSprite } from '@/app/pet/pet-sprite'
+import { PetStarShower } from '@/app/pet/pet-star-shower'
+import { PixelEggSprite } from '@/app/pet/pixel-egg-sprite'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

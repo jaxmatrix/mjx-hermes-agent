@@ -32,7 +32,7 @@ import {
   $workspaceOwnerKey,
   setWorkspaceScope
 } from '@/components/pane-shell/workspace-scope'
-import { FloatingPet } from '@/components/pet/floating-pet'
+import { FloatingPet } from '@/app/pet/floating-pet'
 import { RemoteDisplayBanner } from '@/components/remote-display-banner'
 import { SendDiagnosticsHost } from '@/components/send-diagnostics-dialog'
 import { TipHost } from '@/components/tips'
@@ -106,11 +106,11 @@ import { ModelPickerOverlay } from '../model-picker-overlay'
 import { ModelVisibilityOverlay } from '../model-visibility-overlay'
 import { mainChatOccupied, openSession } from '../open-session'
 import { PetGenerateOverlay } from '../pet-generate/pet-generate-overlay'
-import { FileActionDialogs } from '../right-sidebar/file-actions'
-import { RemoteFolderPicker } from '../right-sidebar/files/remote-picker'
-import { resetProjectTreeState } from '../right-sidebar/files/use-project-tree'
-import { PersistentTerminal } from '../right-sidebar/terminal/persistent'
-import { closeAllTerminals } from '../right-sidebar/terminal/terminals'
+import { FileActionDialogs } from '../right-pane/file-actions'
+import { RemoteFolderPicker } from '../right-pane/files/remote-picker'
+import { resetProjectTreeState } from '../right-pane/files/use-project-tree'
+import { PersistentTerminal } from '../right-pane/terminal/persistent'
+import { closeAllTerminals } from '../right-pane/terminal/terminals'
 import {
   CRON_ROUTE,
   navigateToWorkspacePage,

@@ -1,4 +1,4 @@
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 
 import { SessionActionsMenu, SessionContextMenu } from '@/app/chat/sidebar/session-actions-menu'
 import { appViewForPath } from '@/app/routes'
