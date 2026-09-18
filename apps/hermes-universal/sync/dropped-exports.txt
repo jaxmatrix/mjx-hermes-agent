@@ -5,7 +5,7 @@
 #
 #   git show main-sync-3:apps/hermes-universal/src/<path>
 #
-# 148 files, 582 symbols.
+# 147 files, 572 symbols.
 
 lib/gateway-rpc.ts
     MessageReactTarget
@@ -291,17 +291,6 @@ app/cron/cron-job-model.ts
     cronContextFromPayload
     cronJobFireError
     cronRepeatSummary
-lib/platform.ts
-    detectMobileDevice
-    PLATFORM
-    IS_ANDROID
-    IS_IOS
-    IS_MOBILE
-    IS_NATIVE_MOBILE
-    IS_TAURI
-    IS_DESKTOP
-    LOCAL_MODE_SUPPORTED
-    SSH_LOCAL_FILES_SUPPORTED
 store/updates.ts
     $appUpdate
     $appUpdateChecking

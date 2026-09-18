@@ -97,6 +97,10 @@ lib/safe-area.*
 lib/touch.*
 lib/resize-gesture.*
 lib/trackpad-gestures.*
+# Universal asks the Tauri runtime which platform it is on and handles the iOS
+# webview boot race; desktop only sniffs navigator, and has no notion of mobile
+# at all. Desktop's three host-OS predicates are folded in at the bottom.
+lib/platform.ts
 
 # ---------------------------------------------------------------------------
 # Contracts. These encode the mobile and WebKit rules the imported code has to
