@@ -7,7 +7,7 @@
  *                                     the active one) to the clicked tab;
  *   - plain click                   → collapse back to a single tab.
  *
- * ⌘-click stays CLOSE (PaneTab claims it) and ⌃-click stays the macOS context
+ * ⌘-click stays CLOSE (middle-click.ts) and ⌃-click stays the macOS context
  * menu, so the toggle chord is ⌥ on Mac / Ctrl elsewhere. One selection at a
  * time, scoped to one zone — dragging any selected tab carries the whole set
  * (drag-session resolves it), and ids are validated against the strip's
@@ -15,8 +15,6 @@
  */
 
 import { atom } from 'nanostores'
-
-import { IS_MAC } from '@/lib/keybinds/combo'
 
 export interface TabSelection {
   groupId: string
@@ -27,14 +25,12 @@ export interface TabSelection {
 
 export const $tabSelection = atom<null | TabSelection>(null)
 
+const isMac = typeof navigator !== 'undefined' && /Mac|iP(hone|ad|od)/.test(navigator.platform)
+
 /** The toggle-select chord: ⌥-click on Mac (⌘ closes, ⌃ is the context menu),
  *  Ctrl-click elsewhere — ⌥ is accepted everywhere for one muscle memory. */
-export const isToggleSelectClick = (event: {
-  altKey: boolean
-  button: number
-  ctrlKey: boolean
-  metaKey: boolean
-}): boolean => event.button === 0 && !event.metaKey && (event.altKey || (!IS_MAC && event.ctrlKey))
+export const isToggleSelectClick = (event: { altKey: boolean; button: number; ctrlKey: boolean; metaKey: boolean }) =>
+  event.button === 0 && !event.metaKey && (event.altKey || (!isMac && event.ctrlKey))
 
 export function clearTabSelection() {
   if ($tabSelection.get()) {
@@ -44,18 +40,10 @@ export function clearTabSelection() {
 
 /** ⌥/Ctrl-click: toggle `paneId`. A fresh selection seeds with the active tab
  *  (it is implicitly selected, as in Chrome); collapsing to ≤1 dissolves the
- *  selection entirely — a single "selected" tab is just a tab.
- *
- *  The carried-over set is PRUNED to the tabs the strip still holds. Nothing
- *  clears the selection when a selected tab is closed or dragged into another
- *  zone, so a stale set would keep seats no tab can occupy: ⌥-clicking one more
- *  tab afterwards read as "three selected" and then dragged ONE, because
- *  `selectionFor` validates against the live strip and dissolves anything that
- *  filters down to a single id. */
-export function toggleTabSelected(groupId: string, orderedPanes: readonly string[], paneId: string, activeId: string) {
+ *  selection entirely — a single "selected" tab is just a tab. */
+export function toggleTabSelected(groupId: string, paneId: string, activeId: string) {
   const current = $tabSelection.get()
-  const live = current?.groupId === groupId ? orderedPanes.filter(id => current.ids.has(id)) : []
-  const ids = new Set(live.length > 0 ? live : [activeId])
+  const ids = new Set(current?.groupId === groupId ? current.ids : [activeId])
 
   if (ids.has(paneId)) {
     ids.delete(paneId)

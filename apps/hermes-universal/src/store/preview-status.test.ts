@@ -7,11 +7,6 @@ import {
   recordPreviewArtifact
 } from './preview-status'
 
-// Ported verbatim from apps/desktop/src/store/preview-status.test.ts. The two
-// stores differ only in their doc comment and their `atom` import (universal
-// routes through `@/store/atom` for autocapture); the append/cap/dismiss rules
-// are the same, and universal's composer status stack reads this atom directly.
-
 beforeEach(() => $previewStatusBySession.set({}))
 
 describe('recordPreviewArtifact', () => {

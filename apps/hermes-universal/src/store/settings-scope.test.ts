@@ -1,55 +1,86 @@
+import { atom } from 'nanostores'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/hermes', () => ({ getProfiles: vi.fn(async () => ({ profiles: [] })), setApiRequestProfile: vi.fn() }))
+// Keep store/profile's side-effecting imports inert — same seam as
+// store/profile.test.ts.
+vi.mock('@/store/gateway', () => ({
+  $gateway: atom<unknown>(null),
+  ensureGatewayForAgent: vi.fn(async () => undefined),
+  ensureGatewayForProfile: vi.fn(async () => undefined),
+  openGatewayForProfile: vi.fn(async () => undefined)
+}))
+vi.mock('@/hermes', () => ({
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  setApiRequestProfile: vi.fn()
+}))
 vi.mock('@/lib/query-client', () => ({ invalidateProfileScopedQueries: vi.fn() }))
-vi.mock('@/lib/slash-completion-cache', () => ({ invalidateSlashCompletions: vi.fn() }))
+vi.mock('@/store/starmap', () => ({ resetStarmapGraph: vi.fn() }))
 
-import { $activeProfile } from '@/store/profiles'
-import { $settingsScopeOverride, $settingsScopeProfile, setSettingsScope } from '@/store/settings-scope'
+const { $activeGatewayProfile } = await import('./profile')
+
+const { $settingsRequestProfile, $settingsScopeOverride, $settingsScopeProfile, setSettingsScope } =
+  await import('./settings-scope')
 
 beforeEach(() => {
-  $activeProfile.set(null)
+  $activeGatewayProfile.set('default')
   $settingsScopeOverride.set(null)
 })
 
-describe('settings scope', () => {
-  // `null` is not "no profile" — it is "follow the app", which is what keeps
-  // single-profile users on the unscoped request shape.
-  it('resolves to the app profile with no override', () => {
+describe('settings scope store', () => {
+  it('defaults to following the active gateway profile (no override)', () => {
+    expect($settingsScopeOverride.get()).toBeNull()
     expect($settingsScopeProfile.get()).toBe('default')
 
-    $activeProfile.set('research')
-    expect($settingsScopeProfile.get()).toBe('research')
+    $activeGatewayProfile.set('coder')
+    expect($settingsScopeProfile.get()).toBe('coder')
   })
 
-  it('stores an override for another profile', () => {
+  it('stores a concrete override when a non-active profile is selected', () => {
     setSettingsScope('research')
 
     expect($settingsScopeOverride.get()).toBe('research')
     expect($settingsScopeProfile.get()).toBe('research')
   })
 
-  // Picking the profile the app is ALREADY on must clear the override, not pin
-  // it: a pinned "default" would keep sending ?profile=default forever and
-  // would stop following the app on the next switch.
-  it('clears the override when the app profile itself is picked', () => {
-    $activeProfile.set('research')
+  it('selecting the active profile clears the override instead of pinning it', () => {
+    setSettingsScope('research')
     setSettingsScope('default')
-    expect($settingsScopeOverride.get()).toBe('default')
 
-    setSettingsScope('research')
+    // No override → requests keep their unscoped shape and the scope keeps
+    // following the app on future profile switches.
     expect($settingsScopeOverride.get()).toBeNull()
+    expect($settingsScopeProfile.get()).toBe('default')
   })
 
-  // An app-wide switch re-homes every settings surface; a surviving override
-  // would silently keep the next save pointed at the profile you just left.
-  it('drops a surviving override when the app switches profile', () => {
+  it('normalizes empty/blank names to the default profile key', () => {
+    $activeGatewayProfile.set('coder')
+    setSettingsScope('')
+
+    expect($settingsScopeOverride.get()).toBe('default')
+    expect($settingsScopeProfile.get()).toBe('default')
+  })
+
+  it('exposes a request-shaped scope: undefined (never null) without an override', () => {
+    // api/client.ts profileScoped() treats null as "target primary/default" —
+    // the #90549 bug class. The request form must therefore never be null.
+    expect($settingsRequestProfile.get()).toBeUndefined()
+
+    setSettingsScope('research')
+    expect($settingsRequestProfile.get()).toBe('research')
+
+    setSettingsScope('default')
+    expect($settingsRequestProfile.get()).toBeUndefined()
+  })
+
+  it('drops the override on an app-wide profile switch', () => {
     setSettingsScope('research')
     expect($settingsScopeOverride.get()).toBe('research')
 
-    $activeProfile.set('work')
+    // The app re-homes to another profile: a surviving override would keep
+    // settings edits silently pointed at the previous target.
+    $activeGatewayProfile.set('coder')
 
     expect($settingsScopeOverride.get()).toBeNull()
-    expect($settingsScopeProfile.get()).toBe('work')
+    expect($settingsScopeProfile.get()).toBe('coder')
   })
 })

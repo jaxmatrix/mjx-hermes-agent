@@ -1,12 +1,11 @@
 /**
- * Keeping the active tab inside a scrolling tab strip.
+ * Keeping the active tab (and the trailing "+") inside a scrolling tab strip.
  *
  * Once a zone has more tabs than fit, opening a new one appended it past the
- * right edge, so the tab you just created was off-screen. Activating a tab from
- * a keybind or the session list had the same problem in the other direction.
- *
- * The "+" is NOT in here: it sits outside the scroller (see tree-group), so it
- * is always in view and never part of this measurement.
+ * right edge: the tab you just created — and the "+" that created it — were
+ * both off-screen, so a second new tab meant scrolling back by hand first.
+ * Activating a tab from a keybind or the session list had the same problem in
+ * the other direction.
  */
 
 import { type RefObject, useLayoutEffect } from 'react'
@@ -14,8 +13,10 @@ import { type RefObject, useLayoutEffect } from 'react'
 export interface TabStripGeometry {
   /** Visible width of the strip. */
   clientWidth: number
+  /** Active tab is the LAST one, so reveal the trailing "+" along with it. */
+  last: boolean
   scrollLeft: number
-  /** Full scroll content: every tab. */
+  /** Full scroll content: every tab plus the trailing "+". */
   scrollWidth: number
   /** Active tab's edges, measured from the start of the scroll content. */
   tabEnd: number
@@ -26,12 +27,19 @@ export interface TabStripGeometry {
  *  the current offset when it already is (the caller skips the write). */
 export function tabStripScrollLeft({
   clientWidth,
+  last,
   scrollLeft,
   scrollWidth,
   tabEnd,
   tabStart
 }: TabStripGeometry): number {
   const max = Math.max(0, scrollWidth - clientWidth)
+
+  // The last tab scrolls to the very end rather than to its own edge: the "+"
+  // lives after it in the same scroll content and has to come along.
+  if (last) {
+    return max
+  }
 
   if (tabStart < scrollLeft) {
     return Math.min(tabStart, max)
@@ -45,11 +53,11 @@ export function tabStripScrollLeft({
 }
 
 /** Scroll `activeId`'s tab into view whenever the activation or the tab set
- *  changes. */
+ *  changes. `last` drives the "+"-follows-the-final-tab case. */
 export function useActiveTabVisible(
   scrollerRef: RefObject<HTMLDivElement | null>,
   activeId: string,
-  { enabled, tabCount }: { enabled: boolean; tabCount: number }
+  { enabled, last, tabCount }: { enabled: boolean; last: boolean; tabCount: number }
 ): void {
   // Layout effect: the scroll write lands in the same frame as the tab's
   // insertion, so a new tab never paints off-screen first.
@@ -75,6 +83,7 @@ export function useActiveTabVisible(
 
     const next = tabStripScrollLeft({
       clientWidth: scroller.clientWidth,
+      last,
       scrollLeft: scroller.scrollLeft,
       scrollWidth: scroller.scrollWidth,
       tabEnd: tabStart + rect.width,
@@ -84,5 +93,5 @@ export function useActiveTabVisible(
     if (next !== scroller.scrollLeft) {
       scroller.scrollLeft = next
     }
-  }, [activeId, enabled, scrollerRef, tabCount])
+  }, [activeId, enabled, last, scrollerRef, tabCount])
 }

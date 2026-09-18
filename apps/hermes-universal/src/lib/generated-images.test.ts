@@ -7,9 +7,6 @@ import {
   stripGeneratedImageEchoes
 } from './generated-images'
 
-// Ported verbatim from apps/desktop/src/lib/generated-images.test.ts — the two
-// modules are byte-identical, so the desktop contract is the universal contract.
-
 describe('generatedImageFromResult', () => {
   it('prefers the host-visible image path', () => {
     expect(
@@ -33,12 +30,12 @@ describe('stripGeneratedImageEchoes', () => {
       stripGeneratedImageEchoes('Here you go.\n\n![Generated image](https://cdn.example/cat.png)', [
         'https://cdn.example/cat.png'
       ])
-    ).toBe('Here you go.')
+    ).toBe('Here you go.\n\n')
   })
 
   it('removes media links for generated local image paths', () => {
     expect(stripGeneratedImageEchoes('Saved image: [Image: cat.png](#media:%2Ftmp%2Fcat.png)', ['/tmp/cat.png'])).toBe(
-      'Saved image:'
+      'Saved image: '
     )
   })
 })
@@ -63,6 +60,12 @@ describe('generatedImageEchoSources', () => {
 })
 
 describe('dedupeGeneratedImageEchoesInParts', () => {
+  it('preserves timeline identity when there is nothing to strip', () => {
+    const parts = [{ result: {}, toolName: 'read_file', type: 'tool-call' }]
+
+    expect(dedupeGeneratedImageEchoesInParts(parts)).toBe(parts)
+  })
+
   it('keeps the agent prose while removing the duplicated image', () => {
     expect(
       dedupeGeneratedImageEchoesInParts([
@@ -74,7 +77,7 @@ describe('dedupeGeneratedImageEchoesInParts', () => {
         }
       ])
     ).toEqual([
-      { text: 'Here is your peacock! Enjoy.', type: 'text' },
+      { text: 'Here is your peacock!  Enjoy.', type: 'text' },
       {
         result: { host_image: '/host/p.png', image: '/host/p.png', success: true },
         toolName: 'image_generate',

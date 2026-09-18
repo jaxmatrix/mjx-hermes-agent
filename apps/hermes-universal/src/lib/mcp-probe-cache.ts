@@ -17,10 +17,9 @@ export const PROBE_TTL_MS = 5 * 60_000
 export const probeCache = new Map<string, { at: number; result: McpTestResult }>()
 
 // A probe is only valid for one (profile, exact-config) pair. Keying the cache
-// by a fingerprint of the connection-relevant fields — plus the profile the
-// page is SCOPED to — means a same-name edit (url/command/env change) or a
-// same-named server in another profile MISSES the cache instead of showing a
-// stale probe.
+// by a fingerprint of the connection-relevant fields — plus the active profile
+// — means a same-name edit (url/command/env change) or a same-named server in
+// another profile MISSES the cache instead of showing a stale probe.
 export const serverFingerprint = (server: Record<string, unknown>): string =>
   JSON.stringify([server.url, server.command, server.args, server.env, server.headers, server.transport, server.auth])
 

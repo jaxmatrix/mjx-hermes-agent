@@ -237,3 +237,32 @@ for (const r of rows) {
 }
 console.log(`\napplied     ${copied} files copied into src/`)
 console.log(`staged      ${staged} files under sync/incoming/ for review`)
+
+// ---------------------------------------------------------------------------
+// A handful of desktop's src/ files import pure type modules out of its
+// `electron/` directory (payload shapes shared between the main process and the
+// renderer). Mirroring those modules at the same relative path is what lets the
+// imports resolve unchanged — rewriting them instead would mean redoing the
+// rewrite on every future resync. Only dependency-free modules qualify: if one
+// ever grows an import, this throws rather than dragging the main process in.
+
+const ELECTRON_SRC = path.resolve(APP, '..', 'desktop', 'electron')
+const ELECTRON_DEST = path.join(APP, 'electron')
+const needed = new Set()
+for (const rel of walk(UNIVERSAL_SRC)) {
+  if (!/\.tsx?$/.test(rel)) continue
+  const text = fs.readFileSync(path.join(UNIVERSAL_SRC, rel), 'utf8')
+  for (const m of text.matchAll(/from '(?:\.\.\/)+electron\/([\w-]+)'/g)) needed.add(m[1])
+}
+
+fs.rmSync(ELECTRON_DEST, { recursive: true, force: true })
+for (const name of needed) {
+  const from = path.join(ELECTRON_SRC, `${name}.ts`)
+  const text = fs.readFileSync(from, 'utf8')
+  if (/^import\s/m.test(text)) {
+    throw new Error(`electron/${name}.ts is no longer dependency-free — it cannot be mirrored`)
+  }
+  fs.mkdirSync(ELECTRON_DEST, { recursive: true })
+  fs.copyFileSync(from, path.join(ELECTRON_DEST, `${name}.ts`))
+}
+console.log(`mirrored    ${needed.size} dependency-free electron/ type modules`)

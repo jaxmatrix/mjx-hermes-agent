@@ -1,16 +1,16 @@
-import { previewName } from '@/lib/preview-targets'
-import { atom } from '@/store/atom'
+import { atom } from 'nanostores'
 
-// Ported from apps/desktop/src/store/preview-status.ts.
-//
-// Session-scoped feed of previewable artifacts (HTML files, localhost dev URLs)
-// a tool produced. Fed from the tool row (tool/fallback.tsx) using the same
-// detected target the desktop inline card used.
-//
-// Read by `use-status-presence.ts` (presence boolean) and rendered as compact
-// links by `composer/status-stack/preview-row.tsx`, which routes each artifact by
-// target type: a URL opens in the system browser, a path opens in the right-pane
-// file viewer.
+import { previewName } from '@/lib/preview-targets'
+
+/**
+ * Session-scoped feed of previewable artifacts (HTML files, localhost dev URLs)
+ * a tool produced. Surfaced as compact links in the composer status stack —
+ * NOT auto-opened and NOT a bulky inline card. Click opens the rail preview or
+ * the browser; both are manual.
+ *
+ * Fed from the tool row itself (see tool-fallback.tsx) using the same detected
+ * target the inline card used, so detection parity is exact.
+ */
 export interface PreviewArtifact {
   /** cwd captured at detection so a relative path still resolves on click. */
   cwd: string

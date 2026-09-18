@@ -11,7 +11,7 @@
  */
 import type { SlashChipKind } from '@/components/assistant-ui/directive-text'
 import {
-  desktopSlashCommandTakesArgument,
+  desktopSlashCommandArgumentMode,
   isDesktopSlashCommand,
   resolveDesktopCommand
 } from '@/lib/desktop-slash-commands'
@@ -53,7 +53,7 @@ export interface SlashCommandScanOptions {
  * desktop surface at all (`/exit`, `/config`) stay text too.
  */
 function chippableKind(command: string): SlashChipKind | null {
-  if (!isDesktopSlashCommand(command) || desktopSlashCommandTakesArgument(command)) {
+  if (!isDesktopSlashCommand(command) || desktopSlashCommandArgumentMode(command) !== null) {
     return null
   }
 

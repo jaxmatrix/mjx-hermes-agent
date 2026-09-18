@@ -1,14 +1,9 @@
 import { atom, computed, type ReadableAtom } from 'nanostores'
 
-// Generic pane state (open + resize overrides), keyed by pane id. Ported from
-// desktop's `store/panes.ts` — pure nanostores + localStorage, no Electron. The
-// PaneShell reads this to size/collapse each pane; `store/layout.ts` wraps the
-// chat-sidebar pane with named helpers.
-
 export interface PaneStateSnapshot {
   open: boolean
   widthOverride?: number
-  /** Vertical size override (px) for panes that resize on the Y axis (e.g. a bottom-row terminal). */
+  /** Vertical size override (px) for panes that resize on the Y axis (e.g. the bottom-row terminal). */
   heightOverride?: number
 }
 
@@ -17,7 +12,7 @@ export interface PaneRegisterDefaults {
   widthOverride?: number
 }
 
-const STORAGE_KEY = 'hermes.paneStates.v1'
+const STORAGE_KEY = 'hermes.desktop.paneStates.v1'
 
 function isSnapshot(value: unknown): value is PaneStateSnapshot {
   if (!value || typeof value !== 'object') {
@@ -84,52 +79,7 @@ function persist(states: Record<string, PaneStateSnapshot>) {
 
 export const $paneStates = atom<Record<string, PaneStateSnapshot>>(load())
 
-// Coalesce writes. `persist` is JSON.stringify + a synchronous localStorage
-// write, and a pane drag changes this atom once per frame — paying that on the
-// same frame as the relayout it triggers is measurable jank for a value nothing
-// reads until the next launch. A trailing timer is enough: the last state
-// within the window is the one worth keeping.
-const PERSIST_DELAY_MS = 250
-
-let persistTimer: null | ReturnType<typeof setTimeout> = null
-let persistPending: null | Record<string, PaneStateSnapshot> = null
-
-function flushPersist() {
-  // Clear rather than just drop the handle: an out-of-band flush (pagehide,
-  // visibilitychange) can land while a timer is pending, and leaving it armed
-  // would let the next change schedule a second one alongside it.
-  if (persistTimer !== null) {
-    clearTimeout(persistTimer)
-    persistTimer = null
-  }
-
-  if (persistPending) {
-    persist(persistPending)
-    persistPending = null
-  }
-}
-
-$paneStates.subscribe(states => {
-  persistPending = states
-
-  if (persistTimer === null) {
-    persistTimer = setTimeout(flushPersist, PERSIST_DELAY_MS)
-  }
-})
-
-// Don't lose the last drag if the window goes away inside the debounce window.
-// Both events, because neither is sufficient alone: `pagehide` covers reload and
-// in-page navigation, but a Tauri webview being destroyed (window close, app
-// quit) does not reliably fire it — `visibilitychange` to hidden is what tends
-// to arrive there. Double-firing is harmless; the flush is idempotent.
-if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', flushPersist)
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-      flushPersist()
-    }
-  })
-}
+$paneStates.subscribe(persist)
 
 // Cached per-pane derived atoms keep useStore subscriptions referentially stable.
 function memoized<T>(
@@ -184,23 +134,6 @@ export function togglePane(id: string) {
   $paneStates.set({ ...current, [id]: { ...existing, open: !(existing?.open ?? false) } })
 }
 
-/** Carry a pane's saved state to a new id. Paired with `renameTreePane` — a pane
- *  that keeps its slot but loses its dragged width has not really been renamed. */
-export function renamePaneState(from: string, to: string) {
-  const current = $paneStates.get()
-  const existing = current[from]
-
-  if (!existing) {
-    return
-  }
-
-  const next = { ...current, [to]: existing }
-
-  delete next[from]
-
-  $paneStates.set(next)
-}
-
 export function setPaneWidthOverride(id: string, width: number | undefined) {
   const current = $paneStates.get()
   const existing = current[id] ?? { open: false }
@@ -225,10 +158,9 @@ export function setPaneHeightOverride(id: string, height: number | undefined) {
 
 export const clearPaneWidthOverride = (id: string) => setPaneWidthOverride(id, undefined)
 export const clearPaneHeightOverride = (id: string) => setPaneHeightOverride(id, undefined)
-export const getPaneStateSnapshot = (id: string) => $paneStates.get()[id]
 
-/** Drop every pane's width/height override at once — a layout reset returns all
- *  zones to their weight/default sizing without touching open/closed state. */
+/** Drop every pane's drag-resize override (open state untouched). Layout
+ *  reset / preset application: zones return to their declared sizes. */
 export function clearAllPaneSizeOverrides() {
   const current = $paneStates.get()
   let changed = false
@@ -247,3 +179,5 @@ export function clearAllPaneSizeOverrides() {
     $paneStates.set(next)
   }
 }
+
+export const getPaneStateSnapshot = (id: string) => $paneStates.get()[id]

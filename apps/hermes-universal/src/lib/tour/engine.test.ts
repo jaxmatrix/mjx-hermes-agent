@@ -1,20 +1,7 @@
-/**
- * Ported verbatim from desktop `src/lib/tour/engine.test.ts` (MJXHRM-473),
- * with the same one rename the engine took (`TourDriver` → `TourDriverInstance`).
- *
- * Kept whole rather than trimmed: every case here pins a defect the desktop
- * engine actually shipped — a selector rejected before driver.js is touched, a
- * step that moves the app however it was reached, a tour that hands the route
- * back however it ended, and a highlight that rebinds when React swaps the node
- * underneath it. Universal runs this engine on jsdom rather than desktop's
- * happy-dom, which is itself worth asserting: `document.querySelector('<<<')`
- * throws on both, `MutationObserver` and `requestAnimationFrame` exist on both.
- */
-
 import { describe, expect, it } from 'vitest'
 
 import { collectTourTargets } from './collect-targets'
-import { runTourEngine, type TourDriverInstance, type TourHolder } from './engine'
+import { runTourEngine, type TourDriver, type TourHolder } from './engine'
 
 /** A recording fake of the driver.js surface the engine touches. */
 function makeFactory(calls: string[]) {
@@ -35,7 +22,7 @@ function makeFactory(calls: string[]) {
       steps[at]?.onHighlightStarted?.()
     }
 
-    const instance: TourDriverInstance & { clickNext: () => void; clickPrev: () => void } = {
+    const instance: TourDriver & { clickNext: () => void; clickPrev: () => void } = {
       // Stands in for the popover's own Next/Prev buttons. driver.js runs a
       // configured handler if one exists, otherwise its built-in advance —
       // both end up entering the step, which is what must trigger the move.

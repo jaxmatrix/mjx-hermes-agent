@@ -1,5 +1,5 @@
 import { EmojiPicker } from 'frimousse'
-import { type FC, type ReactNode, useState } from 'react'
+import { type FC, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -10,14 +10,15 @@ import { QUICK_REACTIONS } from '@/store/reactions'
 import type { MessageReaction } from '@/types/hermes'
 
 // Served from the app's own origin (vite.config.ts `hermes:emojibase-assets`
-// bundles emojibase-data): the app must work offline, its CSP grants no
-// connect-src to a CDN, and a client should never phone one to draw a picker.
+// plugin bundles emojibase-data): Electron must work offline, and the app
+// should never phone a CDN to draw a picker.
 const EMOJIBASE_URL = './emojibase'
 
-// Slack tints its picker cells in a repeating palette so long scrolls stay
-// scannable. Same trick, in the app's own accent idiom. Keyed off the emoji's
-// codepoint — deterministic, and stable under frimousse's virtualized rows (an
-// index cycle would reshuffle on scroll).
+// Slack tints its picker cells in a repeating palette (green, blue, yellow,
+// pink, brown, purple…) so long scrolls stay scannable. Same trick, in the
+// app's own accent idiom (bg-emerald-500/15 etc. are existing patterns).
+// Keyed off the emoji's codepoint — deterministic, and stable under
+// frimousse's virtualized rows (an index cycle would reshuffle on scroll).
 const CELL_TINTS = [
   'hover:bg-emerald-500/15 data-[active]:bg-emerald-500/20',
   'hover:bg-sky-500/15 data-[active]:bg-sky-500/20',
@@ -36,9 +37,9 @@ const FullEmojiPicker: FC<{ onSelect: (emoji: string) => void }> = ({ onSelect }
     emojibaseUrl={EMOJIBASE_URL}
     onEmojiSelect={emoji => onSelect(emoji.emoji)}
   >
-    {/* Borderless, underline-on-focus — the app's SearchField idiom, not a
-        boxed search bar. Search matches labels AND emojibase tags ("lol" → 😂),
-        which frimousse handles natively. */}
+    {/* Borderless, underline-on-focus — the app's SearchField idiom (DESIGN.md),
+        not a boxed search bar. Search matches labels AND emojibase tags
+        ("lol" → 😂), which frimousse handles natively. */}
     <EmojiPicker.Search
       autoFocus
       className="mx-1 border-b border-(--ui-stroke-tertiary) bg-transparent px-1 pb-1 text-sm outline-hidden focus:border-(--ui-stroke-secondary)"
@@ -84,12 +85,13 @@ const FullEmojiPicker: FC<{ onSelect: (emoji: string) => void }> = ({ onSelect }
 /**
  * The reaction picker — six quick emoji, then "+" for the full set.
  *
- * Rides the shared Popover so it inherits the app's popover surface treatment
- * rather than inventing a floating pill.
+ * Rides the shared Popover, so it inherits the app's menu/popover surface
+ * treatment rather than inventing a floating pill (DESIGN.md: popovers get one
+ * shared shadow + hairline; call sites don't reinvent elevation).
  */
 export const ReactionPicker: FC<{
   align?: 'end' | 'start'
-  children: ReactNode
+  children: React.ReactNode
   onOpenChange: (open: boolean) => void
   onSelect: (emoji: string) => void
   open: boolean
@@ -114,6 +116,7 @@ export const ReactionPicker: FC<{
         align={align}
         // Opt this one surface out of the shared popover glass: emoji hover
         // tints at 15% alpha are unreadable over blurred transcript text.
+        // Overriding the local surface var keeps the arrow matched for free.
         className={cn('w-auto p-1 [--popover-surface:var(--ui-bg-elevated)]', !expanded && 'flex gap-0.5')}
         onCloseAutoFocus={event => event.preventDefault()}
         side="top"
@@ -151,9 +154,10 @@ export const ReactionPicker: FC<{
 /**
  * The reactions a message carries.
  *
- * Flat by design — no pill, no border, no fill. It reads as quiet metadata in
- * the same register as the message age it sits beside. Your own reaction is
- * clickable to retract; the agent's is display-only.
+ * Flat by design (DESIGN.md: "Flat, not boxed") — no pill, no border, no fill.
+ * It reads as quiet metadata in the same register as the message age and the
+ * checkpoint row it sits beside. Your own reaction is clickable to retract;
+ * the agent's is display-only.
  */
 export const ReactionBadge: FC<{
   className?: string

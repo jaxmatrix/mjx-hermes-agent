@@ -1,38 +1,21 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 
-import { GatewayConfigurator } from '@/app/gateway/gateway-configurator'
-import { GATEWAY_SETTINGS_ROUTE } from '@/app/routes'
 import { StatusDot, type StatusTone } from '@/components/status-dot'
 import { Button } from '@/components/ui/button'
 import { LogView } from '@/components/ui/log-view'
 import { Tip } from '@/components/ui/tooltip'
 import { getLogs } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { splitPlatformStatusKey } from '@/lib/gateway-platforms'
-import { ChevronRight, LayoutDashboard, Power } from '@/lib/icons'
-import { LOG_NOISE_RE, trimLogLine } from '@/lib/log-format'
+import { LayoutDashboard, Power, RefreshCw } from '@/lib/icons'
 import type { RuntimeReadinessResult } from '@/lib/runtime-readiness'
 import { cn } from '@/lib/utils'
-import { runGatewayRestart } from '@/store/system-status'
-import { openAppRoute } from '@/store/windows'
+import { reconnectGateway } from '@/store/gateway-reconnect'
+import { notifyError } from '@/store/notifications'
+import { runGatewayRestart } from '@/store/system-actions'
 import type { StatusResponse } from '@/types/hermes'
-
-// Ported from apps/desktop/src/app/shell/gateway-menu-panel.tsx. The gateway
-// health popover: connection + inference dots, restart / open-system actions, a
-// live-tailing gateway log, and the messaging-platform states. Universal swaps
-// desktop's `store/system-actions` restart for the system-status one.
-
-/** How the popover offers a gateway change:
- *  • 'embedded' — the inline configurator, re-homing without ever leaving the
- *    popover (the roomy desktop statusbar menu);
- *  • 'link'     — a row that leaves for Settings ▸ Gateway, where the connect form
- *    gets a full screen (the phone's 19rem Status drawer, too cramped for one);
- *  • 'none'     — no affordance at all. */
-export type GatewaySwitchAffordance = 'embedded' | 'link' | 'none'
 
 interface GatewayMenuPanelProps {
   gatewayState: string
-  gatewaySwitch?: GatewaySwitchAffordance
   inferenceStatus: RuntimeReadinessResult | null
   onClose: () => void
   onOpenSystem: () => void
@@ -43,6 +26,10 @@ const LOG_TAIL = 120
 const LOG_VISIBLE = 40
 const LOG_POLL_MS = 3_000
 
+// Per-connection WebSocket churn (accept/close/heartbeat) drowns out anything
+// useful — strip it so the tail reads as real gateway activity at a glance.
+const LOG_NOISE_RE = /\bws (?:accepted|closed|response sent|ping|pong)\b/i
+
 // Live tail while the popover is mounted (i.e. open): poll on a tight cadence
 // and stop on unmount, instead of a global always-on status poll.
 function useGatewayLogTail(): string[] {
@@ -51,21 +38,27 @@ function useGatewayLogTail(): string[] {
   useEffect(() => {
     let cancelled = false
 
-    const load = () =>
-      getLogs({ file: 'gui', lines: LOG_TAIL })
-        .then(res => {
-          if (cancelled) {
-            return
-          }
+    // async: getLogs THROWS (not rejects) when the desktop bridge is missing
+    // (plain-browser mode) — a sync throw here would take down the root
+    // error boundary before the .catch even attaches.
+    const load = async () => {
+      try {
+        const res = await getLogs({ file: 'gui', lines: LOG_TAIL })
 
-          setLines(
-            res.lines
-              .map(line => line.trim())
-              .filter(line => line && !LOG_NOISE_RE.test(line))
-              .slice(-LOG_VISIBLE)
-          )
-        })
-        .catch(() => {})
+        if (cancelled) {
+          return
+        }
+
+        setLines(
+          res.lines
+            .map(line => line.trim())
+            .filter(line => line && !LOG_NOISE_RE.test(line))
+            .slice(-LOG_VISIBLE)
+        )
+      } catch {
+        // Bridge/gateway unavailable — keep the last tail.
+      }
+    }
 
     void load()
     const timer = window.setInterval(load, LOG_POLL_MS)
@@ -90,9 +83,14 @@ const PLATFORM_TONE: Record<string, StatusTone> = {
 
 const prettyState = (state: string) => state.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase())
 
+// Strip leading "YYYY-MM-DD HH:MM:SS,mmm " and "[runtime_id] " prefixes from
+// log lines so they don't dominate the display. Full text preserved on hover.
+const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}[,.\d]*\s+/
+const RUNTIME_BRACKET_RE = /^\[[^\]]+]\s+/
+const trimLogLine = (raw: string) => raw.trim().replace(TIMESTAMP_RE, '').replace(RUNTIME_BRACKET_RE, '')
+
 export function GatewayMenuPanel({
   gatewayState,
-  gatewaySwitch = 'none',
   inferenceStatus,
   onClose,
   onOpenSystem,
@@ -100,7 +98,7 @@ export function GatewayMenuPanel({
 }: GatewayMenuPanelProps) {
   const { t } = useI18n()
   const copy = t.shell.gatewayMenu
-  const [configuratorOpen, setConfiguratorOpen] = useState(false)
+  const [reconnecting, setReconnecting] = useState(false)
 
   // Both jumps open the system panel, which owns the full view — so dismiss the
   // little status popover on the way out.
@@ -109,20 +107,22 @@ export function GatewayMenuPanel({
     onOpenSystem()
   }
 
-  // `link` mode: hand the switch to Settings ▸ Gateway, which owns a full-screen
-  // configurator. `openAppRoute` picks the surface per platform — the native screen
-  // Activity on Android (an in-WebView route change when we're already inside it),
-  // the in-app full-screen surface on iOS. Dismiss the popover on the way out.
-  const changeGateway = () => {
-    onClose()
-    openAppRoute(GATEWAY_SETTINGS_ROUTE)
-  }
-
   // Shared restart helper: never rejects and surfaces progress in the statusbar
   // gateway indicator, so just fire and close.
   const restart = () => {
     onClose()
     void runGatewayRestart()
+  }
+
+  const reconnect = () => {
+    if (reconnecting) {
+      return
+    }
+
+    setReconnecting(true)
+    void reconnectGateway()
+      .catch(err => notifyError(err, copy.reconnectGateway))
+      .finally(() => setReconnecting(false))
   }
 
   const gatewayOpen = gatewayState === 'open'
@@ -143,13 +143,7 @@ export function GatewayMenuPanel({
         : copy.checkingInference
     : copy.disconnected
 
-  const platforms = Object.entries(statusSnapshot?.gateway_platforms || {})
-    .sort(([l], [r]) => l.localeCompare(r))
-    // `<profile>:<platform>` keys come from secondary-profile adapters; printing
-    // the raw key gave rows like "Work:telegram". Show the platform, with the
-    // profile it belongs to as a muted tag.
-    .map(([key, status]) => ({ ...splitPlatformStatusKey(key), key, status }))
-
+  const platforms = Object.entries(statusSnapshot?.gateway_platforms || {}).sort(([l], [r]) => l.localeCompare(r))
   const recentLogs = useGatewayLogTail()
 
   // Keep the tail pinned to the latest line as it streams.
@@ -177,6 +171,19 @@ export function GatewayMenuPanel({
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
+          {/* An open transport can still be wedged; recovery must remain reachable. */}
+          <Tip label={copy.reconnectGateway}>
+            <Button
+              aria-label={copy.reconnectGateway}
+              className="text-muted-foreground hover:text-foreground"
+              disabled={reconnecting}
+              onClick={reconnect}
+              size="icon-xs"
+              variant="ghost"
+            >
+              <RefreshCw className={cn(reconnecting && 'animate-spin')} />
+            </Button>
+          </Tip>
           <Tip label={copy.openSystem}>
             <Button
               aria-label={copy.openSystem}
@@ -190,8 +197,7 @@ export function GatewayMenuPanel({
           </Tip>
           {/* Restart is the heavy, disruptive action: keep it visually distinct
               (power icon, destructive hover) and separated from the benign
-              open-system button so it can't be hit by mistake. It used to sit
-              first in the row, one 24px hop from a button people press casually. */}
+              reconnect/system buttons so it can't be hit by mistake. */}
           <span aria-hidden className="mx-1 h-4 w-px bg-border/70" />
           <Tip label={t.commandCenter.restartGateway}>
             <Button
@@ -218,7 +224,7 @@ export function GatewayMenuPanel({
           <div className="flex items-center justify-between gap-2">
             <SectionLabel>{copy.recentActivity}</SectionLabel>
             <Button
-              className="-me-2 h-auto py-0 font-medium leading-none text-muted-foreground"
+              className="-mr-2 h-auto py-0 font-medium leading-none text-muted-foreground"
               onClick={openSystem}
               size="xs"
               type="button"
@@ -237,63 +243,16 @@ export function GatewayMenuPanel({
         <Section>
           <SectionLabel>{copy.messagingPlatforms}</SectionLabel>
           <ul className="mt-1.5 space-y-1">
-            {platforms.map(({ key, platform, profile, status }) => (
-              <li className="flex items-center justify-between gap-2 text-xs" key={key}>
-                <span className="truncate">
-                  <span className="capitalize">{platform}</span>
-                  {profile ? <span className="ms-1 text-muted-foreground">{profile}</span> : null}
-                </span>
+            {platforms.map(([name, platform]) => (
+              <li className="flex items-center justify-between gap-2 text-xs" key={name}>
+                <span className="truncate capitalize">{name}</span>
                 <span className="flex items-center gap-1.5 text-[0.66rem] text-muted-foreground">
-                  <StatusDot tone={PLATFORM_TONE[status.state] || 'muted'} />
-                  {prettyState(status.state)}
+                  <StatusDot tone={PLATFORM_TONE[platform.state] || 'muted'} />
+                  {prettyState(platform.state)}
                 </span>
               </li>
             ))}
           </ul>
-        </Section>
-      )}
-
-      {/* Re-home the app onto another gateway without leaving for Settings. The
-          connect surface is the shared configurator in its `embedded` variant, and
-          connecting is a SOFT switch — the shell (and this popover, until it
-          dismisses itself) stays mounted across the swap. */}
-      {gatewaySwitch === 'embedded' && (
-        <Section>
-          <Button
-            className="-ms-1 h-auto py-0 font-medium leading-none text-muted-foreground"
-            onClick={() => setConfiguratorOpen(open => !open)}
-            size="xs"
-            type="button"
-            variant="text"
-          >
-            {configuratorOpen ? copy.hideGatewaySettings : copy.changeGateway}
-          </Button>
-          {configuratorOpen && (
-            // Radix DropdownMenu typeahead swallows character keys, which would make
-            // the URL / token inputs untypable (the same reason DropdownMenuSearch
-            // stops propagation).
-            <div className="mt-2" onKeyDown={event => event.stopPropagation()}>
-              <GatewayConfigurator onConnected={onClose} variant="embedded" />
-            </div>
-          )}
-        </Section>
-      )}
-
-      {/* Same affordance where the popover can't host a form (the phone's Status
-          drawer): the chevron says it leaves for Settings ▸ Gateway rather than
-          expanding in place. Same wording, so it reads as the one "Change gateway". */}
-      {gatewaySwitch === 'link' && (
-        <Section>
-          <Button
-            className="-ms-1 h-auto gap-0.5 py-0 font-medium leading-none text-muted-foreground"
-            onClick={changeGateway}
-            size="xs"
-            type="button"
-            variant="text"
-          >
-            {copy.changeGateway}
-            <ChevronRight className="size-3 rtl:-scale-x-100" />
-          </Button>
         </Section>
       )}
     </div>

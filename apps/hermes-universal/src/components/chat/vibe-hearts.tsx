@@ -1,14 +1,16 @@
-import { type CSSProperties, useEffect } from 'react'
+import { type CSSProperties } from 'react'
 
 import { createParticleEmitter, ParticleField, type ParticleFieldConfig } from '@/components/particles/particle-field'
 import { $petActive, flashPetActivity } from '@/store/pet'
-import { forwardPetReaction } from '@/store/pet-reaction'
+import { $petOverlayActive, forwardPetReaction } from '@/store/pet-overlay'
+import { $vibeHeartsEnabled } from '@/store/vibe-hearts-enabled'
 
 /**
  * TikTok-style floating hearts — a thin skin over {@link ParticleField} (pixel
  * heart glyph + pink). Placed two ways: rising from the composer when no pet is
- * out, or from the pet when one is. Fired by the core's `reaction` event (ily /
- * `<3` / good bot, see store/chat.ts) — or call {@link burstVibeHearts} directly.
+ * out, or from the pet when one is. Fired by the core `reaction` event (affection
+ * in a user message) via {@link burstVibeHearts}. Gated by Settings → Appearance
+ * → Vibe Hearts (`$vibeHeartsEnabled`), on by default.
  */
 
 // Light pink reads on both light and dark chat surfaces.
@@ -46,54 +48,33 @@ const HEART_GLYPH = (
 
 const emitter = createParticleEmitter()
 
-/** Play hearts in THIS window (whichever HeartField is mounted). */
+/** Play hearts in THIS window (whichever HeartField is mounted). The overlay
+ *  window calls this directly off the mirrored vibe signal. */
 export const playVibeHearts = (count?: number) => emitter.burst(count)
 
 /**
- * Fire a vibe burst from anywhere (the `reaction` event, the DEV hotkey). When a
- * pet is out it celebrates alongside the hearts, which the mounted PetHeartField
- * then puffs off the sprite; with no pet, the composer field catches them.
- *
- * The reaction is also pushed onto the (currently consumer-less) `$petReaction`
- * bus. Desktop uses that to mirror the burst into a popped-out pet's own OS
- * window; universal is single-window, so it's carried for a future pop-out
- * rather than routed to — which is why this always plays locally, where desktop
- * plays locally OR forwards.
+ * Fire a vibe burst (from the core `reaction` event). Routes to where the
+ * affection should land:
+ *  - pet popped out  → forward to the overlay window + celebrate (mirrored)
+ *  - pet in-window   → play here (on the pet) + celebrate
+ *  - no pet          → play here (composer)
  */
 export const burstVibeHearts = (count?: number) => {
-  if ($petActive.get()) {
+  if (!$vibeHeartsEnabled.get()) {
+    return
+  }
+
+  const overlay = $petOverlayActive.get()
+
+  if (overlay || $petActive.get()) {
     flashPetActivity({ celebrate: true })
   }
 
-  forwardPetReaction('vibe')
-  playVibeHearts(count)
-}
-
-/** DEV-only preview: Shift+H, firing even while the composer is focused. Mount
- *  once in an always-present component (FloatingPet) — a single listener.
- *  Deliberately a raw listener rather than a registered keybind: it's a dev
- *  affordance, and registering it would surface a fake row in Settings →
- *  Shortcuts. (Desktop later dropped this hotkey in 1fa3886bc; universal keeps
- *  it, since the reaction path is harder to trigger by hand here.) */
-export function useHeartPreviewHotkey() {
-  useEffect(() => {
-    if (!import.meta.env.DEV) {
-      return
-    }
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (!e.shiftKey || e.repeat || e.altKey || e.ctrlKey || e.metaKey || e.code !== 'KeyH') {
-        return
-      }
-
-      e.preventDefault()
-      burstVibeHearts()
-    }
-
-    window.addEventListener('keydown', onKeyDown)
-
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  if (overlay) {
+    forwardPetReaction('vibe')
+  } else {
+    playVibeHearts(count)
+  }
 }
 
 export interface HeartFieldProps {
@@ -118,7 +99,7 @@ export function HeartField({ config, className, style }: HeartFieldProps) {
 
 /**
  * Pet-anchored hearts, feet→~10-20% above. One place owns the geometry so the
- * pet's puff stays consistent wherever it's mounted. `petW`/`petH` are the
+ * in-window pet and the popped-out overlay stay identical. `petW`/`petH` are the
  * rendered sprite dimensions (frame × scale).
  */
 export function PetHeartField({ petW, petH }: { petW: number; petH: number }) {

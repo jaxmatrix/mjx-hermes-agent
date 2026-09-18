@@ -1,10 +1,7 @@
-import { translateNow } from '@/i18n'
-import { atom } from '@/store/atom'
+import { atom } from 'nanostores'
 
-// Ported from apps/desktop/src/store/notifications.ts (nanostores via the
-// @/store/atom seam). The reducer/error-summary logic is verbatim; the `icon`
-// field is a desktop codicon name the lean mobile stack ignores (kind drives the
-// icon). `placement` is retained for API parity though mobile renders one stack.
+import { translateNow } from '@/i18n'
+import { isLocalBackendSlotWaitTimeout, requestPoolLimitsSettings } from '@/store/pool-limits'
 
 export type NotificationKind = 'error' | 'warning' | 'info' | 'success'
 
@@ -18,18 +15,18 @@ export type NotificationPlacement = 'default' | 'bottom-right'
 export interface AppNotification {
   id: string
   kind: NotificationKind
-  /** Desktop codicon name; ignored by the mobile stack. */
+  /** When set, renders this codicon instead of the default kind icon. */
   icon?: string
-  /** CSS color token overriding the kind icon's default tint — the credits
-   *  usage ramp (muted → orange → red) rides on this. */
+  /** When set, tints the icon and message with this CSS color (severity ramp). */
   accentColor?: string
-  /** Secondary detail line rendered below the message, muted (e.g. "$220.00 cap").
-   *  Unlike `detail` this is prose, not a monospace error dump. */
+  /** Secondary detail line rendered below the message, muted (e.g. "$220.00 cap"). */
   meta?: string
   title?: string
   message: string
   detail?: string
   action?: NotificationAction
+  /** Second, quieter button beside `action` (e.g. "Disable" next to "Sign in"). */
+  secondaryAction?: NotificationAction
   onDismiss?: () => void
   createdAt: number
   placement?: NotificationPlacement
@@ -45,13 +42,14 @@ export interface NotificationInput {
   message: string
   detail?: string
   action?: NotificationAction
+  secondaryAction?: NotificationAction
   onDismiss?: () => void
   durationMs?: number
   placement?: NotificationPlacement
 }
 
 let notificationCounter = 0
-const timers = new Map<string, ReturnType<typeof setTimeout>>()
+const timers = new Map<string, number>()
 
 export const $notifications = atom<AppNotification[]>([])
 
@@ -63,6 +61,13 @@ function defaultDuration(kind: NotificationKind) {
   return 5_000
 }
 
+// Only interruptions worth a top-center toast: errors, warnings, and anything
+// with an action button the user needs to notice and click (restart gateway,
+// update available, sign-in prompts). Everything else — the bulk of routine
+// "saved"/"enabled"/"archived" confirmations across settings, MCP, cron,
+// profiles, messaging — is ambient feedback and defaults to a quiet
+// bottom-right toast instead. Callers can still force `placement: 'default'`
+// for a specific case.
 function defaultPlacement(kind: NotificationKind, action?: NotificationAction): NotificationPlacement {
   if (kind === 'error' || kind === 'warning' || action) {
     return 'default'
@@ -75,7 +80,31 @@ function cleanErrorText(value: string) {
   return value.replace(/^Error:\s*/, '').trim()
 }
 
+/** True when an error string is a disk-full / ENOSPC / SQLITE_FULL failure. */
+export function isDiskFullErrorMessage(message: string): boolean {
+  return (
+    /no space left on device/i.test(message) ||
+    /not enough space/i.test(message) ||
+    /database or disk is full/i.test(message) ||
+    /\bENOSPC\b/i.test(message) ||
+    /disk full/i.test(message) ||
+    /full disk/i.test(message)
+  )
+}
+
 const ERROR_SUMMARIES: { test: (msg: string) => boolean; summarize: (msg: string) => string }[] = [
+  {
+    // Disk full / ENOSPC — session DB write, backend crash, or any path that
+    // bubbles "no space left" / SQLITE_FULL through notifyError. Match before
+    // generic length truncation so the user gets a clear "free space" toast
+    // instead of a silent send or a raw errno dump.
+    test: isDiskFullErrorMessage,
+    summarize: () => translateNow('notifications.errors.diskFull')
+  },
+  {
+    test: msg => /['"]code['"]\s*:\s*['"]gateway_auth_failed['"]/i.test(msg),
+    summarize: () => translateNow('notifications.errors.gatewayAuthFailed')
+  },
   {
     test: msg => /incorrect api key provided/i.test(msg) || /['"]code['"]\s*:\s*['"]invalid_api_key['"]/i.test(msg),
     summarize: msg => {
@@ -104,6 +133,10 @@ const ERROR_SUMMARIES: { test: (msg: string) => boolean; summarize: (msg: string
   {
     test: msg => /microphone permission/i.test(msg),
     summarize: () => translateNow('notifications.errors.microphonePermission')
+  },
+  {
+    test: msg => /Restart required:/i.test(msg),
+    summarize: () => translateNow('notifications.errors.codeSkewRestartRequired')
   }
 ]
 
@@ -117,7 +150,9 @@ function summarizeErrorMessage(message: string, fallback: string) {
   return message.length > 180 ? fallback : message || fallback
 }
 
-function readableError(error: unknown, fallback: string): { message: string; detail?: string } {
+// Exported so flows that surface errors inline (e.g. ConfirmDialog's onConfirm
+// rethrow) can reuse the same IPC-unwrapping + summarizing as notifyError.
+export function readableError(error: unknown, fallback: string): { message: string; detail?: string } {
   const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : fallback
   const unwrapped = raw.match(/Error invoking remote method '[^']+': Error: (.+)$/)?.[1] ?? raw
   const cleaned = cleanErrorText(unwrapped)
@@ -141,12 +176,13 @@ export function notify(input: NotificationInput): string {
     message: input.message,
     detail: input.detail,
     action: input.action,
+    secondaryAction: input.secondaryAction,
     onDismiss: input.onDismiss,
     createdAt: Date.now(),
     placement: input.placement ?? defaultPlacement(kind, input.action)
   }
 
-  clearTimeout(timers.get(id))
+  window.clearTimeout(timers.get(id))
   timers.delete(id)
   $notifications.set([notification, ...$notifications.get().filter(item => item.id !== id)].slice(0, 4))
 
@@ -155,7 +191,7 @@ export function notify(input: NotificationInput): string {
   if (duration > 0) {
     timers.set(
       id,
-      setTimeout(() => dismissNotification(id), duration)
+      window.setTimeout(() => dismissNotification(id), duration)
     )
   }
 
@@ -164,17 +200,24 @@ export function notify(input: NotificationInput): string {
 
 export function notifyError(error: unknown, fallback: string): string {
   const readable = readableError(error, fallback)
+  const poolSlotTimeout = isLocalBackendSlotWaitTimeout(error)
 
   return notify({
+    action: poolSlotTimeout
+      ? {
+          label: translateNow('desktop.poolSlotTimeoutOpenSettings'),
+          onClick: requestPoolLimitsSettings
+        }
+      : undefined,
     kind: 'error',
     title: fallback,
-    message: readable.message,
-    detail: readable.detail
+    message: poolSlotTimeout ? translateNow('desktop.poolSlotTimeoutBody') : readable.message,
+    detail: poolSlotTimeout ? readable.message : readable.detail
   })
 }
 
 export function dismissNotification(id: string) {
-  clearTimeout(timers.get(id))
+  window.clearTimeout(timers.get(id))
   timers.delete(id)
   const dismissed = $notifications.get().find(item => item.id === id)
   $notifications.set($notifications.get().filter(item => item.id !== id))
@@ -183,7 +226,7 @@ export function dismissNotification(id: string) {
 
 export function clearNotifications() {
   for (const timer of timers.values()) {
-    clearTimeout(timer)
+    window.clearTimeout(timer)
   }
 
   timers.clear()

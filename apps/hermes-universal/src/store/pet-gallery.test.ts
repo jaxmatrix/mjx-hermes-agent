@@ -1,184 +1,210 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/store/gateway', () => ({ requestGateway: vi.fn() }))
+import { $petInfo, setPetInfo } from './pet'
+import { $petGallery, adoptPet, type GatewayRequest, loadPetGallery, resetPetGallery } from './pet-gallery'
 
-import { GatewayRpcError } from '@/gateway/rpc-error'
-import { requestGateway } from '@/store/gateway'
+function localGallery() {
+  return {
+    enabled: true,
+    active: 'boba',
+    pets: [{ slug: 'boba', displayName: 'Boba', installed: true }]
+  }
+}
 
-import {
-  $petGallery,
-  $petGalleryStatus,
-  adoptPet,
-  loadPetGallery,
-  loadPetThumb,
-  rankedGalleryPets,
-  setPetEnabled
-} from './pet-gallery'
-import type { PetGallery } from './pet-gallery'
-
-const rpc = vi.mocked(requestGateway)
-
-const gallery = (over: Partial<PetGallery> = {}): PetGallery => ({
-  enabled: false,
-  active: '',
-  pets: [
-    { slug: 'cat', displayName: 'Cat', installed: true },
-    { slug: 'dog', displayName: 'Dog', installed: false, generated: true }
-  ],
-  ...over
-})
-
-describe('pet-gallery store', () => {
+describe('pet gallery pet.info sync', () => {
   beforeEach(() => {
-    rpc.mockReset()
-    $petGallery.set(null)
-    $petGalleryStatus.set('idle')
+    resetPetGallery()
+    setPetInfo({ enabled: false })
   })
-  afterEach(() => $petGallery.set(null))
 
-  it('loads local then the full gallery', async () => {
-    rpc.mockImplementation(async (method: string) => {
+  afterEach(() => {
+    resetPetGallery()
+    setPetInfo({ enabled: false })
+    vi.restoreAllMocks()
+  })
+
+  it('uses pet.info.meta and keeps the cached spritesheet when the revision is current', async () => {
+    setPetInfo({
+      enabled: true,
+      slug: 'boba',
+      displayName: 'Old Boba',
+      scale: 0.33,
+      spritesheetBase64: 'large-sprite-payload',
+      spritesheetRevision: '100:2048',
+      frameW: 192,
+      frameH: 208
+    })
+
+    const requestMock = vi.fn(async (method: string) => {
       if (method === 'pet.gallery') {
-        return gallery() as never
+        return localGallery()
+      }
+
+      if (method === 'pet.info.meta') {
+        return {
+          enabled: true,
+          slug: 'boba',
+          displayName: 'Boba',
+          scale: 0.5,
+          spritesheetRevision: '100:2048'
+        }
+      }
+
+      if (method === 'pet.info') {
+        throw new Error('full pet.info should not be called for an unchanged sprite')
+      }
+
+      throw new Error(`unexpected method: ${method}`)
+    })
+
+    const request = requestMock as unknown as GatewayRequest
+
+    await loadPetGallery(request)
+
+    const methods = requestMock.mock.calls.map(([method]) => method)
+    expect(methods).toContain('pet.info.meta')
+    expect(methods).not.toContain('pet.info')
+    expect($petInfo.get()).toMatchObject({
+      enabled: true,
+      slug: 'boba',
+      displayName: 'Boba',
+      scale: 0.5,
+      spritesheetBase64: 'large-sprite-payload',
+      spritesheetRevision: '100:2048',
+      frameW: 192,
+      frameH: 208
+    })
+  })
+
+  it('fetches full pet.info when metadata reports a new spritesheet revision', async () => {
+    setPetInfo({
+      enabled: true,
+      slug: 'boba',
+      displayName: 'Boba',
+      scale: 0.33,
+      spritesheetBase64: 'old-sprite-payload',
+      spritesheetRevision: '100:2048'
+    })
+
+    const requestMock = vi.fn(async (method: string) => {
+      if (method === 'pet.gallery') {
+        return localGallery()
+      }
+
+      if (method === 'pet.info.meta') {
+        return {
+          enabled: true,
+          slug: 'boba',
+          displayName: 'Boba',
+          scale: 0.33,
+          spritesheetRevision: '101:4096'
+        }
       }
 
       if (method === 'pet.info') {
         return {
-          addGatewayEventListener: () => () => {},
-          enabled: false
-        } as never
+          enabled: true,
+          slug: 'boba',
+          displayName: 'Boba',
+          scale: 0.33,
+          spritesheetBase64: 'new-sprite-payload',
+          spritesheetRevision: '101:4096'
+        }
       }
 
-      return {} as never
+      throw new Error(`unexpected method: ${method}`)
     })
-    await loadPetGallery()
-    expect($petGalleryStatus.get()).toBe('ready')
-    expect($petGallery.get()?.pets.map(p => p.slug)).toEqual(['cat', 'dog'])
+
+    const request = requestMock as unknown as GatewayRequest
+
+    await loadPetGallery(request)
+
+    const methods = requestMock.mock.calls.map(([method]) => method)
+    expect(methods).toContain('pet.info.meta')
+    expect(methods).toContain('pet.info')
+    expect($petInfo.get().spritesheetBase64).toBe('new-sprite-payload')
+    expect($petInfo.get().spritesheetRevision).toBe('101:4096')
   })
 
-  it('marks the backend stale on a missing-method error', async () => {
-    rpc.mockRejectedValue(new Error('method not found: pet.gallery'))
-    await loadPetGallery()
-    expect($petGalleryStatus.get()).toBe('stale')
+  it('falls back to full pet.info when an older gateway lacks metadata', async () => {
+    const requestMock = vi.fn(async (method: string) => {
+      if (method === 'pet.gallery') {
+        return localGallery()
+      }
+
+      if (method === 'pet.info.meta') {
+        throw new Error('JSON-RPC -32601: Method not found')
+      }
+
+      if (method === 'pet.info') {
+        return {
+          enabled: true,
+          slug: 'boba',
+          displayName: 'Boba from legacy gateway',
+          scale: 0.4,
+          spritesheetBase64: 'legacy-full-payload',
+          spritesheetRevision: '99:1024'
+        }
+      }
+
+      throw new Error(`unexpected method: ${method}`)
+    })
+
+    const request = requestMock as unknown as GatewayRequest
+
+    await loadPetGallery(request)
+
+    const methods = requestMock.mock.calls.map(([method]) => method)
+    expect(methods).toContain('pet.info.meta')
+    expect(methods).toContain('pet.info')
+    expect($petInfo.get()).toMatchObject({
+      enabled: true,
+      slug: 'boba',
+      displayName: 'Boba from legacy gateway',
+      spritesheetBase64: 'legacy-full-payload',
+      spritesheetRevision: '99:1024'
+    })
   })
 
-  it('marks the backend stale on a bare -32601, whatever the gateway called it', async () => {
-    // This store carried its own copy of the missing-method predicate, so it
-    // could only ever see what the copy had been taught. It now delegates to
-    // the shared helper, which reads the JSON-RPC code.
-    rpc.mockRejectedValue(new GatewayRpcError('the requested procedure does not exist', -32601))
-    await loadPetGallery()
-    expect($petGalleryStatus.get()).toBe('stale')
-  })
+  it('keeps mutation sync on metadata when the selected pet sprite is unchanged', async () => {
+    $petGallery.set(localGallery())
+    setPetInfo({
+      enabled: true,
+      slug: 'boba',
+      displayName: 'Boba',
+      scale: 0.33,
+      spritesheetBase64: 'large-sprite-payload',
+      spritesheetRevision: '100:2048'
+    })
 
-  it('does not call a genuine gateway failure a stale backend', async () => {
-    rpc.mockRejectedValue(new GatewayRpcError('petdex is unreachable', 5061))
-    await loadPetGallery()
-    expect($petGalleryStatus.get()).toBe('error')
-  })
+    const requestMock = vi.fn(async (method: string) => {
+      if (method === 'pet.select') {
+        return { ok: true, slug: 'boba', displayName: 'Boba' }
+      }
 
-  it('adopts a pet: selects it + marks active/installed', async () => {
-    $petGallery.set(gallery())
-    rpc.mockResolvedValue({} as never)
-    await adoptPet('dog')
-    expect(rpc).toHaveBeenCalledWith('pet.select', { slug: 'dog' })
-    const g = $petGallery.get()!
-    expect(g.active).toBe('dog')
-    expect(g.enabled).toBe(true)
-    expect(g.pets.find(p => p.slug === 'dog')?.installed).toBe(true)
-  })
+      if (method === 'pet.info.meta') {
+        return {
+          enabled: true,
+          slug: 'boba',
+          displayName: 'Boba',
+          scale: 0.33,
+          spritesheetRevision: '100:2048'
+        }
+      }
 
-  it('disables the pet via pet.disable', async () => {
-    $petGallery.set(gallery({ enabled: true, active: 'cat' }))
-    rpc.mockResolvedValue({} as never)
-    await setPetEnabled(false)
-    expect(rpc).toHaveBeenCalledWith('pet.disable')
-    expect($petGallery.get()?.enabled).toBe(false)
-  })
-})
+      if (method === 'pet.info') {
+        throw new Error('full pet.info should not be called after an unchanged select')
+      }
 
-describe('rankedGalleryPets', () => {
-  const g = (over: Partial<PetGallery> = {}): PetGallery => ({
-    enabled: true,
-    active: 'cat',
-    pets: [
-      { slug: 'plain', displayName: 'Plain', installed: false },
-      { slug: 'curated-one', displayName: 'Curated One', installed: false, curated: true },
-      { slug: 'cat', displayName: 'Cat', installed: true },
-      { slug: 'clawd', displayName: 'Clawd', installed: true },
-      { slug: 'clawd-mini', displayName: 'Clawd Mini', installed: true },
-      { slug: 'mine', displayName: 'Mine', installed: true, generated: true }
-    ],
-    ...over
-  })
+      throw new Error(`unexpected method: ${method}`)
+    })
 
-  it('drops the internal clawd pets', () => {
-    expect(rankedGalleryPets(g()).map(p => p.slug)).not.toContain('clawd')
-    expect(rankedGalleryPets(g()).map(p => p.slug)).not.toContain('clawd-mini')
-  })
+    const request = requestMock as unknown as GatewayRequest
 
-  it('ranks generated, then active, then installed, then curated', () => {
-    expect(rankedGalleryPets(g()).map(p => p.slug)).toEqual(['mine', 'cat', 'curated-one', 'plain'])
-  })
+    await expect(adoptPet(request, 'boba', 'Could not adopt pet.')).resolves.toBe(true)
 
-  it('filters on slug or display name', () => {
-    expect(rankedGalleryPets(g(), 'CURATED').map(p => p.slug)).toEqual(['curated-one'])
-    expect(rankedGalleryPets(g(), '  mine ').map(p => p.slug)).toEqual(['mine'])
-    expect(rankedGalleryPets(null, 'x')).toEqual([])
-  })
-})
-
-describe('loadPetThumb', () => {
-  beforeEach(() => {
-    rpc.mockReset()
-    localStorage.clear()
-  })
-
-  it('serves a cached thumbnail without an RPC', async () => {
-    localStorage.setItem('hermes.pet.thumb.warm', 'data:image/png;base64,WARM')
-
-    await expect(loadPetThumb('warm')).resolves.toBe('data:image/png;base64,WARM')
-    expect(rpc).not.toHaveBeenCalled()
-  })
-
-  it('caches a fetched thumbnail and dedupes concurrent callers', async () => {
-    rpc.mockResolvedValue({ ok: true, dataUri: 'data:image/png;base64,NEW' } as never)
-
-    const [a, b] = await Promise.all([loadPetThumb('fresh', 'u'), loadPetThumb('fresh', 'u')])
-
-    expect(a).toBe('data:image/png;base64,NEW')
-    expect(b).toBe(a)
-    expect(rpc).toHaveBeenCalledTimes(1)
-    expect(localStorage.getItem('hermes.pet.thumb.fresh')).toBe('data:image/png;base64,NEW')
-  })
-
-  it('never runs more than four pet.thumb RPCs at once', async () => {
-    let inFlight = 0
-    let peak = 0
-    const release: (() => void)[] = []
-
-    rpc.mockImplementation(
-      () =>
-        new Promise(resolve => {
-          inFlight += 1
-          peak = Math.max(peak, inFlight)
-          release.push(() => {
-            inFlight -= 1
-            resolve({ ok: false } as never)
-          })
-        }) as never
-    )
-
-    const all = Promise.all(Array.from({ length: 20 }, (_, i) => loadPetThumb(`slug-${i}`)))
-
-    // Drain the queue a wave at a time; each release lets the pump start another.
-    for (let i = 0; i < 20; i += 1) {
-      await Promise.resolve()
-      release.shift()?.()
-    }
-
-    await expect(all).resolves.toHaveLength(20)
-    expect(peak).toBeLessThanOrEqual(4)
-    expect(rpc).toHaveBeenCalledTimes(20)
+    const methods = requestMock.mock.calls.map(([method]) => method)
+    expect(methods).toEqual(['pet.select', 'pet.info.meta'])
+    expect($petInfo.get().spritesheetBase64).toBe('large-sprite-payload')
   })
 })

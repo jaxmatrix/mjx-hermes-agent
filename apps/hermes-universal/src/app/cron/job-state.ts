@@ -7,7 +7,7 @@ export const STATE_DOT: Record<string, string> = {
   disabled: 'bg-(--ui-text-quaternary)',
   enabled: 'bg-primary',
   error: 'bg-destructive',
-  paused: 'bg-(--ui-yellow)',
+  paused: 'bg-amber-500',
   running: 'bg-primary',
   scheduled: 'bg-primary'
 }

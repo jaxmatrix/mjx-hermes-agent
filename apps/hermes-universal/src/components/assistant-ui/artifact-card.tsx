@@ -11,7 +11,6 @@ import type { ArtifactDetection } from '@/lib/artifact-detect'
 import { codiconForLanguage } from '@/lib/markdown-code'
 import { cn } from '@/lib/utils'
 import { $artifactRegistry, artifactsForSession, openArtifact, upsertArtifact } from '@/store/artifacts'
-import { scopedStoredKey } from '@/store/session-state-types'
 
 interface ArtifactCardProps {
   code: string
@@ -46,11 +45,7 @@ export function ArtifactCard({ code, detection, streaming = false }: ArtifactCar
   const runtimeId = useStore(view.$runtimeId)
   const storedId = useStore(view.$storedId)
   const registry = useStore($artifactRegistry)
-  // SCOPED (MJXHRM-591): the durable stored id, under the connection that
-  // issued it. Keyed by the bare id, two backends' same-named sessions would
-  // share one artifact history — and a switch would have to wipe the registry
-  // to stay honest, taking every open tab's artifacts with it.
-  const sessionId = storedId && runtimeId ? scopedStoredKey(runtimeId, storedId) : storedId || runtimeId || ''
+  const sessionId = storedId || runtimeId || ''
 
   const trimmed = code.trim()
 
@@ -103,7 +98,7 @@ export function ArtifactCard({ code, detection, streaming = false }: ArtifactCar
     <button
       className={cn(
         WIDGET_SHELL_CLASS,
-        'group/artifact my-1.5 flex w-full max-w-md items-center gap-2.5 overflow-hidden text-start',
+        'group/artifact my-1.5 flex w-full max-w-md items-center gap-2.5 overflow-hidden text-left',
         streaming ? 'cursor-default' : 'cursor-pointer'
       )}
       data-slot="aui_artifact-card"

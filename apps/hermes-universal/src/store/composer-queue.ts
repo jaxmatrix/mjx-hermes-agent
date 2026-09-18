@@ -1,13 +1,29 @@
+import { SLASH_COMMAND_RE } from '@hermes/shared'
 import { atom } from 'nanostores'
 
 import type { ComposerAttachment } from './composer'
-import { addSessionKeyHooks } from './session-state-types'
 
 export interface QueuedPromptEntry {
   id: string
   text: string
+  /** What the queue panel and the sent bubble show, when it differs from the
+   *  text the agent receives. A queued `/skill` invocation carries the whole
+   *  expanded skill body as `text` — the UI shows the invocation instead. */
+  displayText?: string
+  /** A hidden note (a setup line for the model) parked while the turn ran. The panel
+   *  shows a neutral label and the drain submits it hidden again. */
+  displayKind?: 'hidden'
   attachments: ComposerAttachment[]
   queuedAt: number
+}
+
+/** Whether a queued entry can ride a mid-turn redirect: text-only, non-empty,
+ *  not a slash command — the same gate `steerDraft` applies to the live draft
+ *  (attachments can't ride a redirect; slash commands execute, not steer). */
+export const isSteerableEntry = (entry: Pick<QueuedPromptEntry, 'attachments' | 'text'>): boolean => {
+  const text = entry.text.trim()
+
+  return Boolean(text) && entry.attachments.length === 0 && !SLASH_COMMAND_RE.test(text)
 }
 
 type QueueState = Record<string, QueuedPromptEntry[]>
@@ -111,7 +127,7 @@ export const getQueuedPrompts = (key: string | null | undefined): QueuedPromptEn
 
 export const enqueueQueuedPrompt = (
   key: string | null | undefined,
-  payload: { text: string; attachments: ComposerAttachment[] }
+  payload: { text: string; attachments: ComposerAttachment[]; displayText?: string; displayKind?: 'hidden' }
 ): null | QueuedPromptEntry => {
   const sid = sidOf(key)
 
@@ -122,14 +138,16 @@ export const enqueueQueuedPrompt = (
   const entry: QueuedPromptEntry = {
     id: nextId(),
     text: payload.text,
+    ...(payload.displayText ? { displayText: payload.displayText } : {}),
+    ...(payload.displayKind ? { displayKind: payload.displayKind } : {}),
     attachments: cloneAttachments(payload.attachments),
     queuedAt: Date.now()
   }
 
   writeSession(sid, [...queueFor(sid), entry])
-  // Queueing a new prompt is fresh intent to keep the conversation moving — a
-  // park from an earlier Stop must not hold this (or the entries ahead of it)
-  // back.
+  // Queueing a new prompt is fresh intent to keep the conversation moving —
+  // a park from an earlier Stop must not hold this (or the entries ahead of
+  // it) back.
   setParked(sid, false)
 
   return entry
@@ -219,7 +237,12 @@ export const updateQueuedPrompt = (
 
     changed = true
 
-    return { ...entry, text: update.text, attachments }
+    // The user rewrote the text, so any display projection it carried (a
+    // `/skill` invocation standing in for the expanded body) no longer
+    // describes it — what they typed is now what sends.
+    const { displayText: _dropped, ...rest } = entry
+
+    return { ...rest, text: update.text, attachments }
   })
 
   if (!changed) {
@@ -284,35 +307,10 @@ export const migrateQueuedPrompts = (fromKey: string | null | undefined, toKey: 
 }
 
 /**
- * Follow the slice whenever a session key MOVES — `draft:N` promoted to a real
- * runtime id by `session.create`, or a fresh runtime id minted by a resume.
- *
- * The composer already migrates on a runtime-id change (`use-composer-queue.ts`),
- * but only through a heuristic: it must not migrate on a genuine chat switch, and
- * the only signal it has is whether the key is runtime-derived — so it skips
- * every surface that passes a stable `queueSessionKey`, which is what the main
- * chat does. A `rekeySession` call carries no such ambiguity: it means "the same
- * conversation, under a new id", which is exactly when the queue must move.
- *
- * Idempotent with that effect rather than a replacement for it: whichever runs
- * first empties the source, and `migrateQueuedPrompts` no-ops on an empty one.
- */
-addSessionKeyHooks({
-  // Deliberately nothing: a queued prompt is text the user asked to SEND, and
-  // evicting a slice is not them withdrawing it. Entries survive a reload today
-  // (they are persisted), so discarding them on a lifecycle event would be a new
-  // way to lose typed work, not a cleanup.
-  drop() {},
-  rekey(fromKey, toKey) {
-    migrateQueuedPrompts(fromKey, toKey)
-  }
-})
-
-/**
  * Park a session's queue after an explicit user halt (Stop / Esc): entries stay
  * visible in the panel but neither auto-drain path sends them. No-op for a
- * session with nothing queued — parking exists to hold back queued turns, and a
- * park with no queue would only linger as a stale gate.
+ * session with nothing queued — parking exists to hold back queued turns, and
+ * a park with no queue would only linger as a stale gate.
  */
 export const parkQueuedPrompts = (key: string | null | undefined): boolean => {
   const sid = sidOf(key)

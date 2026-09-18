@@ -1,30 +1,18 @@
-import { atom } from '@/store/atom'
+import { atom } from 'nanostores'
 
-/**
- * Event-driven "backend data changed" signals — the gateway-side twin of
- * `store/workspace-events`.
- *
- * The gateway runs ONE change watcher (`tui_gateway/server.py`
- * `_broadcast_watched_changes`) over a table of cheap on-disk signatures and
- * broadcasts `pet.changed` / `cron.changed` / `sessions.changed` /
- * `platforms.changed` / `pairing.changed` the moment one moves.
- * `store/event-router.ts` routes them here, and the surfaces that used to poll
- * subscribe to these ticks — so they refresh exactly when the backend acts and
- * stay idle otherwise. On mobile that is the difference between a radio waking
- * every few seconds forever and one that wakes when something happened.
- *
- * `$changeEventsAvailable` is the compat gate: `gateway.ready` advertises
- * `change_events: true` on a backend that broadcasts. Consumers keep their old
- * poll as a SLOW backstop when it is true, and at the legacy cadence when it is
- * false (an older gateway) — so nothing goes dark mid-upgrade, and a missed
- * broadcast is still eventually corrected.
- *
- * Ported from apps/desktop/src/store/live-sync.ts. Unlike desktop, no profile
- * filtering is applied: this fork's watcher broadcasts through
- * `_broadcast_global_event`, which builds its frame with an empty session id and
- * stamps no `profile`, so desktop's `!event.profile || …` guard is always true
- * on these frames anyway.
- */
+// Event-driven "backend data changed" signals — the workspace-events twin for
+// gateway-side state. The change watcher in tui_gateway broadcasts
+// `pet.changed` / `cron.changed` / `sessions.changed` when its on-disk
+// signatures move (see server._broadcast_watched_changes), the gateway-event
+// lifecycle handler routes them here, and the surfaces that used to poll (cron
+// sidebar/page, messaging lists, pet sprite, live session statuses) subscribe
+// to these ticks and refresh — so they move exactly when the backend acts and
+// stay idle otherwise.
+//
+// `$changeEventsAvailable` is the compat gate: gateway.ready advertises
+// `change_events: true` on backends that broadcast. Consumers keep their old
+// polls as SLOW backstops when it's true and at the legacy cadence when it's
+// false (an older backend), so nothing goes dark mid-upgrade.
 
 export const $changeEventsAvailable = atom(false)
 
@@ -32,33 +20,24 @@ export const $cronChangeTick = atom(0)
 export const $sessionsChangeTick = atom(0)
 export const $platformsChangeTick = atom(0)
 export const $pairingChangeTick = atom(0)
-/**
- * The gateway's plugin directory moved (MJXHRM-416).
- *
- * WIRED BUT NEVER FIRED, deliberately and visibly: the gateway's change-watcher
- * table (`tui_gateway/server.py` `_broadcast_watched_changes`) has five
- * signature rows and none of them is the plugin directory, so nothing emits
- * `plugins.changed` today. Adding one is a NEW backend push event, which the
- * shared-gateway freeze forbids — so 455 lands the client half and a post-freeze
- * ticket adds the row, with no client change needed on that day.
- *
- * The user-visible symptom 416 was filed about is already covered meanwhile:
- * `contrib/plugin-disk.ts`'s 2 s local poll reconciles membership on its own.
- * This is the cheaper path, not the only one.
- */
-export const $pluginsChangeTick = atom(0)
 
 /** `pet.info.meta`-shaped payload carried on `pet.changed` — lets the pet skip
- *  the heavy spritesheet refetch when the broadcast already says enabled=false. */
+ *  the heavy sprite refetch when the broadcast already says enabled=false. */
 export interface PetChangeMeta {
-  displayName?: string
   enabled: boolean
-  scale?: number
   slug?: string
+  displayName?: string
+  scale?: number
   spritesheetRevision?: string
 }
 
 export const $petChange = atom<{ meta?: PetChangeMeta; tick: number }>({ tick: 0 })
+
+/** `setup.ready` — the boot bootstrap (free-tier identity + provider resolution)
+ *  finished, so inference readiness and the free-tier verdict may have just
+ *  changed. One-shot: the status snapshot re-reads both legs once instead of
+ *  waiting for its next ambient tick. */
+export const $setupReadyTick = atom(0)
 
 export function setChangeEventsAvailable(available: boolean): void {
   $changeEventsAvailable.set(available)
@@ -84,25 +63,13 @@ export function notifyPairingChanged(): void {
   $pairingChangeTick.set($pairingChangeTick.get() + 1)
 }
 
-export function notifyPluginsChanged(): void {
-  $pluginsChangeTick.set($pluginsChangeTick.get() + 1)
-}
-
-/**
- * Poll cadence for a surface that also subscribes to a change tick.
- *
- * The backstop exists because a broadcast can be missed — a socket that dropped
- * between the signature moving and the frame going out never gets a replay, and
- * the watcher only re-fires on the NEXT change. Slow enough to be free, fast
- * enough that a missed event is a stale minute rather than a stale session.
- */
-export function livePollIntervalMs(legacyMs: number, backstopMs: number): number {
-  return $changeEventsAvailable.get() ? backstopMs : legacyMs
+export function notifySetupReady(): void {
+  $setupReadyTick.set($setupReadyTick.get() + 1)
 }
 
 /** Reset on gateway wipe/reconnect — a new backend re-advertises capability on
- *  its own `gateway.ready`, and a stale `true` would leave every consumer on its
- *  slow backstop against a gateway that never broadcasts. */
+ *  its own gateway.ready, and stale ticks must not fire refreshes into stores
+ *  the wipe just cleared. */
 export function resetLiveSync(): void {
   $changeEventsAvailable.set(false)
 }

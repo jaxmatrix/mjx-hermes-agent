@@ -1,18 +1,22 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { ArchiveSkillConfirmDialog, fireOptimistic } from '@/app/learning/archive-skill-confirm-dialog'
 import { CodeEditor } from '@/components/chat/code-editor'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { deleteLearningNode, editLearningNode, getLearningNode } from '@/hermes'
-import { readSafeAreaInsets } from '@/lib/safe-area'
 import { notifyError } from '@/store/notifications'
 import { evictStarmapNode, loadStarmapGraph } from '@/store/starmap'
 
 import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
-
-import { clampMenuPosition } from './menu-position'
 
 export interface NodeMenuTarget {
   id: string
@@ -45,7 +49,6 @@ export function NodeContextMenu({ onClose, onNodeRemoved, target }: NodeContextM
   // Bumped on profile switch so an in-flight openEdit fetch from profile A can't
   // reopen the editor with A's node content after switching to B.
   const editEpoch = useRef(0)
-  const menuRef = useRef<HTMLDivElement | null>(null)
 
   // A profile switch swaps the backend under an open edit/delete dialog — its
   // node id belongs to the previous profile, so a Save/Delete after the switch
@@ -58,54 +61,6 @@ export function NodeContextMenu({ onClose, onNodeRemoved, target }: NodeContextM
   })
 
   const noun = target?.kind === 'memory' ? 'memory' : 'skill'
-
-  // Placed at the anchor for the first paint, then corrected once the menu has
-  // a measured size. `useLayoutEffect` so the correction lands before the
-  // browser paints and the menu never visibly jumps.
-  const [placement, setPlacement] = useState<null | { left: number; top: number }>(null)
-
-  // Depends on editing/deleting too: those unmount the menu, and re-opening it
-  // afterwards mounts a fresh element that has to be measured again.
-  useLayoutEffect(() => {
-    const el = menuRef.current
-
-    if (!target || !el) {
-      return
-    }
-
-    const rect = el.getBoundingClientRect()
-    const insets = readSafeAreaInsets()
-
-    setPlacement(
-      clampMenuPosition({
-        h: rect.height,
-        inset: { bottom: insets.bottom + 8, left: insets.left + 8, right: insets.right + 8, top: insets.top + 8 },
-        vh: window.innerHeight,
-        vw: window.innerWidth,
-        w: rect.width,
-        x: target.x,
-        y: target.y
-      })
-    )
-  }, [deleting, editing, target])
-
-  // Escape closes it. The backdrop's click already works on touch, but a
-  // hardware keyboard had no way out.
-  useEffect(() => {
-    if (!target) {
-      return
-    }
-
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose()
-      }
-    }
-
-    window.addEventListener('keydown', onKey)
-
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, target])
 
   const openEdit = async () => {
     if (!target) {
@@ -161,42 +116,36 @@ export function NodeContextMenu({ onClose, onNodeRemoved, target }: NodeContextM
   return (
     <>
       {menuOpen ? (
-        <>
-          <div className="fixed inset-0 z-50" onClick={onClose} onContextMenu={e => e.preventDefault()} />
-          {/* Styled to DropdownMenuContent/Item scale (rounded-lg card, p-1,
-              text-xs rows) — the hand-rolled fixed positioning stays because
-              the target is a canvas point, not a DOM anchor. */}
-          <div
-            className="fixed z-50 min-w-36 rounded-lg border border-(--ui-stroke-secondary) bg-[color-mix(in_srgb,var(--ui-bg-elevated)_96%,transparent)] p-1 shadow-md backdrop-blur-md"
-            ref={menuRef}
-            // Anchor first, corrected to the clamped position by the layout
-            // effect above — which runs before paint, so this is never seen.
-            style={placement ?? { left: target.x, top: target.y }}
-          >
-            <div className="truncate px-2 py-1 text-[0.68rem] text-muted-foreground">{target.label}</div>
-            {/* Raw buttons, so the 44px coarse-pointer minimum in styles.css —
-                which keys off `[data-slot='button']` — does not reach them.
-                Sized here instead. */}
-            <button
-              className="block w-full cursor-pointer rounded-md px-2 py-1 text-start text-xs hover:bg-(--ui-control-active-background) hover:text-foreground disabled:opacity-50 coarse:py-2.5 coarse:text-sm"
+        <DropdownMenu onOpenChange={open => !open && onClose()} open>
+          <DropdownMenuTrigger asChild>
+            {/* A zero-size anchor at the canvas click point, as AppContextMenu
+                does: Radix positions against it like a real trigger and flips or
+                shifts the menu back inside the viewport near the window edges,
+                so the destructive row can never be clipped off-window. */}
+            <span aria-hidden style={{ left: target.x, position: 'fixed', top: target.y }} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" onCloseAutoFocus={e => e.preventDefault()} side="bottom">
+            <DropdownMenuLabel className="truncate text-[0.68rem] font-normal text-muted-foreground">
+              {target.label}
+            </DropdownMenuLabel>
+            <DropdownMenuItem
               disabled={loading}
-              onClick={() => void openEdit()}
-              type="button"
+              onSelect={e => {
+                // Keep the menu up while the node content loads; openEdit closes it.
+                e.preventDefault()
+                void openEdit()
+              }}
             >
               Edit {noun}…
-            </button>
-            <button
-              className="block w-full cursor-pointer rounded-md px-2 py-1 text-start text-xs text-destructive hover:bg-destructive/10 coarse:py-2.5 coarse:text-sm"
-              onClick={() => {
-                setDeleting({ id: target.id, kind: target.kind, label: target.label })
-                onClose()
-              }}
-              type="button"
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => setDeleting({ id: target.id, kind: target.kind, label: target.label })}
+              variant="destructive"
             >
               {target.kind === 'skill' ? 'Archive skill' : 'Delete memory'}
-            </button>
-          </div>
-        </>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
 
       <Dialog onOpenChange={value => !value && !saving && setEditing(null)} open={Boolean(editing)}>

@@ -1,27 +1,32 @@
 import { useStore } from '@nanostores/react'
 import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useRef, useState } from 'react'
 
-import { CONTEXT_KIT, DROPDOWN_KIT, type MenuKit } from '@/components/ui/actions-menu'
-import { Codicon } from '@/components/ui/codicon'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger
+} from '@/components/ui/context-menu'
 import { translateNow, useI18n } from '@/i18n'
 import { isDesktopFsRemoteMode } from '@/lib/desktop-fs'
+import { isSubmitEnter } from '@/lib/ime'
 import { IS_MAC } from '@/lib/keybinds/combo'
 import { cn } from '@/lib/utils'
-import { $folderDownloadAvailable, downloadFolder, downloadPath } from '@/store/downloads'
 import {
   $fileActionDialog,
   beginInlineRename,
   cancelInlineRename,
   closeFileActionDialog,
   copyFilePath,
+  downloadRemoteFile,
   executeFileDelete,
   executeFileRename,
   type FileActionTarget,
   requestFileDelete,
   revealFile,
+  shouldOfferRemoteFileDownload,
   toRelativePath
 } from '@/store/file-actions'
 import { notifyError } from '@/store/notifications'
@@ -39,35 +44,8 @@ export function pickRevealLabel(finder: string, explorer: string, fileManager: s
   return IS_MAC ? finder : IS_WIN ? explorer : fileManager
 }
 
-/**
- * Make `path` the folder the explorer — and the chat — is working in.
- *
- * Both folder rows land here, differing only in `adoptProject`: "Open Folder
- * Here" changes the working directory and nothing else, while "Set as Project
- * Folder" also adopts the folder as a project (`store/projects` refreshes the
- * tree, adopts or creates the project, navigates to it and starts a work
- * session). The session half is identical for the two, which is the point: one
- * decision, one prompt, one source of truth for where we are
- * (`store/explorer-path`).
- *
- * Reached through a dynamic import (the seam §6.4 names) rather than a static
- * one: this module is a LEAF that both file trees and the git review tree
- * mount, while `store/explorer-path` reaches the gateway client — and, for the
- * project half, `store/chat` and `store/session` behind it. A user-initiated
- * menu row can afford the chunk load; making every tree row's menu drag the
- * session layer in cannot.
- */
-async function goToFolder(path: string, adoptProject: boolean): Promise<void> {
-  try {
-    const { setExplorerPath } = await import('@/store/explorer-path')
-
-    setExplorerPath(path, { adoptProject })
-  } catch (error) {
-    notifyError(error, translateNow('errors.genericFailure'))
-  }
-}
-
-export interface FileEntryTarget {
+interface FileEntryContextMenuProps {
+  children: ReactNode
   isDirectory: boolean
   /** Display name (basename). */
   name: string
@@ -77,170 +55,53 @@ export interface FileEntryTarget {
   relativeTo?: null | string
 }
 
-/**
- * The file entry's actions, as a render function both menu flavours can use.
- *
- * Right-click was the only way to reach any of this, which on a phone means
- * reveal / copy path / rename / delete simply did not exist. Defining the rows
- * once and handing them to both the context menu and the kebab is what keeps
- * the two provably identical instead of two lists that drift.
- */
-export function fileEntryMenuItems(
-  { isDirectory, name, path, relativeTo }: FileEntryTarget,
-  m: ReturnType<typeof useI18n>['t']['fileMenu'],
-  d: Pick<ReturnType<typeof useI18n>['t']['downloads'], 'downloadFolder'>
-): (kit: MenuKit) => ReactNode {
+/** Right-click menu shared by both file trees (browser + review/git). */
+export function FileEntryContextMenu({ children, isDirectory, name, path, relativeTo }: FileEntryContextMenuProps) {
+  const { t } = useI18n()
+  const m = t.fileMenu
   // Reveal / rename / delete need the local filesystem; hide them on a remote
-  // backend (copy-path still works everywhere).
+  // backend (copy-path still works everywhere). Download uses the existing
+  // gateway save bridge so a remote file can land on this machine.
   const localFs = !isDesktopFsRemoteMode()
+  const remoteDownload = shouldOfferRemoteFileDownload(isDirectory)
   const target: FileActionTarget = { isDirectory, name, path }
   const revealLabel = pickRevealLabel(m.revealFinder, m.revealExplorer, m.revealFileManager)
-  // Deliberately OUTSIDE the `localFs` guard, and the reason is the whole point
-  // of the row: in Universal `isDesktopFsRemoteMode()` is unconditionally true,
-  // which is why this menu currently offers two copy-path items and nothing
-  // else. Download is meaningful PRECISELY because the file is on the gateway
-  // rather than on this device.
-  //
-  // The folder variant needs the gateway's archive route, which an older
-  // gateway does not have. `$folderDownloadAvailable`
-  // is read at render time (not subscribed): this function is called from the
-  // menu's own render, so a change re-runs it the next time the menu opens,
-  // which is the only moment the answer can matter.
-  const canDownloadFolder = $folderDownloadAvailable.get() !== false
-
-  return (kit: MenuKit) => (
-    <>
-      {localFs && (
-        <>
-          <kit.Item onSelect={() => void revealFile(path)}>{revealLabel}</kit.Item>
-          <kit.Separator />
-        </>
-      )}
-      <kit.Item onSelect={() => void copyFilePath(path)}>{m.copyPath}</kit.Item>
-      {relativeTo && (
-        <kit.Item onSelect={() => void copyFilePath(toRelativePath(path, relativeTo))}>{m.copyRelativePath}</kit.Item>
-      )}
-      {/* `downloadPath` / `downloadFolder` resolve when the transfer is QUEUED,
-          not when the bytes land, and neither throws on a transfer failure —
-          the downloads tray is what reports one. So there is nothing to await
-          and nothing to catch here. */}
-      {(!isDirectory || canDownloadFolder) && (
-        <>
-          <kit.Separator />
-          <kit.Item onSelect={() => void (isDirectory ? downloadFolder(path) : downloadPath(path))}>
-            {isDirectory ? d.downloadFolder : m.download}
-          </kit.Item>
-          {/* The same transfer with the destination chosen by hand. Download
-              itself never opens a dialog any more (a browser's does not
-              either), so this row is the only way to ask for one — which is
-              why it sits beside Download rather than replacing it. */}
-          <kit.Item
-            onSelect={() =>
-              void (isDirectory ? downloadFolder(path, { prompt: true }) : downloadPath(path, { prompt: true }))
-            }
-          >
-            {m.saveAs}
-          </kit.Item>
-        </>
-      )}
-      {isDirectory && (
-        <>
-          {/* The download row above already opened this group — unless it was
-              dropped, in which case this row needs the separator itself. */}
-          {!canDownloadFolder && <kit.Separator />}
-          {/* The gesture the tree was missing: rows only expanded and collapsed,
-              so there was no way to say "this is where I am working now". It
-              sits above Set as Project Folder because it is the lighter half of
-              it — the same cwd move, without adopting a project. */}
-          <kit.Item onSelect={() => void goToFolder(path, false)}>{m.openFolderHere}</kit.Item>
-          <kit.Item onSelect={() => void goToFolder(path, true)}>{m.setAsProjectFolder}</kit.Item>
-        </>
-      )}
-      {localFs && (
-        <>
-          <kit.Separator />
-          <kit.Item onSelect={() => beginInlineRename(path)}>{m.rename}</kit.Item>
-          <kit.Item onSelect={() => requestFileDelete(target)} variant="destructive">
-            {m.delete}
-          </kit.Item>
-        </>
-      )}
-    </>
-  )
-}
-
-interface FileEntryContextMenuProps extends FileEntryTarget {
-  children: ReactNode
-}
-
-/** Right-click menu shared by both file trees (browser + review/git). */
-export function FileEntryContextMenu({ children, ...target }: FileEntryContextMenuProps) {
-  const { t } = useI18n()
-  const items = fileEntryMenuItems(target, t.fileMenu, t.downloads)
 
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       {/* Don't restore focus to the row on close: "Rename" mounts an autofocused
           inline input, and the default focus-return would blur it immediately. */}
-      <ContextMenuContent onCloseAutoFocus={event => event.preventDefault()}>{items(CONTEXT_KIT)}</ContextMenuContent>
+      <ContextMenuContent onCloseAutoFocus={event => event.preventDefault()}>
+        {localFs && (
+          <>
+            <ContextMenuItem onSelect={() => void revealFile(path)}>{revealLabel}</ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        )}
+        <ContextMenuItem onSelect={() => void copyFilePath(path)}>{m.copyPath}</ContextMenuItem>
+        {relativeTo && (
+          <ContextMenuItem onSelect={() => void copyFilePath(toRelativePath(path, relativeTo))}>
+            {m.copyRelativePath}
+          </ContextMenuItem>
+        )}
+        {remoteDownload && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={() => void downloadRemoteFile(path)}>{m.download}</ContextMenuItem>
+          </>
+        )}
+        {localFs && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={() => beginInlineRename(path)}>{m.rename}</ContextMenuItem>
+            <ContextMenuItem onSelect={() => requestFileDelete(target)} variant="destructive">
+              {m.delete}
+            </ContextMenuItem>
+          </>
+        )}
+      </ContextMenuContent>
     </ContextMenu>
-  )
-}
-
-/**
- * The same actions as a kebab button, for pointers that cannot right-click.
- *
- * Hidden until the row is hovered on a fine pointer — a permanent ⋯ on every
- * row of a dense desktop tree is noise — and simply present on a coarse one,
- * where it is the only door to these actions.
- *
- * Deliberately NOT built on `ActionsMenu`: that wrapper does not forward
- * `onCloseAutoFocus`, and without it "Rename" mounts its autofocused input and
- * the menu's focus-return blurs it on the same tick. The shared `items` above
- * is what keeps this and the context menu in step, not a shared container.
- */
-export function FileEntryActionsMenu({ className, ...target }: FileEntryTarget & { className?: string }) {
-  const { t } = useI18n()
-  const items = fileEntryMenuItems(target, t.fileMenu, t.downloads)
-  // Open state held in React rather than read back off the button with
-  // `data-[state=open]:opacity-100`. The menu CONTENT is portalled to <body>,
-  // so the moment the pointer travels toward it the row's `group/row` hover is
-  // gone and the only thing still painting the button is that one selector —
-  // on a DOM node that lives inside a virtualized row and has to survive every
-  // re-render for the rule to keep holding. A state this component owns cannot
-  // be lost that way.
-  const [open, setOpen] = useState(false)
-
-  return (
-    <DropdownMenu onOpenChange={setOpen} open={open}>
-      <DropdownMenuTrigger asChild>
-        <button
-          aria-label={t.fileMenu.actions}
-          className={cn(
-            'grid size-5 shrink-0 place-items-center rounded-sm text-(--ui-text-tertiary) transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground',
-            // A 20px target is a mouse target. On a coarse pointer this is the
-            // ONLY door to rename/delete/reveal, and it swallows the row's own
-            // press — so it has to be a deliberate target, not an accidental
-            // one. `size-11` is 44px; the glyph inside keeps its size.
-            'coarse:size-11',
-            'fine:group-hover/row:opacity-100 fine:group-focus-within/row:opacity-100',
-            open ? 'fine:opacity-100' : 'fine:opacity-0',
-            className
-          )}
-          // The tree row navigates on click and starts a drag on pointerdown;
-          // neither should happen because the kebab was pressed.
-          onClick={event => event.stopPropagation()}
-          onPointerDown={event => event.stopPropagation()}
-          type="button"
-        >
-          <Codicon name="kebab-vertical" size="0.875rem" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" onCloseAutoFocus={event => event.preventDefault()} sideOffset={4}>
-        {items(DROPDOWN_KIT)}
-      </DropdownMenuContent>
-    </DropdownMenu>
   )
 }
 
@@ -337,7 +198,7 @@ export function InlineRenameInput({ className, name, path }: InlineRenameInputPr
       onKeyDown={event => {
         event.stopPropagation()
 
-        if (event.key === 'Enter') {
+        if (isSubmitEnter(event)) {
           event.preventDefault()
           void finish(true)
         } else if (event.key === 'Escape') {

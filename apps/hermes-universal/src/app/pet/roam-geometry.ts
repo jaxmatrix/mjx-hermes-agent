@@ -1,52 +1,73 @@
 /**
  * The "where can it stand" layer of the floating pet's wander: it measures the
- * live DOM and hands back walkable surfaces. The orientation-aware maths lives
- * in `wall-geometry.ts`; this file is the part that touches the document.
- *
- * Originally ported from apps/desktop, floor-only. It now produces oriented
- * `Surface`s so a phone can walk all four edges — see wall-geometry's header
- * for why. Desktop behaviour is preserved exactly by asking for `walls: false`,
- * which yields the bottom floor plus perches and nothing else.
+ * live DOM for walkable surfaces and answers pure questions about them. Split
+ * from the decision logic (`roam-behavior.ts`) and the RAF/DOM loop
+ * (`use-pet-roam.ts`) so the loop reads as physics, not geometry, and the pure
+ * helpers (`overlapsX`, `resolveLedge`, `groundTop`) stay unit testable.
  */
 
-import { readKeyboardInset, readSafeAreaInsets } from '@/lib/safe-area'
+import { TITLEBAR_HEIGHT } from '@/app/shell/titlebar'
 
-import { type Surface, surfacesFromBox, type WalkBox } from './wall-geometry'
+/**
+ * A horizontal surface the pet can stand and walk on. `y` is the surface line
+ * (where the pet's feet rest); `left`/`right` bound the pet's top-left x so the
+ * whole sprite stays on the ledge.
+ */
+export interface Ledge {
+  y: number
+  left: number
+  right: number
+}
 
-export type { Surface } from './wall-geometry'
-
-// Elements the pet can perch on top of, measured fresh each beat. The box edges
-// are always walkable; these add app furniture the pet can climb onto.
+// Elements the pet can perch on top of, measured fresh each beat. The bottom
+// floor is always a ledge; these add app furniture the pet can climb onto (the
+// composer, the profile rail). Add a `data-slot` here to grow the playground.
 const PERCH_SELECTORS = ['[data-slot="composer-surface"]', '[data-slot="profile-rail"]']
 
 // A full-width bar pinned to the window bottom (the status bar). When present,
 // the pet walks along its TOP edge instead of the window edge, so it stands on
-// the bar rather than covering it. Not mounted on mobile — there the bottom of
-// the walk box comes from the safe area instead.
+// the bar rather than covering it.
 const FLOOR_BAR_SELECTOR = '[data-slot="statusbar"]'
 
-// The phone's counterpart at the other end: a full-width bar pinned to the
-// window top. The pet walks along its BOTTOM edge, so the ceiling it clings to
-// is the underside of the app's chrome rather than the underside of the window
-// — which is what put it behind the top bar, half-hidden and untouchable.
-// Desktop has no equivalent (its titlebar is a window chrome the pet never
-// reaches), so this is only consulted on the safe-area path.
-const CEILING_BAR_SELECTOR = '[data-slot="mobile-chrome-bar"]'
+// Sprites carry a few px of transparent padding below the feet; sink the pet by
+// this much so the visible feet meet the surface instead of hovering above it.
+const FEET_DROP_PX = 4
+// Snap distance: how close the feet must be to count as "on this ledge".
+export const GROUND_EPS = 2
 
 const vw = (): number => window.innerWidth || 800
 const vh = (): number => window.innerHeight || 600
 
-// Resolve the `--titlebar-height` CSS var to px (it's authored in rem).
-function titlebarHeightPx(): number {
-  const root = getComputedStyle(document.documentElement)
-  const raw = root.getPropertyValue('--titlebar-height').trim()
-  const rem = parseFloat(root.fontSize) || 16
+/** The y a pet of height `petH` rests at when standing on `ledge`. */
+export const groundTop = (ledge: Ledge, petH: number): number => ledge.y - petH + FEET_DROP_PX
 
-  if (raw.endsWith('rem')) {
-    return (parseFloat(raw) || 0) * rem
+/**
+ * Do the pet's walkable x-ranges on two ledges overlap enough to step across?
+ * (Pure — the wander uses it to find hop-reachable neighbours.)
+ */
+export const overlapsX = (from: Ledge, to: Ledge): boolean =>
+  Math.min(from.right, to.right) > Math.max(from.left, to.left) + 2
+
+/**
+ * The highest surface at or below the pet's feet under its current x — i.e. what
+ * it's standing on, or what it would fall onto. Pure; falls back to the floor
+ * (always `ledges[0]`) if the pet is somehow below everything.
+ */
+export function resolveLedge(ledges: Ledge[], x: number, y: number, petH: number): Ledge {
+  const bottom = y + petH
+  let best: Ledge | null = null
+
+  for (const ledge of ledges) {
+    if (x < ledge.left - 2 || x > ledge.right + 2) {
+      continue
+    }
+
+    if (ledge.y >= bottom - GROUND_EPS && (!best || ledge.y < best.y)) {
+      best = ledge
+    }
   }
 
-  return parseFloat(raw) || 36
+  return best ?? ledges[0]!
 }
 
 /** The bottom ground line: the top of the status bar if it's pinned full-width
@@ -65,68 +86,12 @@ function floorY(width: number, height: number, petH: number): number {
   return height
 }
 
-/** The top ground line: the bottom of the phone's chrome bar when one is pinned
- *  full-width across the window top, otherwise the caller's fallback (the safe
- *  area). The bar owns the notch inset itself, so its `bottom` already clears
- *  both. */
-function ceilingY(width: number, height: number, petH: number, fallback: number): number {
-  const bar = document.querySelector(CEILING_BAR_SELECTOR)
-
-  if (bar) {
-    const rect = bar.getBoundingClientRect()
-
-    // Full-width, flush with the window top, and leaving room to stand under.
-    if (rect.width >= width * 0.5 && rect.top < 4 && rect.bottom + petH <= height) {
-      return rect.bottom
-    }
-  }
-
-  return fallback
-}
-
-/**
- * The area the pet may occupy.
- *
- * On a phone this is inset by the safe area, which is the fix for the pet
- * standing on the home indicator and sitting under the notch — the old code
- * used raw `window.innerHeight`, and the status bar it used to stand on isn't
- * mounted on mobile at all, so nothing was holding it up.
- *
- * The top comes from the chrome bar rather than the safe area alone. Insetting
- * only by the notch left the ceiling wall running behind the app's own top bar,
- * so a pet that climbed up there disappeared under it.
- *
- * The keyboard is subtracted from the bottom as well. The pet is
- * `position: fixed`, so `--keyboard-inset` (which the mobile shell applies as a
- * margin) does not lift it the way it lifts everything else — it would simply
- * end up behind the keyboard.
- */
-export function walkBox(petH: number, safeArea: boolean): WalkBox {
+/** Snapshot the walkable surfaces right now: the bottom floor plus any on-screen
+ *  perch element with room above it for the pet to stand. */
+export function snapshotLedges(petW: number, petH: number): Ledge[] {
   const width = vw()
   const height = vh()
-
-  if (!safeArea) {
-    return { bottom: floorY(width, height, petH), left: 0, right: width, top: 0 }
-  }
-
-  const insets = readSafeAreaInsets()
-  const keyboard = readKeyboardInset()
-  const top = ceilingY(width, height, petH, insets.top)
-  const bottom = Math.max(top + petH, height - insets.bottom - keyboard)
-
-  return { bottom, left: insets.left, right: Math.max(insets.left, width - insets.right), top }
-}
-
-/**
- * Snapshot the walkable surfaces right now: the box edges plus any on-screen
- * perch element with room above it. Perches are always `floor`-oriented — a
- * composer top is a ledge you stand on, whichever walls are in play — which is
- * why they need no special handling in a wall-walking world.
- */
-export function snapshotSurfaces(petW: number, petH: number, opts: { safeArea: boolean; walls: boolean }): Surface[] {
-  const box = walkBox(petH, opts.safeArea)
-  const surfaces = surfacesFromBox(box, petW, petH, opts.walls)
-  const height = vh()
+  const ledges: Ledge[] = [{ left: 0, right: Math.max(0, width - petW), y: floorY(width, height, petH) }]
 
   for (const selector of PERCH_SELECTORS) {
     const el = document.querySelector(selector)
@@ -136,19 +101,19 @@ export function snapshotSurfaces(petW: number, petH: number, opts: { safeArea: b
     }
 
     const rect = el.getBoundingClientRect()
-    const from = Math.max(box.left, rect.left)
-    const to = Math.min(box.right - petW, rect.right - petW)
+    const left = Math.max(0, rect.left)
+    const right = Math.min(width - petW, rect.right - petW)
 
     // Skip surfaces that are too narrow for the pet, have no headroom above, or
     // sit off-screen / flush with the floor (no daylight between them).
-    if (to <= from + 2 || rect.top - petH < box.top || rect.top > height - 8 || height - rect.top < 12) {
+    if (right <= left + 2 || rect.top - petH < 0 || rect.top > height - 8 || height - rect.top < 12) {
       continue
     }
 
-    surfaces.push({ from, pos: rect.top, to, wall: 'floor' })
+    ledges.push({ left, right, y: rect.top })
   }
 
-  return surfaces
+  return ledges
 }
 
 /**
@@ -157,9 +122,9 @@ export function snapshotSurfaces(petW: number, petH: number, opts: { safeArea: b
  * `OverlayView`'s equal inset on every side — `titlebar-height + padding` — so
  * we derive it from that rather than measuring.
  */
-export function overlaySurface(petW: number): Surface {
+export function overlayLedge(petW: number): Ledge {
   const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
-  const inset = titlebarHeightPx() + (vw() >= 640 ? 0.875 : 0.625) * rem
+  const inset = TITLEBAR_HEIGHT + (vw() >= 640 ? 0.875 : 0.625) * rem
 
-  return { from: inset, pos: vh() - inset, to: Math.max(0, vw() - inset - petW), wall: 'floor' }
+  return { left: inset, right: Math.max(0, vw() - inset - petW), y: vh() - inset }
 }

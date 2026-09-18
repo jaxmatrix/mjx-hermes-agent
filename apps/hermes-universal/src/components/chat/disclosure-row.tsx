@@ -9,19 +9,15 @@ import { cn } from '@/lib/utils'
 //
 // Affordance:
 //   - No leading chevron; a caret appears to the RIGHT of the text on hover
-//     (and stays visible when the row is open). Its RESTING opacity is the
-//     `--disclosure-caret-rest` token rather than a hard `0`, so a surface can
-//     opt into a faint hint of the affordance where hover is the only thing
-//     that would otherwise reveal it — see the thinking header in styles.css.
+//     (and stays visible when the row is open).
 //   - The hover background is a tight content-shaped pill — sized to the
 //     title text, NOT the full row — and reaches just past the chevron with
 //     `-mx-1.5 px-1.5` so it reads as a soft hit-target rather than a slab
 //     stretching to the message edge.
-//   - `trailing` overlays the right edge (absolute) and must stay
-//     non-interactive (e.g. a duration timer) — an opacity-0-but-clickable
-//     control there steals clicks from the caret. Interactive controls go in
-//     `action`, which lays out *in flow* at the far right so it never sits on
-//     top of the caret's hit-target, no matter how long the title is.
+//   - `trailing` stays in flow (e.g. a duration timer), so the title always
+//     reserves space for it instead of painting underneath it. Interactive
+//     controls go in `action`, which lays out *in flow* at the far right so it
+//     never sits on top of the caret's hit-target.
 export function DisclosureRow({
   action,
   children,
@@ -42,7 +38,7 @@ export function DisclosureRow({
         className={cn(
           // max-w-fit so the click target hugs the title text width — no
           // background fill, just the cursor + the affordance caret.
-          'flex min-w-0 max-w-fit items-start gap-1.5 text-start transition-colors',
+          'flex min-w-0 max-w-fit items-start gap-1.5 text-left transition-colors',
           onToggle ? 'hover:text-foreground focus-visible:text-foreground focus-visible:outline-none' : 'cursor-default'
         )}
         disabled={!onToggle}
@@ -66,13 +62,11 @@ export function DisclosureRow({
         )}
       </button>
       {action && (
-        <span className="ms-auto flex h-(--conversation-line-height) shrink-0 items-center self-start ps-1.5">
+        <span className="ml-auto flex h-(--conversation-line-height) shrink-0 items-center self-start pl-1.5">
           {action}
         </span>
       )}
-      {trailing && (
-        <span className="absolute end-1 top-0 flex h-(--conversation-line-height) items-center">{trailing}</span>
-      )}
+      {trailing && <span className="flex h-(--conversation-line-height) shrink-0 items-center pl-1.5">{trailing}</span>}
     </div>
   )
 }

@@ -3,7 +3,6 @@ import { useEffect, useRef } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
-import { getAudioContext } from '@/lib/audio-context'
 import { iconSize, Loader2, Mic, Volume2, VolumeX } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { stopVoicePlayback } from '@/lib/voice-playback'
@@ -11,11 +10,31 @@ import { $voicePlayback } from '@/store/voice-playback'
 
 import type { VoiceActivityState } from './types'
 
+type BrowserAudioContext = typeof AudioContext
+
 interface ElementAnalyser {
   analyser: AnalyserNode
 }
 
 const elementAnalysers = new WeakMap<HTMLAudioElement, ElementAnalyser>()
+let playbackAudioContext: AudioContext | null = null
+
+function getPlaybackAudioContext(): AudioContext | null {
+  if (playbackAudioContext && playbackAudioContext.state !== 'closed') {
+    return playbackAudioContext
+  }
+
+  const audioWindow = window as Window & { webkitAudioContext?: BrowserAudioContext }
+  const AudioContextCtor = window.AudioContext || audioWindow.webkitAudioContext
+
+  if (!AudioContextCtor) {
+    return null
+  }
+
+  playbackAudioContext = new AudioContextCtor()
+
+  return playbackAudioContext
+}
 
 function formatElapsed(seconds: number) {
   const safeSeconds = Math.max(0, Math.floor(seconds))
@@ -50,21 +69,15 @@ function VoiceLevelBars({ level, active }: { active: boolean; level: number }) {
 }
 
 function getElementAnalyser(audioElement: HTMLAudioElement): ElementAnalyser | null {
-  // The app-wide cue context (`lib/audio-context.ts`), not a private one: an
-  // element tap counts against the same per-page context cap the chime and the
-  // blips do, and Android's cap is the tight one. Fetched on EVERY call, not
-  // just the first: the getter is also what resumes a context the autoplay
-  // policy suspended, and a second clip plays through an analyser that is
-  // already cached.
-  const context = getAudioContext()
-
-  if (!context) {
-    return null
-  }
-
   let entry = elementAnalysers.get(audioElement)
 
   if (!entry) {
+    const context = getPlaybackAudioContext()
+
+    if (!context) {
+      return null
+    }
+
     const source = context.createMediaElementSource(audioElement)
     const analyser = context.createAnalyser()
 
@@ -75,6 +88,8 @@ function getElementAnalyser(audioElement: HTMLAudioElement): ElementAnalyser | n
     entry = { analyser }
     elementAnalysers.set(audioElement, entry)
   }
+
+  void playbackAudioContext?.resume()
 
   return entry
 }
@@ -219,7 +234,7 @@ export function VoicePlaybackActivity() {
 
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="truncate font-medium text-foreground/85">{title}</span>
-        {!preparing && <PlaybackWaveform audioElement={playback.audioElement ?? null} />}
+        {!preparing && <PlaybackWaveform audioElement={playback.audioElement} />}
       </div>
 
       <Button

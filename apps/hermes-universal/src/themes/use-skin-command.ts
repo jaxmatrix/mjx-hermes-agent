@@ -11,8 +11,6 @@ const ALIASES: Record<string, string> = {
   'nous-light': 'nous'
 }
 
-// Client-side `/skin` handler. Ported from apps/desktop/src/themes/use-skin-command.ts
-// (wording de-desktopised); returns the message to surface in the composer.
 export function useSkinCommand() {
   const { availableThemes, setTheme, themeName } = useTheme()
 
@@ -21,7 +19,7 @@ export function useSkinCommand() {
       const arg = rawArg.trim()
 
       if (!availableThemes.length) {
-        return 'No themes are available.'
+        return 'No desktop themes are available.'
       }
 
       const activeIndex = Math.max(
@@ -33,13 +31,13 @@ export function useSkinCommand() {
         const next = availableThemes[(activeIndex + 1) % availableThemes.length]
         setTheme(next.name)
 
-        return `Theme switched to ${next.label}.`
+        return `Desktop theme switched to ${next.label}.`
       }
 
       if (arg === 'list' || arg === 'ls' || arg === 'status') {
         const rows = availableThemes.map(t => `${t.name === themeName ? '*' : ' '} ${t.name.padEnd(10)} ${t.label}`)
 
-        return ['Themes:', ...rows, '', 'Use /skin <name>, or /skin to cycle.'].join('\n')
+        return ['Desktop themes:', ...rows, '', 'Use /skin <name>, or /skin to cycle.'].join('\n')
       }
 
       const normalized = arg.toLowerCase()
@@ -50,12 +48,12 @@ export function useSkinCommand() {
       )
 
       if (!target) {
-        return `Unknown theme: ${arg}\nAvailable: ${availableThemes.map(t => t.name).join(', ')}`
+        return `Unknown desktop theme: ${arg}\nAvailable: ${availableThemes.map(t => t.name).join(', ')}`
       }
 
       setTheme(target.name)
 
-      return `Theme switched to ${target.label}.`
+      return `Desktop theme switched to ${target.label}.`
     },
     [availableThemes, setTheme, themeName]
   )

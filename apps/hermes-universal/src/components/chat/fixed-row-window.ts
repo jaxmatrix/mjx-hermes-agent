@@ -1,8 +1,6 @@
 import type { RefObject, UIEvent } from 'react'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
-import { throttleDuringResize } from '@/lib/resize-gesture'
-
 export interface LineChunk<T> {
   lines: T[]
   start: number
@@ -143,12 +141,7 @@ export function useFixedRowWindow({
       return cancelFrame
     }
 
-    // Throttled while a sash or the window edge is being dragged — recomputing
-    // the visible window every frame re-renders every row in it, for widths the
-    // reader never sees. `sync` recomputes from the live scroller, so dropping
-    // intermediate calls costs nothing but the frames.
-    const resync = throttleDuringResize('virtual', () => sync(node))
-    const observer = new ResizeObserver(() => resync())
+    const observer = new ResizeObserver(() => sync(node))
 
     observer.observe(node)
 

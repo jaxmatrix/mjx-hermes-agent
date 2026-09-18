@@ -12,7 +12,7 @@
 // The record is deliberately disposable: a small bounded namespace under one
 // key, swept for expiry on first access. Losing it costs the user one drag.
 
-import { readJson, writeJson } from '@/lib/storage'
+import { readJson, writeJson } from './storage'
 
 const STORAGE_KEY = 'hermes.desktop.mdTableColumns.v1'
 const STORE_VERSION = 1

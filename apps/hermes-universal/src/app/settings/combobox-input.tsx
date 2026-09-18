@@ -4,6 +4,8 @@ import { Codicon } from '@/components/ui/codicon'
 import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { useI18n } from '@/i18n'
+import { isSubmitEnter } from '@/lib/ime'
 import { cn } from '@/lib/utils'
 
 /**
@@ -34,6 +36,7 @@ export function ComboboxInput({
   placeholder?: string
   className?: string
 }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -47,7 +50,7 @@ export function ComboboxInput({
       <PopoverAnchor asChild>
         <div className={cn('relative', className)}>
           <Input
-            className="w-full pe-7"
+            className="w-full pr-7"
             onChange={e => {
               onChange(e.target.value)
 
@@ -57,7 +60,7 @@ export function ComboboxInput({
             }}
             onFocus={() => setOpen(true)}
             onKeyDown={e => {
-              if (e.key === 'Escape' || e.key === 'Enter' || e.key === 'Tab') {
+              if (e.key === 'Escape' || e.key === 'Tab' || isSubmitEnter(e)) {
                 setOpen(false)
               }
             }}
@@ -66,8 +69,8 @@ export function ComboboxInput({
             value={value}
           />
           <button
-            aria-label="Show options"
-            className="absolute inset-y-0 end-1.5 flex items-center text-muted-foreground"
+            aria-label={t.settings.config.showOptions}
+            className="absolute inset-y-0 right-1.5 flex items-center text-muted-foreground"
             onClick={() => {
               setOpen(current => !current)
               inputRef.current?.focus()
@@ -81,7 +84,7 @@ export function ComboboxInput({
       </PopoverAnchor>
       <PopoverContent
         align="start"
-        className="w-[var(--radix-popover-trigger-width)] p-0"
+        className="min-w-(--radix-popover-trigger-width) p-0"
         onOpenAutoFocus={e => e.preventDefault()}
       >
         <Command shouldFilter={false}>
@@ -98,7 +101,7 @@ export function ComboboxInput({
                     value={option}
                   >
                     <Codicon
-                      className={cn('me-2 size-4', option === value ? 'opacity-100' : 'opacity-0')}
+                      className={cn('mr-2 size-4', option === value ? 'opacity-100' : 'opacity-0')}
                       name="check"
                     />
                     <span className="truncate">{optionLabels?.[option] ?? option}</span>

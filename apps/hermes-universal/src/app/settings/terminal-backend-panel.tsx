@@ -77,18 +77,18 @@ export function TerminalBackendPanel({ onConfiguredChange }: TerminalBackendPane
 
     try {
       await selectTerminalBackend(backend.name)
-      // Re-read rather than mirror the write: `terminal.backend` is pinned into
-      // TERMINAL_ENV at gateway startup, so a selection made now may not be what
-      // the process is actually running. Only the server can say which it is —
-      // optimistically marking the row active is how the panel used to lie.
-      const fresh = await getTerminalBackends()
-
-      setData(fresh)
-      notify({
-        kind: 'success',
-        message: fresh.restart_required ? copy.restartHint(backend.label) : copy.selectedMessage(backend.label),
-        title: copy.selectedTitle
-      })
+      // Mirror the backend write locally so the active highlight tracks the
+      // new selection without a refetch (probes are unchanged by a select).
+      setData(current =>
+        current
+          ? {
+              ...current,
+              active: backend.name,
+              backends: current.backends.map(b => ({ ...b, active: b.name === backend.name }))
+            }
+          : current
+      )
+      notify({ kind: 'success', title: copy.selectedTitle, message: copy.selectedMessage(backend.label) })
       onConfiguredChange?.()
     } catch (err) {
       notifyError(err, copy.failedSelect(backend.label))
@@ -118,22 +118,12 @@ export function TerminalBackendPanel({ onConfiguredChange }: TerminalBackendPane
           <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
         </Button>
       </div>
-      <p className="px-0.5 text-[0.68rem] text-muted-foreground">{copy.sandboxHint}</p>
-      {/* The saved selection is not what the gateway is running. Say so at the
-          section level, not just on the row, because the user's mental model
-          after clicking is "done" — and it isn't until a restart. */}
-      {data.restart_required && data.configured && (
-        <p className="flex items-start gap-1 px-0.5 text-[0.68rem] text-(--ui-yellow)">
-          <AlertTriangle className="mt-0.5 size-3 shrink-0" />
-          {copy.restartBanner(data.configured, data.active)}
-        </p>
-      )}
       <div className="grid gap-1">
         {data.backends.map(backend => (
           <button
             aria-pressed={backend.active}
             className={cn(
-              'grid gap-0.5 rounded-lg border px-2.5 py-2 text-start transition',
+              'grid gap-0.5 rounded-lg border px-2.5 py-2 text-left transition',
               backend.active
                 ? 'border-(--ui-stroke-secondary) bg-(--ui-bg-tertiary)'
                 : 'border-transparent bg-background/55 hover:bg-accent/40'
@@ -152,18 +142,11 @@ export function TerminalBackendPanel({ onConfiguredChange }: TerminalBackendPane
                   {copy.inUse}
                 </Pill>
               )}
-              {/* Chosen in config, but the process is still on something else. */}
-              {backend.pending && (
-                <Pill tone="muted">
-                  <AlertTriangle className="size-3" />
-                  {copy.restartRequired}
-                </Pill>
-              )}
               {selecting === backend.name && <Loader2 className="size-3 animate-spin" />}
             </span>
             <span className="text-[0.68rem] text-muted-foreground">{backend.description}</span>
             {backend.status !== 'ready' && backend.detail && (
-              <span className="flex items-start gap-1 text-[0.68rem] text-(--ui-yellow)">
+              <span className="flex items-start gap-1 text-[0.68rem] text-amber-600 dark:text-amber-300">
                 <AlertTriangle className="mt-0.5 size-3 shrink-0" />
                 {backend.detail}
                 {backend.active && ` ${copy.needsSetupHint}`}

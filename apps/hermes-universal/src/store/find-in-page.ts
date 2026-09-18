@@ -1,31 +1,6 @@
-import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { atom } from 'nanostores'
 
-import { stepOrdinal } from '@/lib/find-in-page'
-import { clearDomFindSelection, countDomTextMatches, domFind, domFindSupported } from '@/lib/find-in-page-dom'
-import { PLATFORM } from '@/lib/platform'
-import { atom } from '@/store/atom'
-
-/**
- * Find-in-page state (MJXHRM-49, MJXHRM-387).
- *
- * Desktop drives Electron's `webContents.findInPage`. Universal has TWO doors
- * onto the same idea and picks between them once, here:
- *
- *   - **Linux** invokes the Rust commands in `src-tauri/src/find_in_page.rs`,
- *     which reach through to WebKitGTK's own find controller. Highlight-all,
- *     engine-accurate counts.
- *   - **Everywhere else** (macOS, Windows, Android) uses `window.find` plus a
- *     text scan — see `lib/find-in-page-dom.ts` for why that is the trade
- *     instead of three native engine bindings.
- *
- * The ordinal is OURS on both paths. WebKitGTK reports how many matches exist
- * and never which one is selected, so "3 of 12" is counted here as the user
- * steps — see `stepOrdinal`.
- */
-
-/** Emitted by the Rust side with the match count for the current query. */
-const FOUND_IN_PAGE_EVENT = 'hermes://found-in-page'
+import { captureFindScope, currentFindScope, performScopedFind, releaseFindScope } from '@/lib/find-in-page-scope'
 
 export interface FindInPageState {
   active: boolean
@@ -34,188 +9,138 @@ export interface FindInPageState {
   matchCount: number
 }
 
-const EMPTY: FindInPageState = { active: false, matchCount: 0, matchOrdinal: 0, query: '' }
+const EMPTY: FindInPageState = { active: false, query: '', matchOrdinal: 0, matchCount: 0 }
 
 export const $findInPage = atom<FindInPageState>({ ...EMPTY })
 
-/** True when the native (Rust/WebKitGTK) path is the one to drive. */
-function usesNativeFind(): boolean {
-  return PLATFORM === 'linux'
-}
-
 /**
- * Whether this build can search the page at all.
+ * Open the find bar and capture the CURRENT VIEW as the search scope.
  *
- * Checked here rather than letting a call fail, so ⌘F simply does nothing on an
- * engine that can't honour it instead of flashing a bar that reports zero
- * matches for everything. In practice both branches are true on every target we
- * ship; the check survives for plain-browser dev and for any engine without
- * `window.find`.
+ * Capturing once at open time (rather than re-resolving on every keystroke)
+ * means a mid-search route change can't silently re-home the highlights onto
+ * a different session — the FindBar's `useLocation` cleanup closes the bar
+ * before the route flips, so the scope the user actually sees in the input
+ * is the only one ever searched. See apps/desktop/src/components/find-bar.tsx
+ * for the route-change close logic; see lib/find-in-page-scope.ts for the
+ * "current view" predicate (#81726).
  */
-export function findInPageSupported(): boolean {
-  return usesNativeFind() || domFindSupported()
-}
-
-function callFind(query: string, forward: boolean, findNext: boolean): void {
-  if (usesNativeFind()) {
-    void invoke('find_in_page', { findNext, forward, query }).catch(() => undefined)
-
-    return
-  }
-
-  // `fromStart` on a fresh query: otherwise `window.find` resumes from wherever
-  // the previous query left the caret and silently skips everything above it.
-  const selected = domFind(query, { backwards: !forward, fromStart: !findNext })
-
-  // The engine event never fires on this path, so report the count ourselves —
-  // asynchronously, to keep the "a late result can't resurrect a cleared query"
-  // guard in `updateFindResults` on the same footing as the native path.
-  //
-  // Floored at one whenever the engine DID land on something: the two halves ask
-  // different questions (`window.find` flattens frames and shadow content the
-  // scan never sees), and "0/0" over a highlighted match is the one reading the
-  // user can prove wrong just by looking at the page.
-  const counted = Math.max(countDomTextMatches(query), selected ? 1 : 0)
-
-  queueMicrotask(() => updateFindResults(counted, selected))
-}
-
-function callStop(): void {
-  if (usesNativeFind()) {
-    void invoke('stop_find_in_page').catch(() => undefined)
-
-    return
-  }
-
-  clearDomFindSelection()
-}
-
 export function openFindBar(): void {
-  if (!findInPageSupported()) {
-    return
-  }
-
   $findInPage.set({ ...EMPTY, active: true })
+  captureFindScope()
 }
 
 export function closeFindBar(): void {
-  // Already closed: don't re-issue the stop. Escape is a shared gesture (dialogs
-  // and the session switcher claim it too), so a stray second close must not
-  // reach into the engine again.
+  // Already closed: don't re-issue clear. Escape is a shared gesture (the
+  // switcher and dialogs claim it too), so a stray second close must not
+  // re-strip highlights from a bar that has already been torn down.
   if (!$findInPage.get().active) {
     return
   }
 
   $findInPage.set({ ...EMPTY })
-  // Ends the search AND drops the highlight — a bar that closes over a still-
-  // highlighted page has not really closed.
-  callStop()
+  // Strip highlights and the scope marker from the DOM we previously wrapped.
+  releaseFindScope()
 }
 
-export function setFindQuery(query: string): void {
+export async function setFindQuery(query: string): Promise<void> {
   const prev = $findInPage.get()
 
-  // Never search for a closed bar. The component clears its debounce on close,
-  // but a timer that already fired (or any late caller) must not re-issue a find
-  // and re-highlight the page after the user pressed Escape.
+  // Never search for a closed bar. The component clears its debounce on
+  // close, but a timer that already fired (or any late caller) must not
+  // re-wrap matches after the user pressed Escape.
   if (!prev.active) {
     return
   }
 
   if (!query) {
-    $findInPage.set({ ...prev, matchCount: 0, matchOrdinal: 0, query: '' })
-    callStop()
+    $findInPage.set({ ...prev, query: '', matchOrdinal: 0, matchCount: 0 })
+    const scope = currentFindScope()
+
+    if (scope) {
+      // Re-run the scoped walker with an empty query — same code path,
+      // strips highlights + zeroes the counter without special-casing.
+      performScopedFind(scope, '', { forward: true, findNext: false })
+    }
 
     return
   }
 
-  // Ordinal 0 until the engine answers: a fresh query has selected nothing yet,
-  // and carrying the previous query's position over would be a lie for a frame.
-  $findInPage.set({ ...prev, matchOrdinal: 0, query })
-  callFind(query, true, false)
-}
+  const scope = currentFindScope()
 
-function step(direction: 'backward' | 'forward'): void {
-  const state = $findInPage.get()
+  if (!scope) {
+    // No chat surface to search (e.g. settings page, command center). The
+    // bar still accepts a query for parity with the bridge-driven path, but
+    // matches will be zero — there's nothing on screen that IS a "view".
+    $findInPage.set({ ...prev, query, matchOrdinal: 0, matchCount: 0 })
 
-  if (!state.active || !state.query) {
     return
   }
 
-  $findInPage.set({ ...state, matchOrdinal: stepOrdinal(state.matchOrdinal, state.matchCount, direction) })
-  callFind(state.query, direction === 'forward', true)
+  const result = performScopedFind(scope, query, { forward: true, findNext: false })
+
+  $findInPage.set({ ...prev, query, matchOrdinal: result.activeOrdinal, matchCount: result.count })
 }
 
 export function findNext(): void {
-  step('forward')
+  step(true)
 }
 
 export function findPrevious(): void {
-  step('backward')
+  step(false)
 }
 
-/**
- * Called when the engine reports a count for the current query.
- *
- * A count arriving for a query the user has already cleared is dropped: the
- * search is async, so a result for the previous keystroke can land after the
- * bar was emptied and would resurrect a stale counter.
- *
- * `selected` says whether anything is actually highlighted right now. The native
- * path always has a selection when the count is non-zero, so it defaults true;
- * the portable path can count text the engine refused to move to (a virtualized
- * row the engine skipped, a frame it would not enter) and passes false, which
- * shows `0/N` — "N are in here, none of them is where you are" — instead of
- * `1/N` pointing at a highlight that does not exist.
- */
-export function updateFindResults(count: number, selected = true): void {
-  const prev = $findInPage.get()
+function step(forward: boolean): void {
+  const { query } = $findInPage.get()
 
-  if (!prev.active || !prev.query) {
+  if (!query) {
     return
   }
 
-  const matchCount = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0
+  const scope = currentFindScope()
 
-  $findInPage.set({
-    ...prev,
-    matchCount,
-    // First result for a fresh query: the engine has selected match one.
-    matchOrdinal: matchCount === 0 || !selected ? 0 : prev.matchOrdinal || 1
-  })
+  if (!scope) {
+    return
+  }
+
+  const result = performScopedFind(scope, query, { forward, findNext: true })
+
+  $findInPage.set({ ...$findInPage.get(), matchOrdinal: result.activeOrdinal, matchCount: result.count })
 }
 
-// The result subscription is process-wide, not per-mount: the find bar lives in
-// the global overlay set and the shell remounts it on a connection re-home while
-// route changes keep it alive. Refcount the single listener so a remount cannot
-// stack duplicates — every stacked listener would re-dispatch the same result
-// and, worse, outlive its component.
+/** Called by the preload bridge when `found-in-page` fires on webContents.
+ *  Retained for the multi-window case (a secondary session window still uses
+ *  the Electron bridge — see electron/find-in-page.ts); the renderer-side
+ *  walker for the primary window never fires this. */
+export function updateFindResults(activeMatch: number, count: number): void {
+  const prev = $findInPage.get()
+  $findInPage.set({ ...prev, matchOrdinal: activeMatch, matchCount: count })
+}
+
+// The found-in-page subscription is process-wide, not per-mount: the FindBar
+// lives in the global overlay set and the shell remounts it on a connection
+// re-home (soft switch) while route changes keep it alive. Refcount the single
+// bridge listener so a remount cannot stack duplicate subscriptions — every
+// stacked listener would re-dispatch the same result and, worse, outlive its
+// component.
 let listenerRefs = 0
 let detachListener: (() => void) | undefined
-let pendingDetach: Promise<UnlistenFn> | undefined
 
 /**
- * Subscribe to match counts. Returns a release fn; the underlying listener is
- * installed on the first subscriber and removed when the last one releases. Safe
- * to call from an effect with a `[]` dep list.
+ * Subscribe to `found-in-page` results. Returns a release fn; the underlying
+ * bridge listener is installed on the first subscriber and removed when the
+ * last one releases. Safe to call from an effect with a `[]` dep list.
+ *
+ * Kept for secondary-window renderers that still drive search via the
+ * Electron bridge. The primary window's renderer-side walker calls
+ * `updateFindResults` synchronously and never wires this listener.
  */
 export function initFindInPageListener(): () => void {
   listenerRefs += 1
 
   if (listenerRefs === 1) {
-    // `listen` resolves asynchronously, so a mount/unmount inside one tick would
-    // otherwise leave the listener attached with the refcount already at zero.
-    pendingDetach = listen<number>(FOUND_IN_PAGE_EVENT, event => updateFindResults(event.payload))
-
-    void pendingDetach
-      .then(stop => {
-        if (listenerRefs > 0) {
-          detachListener = stop
-        } else {
-          stop()
-        }
-      })
-      .catch(() => undefined)
+    detachListener = window.hermesDesktop?.onFoundInPage?.(result => {
+      updateFindResults(result.activeMatchOrdinal, result.count)
+    })
   }
 
   let released = false
@@ -233,12 +158,69 @@ export function initFindInPageListener(): () => void {
     if (listenerRefs === 0) {
       detachListener?.()
       detachListener = undefined
-      pendingDetach = undefined
     }
   }
 }
 
-/** Test seam: number of live subscriptions (0 or 1 in practice). */
+/** Test seam: number of live bridge subscriptions (0 or 1 in practice). */
 export function findInPageListenerCount(): number {
   return listenerRefs
+}
+
+/**
+ * Test seam: force-detach the bridge listener and zero the refcount.
+ * Production code never calls this — tests use it so one case's leaked
+ * subscription can't bleed into the next.
+ */
+export function resetFindInPageListenerForTest(): void {
+  detachListener?.()
+  detachListener = undefined
+  listenerRefs = 0
+}
+
+// Same refcount pattern as `initFindInPageListener`, but for the
+// "main-process Ctrl/Cmd+F forwarded to renderer" channel. On Pop!_OS /
+// GNOME-based Linux distros the GTK compositor grabs Ctrl+F before the
+// renderer's keydown listener can fire — the main process intercepts the
+// chord via `before-input-event` and emits this IPC, so the renderer can
+// still open the FindBar (#81727).
+let openFindBarRefs = 0
+let detachOpenFindBar: (() => void) | undefined
+
+export function initOpenFindBarListener(): () => void {
+  openFindBarRefs += 1
+
+  if (openFindBarRefs === 1) {
+    detachOpenFindBar = window.hermesDesktop?.onOpenFindBarRequested?.(() => {
+      openFindBar()
+    })
+  }
+
+  let released = false
+
+  return () => {
+    if (released) {
+      return
+    }
+
+    released = true
+    openFindBarRefs -= 1
+
+    if (openFindBarRefs === 0) {
+      detachOpenFindBar?.()
+      detachOpenFindBar = undefined
+    }
+  }
+}
+
+/** Test seam: number of live "open find bar" subscriptions. */
+export function openFindBarListenerCount(): number {
+  return openFindBarRefs
+}
+
+/** Test seam: detach the open-find-bar bridge listener and zero the refcount. */
+export function resetOpenFindBarListenerForTest(): void {
+  detachOpenFindBar?.()
+  detachOpenFindBar = undefined
+  openFindBarRefs = 0
 }

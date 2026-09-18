@@ -1,99 +1,83 @@
 import { describe, expect, it } from 'vitest'
 
+import type { DesktopRegistryConnection } from '@/global'
+
 import {
-  CONNECTION_SEARCH_THRESHOLD,
-  connectionEndpointLabel,
-  connectionSearchMatches,
-  sameBackendHints,
+  connectionEndpoint,
+  connectionMatchesQuery,
+  connectionTooltip,
   sortConnectionsForDisplay
-} from '@/lib/connection-display'
-import type { ConnectionView } from '@/store/connections'
+} from './connection-display'
 
-function view(patch: Partial<ConnectionView>): ConnectionView {
-  return {
-    hasSshKey: false,
-    hasSshPassphrase: false,
-    hasSshPassword: false,
-    hasToken: false,
-    headerNames: [],
-    id: patch.label ?? 'a',
-    kind: 'remote',
-    label: 'A',
-    legacy: false,
-    order: 0,
-    ...patch
-  }
-}
+const connection = (
+  id: string,
+  label: string,
+  kind: DesktopRegistryConnection['kind'] = 'remote'
+): DesktopRegistryConnection => ({ id, kind, label, tokenPreview: null, tokenSet: false })
 
-describe('sortConnectionsForDisplay', () => {
-  it('puts local first, then labels case-insensitively with numeric order', () => {
+describe('connection display helpers', () => {
+  it('anchors local first and sorts labels case-insensitively with numeric order', () => {
     const sorted = sortConnectionsForDisplay([
-      view({ label: 'box 10' }),
-      view({ label: 'Box 2' }),
-      view({ kind: 'local', label: 'This device' }),
-      view({ label: 'alpha' })
+      connection('remote-10', 'Studio 10'),
+      connection('zulu', 'zulu'),
+      connection('remote-2', 'studio 2'),
+      connection('local', 'This device', 'local'),
+      connection('alpha', 'Alpha')
     ])
 
-    expect(sorted.map(row => row.label)).toEqual(['This device', 'alpha', 'Box 2', 'box 10'])
+    expect(sorted.map(item => item.id)).toEqual(['local', 'alpha', 'remote-2', 'remote-10', 'zulu'])
   })
 
-  it('does not mutate the registry order', () => {
-    const rows = [view({ label: 'b', order: 0 }), view({ label: 'a', order: 1 })]
+  it('does not mutate registry order', () => {
+    const connections = [connection('zulu', 'Zulu'), connection('alpha', 'Alpha')]
 
-    sortConnectionsForDisplay(rows)
+    sortConnectionsForDisplay(connections)
 
-    expect(rows.map(row => row.label)).toEqual(['b', 'a'])
-  })
-})
-
-describe('connectionSearchMatches', () => {
-  it('matches labels, transport details and kind, accent-insensitively', () => {
-    const row = view({ host: 'studio.local', kind: 'ssh', label: 'Stüdio', user: 'me' })
-
-    expect(connectionSearchMatches(row, 'studio')).toBe(true)
-    expect(connectionSearchMatches(row, 'STUDIO')).toBe(true)
-    expect(connectionSearchMatches(row, 'me')).toBe(true)
-    expect(connectionSearchMatches(row, 'ssh')).toBe(true)
-    expect(connectionSearchMatches(row, '   ')).toBe(true)
-    expect(connectionSearchMatches(row, 'laptop')).toBe(false)
+    expect(connections.map(item => item.id)).toEqual(['zulu', 'alpha'])
   })
 
-  it('appears only once a list is long enough to need it', () => {
-    expect(CONNECTION_SEARCH_THRESHOLD).toBe(8)
-  })
-})
+  it('matches labels, transport details, localized aliases, and accents', () => {
+    const gateway: DesktopRegistryConnection = {
+      ...connection('studio', 'Studio Genève', 'ssh'),
+      host: 'studio.example.test',
+      org: 'Editorial',
+      port: 2222,
+      remoteProfile: 'production',
+      user: 'hermes'
+    }
 
-describe('connectionEndpointLabel', () => {
-  // The rule desktop states as a test name: technical endpoints on demand,
-  // WITHOUT exposing secrets.
-  it('never renders userinfo from a URL', () => {
-    const row = view({ kind: 'remote', url: 'https://alice:hunter2@gw.example.com/hermes' })
-
-    const label = connectionEndpointLabel(row) ?? ''
-
-    expect(label).toBe('gw.example.com/hermes')
-    expect(label).not.toContain('hunter2')
-    expect(label).not.toContain('alice')
-  })
-
-  it('renders an ssh target and omits the default port', () => {
-    expect(connectionEndpointLabel(view({ host: 'box', kind: 'ssh', port: 22, user: 'me' }))).toBe('me@box')
-    expect(connectionEndpointLabel(view({ host: 'box', kind: 'ssh', port: 2222, user: 'me' }))).toBe('me@box:2222')
+    expect(connectionMatchesQuery(gateway, 'GENEVE')).toBe(true)
+    expect(connectionMatchesQuery(gateway, 'studio 2222')).toBe(true)
+    expect(connectionMatchesQuery(gateway, 'ssh studio')).toBe(true)
+    expect(connectionMatchesQuery(gateway, 'ssh')).toBe(true)
+    expect(connectionMatchesQuery(gateway, 'example.test')).toBe(true)
+    expect(connectionMatchesQuery(gateway, '2222')).toBe(true)
+    expect(connectionMatchesQuery(gateway, 'editorial production')).toBe(true)
+    expect(connectionMatchesQuery(gateway, 'distant', ['Passerelle distante'])).toBe(true)
+    expect(connectionMatchesQuery(gateway, 'homelab')).toBe(false)
   })
 
-  it('has nothing to show for a local source', () => {
-    expect(connectionEndpointLabel(view({ kind: 'local' }))).toBeNull()
-  })
-})
+  it('keeps technical endpoints available on demand without exposing secrets', () => {
+    const remote = {
+      ...connection('work', 'Work gateway'),
+      tokenPreview: 'sec...ret',
+      tokenSet: true,
+      url: 'https://work.example.test:9443'
+    }
 
-describe('sameBackendHints', () => {
-  it('hints only the LATER rows sharing an install id', () => {
-    const hints = sameBackendHints({ byIp: 'same', byName: 'same', other: 'different', unknown: undefined })
+    const ssh = {
+      ...connection('studio', 'Studio over SSH', 'ssh'),
+      host: 'studio.example.test',
+      keyPath: '/secret/key',
+      port: 2222,
+      user: 'hermes'
+    }
 
-    // The first row is not accused of duplicating anything.
-    expect(hints.byIp).toBeUndefined()
-    expect(hints.byName).toBe('byIp')
-    expect(hints.other).toBeUndefined()
-    expect(hints.unknown).toBeUndefined()
+    expect(connectionEndpoint(remote)).toBe('https://work.example.test:9443')
+    expect(connectionTooltip(remote)).toBe('Work gateway\nhttps://work.example.test:9443')
+    expect(connectionTooltip(remote)).not.toContain('sec...ret')
+    expect(connectionEndpoint(ssh)).toBe('hermes@studio.example.test:2222')
+    expect(connectionTooltip(ssh)).not.toContain('/secret/key')
+    expect(connectionTooltip(connection('local', 'This device', 'local'))).toBe('This device')
   })
 })

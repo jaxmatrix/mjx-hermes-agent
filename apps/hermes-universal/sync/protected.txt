@@ -102,7 +102,6 @@ styles.safe-area-vars.test.ts
 styles.connect-safe-area.test.ts
 entry-graph.test.ts
 components/ui/hover-affordance-touch.test.ts
-global.ts
 
 # ---------------------------------------------------------------------------
 # i18n. Universal's catalogues carry the connection-banner strings and are held

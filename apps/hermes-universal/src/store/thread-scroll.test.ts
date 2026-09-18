@@ -1,146 +1,93 @@
-/**
- * MJXHRM-381 — the thread's scroll mirror is PER SESSION.
- *
- * Universal mounts a whole ChatScreen (thread + composer + status stack + jump
- * button) per open tile. While these were two global booleans and one global
- * handler set, scrolling up in one tile dimmed and re-rendered every other
- * tile's composer and status stack, closing a tile reset the flag out from under
- * a tile that was still scrolled up, and one tile's jump button pinned every
- * mounted transcript.
- */
-
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  $threadJumpButtonVisible,
+  $threadScrolledUp,
   onScrollToBottomRequest,
-  onScrollToTurnRequest,
+  publishThreadAtBottom,
   requestScrollToBottom,
-  requestScrollToTurn,
+  resetPublishedThreadScroll,
   resetThreadScroll,
-  sessionThreadJumpVisible,
-  sessionThreadScrolledUp,
   setThreadAtBottom
 } from './thread-scroll'
 
-describe('thread scroll mirror', () => {
-  it('keeps one session scrolled up without touching another', () => {
-    setThreadAtBottom('a', false)
+afterEach(() => {
+  resetThreadScroll()
+})
 
-    expect(sessionThreadScrolledUp('a').get()).toBe(true)
-    expect(sessionThreadJumpVisible('a').get()).toBe(true)
-    expect(sessionThreadScrolledUp('b').get()).toBe(false)
-    expect(sessionThreadJumpVisible('b').get()).toBe(false)
+describe('publishThreadAtBottom', () => {
+  it('lets the visible pane flash the jump pill when the thread leaves the bottom', () => {
+    publishThreadAtBottom(false, { paneVisible: true })
 
-    resetThreadScroll('a')
-
-    expect(sessionThreadScrolledUp('a').get()).toBe(false)
+    expect($threadJumpButtonVisible.get()).toBe(true)
+    expect($threadScrolledUp.get()).toBe(true)
   })
 
-  it('releasing one session leaves another scrolled up', () => {
-    setThreadAtBottom('a', false)
-    setThreadAtBottom('b', false)
+  it('ignores stick-to-bottom misses from a hidden keep-alive pane', () => {
+    setThreadAtBottom(true)
 
-    // A tile closing (its list unmounts and resets its own key).
-    resetThreadScroll('b')
+    publishThreadAtBottom(false, { paneVisible: false })
 
-    expect(sessionThreadScrolledUp('a').get()).toBe(true)
-    expect(sessionThreadScrolledUp('b').get()).toBe(false)
-    resetThreadScroll('a')
+    expect($threadJumpButtonVisible.get()).toBe(false)
+    expect($threadScrolledUp.get()).toBe(false)
   })
 
-  it('does not notify a session whose flag did not move', () => {
-    const other = vi.fn()
-    const unsubscribe = sessionThreadScrolledUp('quiet').listen(other)
+  it("keeps the visible pane's scrolled-up chrome when a hidden pane publishes", () => {
+    publishThreadAtBottom(false, { paneVisible: true })
 
-    setThreadAtBottom('noisy', false)
-    setThreadAtBottom('noisy', true)
+    publishThreadAtBottom(true, { paneVisible: false })
 
-    expect(other).not.toHaveBeenCalled()
-    unsubscribe()
-  })
-
-  it('skips no-op writes so a scroll tick at the bottom does not churn', () => {
-    const seen = vi.fn()
-    setThreadAtBottom('c', false)
-    const unsubscribe = sessionThreadScrolledUp('c').listen(seen)
-
-    setThreadAtBottom('c', false)
-    setThreadAtBottom('c', false)
-
-    expect(seen).not.toHaveBeenCalled()
-
-    setThreadAtBottom('c', true)
-
-    expect(seen).toHaveBeenCalledTimes(1)
-    unsubscribe()
-  })
-
-  it("fires only the requested session's scroll handler", () => {
-    const mine = vi.fn()
-    const theirs = vi.fn()
-    const stopMine = onScrollToBottomRequest('a', mine)
-    const stopTheirs = onScrollToBottomRequest('b', theirs)
-
-    requestScrollToBottom('a')
-
-    expect(mine).toHaveBeenCalledTimes(1)
-    expect(theirs).not.toHaveBeenCalled()
-
-    stopMine()
-    requestScrollToBottom('a')
-
-    expect(mine).toHaveBeenCalledTimes(1)
-    stopTheirs()
-  })
-
-  it('treats a session with no runtime key as its own slot', () => {
-    setThreadAtBottom(null, false)
-
-    expect(sessionThreadScrolledUp(null).get()).toBe(true)
-    expect(sessionThreadScrolledUp(undefined).get()).toBe(true)
-    expect(sessionThreadScrolledUp('a').get()).toBe(false)
-    resetThreadScroll(null)
+    expect($threadJumpButtonVisible.get()).toBe(true)
+    expect($threadScrolledUp.get()).toBe(true)
   })
 })
 
-// The prompt rail names a turn; the transcript that owns the key finds it. Same
-// keying as the jump button above, and for the same reason — a rail in one tile
-// must not scroll a neighbouring tile's transcript.
-describe('scroll-to-turn requests', () => {
-  it('delivers the turn id to the handler for that session', () => {
-    const handler = vi.fn()
-    const off = onScrollToTurnRequest('a', handler)
+describe('resetPublishedThreadScroll', () => {
+  it('clears the jump pill when the visible pane unmounts', () => {
+    setThreadAtBottom(false)
 
-    requestScrollToTurn('a', 'msg-7')
+    resetPublishedThreadScroll({ paneVisible: true })
 
-    expect(handler).toHaveBeenCalledWith('msg-7')
-    off()
+    expect($threadJumpButtonVisible.get()).toBe(false)
+    expect($threadScrolledUp.get()).toBe(false)
   })
 
-  it("does not reach another session's transcript", () => {
-    const a = vi.fn()
-    const b = vi.fn()
-    const offA = onScrollToTurnRequest('a', a)
-    const offB = onScrollToTurnRequest('b', b)
+  it('does not clear the visible pane when a hidden list unmounts', () => {
+    setThreadAtBottom(false)
 
-    requestScrollToTurn('a', 'msg-7')
+    resetPublishedThreadScroll({ paneVisible: false })
 
-    expect(a).toHaveBeenCalledTimes(1)
-    expect(b).not.toHaveBeenCalled()
-    offA()
-    offB()
+    expect($threadJumpButtonVisible.get()).toBe(true)
+    expect($threadScrolledUp.get()).toBe(true)
+  })
+})
+
+describe('requestScrollToBottom', () => {
+  it('routes a scroll request only to its session', () => {
+    const sessionA = vi.fn()
+    const sessionB = vi.fn()
+    const stopA = onScrollToBottomRequest(sessionA, 'session-a')
+    const stopB = onScrollToBottomRequest(sessionB, 'session-b')
+
+    requestScrollToBottom('session-b')
+
+    expect(sessionA).not.toHaveBeenCalled()
+    expect(sessionB).toHaveBeenCalledOnce()
+    stopA()
+    stopB()
   })
 
-  it('stops delivering once unsubscribed', () => {
-    const handler = vi.fn()
-    onScrollToTurnRequest('a', handler)()
+  it("does not let a late unmount clear a newer session's handler", () => {
+    const first = vi.fn()
+    const second = vi.fn()
+    const stopFirst = onScrollToBottomRequest(first, 'session-a')
+    const stopSecond = onScrollToBottomRequest(second, 'session-a')
 
-    requestScrollToTurn('a', 'msg-7')
+    stopFirst()
+    requestScrollToBottom('session-a')
 
-    expect(handler).not.toHaveBeenCalled()
-  })
-
-  it('is a no-op for a session nothing is listening on', () => {
-    expect(() => requestScrollToTurn('nobody', 'msg-7')).not.toThrow()
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledOnce()
+    stopSecond()
   })
 })

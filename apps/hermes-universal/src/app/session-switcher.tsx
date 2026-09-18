@@ -1,16 +1,15 @@
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 
 import { sessionTitle } from '@/lib/chat-runtime'
 import { cn } from '@/lib/utils'
-import { $sessionOwnerLabels, withSessionOwner } from '@/store/session-owner-label'
 import { $switcherIndex, $switcherOpen, $switcherSessions, closeSwitcher } from '@/store/session-switcher'
 
 import { SessionStatusDot } from './chat/session-status-dot'
 import { HUD_ITEM, HUD_POSITION, HUD_SURFACE, HUD_TEXT } from './floating-hud'
-import { sessionRoute } from './routes'
+import { openSession } from './open-session'
 
 // Compact session-switcher HUD — keyboard-driven from `use-keybinds`, rows
 // clickable via mousedown (Ctrl+click on macOS). No Dialog: Tab stays global.
@@ -18,7 +17,6 @@ export function SessionSwitcher() {
   const open = useStore($switcherOpen)
   const sessions = useStore($switcherSessions)
   const index = useStore($switcherIndex)
-  const ownerLabels = useStore($sessionOwnerLabels)
   const navigate = useNavigate()
 
   const activeRef = useRef<HTMLDivElement>(null)
@@ -33,7 +31,7 @@ export function SessionSwitcher() {
 
   const pick = (sessionId: string) => {
     closeSwitcher()
-    navigate(sessionRoute(sessionId))
+    openSession(sessionId, navigate)
   }
 
   return createPortal(
@@ -72,9 +70,7 @@ export function SessionSwitcher() {
               ref={selected ? activeRef : undefined}
             >
               <SessionStatusDot className="shrink-0" session={session} storedSessionId={session.id} />
-              <span className="min-w-0 flex-1 truncate">
-                {withSessionOwner(sessionTitle(session), session.profile, ownerLabels)}
-              </span>
+              <span className="min-w-0 flex-1 truncate">{sessionTitle(session)}</span>
               {i < 9 && (
                 <span
                   className={cn(

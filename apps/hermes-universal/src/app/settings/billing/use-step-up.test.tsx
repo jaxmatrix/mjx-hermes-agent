@@ -7,8 +7,6 @@ const apiMocks = vi.hoisted(() => ({
   stepUp: vi.fn()
 }))
 
-const openExternalLinkMock = vi.hoisted(() => vi.fn())
-
 const gatewayMock = vi.hoisted(() => {
   const handlers = new Map<string, Set<(event: unknown) => void>>()
 
@@ -54,10 +52,6 @@ vi.mock('./api', () => ({
   })
 }))
 
-// Universal opens URLs through the shared opener (a Rust `open_external`
-// command) rather than desktop's `window.hermesDesktop.openExternal` bridge.
-vi.mock('@/lib/external-link', () => ({ openExternalLink: openExternalLinkMock }))
-
 import { useStepUpFlow } from './use-step-up'
 
 function createWrapper(client: QueryClient) {
@@ -68,7 +62,6 @@ function createWrapper(client: QueryClient) {
 
 beforeEach(() => {
   apiMocks.stepUp.mockReset()
-  openExternalLinkMock.mockReset()
   gatewayMock.reset()
 })
 
@@ -88,6 +81,12 @@ describe('useStepUpFlow', () => {
     const invalidate = vi.spyOn(client, 'invalidateQueries')
 
     apiMocks.stepUp.mockReturnValue(stepUpPromise)
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: {
+        openExternal: vi.fn()
+      }
+    })
 
     const { result, unmount } = renderHook(() => useStepUpFlow(), { wrapper: createWrapper(client) })
 
@@ -115,7 +114,7 @@ describe('useStepUpFlow', () => {
     })
 
     result.current.openVerification()
-    expect(openExternalLinkMock).toHaveBeenCalledWith('https://portal.nousresearch.com/device')
+    expect(window.hermesDesktop?.openExternal).toHaveBeenCalledWith('https://portal.nousresearch.com/device')
 
     await act(async () => {
       resolveStepUp({ data: { granted: true, ok: true }, ok: true })

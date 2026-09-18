@@ -1,7 +1,8 @@
+import { contrastRatio } from '@hermes/shared/color'
 import { describe, expect, it } from 'vitest'
 
-import { contrastRatio, hexToOklch, hueDelta, withHue } from './color'
-import { githubTheme, midnightTheme, nousTheme } from './presets'
+import { hexToOklch, withHue } from './color'
+import { githubTheme, nousTheme } from './presets'
 import { retintTheme, themeHue } from './retint'
 import type { DesktopThemeColors } from './types'
 
@@ -231,55 +232,5 @@ describe('retintTheme', () => {
       expect(ring.l).toBeCloseTo(hexToOklch('#8b80e8')!.l, 1)
       expect(ring.l).not.toBeCloseTo(hexToOklch(teal.colors.primary)!.l, 1)
     })
-  })
-})
-
-// The `shaded` fixture above models a real skin: `midnight` runs a `#ddd6ff`
-// primary over a `#8b80e8` ring — one violet at two lightnesses. It is the
-// theme that made exact-equality matching untenable, so assert on it directly
-// rather than only on a fixture built to look like it.
-describe('midnight — a shipped theme that shades its accent', () => {
-  const teal = retintTheme(midnightTheme, '#0f9b8e')
-
-  it('carries the ring and midground with the primary', () => {
-    for (const key of ['ring', 'midground'] as const) {
-      expect(teal.colors[key], key).not.toBe(midnightTheme.colors[key])
-      expect(Math.abs(hueDelta(hexToOklch(teal.colors[key]!)!.h, hexToOklch('#0f9b8e')!.h)), key).toBeLessThan(3)
-    }
-  })
-
-  it('keeps each slot at its OWN lightness rather than flattening them onto one', () => {
-    // The ring holds the lightness midnight authored for it. Flattening the
-    // family onto the seed is what the exact-equality version did.
-    expect(hexToOklch(teal.colors.ring)!.l).toBeCloseTo(hexToOklch('#8b80e8')!.l, 2)
-    expect(hexToOklch(teal.colors.ring)!.l).not.toBeCloseTo(hexToOklch(teal.colors.primary)!.l, 2)
-  })
-
-  it('leaves its near-black chrome alone', () => {
-    for (const key of ['background', 'card', 'foreground'] as const) {
-      expect(teal.colors[key], key).toBe(midnightTheme.colors[key])
-    }
-  })
-})
-
-// `retintTheme` short-circuits when the seed already IS the theme's accent, so
-// the identity case above never actually exercises ACCENT_MIX — it returns the
-// same object. That short-circuit is correct (it avoids an invisible one-bit
-// round trip), but it means the load-bearing claim in retint.ts, that these
-// ratios are the converter's own and reproduce the shipped palette, was going
-// unchecked. Move the primary out of the way first, then re-seed with the real
-// accent: the derived surfaces have to come back byte-identical.
-describe('the mix ratios are the ones that produced the shipped palette', () => {
-  const displaced = { ...nousTheme, colors: { ...nousTheme.colors, primary: '#7a7a7a' }, darkColors: undefined }
-  const rebuilt = retintTheme(displaced, nousTheme.colors.primary).colors
-
-  it.each(['accent', 'secondary', 'userBubble'] as const)('re-derives %s exactly', key => {
-    expect(rebuilt[key]).toBe(nousTheme.colors[key])
-  })
-
-  it('lands back on the shipped seed slots too', () => {
-    for (const key of ['primary', 'ring', 'midground', 'composerRing'] as const) {
-      expect(rebuilt[key], key).toBe(nousTheme.colors[key])
-    }
   })
 })

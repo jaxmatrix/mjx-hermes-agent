@@ -1,17 +1,12 @@
-/**
- * When a repeating renderer loop is worth running at all.
- *
- * A spinner, a ticker, any `setInterval` that exists to be looked at: none of
- * it earns its wake-ups while nobody is looking. The window can be minimized,
- * occluded by another workspace, or simply unfocused, and a transcript with a
- * dozen live rows keeps every one of them ticking regardless.
- *
- * Ported from desktop's `lib/renderer-loop-pause.ts` minus its Electron
- * `onWindowStateChanged` hook — Tauri has no such bridge here, so a minimized
- * window is detected through `document.visibilityState`, which is what the
- * WebKitGTK/WebView2/WKWebView hosts report when the surface stops compositing.
- */
-export function createRendererLoopPauseController(onChange: () => void, { pauseWhenUnfocused = true } = {}) {
+interface WindowStatePayload {
+  isMinimized?: boolean
+  isVisible?: boolean
+}
+
+export const RENDERER_ANIMATIONS_PAUSED_ATTRIBUTE = 'data-renderer-animations-paused'
+
+export function createRendererLoopPauseController(onChange: () => void, { pauseWhenUnfocused = false } = {}) {
+  let windowPaused = false
   let windowFocused = document.hasFocus()
 
   const onVisibilityChange = () => onChange()
@@ -30,16 +25,51 @@ export function createRendererLoopPauseController(onChange: () => void, { pauseW
     }
   }
 
+  const offWindowState = window.hermesDesktop?.onWindowStateChanged?.((payload: WindowStatePayload) => {
+    const next = payload?.isMinimized === true || payload?.isVisible === false
+
+    if (windowPaused === next) {
+      return
+    }
+
+    windowPaused = next
+    onChange()
+  })
+
   document.addEventListener('visibilitychange', onVisibilityChange)
-  window.addEventListener('blur', onBlur)
-  window.addEventListener('focus', onFocus)
+
+  if (pauseWhenUnfocused) {
+    window.addEventListener('blur', onBlur)
+    window.addEventListener('focus', onFocus)
+  }
 
   return {
     dispose: () => {
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('focus', onFocus)
+      offWindowState?.()
     },
-    isPaused: () => document.visibilityState === 'hidden' || (pauseWhenUnfocused && !windowFocused)
+    isPaused: () => document.visibilityState === 'hidden' || (pauseWhenUnfocused && !windowFocused) || windowPaused
+  }
+}
+
+/**
+ * Mirrors the main window's observability onto :root so continuous decorative
+ * CSS animations can sleep with the JS renderer loops. The caller owns the
+ * returned cleanup; overlay windows intentionally do not install this state.
+ */
+export function installRendererAnimationPauseState(): () => void {
+  const root = document.documentElement
+  let controller: ReturnType<typeof createRendererLoopPauseController>
+
+  const sync = () => root.toggleAttribute(RENDERER_ANIMATIONS_PAUSED_ATTRIBUTE, controller.isPaused())
+
+  controller = createRendererLoopPauseController(sync)
+  sync()
+
+  return () => {
+    controller.dispose()
+    root.removeAttribute(RENDERER_ANIMATIONS_PAUSED_ATTRIBUTE)
   }
 }

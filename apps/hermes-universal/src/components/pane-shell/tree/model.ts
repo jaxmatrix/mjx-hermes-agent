@@ -15,6 +15,20 @@
 
 export type Orientation = 'row' | 'column'
 
+/**
+ * A zone's STANDING CHOICE about its tab strip. Absent is the third value and
+ * the default: AUTO, where the strip's presence is a pure function of what the
+ * zone currently holds (see `resolveTabStripVisible`).
+ *
+ * This replaced a `headerHidden?: boolean` that tried to carry both the user's
+ * choice and the layout's own repairs in one field. `false` there meant either
+ * "the user wants the strip" or "some code path pinned it visible to escape a
+ * dead end" — insert, tab cycling, dock enforcement and pane adoption all wrote
+ * it — so a repair permanently overwrote a choice and neither could be read
+ * back. Only the user writes `tabStrip`; everything else asks AUTO.
+ */
+export type TabStripMode = 'always' | 'never'
+
 export interface SplitNode {
   type: 'split'
   id: string
@@ -33,12 +47,10 @@ export interface GroupNode {
   active: string
   /** Collapsed to header strip (chevron restores). */
   minimized?: boolean
-  /**
-   * Header hidden entirely (double-click the header to hide, double-click the
-   * zone's top edge to bring it back). Minimize always shows the header —
-   * a minimized group IS its header.
-   */
-  headerHidden?: boolean
+  /** The user's standing choice for this zone's strip; absent = auto. Written
+   *  only by the zone menu and the toggle command. Minimize ignores it — a
+   *  minimized group IS its strip. */
+  tabStrip?: TabStripMode
 }
 
 export type LayoutNode = SplitNode | GroupNode
@@ -57,7 +69,7 @@ export const group = (panes: string[], options?: Partial<Omit<GroupNode, 'type' 
   panes,
   active: options?.active ?? panes[0] ?? '',
   minimized: options?.minimized,
-  headerHidden: options?.headerHidden
+  tabStrip: options?.tabStrip
 })
 
 export const split = (
@@ -113,6 +125,27 @@ export function allPaneIds(node: LayoutNode): string[] {
   return node.type === 'group' ? [...node.panes] : node.children.flatMap(allPaneIds)
 }
 
+/** The split whose DIRECT child carries `childId`, or null. */
+export function findParentSplit(node: LayoutNode, childId: string): SplitNode | null {
+  if (node.type !== 'split') {
+    return null
+  }
+
+  if (node.children.some(child => child.id === childId)) {
+    return node
+  }
+
+  for (const child of node.children) {
+    const hit = findParentSplit(child, childId)
+
+    if (hit) {
+      return hit
+    }
+  }
+
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // Structural edits (pure)
 // ---------------------------------------------------------------------------
@@ -134,17 +167,16 @@ export function normalize(node: LayoutNode): LayoutNode | null {
     }
 
     const active = node.panes.includes(node.active) ? node.active : node.panes[0]
-    // A zone down to one pane clears a redundant HIDDEN override (the lone-pane
-    // default is already headerless) but KEEPS an explicit SHOWN override —
-    // once a zone has ever had a tab bar, closing back to one tab leaves it
-    // shown (sticky bar; the off switch is "Hide tab bar"). `false` survives.
-    const headerHidden = node.panes.length <= 1 && node.headerHidden !== false ? undefined : node.headerHidden
 
-    if (active === node.active && headerHidden === node.headerHidden) {
+    // `tabStrip` is deliberately untouched: it is the user's standing choice
+    // about this zone, not a derived attribute, so no structural edit may
+    // launder it. (Its predecessor `headerHidden` had to be reasoned about here
+    // precisely because the layout wrote to it too.)
+    if (active === node.active) {
       return node
     }
 
-    return { ...node, active, headerHidden }
+    return { ...node, active }
   }
 
   const children: LayoutNode[] = []
@@ -184,48 +216,9 @@ export function normalize(node: LayoutNode): LayoutNode | null {
   return { ...node, children, weights }
 }
 
-/**
- * Give a pane a new id, in place.
- *
- * Only for an id that ROTATES under a pane that is otherwise unchanged — a draft
- * chat receiving its real session id on first submit. Remove-then-insert is not
- * the same thing: it re-enters through adoption and lands wherever the dock hint
- * says, so the user would watch their chat jump zones the moment they hit send.
- *
- * No normalize: the shape is untouched, only a label. A `from` that isn't in the
- * tree, or a `to` that already is, returns the tree unchanged — a rotation must
- * never be able to produce a duplicate leaf.
- */
-export function renamePane(node: LayoutNode, from: string, to: string): LayoutNode {
-  if (from === to || !allPaneIds(node).includes(from) || allPaneIds(node).includes(to)) {
-    return node
-  }
-
-  const walk = (n: LayoutNode): LayoutNode => {
-    if (n.type === 'group') {
-      if (!n.panes.includes(from)) {
-        return n
-      }
-
-      // Mapped, not filtered-and-pushed: the tab keeps its slot in the strip.
-      return {
-        ...n,
-        panes: n.panes.map(p => (p === from ? to : p)),
-        active: n.active === from ? to : n.active
-      }
-    }
-
-    return { ...n, children: n.children.map(walk) }
-  }
-
-  return walk(node)
-}
-
 /** Remove a pane wherever it lives. Closing the ACTIVE tab leaves selection on
- *  the neighbor that FILLS ITS SLOT (the right one; the left one when it was
- *  last) — the tab under the pointer stays under the pointer, so closing a run
- *  of tabs never jumps the selection backwards mid-gesture. Same rule as
- *  terminals and the preview rail. */
+ *  the neighbor that fills its slot (right; left when it was last) — same rule
+ *  as terminals and the preview rail. */
 export function removePane(node: LayoutNode, paneId: string): LayoutNode | null {
   const walk = (n: LayoutNode): LayoutNode => {
     if (n.type === 'group') {
@@ -263,7 +256,11 @@ export function insertAtGroup(
   before?: null | string,
   /** Front the inserted pane — TRUE for a gesture (drop/reveal), FALSE for silent
    *  adoption (logs stacking into the terminal zone must not steal its tab). */
-  activate: boolean = true
+  activate: boolean = true,
+  /** Edge splits only: the [target zone, added pane] weight pair (default
+   *  even). Lets a re-opened tile take the share it held when it closed
+   *  instead of half the anchor zone. */
+  edgeWeights?: readonly [number, number]
 ): LayoutNode | null {
   const walk = (n: LayoutNode): LayoutNode => {
     if (n.type === 'group') {
@@ -275,28 +272,26 @@ export function insertAtGroup(
         const at = before ? n.panes.indexOf(before) : -1
         const panes = at >= 0 ? [...n.panes.slice(0, at), paneId, ...n.panes.slice(at)] : [...n.panes, paneId]
 
-        // Gaining a pane pins the header EXPLICITLY shown (not just cleared):
-        // a stack you can't see is a trap, and once a zone has ever stacked
-        // the bar STAYS when it drops back to one tab — the auto-hide flicker
-        // while dragging tabs around felt broken. Hiding is the user's call
-        // (double-click / zone menu). Active moves only on a gesture; an empty
-        // target has no prior tab, so the newcomer takes it regardless.
+        // `tabStrip` is NOT touched. Gaining a pane used to pin the strip
+        // visible so a surprise arrival always had a handle, which is how a
+        // deliberate hide came undone by a background adoption. Reachability
+        // is the resolver's job now, and it answers per-pane: a closeable tile
+        // forces the strip open, a stack of tool panels doesn't need it
+        // because tab cycling already reaches every member.
+        // Active moves only on a gesture; an empty target has no prior tab, so
+        // the newcomer takes it regardless.
         const active = activate || n.panes.length === 0 ? paneId : n.active
 
-        // A GESTURE (drop/reveal) also un-minimizes: dropping a pane onto a
-        // collapsed strip otherwise leaves it invisible behind that strip, and
-        // with the cascading fold it would vanish into a rail. Silent adoption
-        // must NOT — re-collapsing zones on boot is exactly the hazard the
-        // `activate` flag exists to avoid (see store.ts adoptContributedPanes).
-        return { ...n, panes, active, headerHidden: false, minimized: activate ? undefined : n.minimized }
+        return { ...n, panes, active }
       }
 
       const orientation: Orientation = pos === 'left' || pos === 'right' ? 'row' : 'column'
       const leading = pos === 'left' || pos === 'top'
       const added = group([paneId])
       const children = leading ? [added, n] : [n, added]
+      const [targetWeight, addedWeight] = edgeWeights ?? [1, 1]
 
-      return split(orientation, children, [1, 1])
+      return split(orientation, children, leading ? [addedWeight, targetWeight] : [targetWeight, addedWeight])
     }
 
     return { ...n, children: n.children.map(walk) }
@@ -339,18 +334,8 @@ export function movePane(
 ): LayoutNode {
   const from = findGroupOfPane(root, paneId)
 
-  // The pane is not in the tree. A drag outlives its source — the session
-  // behind a tab can close, a profile switch prunes the other profile's tile
-  // panes — and the commit reads the LIVE tree, so by release the id can be
-  // gone. Falling through to `insertAtGroup` would mint a tab that no tile
-  // backs: invisible (`tileVisibility` calls it `absent`), persisted with the
-  // layout, and counted by every later reorder.
-  if (!from) {
-    return root
-  }
-
   // No-op guards: dropping a pane onto its own single-pane group.
-  if (from.id === target.groupId && from.panes.length === 1) {
+  if (from && from.id === target.groupId && from.panes.length === 1) {
     return root
   }
 
@@ -379,15 +364,10 @@ export function movePane(
  */
 export function movePanes(
   root: LayoutNode,
-  selection: readonly string[],
+  paneIds: readonly string[],
   target: { groupId: string; pos: DropPosition; before?: null | string },
-  activeId: string = selection[0] ?? ''
+  activeId: string = paneIds[0] ?? ''
 ): LayoutNode {
-  // Panes that left the tree mid-drag drop out of the block (same hazard
-  // `movePane` guards, and a multi-tab selection is that much more likely to
-  // hold one). Order is preserved, so the survivors still land as they looked.
-  const paneIds = selection.filter(id => findGroupOfPane(root, id) !== null)
-
   if (paneIds.length <= 1) {
     return paneIds.length === 1 ? movePane(root, paneIds[0], target) : root
   }
@@ -440,91 +420,6 @@ export function groupLeafIds(node: LayoutNode): string[] {
   return node.type === 'group' ? [node.id] : node.children.flatMap(groupLeafIds)
 }
 
-function pathToGroup(node: LayoutNode, groupId: string): LayoutNode[] | null {
-  if (node.type === 'group') {
-    return node.id === groupId ? [node] : null
-  }
-
-  for (const child of node.children) {
-    const sub = pathToGroup(child, groupId)
-
-    if (sub) {
-      return [node, ...sub]
-    }
-  }
-
-  return null
-}
-
-const OPPOSITE_EDGE: Record<RootEdge, RootEdge> = { bottom: 'top', left: 'right', right: 'left', top: 'bottom' }
-
-/** The viable group touching `edge` of this subtree. Along the edge's axis
- *  children are scanned edge-first — a non-viable zone is display:none, so the
- *  next sibling IS the visual edge; across it, every child touches the edge. */
-function edgeGroup(node: LayoutNode, edge: RootEdge, viable: (g: GroupNode) => boolean): GroupNode | null {
-  if (node.type === 'group') {
-    return viable(node) ? node : null
-  }
-
-  const along = (node.orientation === 'row') === (edge === 'left' || edge === 'right')
-  const children = along && (edge === 'right' || edge === 'bottom') ? [...node.children].reverse() : node.children
-
-  for (const child of children) {
-    const hit = edgeGroup(child, edge, viable)
-
-    if (hit) {
-      return hit
-    }
-  }
-
-  return null
-}
-
-/**
- * The viable zone VISUALLY adjacent to `groupId` on `side` (the target of the
- * zone menu's "Move left/right/up/down"). Walks up to the nearest ancestor
- * split running along that axis with a sibling on that side, then descends to
- * the sibling's closest viable leaf; subtrees whose every zone fails `viable`
- * (all panes hidden) are skipped, matching their collapsed rendering.
- */
-export function adjacentGroup(
-  root: LayoutNode,
-  groupId: string,
-  side: RootEdge,
-  viable: (g: GroupNode) => boolean
-): GroupNode | null {
-  const path = pathToGroup(root, groupId)
-
-  if (!path) {
-    return null
-  }
-
-  const orientation: Orientation = side === 'left' || side === 'right' ? 'row' : 'column'
-  const forward = side === 'right' || side === 'bottom'
-
-  for (let i = path.length - 2; i >= 0; i--) {
-    const parent = path[i]
-
-    if (parent.type !== 'split' || parent.orientation !== orientation) {
-      continue
-    }
-
-    const index = parent.children.indexOf(path[i + 1])
-
-    const siblings = forward ? parent.children.slice(index + 1) : parent.children.slice(0, index).reverse()
-
-    for (const sibling of siblings) {
-      const hit = edgeGroup(sibling, OPPOSITE_EDGE[side], viable)
-
-      if (hit) {
-        return hit
-      }
-    }
-  }
-
-  return null
-}
-
 function sameSet(ids: string[], set: Set<string>): boolean {
   return ids.length === set.size && ids.every(id => set.has(id))
 }
@@ -560,15 +455,12 @@ function findCover(node: LayoutNode, set: Set<string>): LayoutNode | null {
 export function mergeZonesWithPane(
   root: LayoutNode,
   groupIds: string[],
-  paneId: readonly string[] | string
+  paneId: string | readonly string[]
 ): LayoutNode | null {
-  // Same mid-drag guard as `movePane`: an id that is no longer in the tree must
-  // not be seeded into the merged group as a pane nothing backs.
-  const paneIds = (typeof paneId === 'string' ? [paneId] : [...paneId]).filter(id => findGroupOfPane(root, id) !== null)
-
+  const paneIds = typeof paneId === 'string' ? [paneId] : [...paneId]
   const set = new Set(groupIds)
 
-  if (paneIds.length === 0 || set.size <= 1 || !findCover(root, set)) {
+  if (set.size <= 1 || !findCover(root, set)) {
     return null
   }
 
@@ -624,26 +516,14 @@ export function setActivePane(root: LayoutNode, groupId: string, paneId: string)
   return mapGroups(root, g => (g.id === groupId && g.panes.includes(paneId) ? { ...g, active: paneId } : g))
 }
 
-/**
- * Reorder a block of panes within a group as one unit (browser-tab drag
- * semantics; a single-tab drag is a one-id block): the block lands BEFORE
- * `before`, keeping its own order, or at the end when `before` is null.
- *
- * The slot is a pane ID, never an index, and that is the whole point. The
- * caller reads it off the STRIP, which renders only the SHOWN tabs, while
- * `panes` also carries the ones that aren't on screen — a tile whose owning
- * store toggled it off, and a disabled plugin's pane, which `closeTreePane`
- * deliberately leaves in the tree so re-enabling restores it in place. An index
- * resolved in the strip's space and applied in the tree's space slid the block
- * by the number of unshown panes ahead of the slot, so dropping a tab at the
- * end of a strip with one of those in it landed it second-to-last instead.
- * `insertAtGroup` has always spoken `before` for exactly this reason.
- */
+/** Reorder a block of panes within a group as one unit (browser-tab drag
+ *  semantics; a single-tab drag is a one-id block): the block lands at
+ *  `toIndex` among the remaining tabs, keeping its own order. */
 export function reorderPanesInGroup(
   root: LayoutNode,
   groupId: string,
   paneIds: readonly string[],
-  before: null | string
+  toIndex: number
 ): LayoutNode {
   return mapGroups(root, g => {
     if (g.id !== groupId || !paneIds.every(p => g.panes.includes(p))) {
@@ -651,15 +531,10 @@ export function reorderPanesInGroup(
     }
 
     const without = g.panes.filter(p => !paneIds.includes(p))
-    const index = before === null ? without.length : without.indexOf(before)
+    const index = Math.max(0, Math.min(without.length, toIndex))
+    const panes = [...without.slice(0, index), ...paneIds, ...without.slice(index)]
 
-    // The anchor tab left the group mid-drag: the slot no longer exists, so
-    // leave the strip alone rather than guessing at an end.
-    if (index === -1) {
-      return g
-    }
-
-    return { ...g, panes: [...without.slice(0, index), ...paneIds, ...without.slice(index)] }
+    return { ...g, panes }
   })
 }
 
@@ -667,8 +542,9 @@ export function setGroupMinimized(root: LayoutNode, groupId: string, minimized: 
   return mapGroups(root, g => (g.id === groupId ? { ...g, minimized } : g))
 }
 
-export function setGroupHeaderHidden(root: LayoutNode, groupId: string, headerHidden: boolean): LayoutNode {
-  return mapGroups(root, g => (g.id === groupId ? { ...g, headerHidden } : g))
+/** Write a zone's standing strip choice; `undefined` returns it to auto. */
+export function setGroupTabStrip(root: LayoutNode, groupId: string, tabStrip: TabStripMode | undefined): LayoutNode {
+  return mapGroups(root, g => (g.id === groupId ? { ...g, tabStrip } : g))
 }
 
 function replaceNode(node: LayoutNode, id: string, make: (g: GroupNode) => LayoutNode): LayoutNode {
@@ -677,32 +553,6 @@ function replaceNode(node: LayoutNode, id: string, make: (g: GroupNode) => Layou
   }
 
   return { ...node, children: node.children.map(c => replaceNode(c, id, make)) }
-}
-
-/**
- * Split a zone: `movePaneId` (one of SEVERAL panes in the group) moves into
- * the new zone on `side` — VS Code "split right", split and move in one
- * gesture. A lone pane can't split away from itself: no-op (normalize prunes
- * the empty zone the split would have minted).
- */
-export function splitGroupZone(root: LayoutNode, groupId: string, side: RootEdge, movePaneId: string): LayoutNode {
-  const orientation: Orientation = side === 'left' || side === 'right' ? 'row' : 'column'
-  const before = side === 'left' || side === 'top'
-
-  return (
-    normalize(
-      replaceNode(root, groupId, g => {
-        if (g.panes.length < 2 || !g.panes.includes(movePaneId)) {
-          return g
-        }
-
-        const added = group([movePaneId])
-        const remaining = { ...g, panes: g.panes.filter(p => p !== movePaneId) }
-
-        return split(orientation, before ? [added, remaining] : [remaining, added], [1, 1])
-      })
-    ) ?? root
-  )
 }
 
 /** Mirror the layout HORIZONTALLY (the titlebar flip toggle / ⌘\): reverse
@@ -739,6 +589,33 @@ export function setSplitWeights(root: LayoutNode, splitId: string, weights: numb
 // ---------------------------------------------------------------------------
 // Validation (persisted trees are untrusted)
 // ---------------------------------------------------------------------------
+
+/**
+ * Bring a persisted tree onto the current attribute schema.
+ *
+ * Retires `headerHidden` outright rather than translating it. A stored `true`
+ * could have come from a deliberate "Hide header", or from a double-tap the
+ * user never meant (that gesture rode every tab, so an ordinary double-click
+ * on a title hid the strip), and nothing on disk distinguishes them. Since the
+ * hide also unmounted the only surface offering "Show header", every wrongly
+ * hidden zone stayed hidden across restarts — the state people actually
+ * reported being stuck in. Carrying those forward as `tabStrip: 'never'` would
+ * re-strand exactly them, so the flag is dropped and the zone returns to auto;
+ * the strip is now hidden deliberately, from controls that say how to undo it.
+ *
+ * A stored `false` is dropped for the same reason in reverse: most were written
+ * by the layout's own repair paths, not by anyone choosing to see a strip.
+ */
+export function migratePersistedTree(node: LayoutNode): LayoutNode {
+  if (node.type === 'group') {
+    const { headerHidden, ...rest } = node as GroupNode & { headerHidden?: unknown }
+    const tabStrip = rest.tabStrip === 'always' || rest.tabStrip === 'never' ? rest.tabStrip : undefined
+
+    return headerHidden === undefined && rest.tabStrip === tabStrip ? node : { ...rest, tabStrip }
+  }
+
+  return { ...node, children: node.children.map(migratePersistedTree) }
+}
 
 export function isLayoutNode(value: unknown): value is LayoutNode {
   if (!value || typeof value !== 'object') {

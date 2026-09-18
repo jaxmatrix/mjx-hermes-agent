@@ -1,109 +1,155 @@
-/**
- * MJXHRM-452 — live task progress per session, the "3/7" an inbox-style sidebar
- * card shows.
- *
- * Universal derives todos from the TRANSCRIPT where desktop keeps a live map fed
- * by `todo` tool events, so this is a projection of state universal already
- * holds rather than a second pipeline. The rules that matter: cancelled items
- * count toward neither side of the fraction, a session with no list contributes
- * nothing at all, and the progress is claimed under every lineage alias so a
- * sidebar row holding either tip of a compacted conversation finds it.
- */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { TodoItem } from '@/lib/todos'
 
-vi.mock('@/store/gateway', async () => {
-  const { atom } = await import('@/store/atom')
+import {
+  $todoRevisionsBySession,
+  $todosBySession,
+  clearActiveSessionTodos,
+  clearSessionTodos,
+  restoreSessionTodosFromSnapshot,
+  setSessionTodos,
+  todosForHydration
+} from './todos'
 
-  return {
-    $gatewayState: atom('open'),
-    addGatewayEventListener: () => () => {},
-    getGatewayClient: () => null,
-    requestGateway: vi.fn()
-  }
-})
+const todo = (id: string, status: TodoItem['status']): TodoItem => ({ content: `task ${id}`, id, status })
 
-import type { TodoItem, TodoStatus } from '@/lib/todos'
-
-import { $sessions } from './session'
-import { $sessionStates, emptySessionState } from './session-state-types'
-import { $todoProgressBySession, todoListActive, todoProgressLabel } from './todos'
-
-const todo = (id: string, status: TodoStatus): TodoItem => ({ content: `task ${id}`, id, status })
-
-/** A transcript whose todo-tool parts carry lists — `lib/todos` reads
- *  `tool-call` parts named `todo`, live ones carrying `todos`.
- *
- *  Two stale lists surround the real one, one in an EARLIER message and one in
- *  an earlier PART of the same message, so the fixture exercises both halves of
- *  "the last list wins" — the message walk and the per-message part scan. */
-const stale = (id: string) => ({ toolName: 'todo', todos: [todo(id, 'pending')], type: 'tool-call' })
-
-const transcriptWith = (todos: TodoItem[]) =>
-  [
-    { parts: [stale('older-message')] },
-    { parts: [stale('older-part'), { toolName: 'todo', todos, type: 'tool-call' }] }
-  ] as never
-
-beforeEach(() => {
-  $sessions.set([])
-  $sessionStates.set({})
-})
-
-describe('todoProgressLabel', () => {
-  it('counts completed against the total', () => {
-    expect(todoProgressLabel([todo('a', 'completed'), todo('b', 'pending'), todo('c', 'pending')])).toBe('1/3')
+describe('setSessionTodos finished-list auto-clear', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
   })
 
-  it('excludes cancelled items from BOTH sides of the fraction', () => {
-    // Seeded to disagree with a plain length: five items, two abandoned. A plan
-    // the agent gave up on three items in should read 3/3 when the rest land,
-    // not 3/5 forever.
-    expect(
-      todoProgressLabel([
-        todo('a', 'completed'),
-        todo('b', 'completed'),
-        todo('c', 'completed'),
-        todo('d', 'cancelled'),
-        todo('e', 'cancelled')
-      ])
-    ).toBe('3/3')
+  afterEach(() => {
+    clearSessionTodos('s1')
+    vi.useRealTimers()
   })
 
-  it('has nothing to show for an empty or wholly cancelled list', () => {
-    expect(todoProgressLabel([])).toBeNull()
-    expect(todoProgressLabel([todo('a', 'cancelled')])).toBeNull()
+  it('keeps an in-flight list indefinitely', () => {
+    setSessionTodos('s1', [todo('a', 'completed'), todo('b', 'in_progress')])
+
+    vi.advanceTimersByTime(60_000)
+
+    expect($todosBySession.get().s1).toHaveLength(2)
+  })
+
+  it('drops the list shortly after every item completes', () => {
+    setSessionTodos('s1', [todo('a', 'completed'), todo('b', 'cancelled')])
+
+    expect($todosBySession.get().s1).toHaveLength(2)
+
+    vi.advanceTimersByTime(5_000)
+
+    expect($todosBySession.get().s1).toBeUndefined()
+  })
+
+  it('cancels the pending clear when a new active list arrives', () => {
+    setSessionTodos('s1', [todo('a', 'completed')])
+    vi.advanceTimersByTime(2_000)
+
+    // The next turn starts a fresh plan before the linger expires.
+    setSessionTodos('s1', [todo('a', 'completed'), todo('b', 'pending')])
+    vi.advanceTimersByTime(60_000)
+
+    expect($todosBySession.get().s1).toHaveLength(2)
   })
 })
 
-describe('todoListActive', () => {
-  it('is false once every item has settled', () => {
-    expect(todoListActive([todo('a', 'completed'), todo('b', 'cancelled')])).toBe(false)
+describe('clearActiveSessionTodos (turn-end cleanup)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
   })
 
-  it('is true while anything is pending or running', () => {
-    expect(todoListActive([todo('a', 'completed'), todo('b', 'in_progress')])).toBe(true)
+  afterEach(() => {
+    clearSessionTodos('s1')
+    vi.useRealTimers()
+  })
+
+  it('drops a still-active list when the turn has ended', () => {
+    setSessionTodos('s1', [todo('a', 'completed'), todo('b', 'in_progress')])
+
+    clearActiveSessionTodos('s1')
+
+    expect($todosBySession.get().s1).toBeUndefined()
+  })
+
+  it('leaves a finished list to its normal linger instead of clearing immediately', () => {
+    setSessionTodos('s1', [todo('a', 'completed')])
+
+    clearActiveSessionTodos('s1')
+
+    expect($todosBySession.get().s1).toHaveLength(1)
+    vi.advanceTimersByTime(5_000)
+    expect($todosBySession.get().s1).toBeUndefined()
+  })
+
+  it('is a no-op when the session has no todos', () => {
+    clearActiveSessionTodos('s1')
+
+    expect($todosBySession.get().s1).toBeUndefined()
   })
 })
 
-describe('$todoProgressBySession', () => {
-  it('takes the LAST list in the transcript and claims it under every alias', () => {
-    $sessionStates.set({
-      'rt-1': {
-        ...emptySessionState('tip'),
-        messages: transcriptWith([todo('a', 'completed'), todo('b', 'pending')]),
-        storedSessionId: 'tip'
-      }
-    })
-    $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as never])
-
-    // The earlier list in the fixture would read 0/1 — only the last one wins.
-    expect($todoProgressBySession.get()).toEqual({ tip: '1/2' })
+describe('todosForHydration (stale-active guard on restore)', () => {
+  it('does not restore an active list (stale after a completed turn)', () => {
+    expect(todosForHydration([todo('a', 'completed'), todo('b', 'in_progress')])).toBeNull()
+    expect(todosForHydration([todo('a', 'pending')])).toBeNull()
   })
 
-  it('reports nothing for a session whose transcript has no list', () => {
-    $sessionStates.set({ 'rt-1': { ...emptySessionState('plain'), storedSessionId: 'plain' } })
+  it('restores a finished list so its linger shows the final checkmarks', () => {
+    const finished = [todo('a', 'completed'), todo('b', 'cancelled')]
 
-    expect($todoProgressBySession.get()).toEqual({})
+    expect(todosForHydration(finished)).toEqual(finished)
+  })
+
+  it('returns null when there is nothing stored', () => {
+    expect(todosForHydration(null)).toBeNull()
+  })
+})
+
+describe('revisioned snapshots', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    clearSessionTodos('s1')
+  })
+
+  afterEach(() => {
+    clearSessionTodos('s1')
+    vi.useRealTimers()
+  })
+
+  it('rejects a snapshot older than the latest live update', () => {
+    setSessionTodos('s1', [todo('new', 'in_progress')], 5)
+    setSessionTodos('s1', [todo('old', 'pending')], 4)
+
+    expect($todosBySession.get().s1?.[0]?.id).toBe('new')
+    expect($todoRevisionsBySession.get().s1).toBe(5)
+  })
+
+  it('restores an active snapshot only while the session is running', () => {
+    const snapshot = { revision: 7, todos: [todo('active', 'in_progress')] }
+
+    restoreSessionTodosFromSnapshot('s1', snapshot, false)
+    expect($todosBySession.get().s1).toBeUndefined()
+
+    restoreSessionTodosFromSnapshot('s1', snapshot, true)
+    expect($todosBySession.get().s1?.[0]?.id).toBe('active')
+  })
+
+  it('applies an unversioned update after a revisioned snapshot (tool.start merge)', () => {
+    setSessionTodos('s1', [todo('a', 'pending'), todo('b', 'pending')], 5)
+    setSessionTodos('s1', [todo('a', 'completed'), todo('b', 'pending')])
+
+    expect($todosBySession.get().s1?.[0]?.status).toBe('completed')
+    expect($todoRevisionsBySession.get().s1).toBe(5)
+  })
+
+  it('does not stamp a watermark from an unused empty snapshot', () => {
+    restoreSessionTodosFromSnapshot('s1', { revision: 0, todos: [] }, true)
+
+    expect($todosBySession.get().s1).toBeUndefined()
+    expect($todoRevisionsBySession.get().s1).toBeUndefined()
+
+    setSessionTodos('s1', [todo('a', 'in_progress')])
+    expect($todosBySession.get().s1?.[0]?.id).toBe('a')
   })
 })

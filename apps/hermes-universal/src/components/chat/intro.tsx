@@ -1,140 +1,176 @@
-import { type CSSProperties, useLayoutEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 
-import { useHermesConfigRecord } from '@/app/hooks/use-config-record'
-import { normalize } from '@/lib/text'
-import { useStore } from '@/store/atom'
-import { $introSeed } from '@/store/chat'
+import { capitalize, normalize } from '@/lib/text'
 
-import { resolveIntroCopy } from './intro-copy'
+import introCopyJsonl from './intro-copy.jsonl?raw'
+import { Wordmark } from './wordmark'
+
+type IntroCopy = {
+  headline: string
+  body: string
+}
+
+type IntroCopyRecord = IntroCopy & {
+  personality: string
+}
+
+export type IntroProps = {
+  personality?: string
+  seed?: number
+}
+
+const NEUTRAL_PERSONALITIES = new Set(['', 'default', 'none', 'neutral'])
+
+const FALLBACK_COPY: IntroCopy[] = [
+  {
+    headline: 'What are we moving today?',
+    body: "Send a bug, branch, plan, or rough idea. I'll inspect the repo and turn it into the next concrete step."
+  },
+  {
+    headline: "What's on your mind?",
+    body: "Bring the code, question, or stuck part. I'll read the room before making changes."
+  },
+  {
+    headline: 'What should Hermes look at?',
+    body: "Send the task, failing path, or half-formed plan. I'll help turn it into action."
+  },
+  {
+    headline: 'Where should we start?',
+    body: "Bring the problem, goal, or file. I'll inspect first and keep the next step concrete."
+  },
+  {
+    headline: 'What needs attention?',
+    body: "Send the context you have. I'll help sort it into a plan or a fix."
+  }
+]
+
+function normalizeKey(value?: string): string {
+  return normalize(value)
+}
+
+function titleize(value: string): string {
+  return value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map(capitalize)
+    .join(' ')
+}
+
+function isIntroCopyRecord(value: unknown): value is IntroCopyRecord {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const record = value as Record<string, unknown>
+
+  return (
+    typeof record.personality === 'string' &&
+    typeof record.headline === 'string' &&
+    typeof record.body === 'string' &&
+    Boolean(record.personality.trim()) &&
+    Boolean(record.headline.trim()) &&
+    Boolean(record.body.trim())
+  )
+}
+
+function parseIntroCopy(raw: string): Record<string, IntroCopy[]> {
+  const byPersonality: Record<string, IntroCopy[]> = {}
+
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim()
+
+    if (!trimmed) {
+      continue
+    }
+
+    try {
+      const parsed: unknown = JSON.parse(trimmed)
+
+      if (!isIntroCopyRecord(parsed)) {
+        continue
+      }
+
+      const key = normalizeKey(parsed.personality)
+      byPersonality[key] ??= []
+      byPersonality[key].push({
+        headline: parsed.headline.trim(),
+        body: parsed.body.trim()
+      })
+    } catch {
+      // Bad generated copy should not break the whole desktop app.
+    }
+  }
+
+  return byPersonality
+}
+
+const INTRO_COPY_BY_PERSONALITY = parseIntroCopy(introCopyJsonl)
+
+function neutralCopy(): IntroCopy[] {
+  return INTRO_COPY_BY_PERSONALITY.none || INTRO_COPY_BY_PERSONALITY.default || FALLBACK_COPY
+}
+
+function fallbackCopyForPersonality(personalityKey: string): IntroCopy[] {
+  if (NEUTRAL_PERSONALITIES.has(personalityKey)) {
+    return neutralCopy()
+  }
+
+  const label = titleize(personalityKey)
+
+  return [
+    {
+      headline: `${label} mode is on. What should we work on?`,
+      body: "Send the task, file, or rough idea. I'll use your configured voice and keep the work grounded in this repo."
+    },
+    {
+      headline: `What does ${label} Hermes need to see?`,
+      body: "Bring the context or the stuck part. I'll adapt to your configured personality."
+    },
+    {
+      headline: `${label} mode is ready.`,
+      body: "Send the problem, file, or idea. I'll follow the personality you've configured."
+    },
+    {
+      headline: `What should ${label} Hermes tackle?`,
+      body: "Drop the task here. I'll keep the work grounded in the repo."
+    },
+    {
+      headline: 'Where should we begin?',
+      body: `Give me the context and I'll answer in ${label} mode.`
+    }
+  ]
+}
+
+function pickCopy(copies: IntroCopy[], seed = 0): IntroCopy {
+  return copies[Math.abs(seed) % copies.length] || FALLBACK_COPY[0]
+}
 
 const WORDMARK = 'HERMES AGENT'
 
-/** `display.personality` from the profile config — the copy set to draw from.
- *  Mirrors desktop's normalizePersonalityValue (lib/chat-runtime): the neutral
- *  values collapse to '' so resolveIntroCopy takes the `none` set. */
-function usePersonality(): string {
-  const { data } = useHermesConfigRecord()
-  const display = (data?.display ?? {}) as Record<string, unknown>
-  const value = normalize(typeof display.personality === 'string' ? display.personality : '')
+function resolveCopy(personality?: string, seed?: number): IntroCopy {
+  const personalityKey = normalizeKey(personality)
 
-  return !value || value === 'default' || value === 'none' ? '' : value
+  const copies = NEUTRAL_PERSONALITIES.has(personalityKey)
+    ? INTRO_COPY_BY_PERSONALITY[personalityKey] || neutralCopy()
+    : INTRO_COPY_BY_PERSONALITY[personalityKey] || fallbackCopyForPersonality(personalityKey)
+
+  return pickCopy(copies, seed)
 }
 
-// Desktop fills the wordmark to its column width with a CSS container-query +
-// trig (tan/atan2) fit that the Linux WebKitGTK webview won't render large. We
-// reproduce the SAME result in JS: a hidden twin measures the wordmark's natural
-// width at a fixed reference size, and the visible wordmark is scaled so its
-// width == the available column width. Re-fits on resize and once the Collapse
-// webfont swaps in. Bounds keep it sane on very narrow / very wide columns.
-const REF_PX = 100
-const MIN_PX = 44
-const MAX_PX = 200
-
-const WORDMARK_METRICS = "font-['Collapse'] font-bold uppercase tracking-[0.08em]"
-
-export function Intro() {
-  const fillRef = useRef<HTMLDivElement>(null)
-  const measureRef = useRef<HTMLSpanElement>(null)
-  const [fontPx, setFontPx] = useState(0) // 0 = not measured yet (wordmark hidden)
-  // Desktop's pair: a random seed picked once per mount, plus a counter the
-  // store bumps on every new chat — so the line rotates even if this component
-  // is never unmounted between chats.
-  const [mountSeed] = useState(() => Math.floor(Math.random() * 100_000))
-  const introSeed = useStore($introSeed)
-  const personality = usePersonality()
-  const copy = resolveIntroCopy(personality, mountSeed + introSeed)
-
-  useLayoutEffect(() => {
-    const fill = fillRef.current
-    const measure = measureRef.current
-
-    if (!fill || !measure) {
-      return
-    }
-
-    const fit = () => {
-      const avail = fill.clientWidth
-      const natural = measure.getBoundingClientRect().width // width at REF_PX
-
-      if (avail > 0 && natural > 0) {
-        setFontPx(Math.max(MIN_PX, Math.min(MAX_PX, (avail / natural) * REF_PX)))
-      }
-    }
-
-    fit()
-    const raf = requestAnimationFrame(fit)
-    const observer = new ResizeObserver(fit)
-    observer.observe(fill)
-
-    // The webfont changes the measured width; re-fit once it's ready.
-    let cancelled = false
-
-    if (typeof document !== 'undefined' && document.fonts?.ready) {
-      void document.fonts.ready.then(() => {
-        if (!cancelled) {
-          fit()
-        }
-      })
-    }
-
-    return () => {
-      cancelled = true
-      cancelAnimationFrame(raf)
-      observer.disconnect()
-    }
-  }, [])
+export function Intro({ personality, seed }: IntroProps) {
+  const [mountSeed] = useState(() => Math.floor(Math.random() * 100000))
+  const copy = resolveCopy(personality, mountSeed + (seed ?? 0))
 
   return (
     <div
       className="pointer-events-none flex w-full min-w-0 flex-col items-center justify-center px-0.5 py-6 text-center text-muted-foreground sm:px-6 lg:px-8"
       data-slot="aui_intro"
-      style={{ paddingBottom: 'var(--composer-measured-height)' }}
     >
-      <div className="mx-auto w-full min-w-0 max-w-[min(var(--composer-width),82vw)]">
-        <div className="mx-auto mb-1 w-[calc(100%-1rem)]" ref={fillRef}>
-          <p
-            aria-label={WORDMARK}
-            className={`m-0 text-center leading-[0.9] text-midground mix-blend-plus-lighter dark:text-foreground/90 ${WORDMARK_METRICS}`}
-            style={
-              {
-                fontSize: `${fontPx || MIN_PX}px`,
-                whiteSpace: 'nowrap',
-                // Hidden only until measured, and otherwise INHERITED. An
-                // explicit `visible` overrides the `invisible` a hidden tab's
-                // layer sets, so an empty main chat's wordmark painted through
-                // whatever tab was stacked on top of it.
-                ...(fontPx ? {} : { visibility: 'hidden' })
-              } as CSSProperties
-            }
-          >
-            {WORDMARK}
-          </p>
-        </div>
+      <div className="w-full min-w-0">
+        <Wordmark className="mb-1" text={WORDMARK} />
 
-        <p className="m-0 mx-auto max-w-[34rem] text-center text-[0.875rem] leading-[1.45] tracking-tight text-(--ui-text-tertiary)">
-          {copy.body}
-        </p>
+        <p className="m-0 text-center leading-normal tracking-tight">{copy.body}</p>
       </div>
-
-      {/* Hidden twin — same font metrics as the wordmark, at a fixed reference
-          size — measured to scale the visible wordmark. Kept in layout (not
-          display:none) so getBoundingClientRect() is valid. */}
-      <span
-        aria-hidden
-        className={WORDMARK_METRICS}
-        ref={measureRef}
-        style={{
-          fontSize: `${REF_PX}px`,
-          left: '-9999px',
-          pointerEvents: 'none',
-          position: 'absolute',
-          top: 0,
-          visibility: 'hidden',
-          whiteSpace: 'nowrap'
-        }}
-      >
-        {WORDMARK}
-      </span>
     </div>
   )
 }

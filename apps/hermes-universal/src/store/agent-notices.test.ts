@@ -13,11 +13,6 @@ import {
 } from './agent-notices'
 import { $notifications, clearNotifications } from './notifications'
 
-// Ported from apps/desktop/src/store/agent-notices.test.ts. Only the last block
-// diverges: universal's NativeNotificationInput has no `global` flag (its
-// dispatch is already "fire only while backgrounded"), so the account-wide notice
-// carries no sessionId and uses the notice key as its throttle `tag` instead.
-
 function usage(overrides: Partial<AgentNoticePayload> = {}): AgentNoticePayload {
   return {
     key: 'credits.usage',
@@ -88,6 +83,7 @@ test('the leading severity glyph is stripped from the toast message', () => {
 })
 
 test('the trailing "· detail" is split off as a secondary meta line, not inlined', () => {
+  // Detail-carrying notices split on the first ` · `.
   const paused = noticeToToast({
     key: 'credits.depleted',
     level: 'error',
@@ -97,6 +93,7 @@ test('the trailing "· detail" is split off as a secondary meta line, not inline
   expect(paused?.message).toBe('Credit access paused')
   expect(paused?.meta).toBe('run /topup to top up')
 
+  // grant_spent carries a `· detail` tail too.
   const grant = noticeToToast({ key: 'credits.grant_spent', level: 'info', text: '• Grant spent · $12.00 top-up left' })
   expect(grant?.message).toBe('Grant spent')
   expect(grant?.meta).toBe('$12.00 top-up left')
@@ -211,7 +208,7 @@ test('only credits.depleted and credits.restored map to a native notification', 
   expect(nativeNoticeInput({ text: '', key: 'credits.depleted' }, 'Credits')).toBeNull()
 })
 
-test('the urgent pair maps to a session-less native input keyed by the notice', () => {
+test('the urgent pair maps to a global native input carrying the text as its body', () => {
   const depleted = nativeNoticeInput(
     { key: 'credits.depleted', kind: 'sticky', level: 'error', text: '✕ Credit access paused · run /topup to top up' },
     'Credits'
@@ -219,8 +216,8 @@ test('the urgent pair maps to a session-less native input keyed by the notice', 
 
   expect(depleted).toEqual({
     body: '✕ Credit access paused · run /topup to top up',
+    global: true,
     kind: 'credits',
-    tag: 'credits.depleted',
     title: 'Credits'
   })
 
@@ -231,6 +228,4 @@ test('the urgent pair maps to a session-less native input keyed by the notice', 
 
   expect(restored?.kind).toBe('credits')
   expect(restored?.body).toBe('✓ Credit access restored')
-  // Distinct tags: depleted and restored must not throttle each other out.
-  expect(restored?.tag).toBe('credits.restored')
 })

@@ -10,11 +10,13 @@
  * (agent rewrites a plugin file -> clean reload). Failures toast + log; a
  * broken plugin can never take the app down.
  *
- * The source is whichever `PluginDisk` is in force (contrib/plugin-disk.ts): this
- * device's `desktop-plugins` tree, or the connected gateway's copy of it.
+ * Sources today: the in-repo runtime example (`?raw`, proves the pipeline)
+ * and the two on-disk doors — `<hermes home>/desktop-plugins/<name>/plugin.js`
+ * and the unified agent-plugin half `<hermes home>/plugins/<name>/desktop/
+ * plugin.js` — the doors the agent writes through.
  *
  * SECURITY — this is NOT a capability boundary. A loaded plugin is evaluated
- * as ESM in the webview realm with FULL app authority: the React singleton,
+ * as ESM in the renderer realm with FULL app authority: the React singleton,
  * the whole SDK (`host.request` gateway RPC, `ctx.rest`, storage, `navigate`).
  * The isolation here is *error* isolation only (ContribBoundary, isolated
  * listeners) — a plugin can't crash the app, but it can do anything the app
@@ -24,76 +26,29 @@
  * it needs a real boundary (iframe/worker + CSP + capability gating) before
  * it can land. The `{ integrity }` option is the transport seam, not the
  * trust seam.
- *
- * Note the gateway door is, strictly, code from another machine. It is not a
- * remote-fetch-from-the-internet path — it is the user's own backend, the same
- * one that already serves the workspace and executes their agent — but it IS a
- * trust decision, which is why it is switchable off (see plugin-disk.ts).
  */
 
 import { installPluginSdk, sdkImportMap } from '@/sdk/runtime'
-import { $connection } from '@/store/connection'
 import { notifyError } from '@/store/notifications'
-import { $activeProfile } from '@/store/profiles'
 
 import { createPluginContext, type HermesPlugin } from './plugin'
-import {
-  $restDoorEnabled,
-  type DiskEntry,
-  type PluginDisk,
-  type PluginRoot,
-  resolvePluginDisk,
-  REST_CONTENT_DIFF_CAP
-} from './plugin-disk'
 import { $pluginRecords, dropPlugin, pluginActive, type PluginKind, publishPlugin } from './plugins-store'
 
-/**
- * The root's posture capping the plugin's own default. Pure, and exported so the
- * rule is pinned directly rather than inferred from a load: it can only LOWER.
- *
- * A package half declaring `defaultEnabled: true` in the opt-in root stays off
- * (it does not get to choose its own posture), and a plugin declaring `false` in
- * the permissive root also stays off (the root does not get to override it).
- * Absence on either side means "no opinion", not "off".
- */
-export function rootCappedDefault(pluginDefault?: boolean, rootDefault?: boolean): boolean {
-  return (pluginDefault ?? true) && (rootDefault ?? true)
-}
-
-/**
- * Would loading this plugin take over an IN-TREE one's id?
- *
- * An in-tree plugin (`src/plugins/*`) is a first-party FEATURE, not a sample —
- * MJXHRM-445's Bot Mode ships that way. `loaded` is keyed by id and a second
- * registration disposes the first, so a disk plugin, including an agent package
- * the user installed for entirely unrelated reasons, could silently replace one
- * just by picking its slug. Refused, and named (MJXHRM-455 D3).
- *
- * Only ever refuses the DISK side: a bundled plugin re-registering itself is a
- * reload, not a takeover.
- */
-export function shadowsBundledPlugin(id: string, kind: PluginKind): boolean {
-  return kind !== 'bundled' && $pluginRecords.get()[id]?.kind === 'bundled'
-}
-
 interface LoadOptions {
+  /** Root-level default-enable CAP: `false` ships the plugin opt-in (inventory
+   *  row, off until the user toggles) even if the plugin says otherwise. The
+   *  unified agent-plugin root sets this so `~/.hermes/plugins` keeps its
+   *  installed-but-inert posture (GHSA-mcfc-hp25-cjv7) on the desktop side too. */
+  defaultEnabled?: boolean
   /** Absolute plugin.js path (disk plugins) — recorded for reveal/inventory. */
   file?: string
   /** `sha256-<base64>` — verified against the source before evaluation. */
   integrity?: string
   /** Inventory bucket; the disk door is the default runtime source. */
   kind?: PluginKind
-  /** Which disk root the entry came from — the inventory row's badge. */
-  root?: PluginRoot
-  /**
-   * The ROOT's posture, which can only LOWER the plugin's own `defaultEnabled`.
-   *
-   * A plugin declaring `defaultEnabled: true` in an opt-in root stays off; a
-   * plugin declaring `false` in a permissive root also stays off. An explicit
-   * user decision still wins over both — absence in `$pluginDecisions` means
-   * "no choice", not "off".
-   */
-  defaultEnabled?: boolean
+  /** Agent package whose desktop half this is (unified packages). */
+  packageName?: string
+  packageOrigin?: PackageMarker['origin']
 }
 
 /** Live runtime plugins: id -> disposers (unload/reload support). */
@@ -101,12 +56,7 @@ const loaded = new Map<string, (() => void)[]>()
 
 // Matches the specifier of a static `from '…'`, a side-effect `import '…'`, or
 // a dynamic `import('…')` — anchored to import/export syntax so a bare string
-// literal (e.g. `notify('react')`) is never touched.
-//
-// It is a regex, not a parser: a COMMENTED-OUT import still matches. That fails
-// closed (the plugin gets a named "unsupported import" error rather than a
-// silently ignored dependency), which is the right way round, but it will confuse
-// an author who left dead import lines in the file.
+// literal or comment (e.g. `notify('react')`) is never touched.
 const importSpecifierRe = () => /(from\s*|import\s*\(\s*|import\s+)(['"])([^'"]+)\2/g
 
 /** Rewrite ONLY mapped import specifiers (@hermes/plugin-sdk, react*) to their
@@ -138,14 +88,6 @@ function unsupportedImports(source: string): string[] {
   return [...bare]
 }
 
-/** SHA-256 of `source` as standard SRI base64 — the change token for a door that
- *  can't give us an mtime, and the comparison for an `integrity` option. */
-async function sha256(source: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source))
-
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-}
-
 async function verifyIntegrity(source: string, integrity: string): Promise<boolean> {
   const [algo, expected] = integrity.split('-', 2)
 
@@ -153,8 +95,11 @@ async function verifyIntegrity(source: string, integrity: string): Promise<boole
     return false
   }
 
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source))
   // Standard SRI base64 (`sha256-<base64>`) — a base64url-encoded hash won't match.
-  return (await sha256(source)) === expected
+  const actual = btoa(String.fromCharCode(...new Uint8Array(digest)))
+
+  return actual === expected
 }
 
 export function unloadRuntimePlugin(id: string): void {
@@ -200,8 +145,26 @@ export async function loadRuntimePlugin(
       throw new Error(`${origin} has no valid default HermesPlugin export`)
     }
 
-    if (shadowsBundledPlugin(plugin.id, options.kind ?? 'disk')) {
-      throw new Error(`plugin id "${plugin.id}" is already used by a built-in plugin`)
+    // A disk/runtime copy of a plugin that now ships BUNDLED (e.g. a
+    // standalone install of hermes-bots predating its adoption in-tree) must
+    // not register a second time: contributions would double up and the two
+    // copies would fight over storage. The bundled copy wins; the disk copy
+    // is skipped — but VISIBLY: a silent skip left the stale folder
+    // undiscoverable while (on shells without the bundled twin) the same
+    // folder actively breaks the feature it shadows. The inventory row
+    // carries the file path so Capabilities → Plugins can reveal it for deletion.
+    if ($pluginRecords.get()[plugin.id]?.kind === 'bundled') {
+      console.info(`[plugins] ${origin} skipped — "${plugin.id}" already ships bundled with the app`)
+      publishPlugin({
+        id: `${plugin.id}:disk-shadowed`,
+        name: `${plugin.name ?? plugin.id} (stale disk copy)`,
+        description: `Shadowed by the bundled "${plugin.id}" plugin — this folder is no longer used and can be deleted.`,
+        kind: options.kind ?? 'disk',
+        file: options.file,
+        status: 'disabled'
+      })
+
+      return null
     }
 
     const record = {
@@ -210,7 +173,8 @@ export async function loadRuntimePlugin(
       description: plugin.description,
       kind: options.kind ?? 'disk',
       file: options.file,
-      root: options.root
+      packageName: options.packageName,
+      packageOrigin: options.packageOrigin
     }
 
     const activate = () => {
@@ -225,8 +189,10 @@ export async function loadRuntimePlugin(
     publishPlugin({ ...record, status: 'disabled' }, { activate, deactivate: () => unloadRuntimePlugin(plugin.id) })
 
     // A disabled plugin still inventories (settings shows it, toggle
-    // reactivates via the handle above) — it just never registers.
-    if (pluginActive(plugin.id, rootCappedDefault(plugin.defaultEnabled, options.defaultEnabled))) {
+    // reactivates via the handle above) — it just never registers. A root-level
+    // `defaultEnabled: false` caps the plugin's own default: the user's explicit
+    // enable still wins, a plugin can't self-enable past its root's posture.
+    if (pluginActive(plugin.id, (plugin.defaultEnabled ?? true) && (options.defaultEnabled ?? true))) {
       activate()
     }
 
@@ -234,18 +200,13 @@ export async function loadRuntimePlugin(
   } catch (error) {
     console.error(`[plugins] runtime load failed (${origin})`, error)
     notifyError(error, `Plugin "${origin}" failed to load`)
-    // Keyed by the entry FILE when there is one, NOT by the folder name.
-    // Inventory rows are keyed by `plugin.id`, and with two roots a folder name
-    // can equal a healthy plugin's id in the other one — so a folder-named error
-    // row overwrote that plugin's row and then took it away again when the
-    // broken folder was fixed. `name` still carries the folder, so the settings
-    // page reads the same.
     publishPlugin({
-      id: options.file ?? origin,
+      id: origin,
       name: origin,
       kind: options.kind ?? 'disk',
       file: options.file,
-      root: options.root,
+      packageName: options.packageName,
+      packageOrigin: options.packageOrigin,
       status: 'error',
       error: error instanceof Error ? error.message : String(error)
     })
@@ -255,73 +216,155 @@ export async function loadRuntimePlugin(
 }
 
 // ---------------------------------------------------------------------------
-// The disk plugin door (agent- or user-written plugin.js). SELF-MAINTAINING —
-// no reload ceremony:
-//  - each tick compares every folder's change token, so saving the file hot
-//    reloads the plugin in place;
-//  - folder membership is reconciled on the same tick, so a new folder loads and
-//    a deleted one unloads.
-// Desktop watches the fs and keeps a 5s poll as its fallback; universal polls
-// only (2s local / 10s gateway — see plugin-disk.ts). A native watcher would
-// need a new Rust dependency and Android inotify semantics that only a device
-// build can validate: FIXME(MJX-53/watcher).
-//
-// Panes land via placement adoption and STAY where the user drags them — the
-// tree treats not-yet-loaded pane ids as hidden, so boot and reload are
+// The on-disk plugin door — ONE app-level root, `<hermes home>/desktop-plugins/`:
+//  - `<id>/plugin.js` — a standalone desktop plugin (agent- or user-written);
+//  - `<package>/plugin.js` + `.hermes-package.json` — the desktop HALF of a
+//    unified agent+desktop package, COPIED here by Electron from the package's
+//    `plugins/<package>/desktop/` folder (electron/desktop-plugins-root.ts).
+//    The agent half stays in its profile; the desktop half lives with the app,
+//    so it neither appears nor disappears when the active profile changes.
+// SELF-MAINTAINING — no reload ceremony:
+//  - each plugin.js is fs-watched (the preview watcher IPC, debounced in
+//    main): saving the file hot-reloads the plugin in place;
+//  - each root is fs-watched too (watchDirectory IPC), so new folders load +
+//    removed ones unload on the change tick; older Electron shells without
+//    watchDirectory fall back to the slow visible-tab poll.
+// Panes land via placement adoption and STAY where the user drags them —
+// the tree treats not-yet-loaded pane ids as hidden, so boot and reload are
 // collapse -> appear, never a placeholder flash.
 // ---------------------------------------------------------------------------
 
-interface DiskPlugin {
-  file: string
-  /** Loaded plugin id (null while broken — kept so a fixing save reloads). */
-  id: null | string
-  /** Last-seen change token: the door's `stamp`, or a source hash when it has
-   *  none. Empty until first load. */
-  stamp: string
+const DISK_POLL_MS = 5_000
+
+interface DiskRoot {
+  dir: string
+  /** Path segments below each scanned folder to the entry file. */
+  entrySegments: readonly string[]
 }
 
-/**
- * Disk records, keyed by ENTRY FILE — not by folder name.
- *
- * Two roots means two folders can share a name (`desktop-plugins/demo` and
- * `plugins/demo/desktop`), and they are different plugins. Keying on the name
- * made the second one overwrite the first's record, so one of them silently
- * stopped being reconciled and never unloaded when its folder went away.
- */
+/** The app-level root, resolved fresh each pass (Electron-local, never the
+ *  backend's hermes_home — #66899). Resolving it also runs Electron's
+ *  reconcile, so unified packages' desktop halves are current before we scan. */
+async function diskRoots(): Promise<DiskRoot[]> {
+  const root = await window.hermesDesktop?.desktopPluginsRoot?.()
+
+  return root ? [{ dir: root, entrySegments: ['plugin.js'] }] : []
+}
+
+/** Marker Electron writes beside a materialized unified-package half. Its
+ *  presence means: opt-in posture (the Python half is installed-but-inert
+ *  until allowlisted — GHSA-mcfc-hp25-cjv7 — so the desktop half matches), and
+ *  the record carries the package name so the Plugins page pairs it with the
+ *  agent row. */
+const PACKAGE_MARKER = '.hermes-package.json'
+
+interface PackageMarker {
+  origin?: { catalogName?: string; repo?: string; sha?: string }
+  package: string
+}
+
+async function readPackageMarker(desktop: Window['hermesDesktop'], folder: string): Promise<null | PackageMarker> {
+  try {
+    const { entries } = await desktop.readDir(folder)
+    const marker = entries.find(entry => entry.name === PACKAGE_MARKER && !entry.isDirectory)
+
+    if (!marker) {
+      return null
+    }
+
+    const parsed = JSON.parse((await desktop.readFileText(marker.path)).text) as {
+      catalogName?: string
+      package?: string
+      repo?: string
+      sha?: string
+    }
+
+    if (!parsed.package) {
+      return null
+    }
+
+    return {
+      origin: parsed.repo ? { catalogName: parsed.catalogName, repo: parsed.repo, sha: parsed.sha } : undefined,
+      package: parsed.package
+    }
+  } catch {
+    return null
+  }
+}
+
+interface DiskPlugin {
+  /** Root posture, forwarded on every (re)load of this entry. */
+  defaultEnabled?: boolean
+  file: string
+  /** Agent package this folder is the desktop half of (unified packages). */
+  packageName?: string
+  packageOrigin?: PackageMarker['origin']
+  /** Loaded plugin id (null while broken — kept so a fixing save reloads). */
+  id: null | string
+  /** Origin label (folder name) — the toast/inventory name for load errors. */
+  origin: string
+  watchId: null | string
+}
+
+/** Live disk plugins keyed by ENTRY FILE path — unique across both roots
+ *  (folder names alone can collide between them). */
 const disk = new Map<string, DiskPlugin>()
 let watching = false
 let scanning = false
-let timer: null | number = null
-/** The door the running poll belongs to, so a door change restarts it. */
-let activeDoor: null | PluginDisk = null
 
-/** Tear down every loaded disk plugin — used when the door itself changes
- *  (profile switch, gateway-door toggle), since the inventory then describes a
- *  different filesystem entirely. */
-function unloadAllDiskPlugins(): void {
-  for (const record of disk.values()) {
-    if (record.id) {
-      unloadRuntimePlugin(record.id)
-      dropPlugin(record.id)
+/** Drop a folder-named error record — unless that name is the live plugin id
+ *  of ANOTHER disk entry (two roots can carry same-named folders; a broken one
+ *  must not clobber its healthy namesake's inventory row). */
+function dropOriginRecord(origin: string, except: DiskPlugin): void {
+  for (const other of disk.values()) {
+    if (other !== except && other.id === origin) {
+      return
     }
-
-    dropPlugin(record.file)
   }
 
-  disk.clear()
+  dropPlugin(origin)
 }
 
-async function loadDiskPlugin(door: PluginDisk, entry: DiskEntry, stamp: string): Promise<void> {
-  const record = disk.get(entry.file)
-  const prevId = record?.id
+/** A plugin source that could not be read in FULL. Evaluating a truncated
+ *  file is never acceptable — half a module can still parse. */
+class PluginSourceOversizeError extends Error {}
+
+/** Read a plugin entry file in full. Prefers the dedicated readPluginSource
+ *  IPC (16 MiB cap, no truncation). Older shells predate it and only offer
+ *  the preview read, which silently truncates at 512 KiB — there the read
+ *  fails loudly instead of handing a partial file to the evaluator. */
+async function readPluginSourceText(file: string): Promise<string> {
+  const desktop = window.hermesDesktop!
+
+  if (desktop.readPluginSource) {
+    return (await desktop.readPluginSource(file)).text
+  }
+
+  const result = await desktop.readFileText(file)
+
+  if (result.truncated) {
+    throw new PluginSourceOversizeError(
+      "plugin.js exceeds this shell's 512 KiB read limit — update Hermes Desktop to load larger plugins"
+    )
+  }
+
+  return result.text
+}
+
+/** Returns false when the entry file could not be read (vanished mid-read) so
+ *  the caller can reconcile/unload the registration instead of retaining a
+ *  live ghost for a missing entry. */
+async function loadDiskPlugin(entry: DiskPlugin): Promise<boolean> {
+  const prevId = entry.id
 
   try {
-    const source = await door.read(entry)
+    const text = await readPluginSourceText(entry.file)
 
-    const id = await loadRuntimePlugin(source, entry.name, {
+    const id = await loadRuntimePlugin(text, entry.origin, {
       defaultEnabled: entry.defaultEnabled,
       file: entry.file,
-      root: entry.root
+      packageName: entry.packageName,
+      packageOrigin: entry.packageOrigin
     })
 
     // A hot-edit that changes `plugin.id`: loadRuntimePlugin only disposes the
@@ -332,82 +375,146 @@ async function loadDiskPlugin(door: PluginDisk, entry: DiskEntry, stamp: string)
       dropPlugin(prevId)
     }
 
-    if (record) {
-      record.id = id ?? record.id
-      record.stamp = stamp
+    entry.id = id ?? entry.id
+
+    // A fixing save under a different plugin id — drop the folder-named
+    // error record so the inventory shows one row, not a ghost.
+    if (id && id !== entry.origin) {
+      dropOriginRecord(entry.origin, entry)
     }
 
-    // A fixing save under a different plugin id — drop THIS FILE's error record
-    // so the inventory shows one row, not a ghost.
-    if (id && id !== entry.file) {
-      dropPlugin(entry.file)
+    return true
+  } catch (error) {
+    // An oversize source is a REAL failure the user must see (the silent
+    // shape was the bug: a truncated file evaluated as a syntax error, or
+    // worse, as half a plugin). It is a completed read of an existing file,
+    // so report it and keep the registration (true) — everything else is a
+    // file vanishing mid-read, where false lets the caller reconcile/unload.
+    if (error instanceof PluginSourceOversizeError) {
+      console.error(`[plugins] ${entry.origin}: ${error.message}`)
+      notifyError(error, `Plugin "${entry.origin}" failed to load`)
+      publishPlugin({
+        id: entry.origin,
+        name: entry.origin,
+        kind: 'disk',
+        file: entry.file,
+        status: 'error',
+        error: error.message
+      })
+
+      return true
     }
-  } catch {
-    // File vanished mid-read — the next scan reconciles.
+
+    return false
   }
 }
 
-/**
- * Reconcile the inventory against the door: load new folders, reload changed
- * ones, unload vanished ones.
- *
- * `door` is injectable so tests can drive the whole reconciliation loop without
- * Tauri or a gateway.
- */
-export async function scanDiskPlugins(door?: PluginDisk): Promise<void> {
-  // Re-entrancy guard: the poll must not overlap a slow in-flight scan (reads
-  // and loads can exceed the interval).
-  if (scanning) {
+async function resolveDiskPluginEntry(
+  desktop: Window['hermesDesktop'],
+  folderPath: string,
+  segments: readonly string[]
+): Promise<string | null> {
+  let currentDir = folderPath
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const { entries } = await desktop.readDir(currentDir)
+    const entry = entries.find(candidate => candidate.name === segments[index])
+
+    if (!entry) {
+      return null
+    }
+
+    const last = index === segments.length - 1
+
+    if (last) {
+      return entry.isDirectory ? null : entry.path
+    }
+
+    if (!entry.isDirectory) {
+      return null
+    }
+
+    currentDir = entry.path
+  }
+
+  return null
+}
+
+async function scanDiskPlugins(): Promise<void> {
+  const desktop = window.hermesDesktop
+
+  // Re-entrancy guard: the 5s poll must not overlap a slow in-flight scan
+  // (reads/loads can exceed the interval).
+  if (!desktop || scanning) {
     return
   }
 
   scanning = true
 
   try {
-    const active = door ?? (await resolvePluginDisk())
+    const roots = await diskRoots()
 
-    if (!active) {
+    if (roots.length === 0) {
       return
     }
 
-    const entries = await active.list()
     const seen = new Set<string>()
 
-    // Hashing every folder's source per tick is the gateway door's only way to
-    // spot an edit, and it costs one HTTP read each. Past the cap, reconcile
-    // MEMBERSHIP only — a new or deleted folder still lands, but an in-place
-    // edit needs the manual Rescan.
-    const diffContent = active.hashToDetectChange && entries.length <= REST_CONTENT_DIFF_CAP
+    for (const root of roots) {
+      let entries
 
-    for (const entry of entries) {
-      seen.add(entry.file)
-
-      const known = disk.get(entry.file)
-
-      if (!known) {
-        disk.set(entry.file, { file: entry.file, id: null, stamp: '' })
-        await loadDiskPlugin(active, entry, await changeToken(active, entry, true))
-
-        continue
+      try {
+        ;({ entries } = await desktop.readDir(root.dir))
+      } catch {
+        continue // Root missing (no plugins yet) — the poll/watch reconciles.
       }
 
-      // Cheap path: the door gave us a token, so compare it.
-      if (!active.hashToDetectChange) {
-        if (entry.stamp !== known.stamp) {
-          await loadDiskPlugin(active, entry, entry.stamp)
+      for (const dir of entries.filter(e => e.isDirectory)) {
+        let file: string | null
+
+        try {
+          file = await resolveDiskPluginEntry(desktop, dir.path, root.entrySegments)
+        } catch {
+          continue // Folder changed during the metadata walk; the next tick reconciles.
         }
 
-        continue
-      }
+        if (!file) {
+          continue // Ordinary agent package with no Desktop half — not an error.
+        }
 
-      if (!diffContent) {
-        continue
-      }
+        seen.add(file)
 
-      const stamp = await changeToken(active, entry, false)
+        if (disk.has(file)) {
+          continue
+        }
 
-      if (stamp && stamp !== known.stamp) {
-        await loadDiskPlugin(active, entry, stamp)
+        const marker = await readPackageMarker(desktop, dir.path)
+
+        const record: DiskPlugin = {
+          // A unified package's desktop half ships opt-in, like its agent half.
+          defaultEnabled: marker ? false : undefined,
+          file,
+          id: null,
+          origin: dir.name,
+          packageName: marker?.package,
+          packageOrigin: marker?.origin,
+          watchId: null
+        }
+
+        disk.set(file, record)
+
+        if (!(await loadDiskPlugin(record))) {
+          disk.delete(file)
+
+          continue
+        }
+
+        try {
+          record.watchId = (await desktop.watchPreviewFile(file)).id
+        } catch {
+          // Unwatchable — the poll still reconciles new folders; edits need a
+          // manual "Reload desktop plugins".
+        }
       }
     }
 
@@ -422,125 +529,111 @@ export async function scanDiskPlugins(door?: PluginDisk): Promise<void> {
         dropPlugin(record.id)
       }
 
+      dropOriginRecord(record.origin, record)
+
+      if (record.watchId) {
+        void desktop.stopPreviewFileWatch(record.watchId)
+      }
+
       disk.delete(file)
-      dropPlugin(file)
     }
   } catch {
-    // No plugin root, or no gateway yet — nothing to reconcile.
+    // No plugin roots (or no gateway yet) — nothing to reconcile.
   } finally {
     scanning = false
   }
 }
 
-/** The change token to record for `entry`: the door's own stamp when it has one,
- *  else a hash of the current source. `optimistic` skips the extra read for a
- *  brand-new folder (loadDiskPlugin is about to read it anyway). */
-async function changeToken(door: PluginDisk, entry: DiskEntry, optimistic: boolean): Promise<string> {
-  if (!door.hashToDetectChange) {
-    return entry.stamp
-  }
+/** Manual rescan (the ⌘K "Reload desktop plugins" fallback). */
+export const discoverRuntimePlugins = scanDiskPlugins
 
-  if (optimistic) {
-    // Recorded on the next tick; a first load doesn't need a token to compare.
-    return ''
-  }
-
-  try {
-    return await sha256(await door.read(entry))
-  } catch {
-    return ''
-  }
-}
-
-/** Manual rescan (the "Reload plugins" command / the settings Rescan button). */
-export const discoverRuntimePlugins = (): void => void scanDiskPlugins()
-
-/** Start the self-maintaining disk door: initial scan, then a visibility-gated
- *  poll at the door's own cadence. Idempotent. */
+/** Start the self-maintaining disk door: initial scan, per-file hot reload,
+ *  fs-watched folder reconciliation (poll fallback on older shells). Idempotent. */
 export function watchRuntimePlugins(): void {
-  if (watching) {
+  const desktop = window.hermesDesktop
+
+  if (watching || !desktop) {
     return
   }
 
   watching = true
 
-  const start = async () => {
-    const door = await resolvePluginDisk()
-    activeDoor = door
+  const dirWatchIds = new Set<string>()
+  const watchedDirs = new Set<string>()
 
-    if (timer !== null) {
-      window.clearInterval(timer)
-      timer = null
-    }
+  desktop.onPreviewFileChanged(({ id }) => {
+    // Directory tick: a plugin folder appeared or vanished — reconcile.
+    if (dirWatchIds.has(id)) {
+      void scanDiskPlugins()
 
-    if (!door) {
       return
     }
 
-    await scanDiskPlugins(door)
+    for (const record of disk.values()) {
+      if (record.watchId === id) {
+        void loadDiskPlugin(record).then(readable => {
+          if (!readable) {
+            void scanDiskPlugins()
+          }
+        })
 
-    timer = window.setInterval(() => {
-      // A background tab shouldn't poll a filesystem — or worse, the gateway.
+        return
+      }
+    }
+  })
+
+  // True only when EVERY root is fs-watched — a partially watched set keeps
+  // the poll alive so unwatched roots still reconcile new/removed folders.
+  const startDirWatches = async (): Promise<boolean> => {
+    if (!desktop.watchDirectory) {
+      return false
+    }
+
+    const roots = await diskRoots()
+
+    if (roots.length === 0) {
+      return false
+    }
+
+    let all = true
+
+    for (const root of roots) {
+      if (watchedDirs.has(root.dir)) {
+        continue
+      }
+
+      try {
+        dirWatchIds.add((await desktop.watchDirectory(root.dir)).id)
+        watchedDirs.add(root.dir)
+      } catch {
+        // Dir missing or unwatchable — the poll covers it and retries here.
+        all = false
+      }
+    }
+
+    return all
+  }
+
+  void scanDiskPlugins()
+  void startDirWatches().then(watched => {
+    if (watched) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
       if (document.visibilityState !== 'visible') {
         return
       }
 
-      void scanDiskPlugins(activeDoor ?? undefined)
-    }, door.pollMs)
-  }
+      void scanDiskPlugins()
 
-  void start()
-
-  // The door itself can change under us: a profile switch repoints the local
-  // root, and the gateway-door toggle swaps which filesystem we're reading. Both
-  // describe a different set of files, so drop everything and rescan rather than
-  // diffing across them.
-  const restart = () => {
-    unloadAllDiskPlugins()
-    void start()
-  }
-
-  $restDoorEnabled.listen(restart)
-
-  // Only the PROFILE matters here, not every connection change — a plain
-  // reconnect reads the same files, and unloading every plugin for it would make
-  // a dropped socket look like a plugin bug.
-  let lastProfile = doorProfile()
-
-  const onProfileChange = () => {
-    const next = doorProfile()
-
-    if (next !== lastProfile) {
-      lastProfile = next
-      restart()
-    }
-  }
-
-  $connection.listen(onProfileChange)
-  $activeProfile.listen(onProfileChange)
-}
-
-function doorProfile(): null | string {
-  return $connection.get()?.profile ?? $activeProfile.get() ?? null
-}
-
-/** Test seam: the entry files the scanner is tracking. Keying these on the FILE
- *  rather than the folder name is what lets two roots carry the same name. */
-export function __diskRecordFiles(): string[] {
-  return [...disk.keys()]
-}
-
-/** Test seam: reset the module's disk state between cases. */
-export function __resetRuntimeLoaderForTests(): void {
-  unloadAllDiskPlugins()
-  loaded.clear()
-
-  if (timer !== null) {
-    window.clearInterval(timer)
-    timer = null
-  }
-
-  watching = false
-  scanning = false
-  activeDoor = null
+      // A root may have appeared since — upgrade to the watches and retire
+      // this poll once every root is covered.
+      void startDirWatches().then(upgraded => {
+        if (upgraded) {
+          window.clearInterval(timer)
+        }
+      })
+    }, DISK_POLL_MS)
+  })
 }

@@ -1,37 +1,24 @@
 import { useStore } from '@nanostores/react'
-import {
-  createContext,
-  type KeyboardEvent as ReactKeyboardEvent,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState
-} from 'react'
+import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { useMemo } from 'react'
 import { type NodeApi, type NodeRendererProps, type RowRendererProps, Tree, type TreeApi } from 'react-arborist'
 
 import { TreeSkeleton } from '@/components/chat/skeletons'
 import { Codicon } from '@/components/ui/codicon'
+import { markRightPanePerf } from '@/debug/right-pane-events'
 import { useResizeObserver } from '@/hooks/use-resize-observer'
-import { IS_MOBILE } from '@/lib/platform'
-import { createTap, isCoarsePointer } from '@/lib/touch'
 import { cn } from '@/lib/utils'
-import { $repoChangeByPath, type RepoChangeKind } from '@/store/coding-status'
-import { useDisplayPath } from '@/store/display-home'
+import { type RepoChangeKind, repoChangeKindForPath } from '@/store/coding-status'
 import { $renamingPath, beginInlineRename } from '@/store/file-actions'
 import { $revealInTreeRequest } from '@/store/layout'
 
-import { FileEntryActionsMenu, FileEntryContextMenu, InlineRenameInput, isRenameShortcut } from '../file-actions'
+import { FileEntryContextMenu, InlineRenameInput, isRenameShortcut } from '../file-actions'
 
 import { getFileTreeDndManager } from './dnd-manager'
 import type { TreeNode } from './use-project-tree'
 
-// 22px rows are a mouse target. On touch the row IS the hit area (there are no
-// hover affordances to aim at), so it gets the platform minimum, and the indent
-// grows with it so nesting still reads at that scale.
-const ROW_HEIGHT = IS_MOBILE ? 44 : 22
-const INDENT = IS_MOBILE ? 14 : 10
+const ROW_HEIGHT = 22
+const INDENT = 10
 /** Fixed base inset (`px-6.5`) layered on top of arborist's depth indent. */
 const TREE_ROW_INSET = '17px'
 
@@ -70,20 +57,11 @@ export function ProjectTree({
   onPreviewFile,
   openState
 }: ProjectTreeProps) {
+  markRightPanePerf('project-tree-render')
+
   const containerRef = useRef<HTMLDivElement | null>(null)
   const treeRef = useRef<TreeApi<TreeNode> | null>(null)
-  // HEIGHT ONLY, and that is the whole point. The virtualized list needs a
-  // pixel height to know how many rows to mount; its WIDTH it only ever passes
-  // through to CSS (`react-arborist` types it `number | string` and never does
-  // arithmetic on it), and the row renderer below already pins `width: 100%`.
-  //
-  // Holding width in state made every horizontal resize a re-render of the
-  // whole tree. Measured on a right-sidebar sash drag: 174 commits of this one
-  // pane, 1476ms of React, ~97% of every pane commit in the capture — against
-  // 3 for `sessions` and 2 for `chat`. A horizontal drag now changes nothing
-  // this component reads, so it does not re-render at all.
-  const [height, setHeight] = useState(0)
-  const changeByPath = useStore($repoChangeByPath)
+  const [size, setSize] = useState({ height: 0, width: 0 })
 
   const syncTreeSize = useCallback((entries: readonly ResizeObserverEntry[]) => {
     const el = containerRef.current
@@ -92,11 +70,15 @@ export function ProjectTree({
       return
     }
 
-    // From the entry when the observer already computed it; inside RO timing
-    // the fallback read is cheap anyway, but free is cheaper.
-    const next = entries.find(entry => entry.target === el)?.contentRect?.height ?? el.getBoundingClientRect().height
+    const { height, width } = projectTreeViewportSize(entries, el)
 
-    setHeight(prev => (prev === next ? prev : next))
+    setSize(prev => {
+      if (prev.height === height && prev.width === width) {
+        return prev
+      }
+
+      return { height, width }
+    })
   }, [])
 
   useResizeObserver(syncTreeSize, containerRef)
@@ -164,26 +146,12 @@ export function ProjectTree({
     [revealNode]
   )
 
-  // THE open-on-tap path, and the only one. It runs from `node.activate()`,
-  // which the row container calls on a mouse click (via `node.handleClick`) and
-  // on a finger tap (via the pointer gesture — see ProjectTreeRowContainer).
-  //
-  // Coarse pointers only. A finger has no double-click idiom, so one tap has to
-  // open; a mouse keeps select-then-double-click, where a single click is how
-  // you pick a row to rename or drag, and `onDoubleClick` on the row opens.
-  // Gated on the LIVE media query rather than `IS_MOBILE`: that const is frozen
-  // at first import (and deliberately never tags a touchscreen laptop), so it is
-  // the wrong question for "what is touching this row".
-  //
-  // Suppressed for the row being renamed so the context-menu "Rename" (and the
-  // click that falls through as its menu closes) can't open the preview instead.
   const handleActivate = useCallback(
     (node: NodeApi<TreeNode>) => {
-      if (!node.data || node.data.isDirectory || node.data.placeholder || !isCoarsePointer()) {
-        return
-      }
-
-      if ($renamingPath.get() !== node.data.id) {
+      // arborist fires onActivate on click/dblclick/Enter — independent of the
+      // row's own handlers. Suppress it for the row being renamed so the
+      // context-menu "Rename" (and its fall-through) can't open the preview.
+      if (node.data && !node.data.isDirectory && $renamingPath.get() !== node.data.id) {
         onPreviewFile?.(node.data.id)
       }
     },
@@ -209,56 +177,44 @@ export function ProjectTree({
     beginInlineRename(node.data.id)
   }, [])
 
-  // Everything the row renderer needs that is NOT arborist's own node props.
-  // It travels by context rather than by closure for one reason, and it is the
-  // whole of MJXHRM's "the menu vanishes" bug: `props.children` IS the node
-  // renderer's ELEMENT TYPE (`tree.renderNode`, react-arborist
-  // row-container.js:61). An inline `{props => <ProjectTreeRow …/>}` is a new
-  // function identity on every render of this component, so every re-render
-  // handed React a different type for every visible row — which React can only
-  // service by UNMOUNTING each row and mounting a replacement. Each row carries
-  // two Radix roots; unmounting one closes its menu, mid-`onSelect` if that is
-  // when the re-render landed. A module-level component keeps the type constant,
-  // so a re-render updates the rows in place and an open menu survives it.
-  const rowContext = useMemo(
-    () => ({
-      changeByPath,
-      onAttachFile: onActivateFile,
-      onAttachFolder: onActivateFolder,
-      onPreviewFile,
-      relativeTo: cwd
-    }),
-    [changeByPath, cwd, onActivateFile, onActivateFolder, onPreviewFile]
-  )
-
   return (
-    <div className="min-h-0 flex-1 overflow-hidden" onKeyDownCapture={handleRenameShortcut} ref={containerRef}>
-      {height > 0 ? (
-        <ProjectTreeRowContext.Provider value={rowContext}>
-          <Tree<TreeNode>
-            childrenAccessor={node => (node?.isDirectory ? (node.children ?? []) : null)}
-            data={data}
-            disableDrag
-            disableDrop
-            disableEdit
-            dndManager={getFileTreeDndManager()}
-            height={height}
-            indent={INDENT}
-            initialOpenState={openState}
-            key={`${cwd}:${collapseNonce}`}
-            onActivate={handleActivate}
-            onToggle={handleToggle}
-            openByDefault={false}
-            padding={0}
-            ref={treeRef}
-            renderRow={ProjectTreeRowContainer}
-            rowHeight={ROW_HEIGHT}
-            // CSS, not a measured pixel count — see the height-only note above.
-            width="100%"
-          >
-            {ProjectTreeNodeRenderer}
-          </Tree>
-        </ProjectTreeRowContext.Provider>
+    <div
+      className="min-h-0 flex-1 overflow-hidden"
+      data-project-tree=""
+      onKeyDownCapture={handleRenameShortcut}
+      ref={containerRef}
+    >
+      {size.height > 0 && size.width > 0 ? (
+        <Tree<TreeNode>
+          childrenAccessor={node => (node?.isDirectory ? (node.children ?? []) : null)}
+          data={data}
+          disableDrag
+          disableDrop
+          disableEdit
+          dndManager={getFileTreeDndManager()}
+          height={size.height}
+          indent={INDENT}
+          initialOpenState={openState}
+          key={`${cwd}:${collapseNonce}`}
+          onActivate={handleActivate}
+          onToggle={handleToggle}
+          openByDefault={false}
+          padding={0}
+          ref={treeRef}
+          renderRow={ProjectTreeRowContainer}
+          rowHeight={ROW_HEIGHT}
+          width={size.width}
+        >
+          {props => (
+            <ProjectTreeRow
+              {...props}
+              onAttachFile={onActivateFile}
+              onAttachFolder={onActivateFolder}
+              onPreviewFile={onPreviewFile}
+              relativeTo={cwd}
+            />
+          )}
+        </Tree>
       ) : (
         <TreeSizingState />
       )}
@@ -266,34 +222,14 @@ export function ProjectTree({
   )
 }
 
-interface ProjectTreeRowContextValue {
-  changeByPath: Map<string, RepoChangeKind>
-  onAttachFile: (path: string) => void
-  onAttachFolder: (path: string) => void
-  onPreviewFile?: (path: string) => void
-  relativeTo?: null | string
-}
+export function projectTreeViewportSize(
+  entries: readonly ResizeObserverEntry[],
+  element: HTMLElement
+): { height: number; width: number } {
+  const entry = entries.find(item => item.target === element)
+  const box = entry?.contentRect ?? element.getBoundingClientRect()
 
-const EMPTY_CHANGES: Map<string, RepoChangeKind> = new Map()
-
-const ProjectTreeRowContext = createContext<ProjectTreeRowContextValue>({
-  changeByPath: EMPTY_CHANGES,
-  onAttachFile: () => {},
-  onAttachFolder: () => {}
-})
-
-/** The node renderer, as a STABLE component type — see `rowContext` above for
- *  why that identity is load-bearing rather than a micro-optimisation. */
-function ProjectTreeNodeRenderer(props: NodeRendererProps<TreeNode>) {
-  const { changeByPath, ...rest } = useContext(ProjectTreeRowContext)
-
-  return (
-    <ProjectTreeRow
-      {...props}
-      {...rest}
-      changeKind={props.node.data ? changeByPath.get(props.node.data.id) : undefined}
-    />
-  )
+  return { height: box.height, width: box.width }
 }
 
 function TreeSizingState() {
@@ -304,73 +240,12 @@ function TreeSizingState() {
 // span horizontally-scrolled content), which grows the row to its full name
 // width and defeats the inner `truncate`. We don't scroll sideways — pin the row
 // to the viewport so long names ellipsize instead of clipping at the pane edge.
-//
-// This container, not the presentational row inside it, is the element arborist
-// sizes to the full row rect, so it owns activation: `node.handleClick` selects
-// and activates, and `onActivate` is where opening lives. Nothing here closes
-// over a callback — a `renderRow` whose identity moves makes arborist unmount
-// and rebuild every visible row, and doing that to the rows under a finger that
-// is still touching one is how a tap ends up tearing out the Radix menus each
-// row carries.
-//
-// A FINGER does not go through `click` at all. On a touch screen `click` is not
-// an event the page receives, it is a verdict the engine reaches after ruling
-// out a scroll and a drag — and for a row inside a scrollable virtualized list
-// the Android WebView routinely rules against a quick jab, which is why a short
-// tap did nothing here while a slower, stationary press worked. `createTap`
-// reads `pointerup` directly and takes the engine out of the decision; the
-// capture-phase guard below then kills the synthetic click if one does arrive,
-// so a tap can never both tap and click. A mouse never arms the gesture and its
-// native click path is untouched.
 function ProjectTreeRowContainer({ attrs, children, innerRef, node }: RowRendererProps<TreeNode>) {
-  // The node instance is rebuilt on every tree state change; the gesture is not.
-  const nodeRef = useRef(node)
-
-  nodeRef.current = node
-
-  const tapRef = useRef<null | ReturnType<typeof createTap>>(null)
-
-  if (!tapRef.current) {
-    tapRef.current = createTap({
-      onTap: () => {
-        const current = nodeRef.current
-
-        if (!current.data || current.data.placeholder || $renamingPath.get() === current.data.id) {
-          return
-        }
-
-        current.select()
-
-        // A folder expands and a file opens — the two halves of what a click
-        // means here, which on the mouse path are split between `handleClick`
-        // (select + activate) and the inner row (toggle).
-        if (current.data.isDirectory) {
-          current.toggle()
-        } else {
-          current.activate()
-        }
-      }
-    })
-  }
-
-  const tap = tapRef.current
-
   return (
     <div
       {...attrs}
       onClick={node.handleClick}
-      onClickCapture={event => {
-        // Capture phase, so this also spares the inner row's handler: the tap
-        // already resolved this gesture.
-        if (tap.fired()) {
-          event.stopPropagation()
-        }
-      }}
       onFocus={e => e.stopPropagation()}
-      onPointerCancel={tap.cancel}
-      onPointerDown={tap.down}
-      onPointerMove={tap.move}
-      onPointerUp={tap.up}
       ref={innerRef}
       style={{ ...attrs.style, minWidth: 0, width: '100%' }}
     >
@@ -386,7 +261,6 @@ const CHANGE_TINT: Record<RepoChangeKind, string> = {
 }
 
 function ProjectTreeRow({
-  changeKind,
   dragHandle,
   node,
   onAttachFile,
@@ -395,16 +269,17 @@ function ProjectTreeRow({
   relativeTo,
   style
 }: NodeRendererProps<TreeNode> & {
-  changeKind?: RepoChangeKind
   onAttachFile: (path: string) => void
   onAttachFolder: (path: string) => void
   onPreviewFile?: (path: string) => void
   relativeTo?: null | string
 }) {
   const renamingPath = useStore($renamingPath)
-  // The row's tooltip is the node's ABSOLUTE path on the GATEWAY's filesystem —
-  // this tree is served by `/api/fs`, not by this client's disk (MJXHRM-394).
-  const displayPath = useDisplayPath()
+  const path = node.data?.id ?? ''
+  const changeStore = useMemo(() => repoChangeKindForPath(path), [path])
+  const changeKind: RepoChangeKind | undefined = useStore(changeStore)
+
+  markRightPanePerf('project-tree-row-render', path)
 
   if (!node.data) {
     return <div style={style} />
@@ -415,24 +290,64 @@ function ProjectTreeRow({
   const isErrorPlaceholder = node.data.placeholder === 'error'
   const editing = !isPlaceholder && renamingPath === node.data.id
 
-  // The row's CONTENT, and the right-click trigger — deliberately not the row
-  // element itself, so that `FileEntryActionsMenu` below is this trigger's
-  // SIBLING rather than its descendant. Two Radix roots on one element share a
-  // pointer stream: the context trigger installs its own pointerdown/move/up for
-  // a 700ms long-press, and the kebab only ever stopped propagation at
-  // `pointerdown`, so the trigger kept seeing the rest of the gesture.
-  //
-  // `absolute inset-0` rather than an in-flow `flex-1`, and that is the whole
-  // point: in flow it would end where the kebab begins, leaving the row's last
-  // ~32px — the far right edge people habitually aim at — with no right-click at
-  // all. Filling the row keeps the trigger the full width while the kebab, which
-  // comes later in DOM order and is positioned, still paints and hits above it.
-  // The trailing padding reserves the kebab's own width so a long name
-  // ellipsizes before it instead of running underneath.
-  const label = (
+  const row = (
     <div
-      className={cn('absolute inset-0 flex items-center', IS_MOBILE ? 'gap-2 pe-14' : 'gap-1 pe-8')}
-      style={{ paddingLeft: withTreeInset(style.paddingLeft) }}
+      aria-expanded={isFolder ? node.isOpen : undefined}
+      aria-selected={node.isSelected}
+      className={cn(
+        'group/row row-hover flex h-full select-none items-center gap-1 border border-transparent px-3 text-xs font-normal leading-(--file-tree-row-height) text-(--ui-text-secondary) hover:text-foreground',
+        node.isSelected && 'bg-(--ui-row-active-background) text-foreground',
+        isPlaceholder && 'pointer-events-none italic text-muted-foreground/70'
+      )}
+      draggable={!isPlaceholder && !editing}
+      onClick={event => {
+        event.stopPropagation()
+
+        // Read the rename atom LIVE (not the render closure): the fall-through
+        // click from a context-menu close can fire before the editing re-render
+        // commits, so a stale closure would still select/activate and yank focus.
+        if (isPlaceholder || $renamingPath.get() === node.data.id) {
+          return
+        }
+
+        if (event.shiftKey) {
+          ;(isFolder ? onAttachFolder : onAttachFile)(node.data.id)
+
+          return
+        }
+
+        if (isFolder) {
+          node.toggle()
+        } else {
+          node.select()
+        }
+      }}
+      onDoubleClick={event => {
+        event.stopPropagation()
+
+        if (!isFolder && !isPlaceholder && $renamingPath.get() !== node.data.id) {
+          onPreviewFile?.(node.data.id)
+        }
+      }}
+      onDragStart={event => {
+        if (isPlaceholder || $renamingPath.get() === node.data.id) {
+          event.preventDefault()
+
+          return
+        }
+
+        const payload = JSON.stringify([{ isDirectory: isFolder, path: node.data.id }])
+
+        event.dataTransfer.effectAllowed = 'copy'
+        event.dataTransfer.setData('application/x-hermes-paths', payload)
+        event.dataTransfer.setData('text/plain', node.data.id)
+      }}
+      ref={dragHandle}
+      style={{
+        ...style,
+        paddingLeft: withTreeInset(style.paddingLeft)
+      }}
+      title={node.data.id}
     >
       {/* No chevron column — the folder icon (open/closed) already carries the
           expand state, so the extra glyph was pure noise. */}
@@ -457,102 +372,13 @@ function ProjectTreeRow({
     </div>
   )
 
+  if (isPlaceholder) {
+    return row
+  }
+
   return (
-    <div
-      aria-expanded={isFolder ? node.isOpen : undefined}
-      aria-selected={node.isSelected}
-      className={cn(
-        'group/row row-hover relative flex h-full select-none items-center border border-transparent font-normal leading-(--file-tree-row-height) text-(--ui-text-secondary) hover:text-foreground',
-        IS_MOBILE ? 'text-sm leading-normal' : 'text-xs',
-        node.isSelected && 'bg-(--ui-row-active-background) text-foreground',
-        isPlaceholder && 'pointer-events-none italic text-muted-foreground/70'
-      )}
-      // Never on a phone. The tree's drag layer is react-dnd's HTML5Backend
-      // (files/dnd-manager.ts), which has no touch path at all — so `draggable`
-      // there buys nothing and costs the gesture engine one more thing to weigh
-      // against "this was a tap" on every press.
-      draggable={!IS_MOBILE && !isPlaceholder && !editing}
-      onClick={event => {
-        // Read the rename atom LIVE (not the render closure): the fall-through
-        // click from a context-menu close can fire before the editing re-render
-        // commits, so a stale closure would still select/activate and yank focus.
-        if (isPlaceholder || $renamingPath.get() === node.data.id) {
-          event.stopPropagation()
-
-          return
-        }
-
-        if (event.shiftKey) {
-          event.stopPropagation()
-          ;(isFolder ? onAttachFolder : onAttachFile)(node.data.id)
-
-          return
-        }
-
-        // Everything else FALLS THROUGH to the row container, which is the
-        // element arborist sizes to the whole row and the single place selection
-        // and activation live. This handler used to stop propagation
-        // unconditionally, which meant the container's click — and with it
-        // `onActivate`, the open — only ever ran for the sliver of row this div
-        // did not cover.
-        //
-        // A folder still toggles here: `handleClick` selects and activates but
-        // never toggles, and expanding is what a tap on a folder means.
-        if (isFolder) {
-          node.toggle()
-        }
-      }}
-      onDoubleClick={event => {
-        event.stopPropagation()
-
-        if (!isFolder && !isPlaceholder && $renamingPath.get() !== node.data.id) {
-          onPreviewFile?.(node.data.id)
-        }
-      }}
-      onDragStart={event => {
-        if (isPlaceholder || $renamingPath.get() === node.data.id) {
-          event.preventDefault()
-
-          return
-        }
-
-        const payload = JSON.stringify([{ isDirectory: isFolder, path: node.data.id }])
-
-        event.dataTransfer.effectAllowed = 'copy'
-        event.dataTransfer.setData('application/x-hermes-paths', payload)
-        event.dataTransfer.setData('text/plain', node.data.id)
-      }}
-      ref={dragHandle}
-      title={displayPath(node.data.id)}
-    >
-      {/* No context menu on a phone. Radix's trigger arms a 700ms touch
-          long-press of its own, which is the third thing competing for the same
-          press — and it is redundant there, because the kebab beside it exists
-          precisely so these actions have a touch path. Right-click keeps it on
-          every pointer that has one. */}
-      {isPlaceholder || IS_MOBILE ? (
-        label
-      ) : (
-        <FileEntryContextMenu isDirectory={isFolder} name={node.data.name} path={node.data.id} relativeTo={relativeTo}>
-          {label}
-        </FileEntryContextMenu>
-      )}
-      {/* The context menu beside it is right-click only, so without this the
-          row's actions have no touch path at all. Rendered for every row so the
-          column width is stable; it is the visibility that varies. */}
-      {!editing && !isPlaceholder && (
-        <FileEntryActionsMenu
-          // The row's only IN-FLOW child, so `ms-auto` is what puts it at the
-          // end; `relative` is what puts it above the absolutely-positioned
-          // trigger it shares the row with (both are positioned, so DOM order
-          // decides, and it comes second).
-          className="relative ms-auto me-3"
-          isDirectory={isFolder}
-          name={node.data.name}
-          path={node.data.id}
-          relativeTo={relativeTo}
-        />
-      )}
-    </div>
+    <FileEntryContextMenu isDirectory={isFolder} name={node.data.name} path={node.data.id} relativeTo={relativeTo}>
+      {row}
+    </FileEntryContextMenu>
   )
 }

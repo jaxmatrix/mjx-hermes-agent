@@ -1,3 +1,5 @@
+import { LOCALE_ENDONYMS } from '@hermes/shared/i18n'
+
 import { normalize } from '@/lib/text'
 
 import type { Locale } from './types'
@@ -7,54 +9,41 @@ export const DEFAULT_LOCALE: Locale = 'en'
 export const LOCALE_OPTIONS = [
   {
     id: 'en',
-    name: 'English',
+    name: LOCALE_ENDONYMS.en,
     englishName: 'English',
     configValue: 'en'
   },
   {
     id: 'zh',
-    name: '简体中文',
+    name: LOCALE_ENDONYMS.zh,
     englishName: 'Simplified Chinese',
     configValue: 'zh'
   },
   {
     id: 'zh-hant',
-    name: '繁體中文',
+    name: LOCALE_ENDONYMS['zh-hant'],
     englishName: 'Traditional Chinese',
     configValue: 'zh-hant'
   },
   {
     id: 'ja',
-    name: '日本語',
+    name: LOCALE_ENDONYMS.ja,
     englishName: 'Japanese',
     configValue: 'ja'
   },
   {
     id: 'ar',
-    name: 'العربية',
+    name: LOCALE_ENDONYMS.ar,
     englishName: 'Arabic',
     configValue: 'ar'
+  },
+  {
+    id: 'ru',
+    name: LOCALE_ENDONYMS.ru,
+    englishName: 'Russian',
+    configValue: 'ru'
   }
 ] as const satisfies readonly { configValue: string; englishName: string; id: Locale; name: string }[]
-
-/**
- * Writing direction per locale.
- *
- * Kept as an explicit table rather than derived from the language tag: the set
- * of locales is small and curated, and a wrong guess here flips the entire
- * layout. Everything not listed is left-to-right.
- */
-export const LOCALE_DIRECTION: Record<Locale, 'ltr' | 'rtl'> = {
-  ar: 'rtl',
-  en: 'ltr',
-  ja: 'ltr',
-  zh: 'ltr',
-  'zh-hant': 'ltr'
-}
-
-export function localeDirection(locale: Locale): 'ltr' | 'rtl' {
-  return LOCALE_DIRECTION[locale] ?? 'ltr'
-}
 
 // `name` is the endonym (native name) shown in the picker so users recognize
 // their language regardless of the current UI language. No country flags:
@@ -90,32 +79,24 @@ const LOCALE_ALIASES: Record<string, Locale> = {
   ja: 'ja',
   'ja-jp': 'ja',
   ja_jp: 'ja',
-  // Arabic is one UI locale across every region — the dialects differ in speech
-  // far more than in the written MSA these strings are in, so every ar-* tag
-  // resolves to the same catalogue rather than 20 near-identical entries.
   ar: 'ar',
-  'ar-ae': 'ar',
-  ar_ae: 'ar',
-  'ar-dz': 'ar',
-  ar_dz: 'ar',
-  'ar-eg': 'ar',
-  ar_eg: 'ar',
-  'ar-iq': 'ar',
-  ar_iq: 'ar',
-  'ar-jo': 'ar',
-  ar_jo: 'ar',
-  'ar-kw': 'ar',
-  ar_kw: 'ar',
-  'ar-lb': 'ar',
-  ar_lb: 'ar',
-  'ar-ma': 'ar',
-  ar_ma: 'ar',
-  'ar-qa': 'ar',
-  ar_qa: 'ar',
   'ar-sa': 'ar',
   ar_sa: 'ar',
-  'ar-tn': 'ar',
-  ar_tn: 'ar'
+  'ar-ae': 'ar',
+  ar_ae: 'ar',
+  'ar-eg': 'ar',
+  ar_eg: 'ar',
+  arabic: 'ar',
+  العربية: 'ar',
+  ru: 'ru',
+  'ru-ru': 'ru',
+  ru_ru: 'ru',
+  'ru-by': 'ru',
+  'ru-kz': 'ru',
+  russian: 'ru',
+  'russian-russian': 'ru',
+  русский: 'ru',
+  руский: 'ru'
 }
 
 export function isLocale(value: unknown): value is Locale {
@@ -132,6 +113,32 @@ export function normalizeLocale(value: unknown): Locale {
 
 export function isSupportedLocaleValue(value: unknown): boolean {
   return typeof value === 'string' && LOCALE_ALIASES[normalize(value)] != null
+}
+
+/** OS tags can include regions absent from the picker aliases, such as ru-UA. */
+export function osPreferredLocale(tag: string | null | undefined): Locale | null {
+  if (!tag) {
+    return null
+  }
+
+  const exact = LOCALE_ALIASES[normalize(tag)]
+
+  if (exact) {
+    return exact
+  }
+
+  const base = tag.split(/[-_]/)[0]
+
+  return (base && LOCALE_ALIASES[normalize(base)]) || null
+}
+
+/** An explicit choice must win even when it differs from the OS language. */
+export function resolveInitialLocale(saved: string | null | undefined, osLocale: string | null | undefined): Locale {
+  if (isSupportedLocaleValue(saved)) {
+    return normalizeLocale(saved)
+  }
+
+  return osPreferredLocale(osLocale) ?? DEFAULT_LOCALE
 }
 
 export function localeConfigValue(locale: Locale): string {

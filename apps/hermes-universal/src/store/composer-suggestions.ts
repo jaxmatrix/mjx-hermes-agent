@@ -1,4 +1,4 @@
-import { atom } from '@/store/atom'
+import { atom } from 'nanostores'
 
 /**
  * The composer suggestion bus — a generic, session-scoped feed for the pill
@@ -17,13 +17,6 @@ import { atom } from '@/store/atom'
  *   `offerSuggestion` / `withdrawSuggestion` from wherever their signal
  *   lives (a store listener, a gateway event handler). The bus applies the
  *   same session scoping and cap.
- *
- * Ported from apps/desktop/src/store/composer-suggestions.ts. Universal ships
- * ONE provider today (the MCP draft provider); the registry is kept rather than
- * inlined because four of the five hardening commits behind this feature live
- * HERE, not in the matcher — the cap, the dedupe, the declined ledger, the
- * rendered-field change gate and the debounced sampler are all bus-level, and
- * re-deriving them around a single-purpose store is how they drift.
  *
  * The UX contract every suggestion signs (see PR #85036's pills):
  * session-scoped, capped at MAX_SUGGESTIONS with draft suggestions ranked

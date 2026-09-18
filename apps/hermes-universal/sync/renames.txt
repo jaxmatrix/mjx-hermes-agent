@@ -11,5 +11,11 @@
 # and universal has no pet-overlay window at all, so both land as new trees and
 # are reconciled by hand.
 
+# Desktop declares its shared payload types in an ambient `global.d.ts` that
+# also carries the `window.hermesDesktop` bridge. Universal needs the same types
+# as a real module (`@/global` must resolve to it), and the bridge declaration is
+# what the Tauri shim implements, so the file lands under the module name.
+global.d.ts -> global.ts
+
 app/right-sidebar/ -> app/right-pane/
 components/pet/ -> app/pet/

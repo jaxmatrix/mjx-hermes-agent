@@ -1,20 +1,14 @@
 /**
- * PLUGIN INVENTORY — the reactive record of every plugin the app knows about
- * (bundled `src/plugins/*`, plus the disk door's plugins — incl. agent-written
- * ones), and the persisted enable/disable decisions. The Settings ▸ Plugins page
- * renders this; the loaders publish into it and consult the decisions before
+ * PLUGIN INVENTORY — the reactive record of every desktop plugin the app
+ * knows about (bundled `src/plugins/*`, the in-repo runtime example, the
+ * `<hermes home>/desktop-plugins/*` disk door — incl. agent-written ones),
+ * plus the persisted DISABLED set. The settings "Plugins" page renders this;
+ * the loaders publish into it and consult the disabled set before
  * registering. Enable/disable is live: each record carries the loader's own
  * activate/deactivate handles, so toggling never needs an app reload.
- *
- * Ported from apps/desktop/src/contrib/plugins-store.ts, INCLUDING the
- * `hermes.desktop.*` localStorage keys. Those are a per-app namespace and
- * universal ships as a different app, so there is nothing to collide with —
- * keeping them identical means this file stays a diff-free copy of desktop's and
- * doesn't drift.
  */
 
-import type { PluginRoot } from '@/contrib/plugin-disk'
-import { atom } from '@/store/atom'
+import { atom } from 'nanostores'
 
 export type PluginKind = 'bundled' | 'disk' | 'runtime'
 export type PluginStatus = 'disabled' | 'error' | 'loaded'
@@ -22,18 +16,18 @@ export type PluginStatus = 'disabled' | 'error' | 'loaded'
 export interface PluginRecord {
   id: string
   name: string
-  /** One line on what the plugin does, from its manifest — the inventory's
-   *  only chance to say why a row is worth enabling. */
-  description?: string
   kind: PluginKind
   status: PluginStatus
+  /** One-liner from the plugin's own metadata (what it adds). */
+  description?: string
   /** Load/registration failure message (status 'error'). */
   error?: string
-  /** Absolute plugin.js path (disk plugins) — powers "Reveal in file manager". */
+  /** Absolute plugin.js path (disk plugins) — powers "Reveal in Finder". */
   file?: string
-  /** Which disk ROOT it came from (disk plugins). Shown as a badge, because
-   *  "why is this one off by default" has to be answerable from the row. */
-  root?: PluginRoot
+  /** Agent package this is the desktop half of (unified agent+desktop packages). */
+  packageName?: string
+  /** Where that package came from (catalog sidecar or git remote), when known. */
+  packageOrigin?: { catalogName?: string; repo?: string; sha?: string }
 }
 
 // Explicit user enable/disable choices, id -> boolean. ABSENCE means "no
@@ -91,8 +85,7 @@ interface PluginHandle {
   deactivate: () => void
 }
 
-/** Loader-owned lifecycle handles, keyed by plugin id. Deliberately NOT in an
- *  atom: these are closures over loader state, not renderable data. */
+/** Loader-owned lifecycle handles, keyed by plugin id. */
 const handles = new Map<string, PluginHandle>()
 
 /** Publish/refresh a plugin's record + its activate/deactivate handles. */

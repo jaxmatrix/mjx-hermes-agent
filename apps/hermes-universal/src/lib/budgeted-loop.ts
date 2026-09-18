@@ -1,17 +1,16 @@
 /**
  * Budgeted renderer loop — the one way to run a decorative rAF animation.
  *
- * Ported verbatim from desktop's `lib/budgeted-loop.ts` — its dependency,
- * `lib/renderer-loop-pause.ts`, already lives here. Desktop shipped the same
- * bug class repeatedly: an animation loop that never sleeps (face clock, pixel
- * egg, diffusion placeholder, status pulse), each fix re-implementing the same
- * four behaviours by hand. This helper owns them:
+ * Desktop has repeatedly shipped the same bug class: an animation loop that
+ * never sleeps (bots face clock #88543, pixel egg #88406, diffusion
+ * placeholder #88564, status pulse / spinner in the #77651 wave). Each fix
+ * re-implemented the same four behaviors by hand. This helper owns them:
  *
  *  - **fps budget** — paints are skipped until `1000 / fps` elapsed; the loop
  *    still rides rAF so Chromium can align and pause it natively.
  *  - **observability pause** — wired to `createRendererLoopPauseController`:
- *    the loop cancels while the window is hidden, minimized, or (opt-in)
- *    unfocused, and resumes when observable.
+ *    the loop cancels while the window is hidden or minimized and resumes
+ *    when visible, even if another window has focus.
  *  - **idle dormancy** — when `idleWhen()` returns true after a draw, the loop
  *    parks (zero pending frames, zero timers) until `wake()` is called. This
  *    is the piece every hand-rolled loop forgot: "nothing visible to animate"
@@ -44,7 +43,7 @@ export interface BudgetedLoopOptions {
    *  animation finished). Checked after every draw; when true the loop parks
    *  until `wake()`. Omit for loops that should run whenever observable. */
   idleWhen?: () => boolean
-  /** Forwarded to the pause controller. Default true (pause on blur). */
+  /** Forwarded to the pause controller. Default false (animate while visible). */
   pauseWhenUnfocused?: boolean
 }
 
@@ -61,7 +60,7 @@ export interface BudgetedLoop {
 
 export function createBudgetedLoop(
   draw: (now: number) => void,
-  { fps = 15, idleWhen, pauseWhenUnfocused = true }: BudgetedLoopOptions = {}
+  { fps = 15, idleWhen, pauseWhenUnfocused = false }: BudgetedLoopOptions = {}
 ): BudgetedLoop {
   const frameInterval = 1000 / fps
   let frame = 0
@@ -98,7 +97,6 @@ export function createBudgetedLoop(
 
     // Idle dormancy: nothing to animate -> park with zero pending work.
     // The owner wakes us when a target (re)appears.
-
     if (idleWhen?.()) {
       dormant = true
 

@@ -1,78 +1,41 @@
-/**
- * The keep-alive lookup policy (MJXHRM-170).
- *
- * These exist because the failure they prevent is invisible. With keep-alive,
- * an inactive tab is still in the DOM with an IDENTICAL layout box to the
- * visible one — so `document.querySelector('[data-slot="composer-root"]')`
- * returns whichever comes first in document order, and the app focuses, scrolls
- * or drops into the wrong tab with no error anywhere.
- */
-
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { hiddenPaneProps, PANE_HIDDEN_ATTR, queryAllVisible, queryVisible } from './pane-visibility'
 
-/** Two stacked tabs: the hidden one FIRST, which is the case a naive
- *  `querySelector` gets wrong. */
-function stack(): HTMLElement {
-  const root = document.createElement('div')
-  root.innerHTML = `
-    <div ${PANE_HIDDEN_ATTR}>
-      <div class="viewport" id="hidden-viewport"><span class="composer" id="hidden-composer"></span></div>
-    </div>
-    <div>
-      <div class="viewport" id="active-viewport"><span class="composer" id="active-composer"></span></div>
-    </div>
-  `
-  document.body.appendChild(root)
+/**
+ * Inactive tabs stay mounted with their layout box intact, so they answer
+ * document-wide lookups exactly like the visible tab. These helpers are the one
+ * place that difference is decided.
+ */
 
-  return root
-}
+const COMPOSER = '[data-slot="composer-root"]'
 
-describe('queryVisible', () => {
-  it('skips a hidden tab even when it comes first in document order', () => {
-    const root = stack()
+const tab = (id: string, hidden = false) => `
+  <div ${hidden ? PANE_HIDDEN_ATTR : ''}>
+    <section><div data-slot="composer-root" id="${id}"></div></section>
+  </div>
+`
 
-    expect(document.querySelector('.viewport')?.id).toBe('hidden-viewport')
-    expect(queryVisible('.viewport', root)?.id).toBe('active-viewport')
-
-    root.remove()
-  })
-
-  it('skips descendants of a hidden tab, not just its root', () => {
-    const root = stack()
-
-    expect(queryVisible('.composer', root)?.id).toBe('active-composer')
-
-    root.remove()
-  })
-
-  it('is null when every match is hidden', () => {
-    const root = document.createElement('div')
-    root.innerHTML = `<div ${PANE_HIDDEN_ATTR}><span class="composer"></span></div>`
-    document.body.appendChild(root)
-
-    expect(queryVisible('.composer', root)).toBeNull()
-
-    root.remove()
-  })
+afterEach(() => {
+  document.body.innerHTML = ''
 })
 
-describe('queryAllVisible', () => {
-  it('returns only the visible matches', () => {
-    const root = stack()
+describe('pane visibility lookups', () => {
+  it('resolves the foreground element even when a hidden tab matches first', () => {
+    document.body.innerHTML = tab('background', true) + tab('foreground')
 
-    expect(root.querySelectorAll('.composer')).toHaveLength(2)
-    expect(queryAllVisible('.composer', root).map(el => el.id)).toEqual(['active-composer'])
-
-    root.remove()
+    expect(queryVisible(COMPOSER)?.id).toBe('foreground')
+    expect(queryAllVisible(COMPOSER).map(el => el.id)).toEqual(['foreground'])
   })
-})
 
-describe('hiddenPaneProps', () => {
-  it('marks a hidden layer and leaves a visible one unmarked', () => {
+  it('answers normally when nothing is hidden', () => {
+    document.body.innerHTML = tab('only')
+
+    expect(queryVisible(COMPOSER)?.id).toBe('only')
+  })
+
+  it('marks a pane hidden only while it is inactive', () => {
     expect(hiddenPaneProps(true)).toEqual({ [PANE_HIDDEN_ATTR]: '' })
-    // Empty, not `{ 'data-pane-hidden': 'false' }` — the selector is presence-based.
     expect(hiddenPaneProps(false)).toEqual({})
   })
 })

@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { formatMoney } from './billing-amounts'
 import {
   billingDevFixtures,
   loggedOutBillingState,
@@ -47,22 +48,6 @@ vi.mock('./api', () => ({
   })
 }))
 
-// Universal routes external URLs through the shared opener (a Rust
-// `open_external` command) instead of desktop's `window.hermesDesktop` bridge.
-// Mocking it here covers both call paths: ./open-external wraps it, and
-// plans-view / inline-feedback import it directly.
-vi.mock('@/lib/external-link', () => ({ openExternalLink: apiMocks.openExternal }))
-
-// use-step-up reads the live client off $gateway. Stubbing the store also keeps
-// the test out of its import cycle with @/store/connection (see
-// use-billing-state.test.ts). `null` = no socket, which the step-up flow
-// already handles via `gateway?.on`.
-vi.mock('@/store/gateway', async () => {
-  const { atom } = (await vi.importActual('nanostores')) as { atom: (value: unknown) => unknown }
-
-  return { $gateway: atom(null), requestGateway: vi.fn() }
-})
-
 function renderBilling(initialEntries: string[] = ['/settings?tab=billing']) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
@@ -80,6 +65,12 @@ function renderBilling(initialEntries: string[] = ['/settings?tab=billing']) {
 beforeEach(() => {
   apiMocks.fetchBillingState.mockResolvedValue(okBilling(todayBillingState))
   apiMocks.fetchSubscriptionState.mockResolvedValue(okSubscription(todaySubscriptionState))
+  Object.defineProperty(window, 'hermesDesktop', {
+    configurable: true,
+    value: {
+      openExternal: apiMocks.openExternal
+    }
+  })
 })
 
 afterEach(() => {
@@ -178,7 +169,7 @@ describe('BillingSettings', () => {
       target: { value: '7.50' }
     })
 
-    expect(screen.getByText('Threshold: minimum is $10.')).toBeTruthy()
+    expect(screen.getByText(`Threshold: minimum is ${formatMoney(10)}.`)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true)
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -229,7 +220,7 @@ describe('BillingSettings', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Manage' }))
 
     expect(screen.getByRole('spinbutton', { name: 'Auto-refill threshold' })).toBeTruthy()
-    expect(screen.queryByText('Threshold: minimum is $10.')).toBeNull()
+    expect(screen.queryByText(`Threshold: minimum is ${formatMoney(10)}.`)).toBeNull()
     // Save is disabled because the prefilled config is invalid — but no error yet.
     expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true)
   })
@@ -602,7 +593,7 @@ describe('BillingSettings', () => {
       ok: true
     })
 
-    await waitFor(() => expect(screen.getByText('$25 added. Balance is refreshing.')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(`${formatMoney(25)} added. Balance is refreshing.`)).toBeTruthy())
   })
 
   it('renders logged-out as a connect card without normal account rows', async () => {

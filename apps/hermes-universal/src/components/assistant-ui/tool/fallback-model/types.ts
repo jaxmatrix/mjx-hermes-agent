@@ -1,10 +1,15 @@
+import type { ToolResultMetadata } from '@/lib/tool-result-metadata'
+
 export type ToolTone = 'agent' | 'browser' | 'default' | 'file' | 'image' | 'terminal' | 'web'
-export type ToolStatus = 'error' | 'running' | 'success' | 'warning'
+export type ToolStatus = 'error' | 'notice' | 'running' | 'success' | 'warning'
 
 export interface ToolPart {
+  toolResultMetadata?: ToolResultMetadata
   args?: unknown
+  completedAt?: number
   isError?: boolean
   result?: unknown
+  timestamp?: number
   toolCallId?: string
   toolName: string
   type: 'tool-call'
@@ -47,12 +52,6 @@ export interface ToolView {
    *  execute_code), the renderer shows it as its own labeled, neutrally
    *  tinted block under stdout — distinct from an error tone. */
   stderr?: string
-  /** Where an oversized result was spilled to, parsed out of the
-   *  `<persisted-output>` block the backend substituted for it. The row offers
-   *  to open it; `detail` then holds only the preview body. */
-  spilloverPath?: string
-  /** The original size, as the backend phrased it ("4.2 MB"). */
-  spilloverSizeLabel?: string
   /** Terminal-only command shown as the prompt in the expanded transcript. */
   terminalCommand?: string
   /** Terminal-only process exit code, when the backend reported one. */

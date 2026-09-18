@@ -1,9 +1,9 @@
 /**
- * TOURS — highlight-and-narrate walkthroughs of the app (MJXHRM-473).
+ * TOURS — highlight-and-narrate walkthroughs for any surface.
  *
  * Two consumers, one engine:
  *
- * - The `tour` agent tool, via the gateway (see `store/tour-bridge.ts`).
+ * - The `tour` agent tool, via the gateway (see run-tour.ts).
  * - Your own curated tours, via this module:
  *
  * ```ts
@@ -18,9 +18,6 @@
  * Tours run against whatever is in the DOM — mark elements with `data-tour="…"`
  * to give them durable handles (see `collectTourTargets`, which reports those
  * first and flags every selector as stable or positional).
- *
- * Import this module DYNAMICALLY. It pulls driver.js and two stylesheets, and
- * `src/entry-graph.test.ts` fails if any of that reaches the boot graph.
  */
 
 export { collectTourTargets, type TourTarget } from './collect-targets'

@@ -12,45 +12,31 @@ export const queryClient = new QueryClient({
   }
 })
 
-/**
- * Test seam: take React Query's retry ladder off the SHARED client.
- *
- * Called once from `src/test-setup.ts`, so no test file has to remember it.
- *
- * A test cannot simply hand `QueryClientProvider` a fresh client instead: this
- * module's `writeCache` / `invalidateProfileScopedQueries` — and everything
- * built on them, e.g. `settings/use-config-record.ts` — close over the SINGLETON
- * above. A component tree wired to a different client would read from one cache
- * while the code under test wrote to another. That is why a dozen test files
- * pass this exact instance, and it is what makes the retry policy theirs too.
- *
- * React Query's default is 3 retries at 1s/2s/4s, so the first render in which a
- * query REJECTS sits in its loading skeleton for ~7s before the error state
- * appears — past Vitest's 5s `testTimeout`. The failure looks like a slow test
- * and invites raising the timeout; the actual cost is that no test in this app
- * could assert a failed-load state at all.
- */
-export function configureQueryClientForTests(): void {
-  queryClient.setDefaultOptions({
-    queries: {
-      refetchOnWindowFocus: false,
-      // The whole point: surface the rejection on the first attempt.
-      retry: false,
-      staleTime: 60_000
-    }
-  })
-}
+// Curried, setState-shaped cache writer for optimistic write-through: keeps
+// mutation sites terse (`setX(next)` or `setX(prev => …)`) over one query key.
+export const writeCache =
+  <T>(key: QueryKey) =>
+  (next: T | undefined | ((prev: T | undefined) => T | undefined)): void =>
+    void queryClient.setQueryData<T>(key, next)
 
-// Query roots that are account/global rather than per-profile, so a profile
-// switch must NOT refetch them. Billing is the motivating case: balance, plan
-// and card live on the account, and blowing that cache away on every switch
-// cost two gateway RPCs and a visible flicker. Ported from desktop, minus the
-// roots universal has no equivalent for.
-const PROFILE_INDEPENDENT_QUERY_ROOTS = new Set<string>(['billing', 'marketplace-themes-settings'])
+// Query-key roots that are NOT profile-scoped: account/billing, the theme
+// marketplace, onboarding, and contrib log tails all read global or
+// account-level state, so a profile/gateway swap must not refetch them. Any
+// other key is treated as profile-scoped and invalidated -- a denylist is
+// correctness-safe here: a root we forget to list just gets refetched (a small
+// cost), whereas an allowlist that misses a profile-scoped key would paint the
+// previous profile's data (a bug).
+const PROFILE_INDEPENDENT_QUERY_ROOTS = new Set<string>([
+  'billing',
+  'marketplace-themes',
+  'marketplace-themes-settings',
+  'onboarding-model-options',
+  'contrib-logs-tail'
+])
 
 // Invalidate profile-scoped query caches on a profile / gateway switch, leaving
 // account/global caches intact. Replaces a keyless invalidateQueries() that
-// refetched everything on every switch.
+// refetched everything (billing, marketplace, onboarding) on every switch.
 export function invalidateProfileScopedQueries(): void {
   void queryClient.invalidateQueries({
     predicate: query => {
@@ -60,10 +46,3 @@ export function invalidateProfileScopedQueries(): void {
     }
   })
 }
-
-// Curried, setState-shaped cache writer for optimistic write-through: keeps
-// mutation sites terse (`setX(next)` or `setX(prev => …)`) over one query key.
-export const writeCache =
-  <T>(key: QueryKey) =>
-  (next: T | undefined | ((prev: T | undefined) => T | undefined)): void =>
-    void queryClient.setQueryData<T>(key, next)
