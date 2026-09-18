@@ -24,8 +24,9 @@ import { $activeConnection, describeConnection, publishActiveConnection } from '
 // and turns every cross-source assertion here into a green lie. (Verified: drop
 // the `registrySessionRouter.active()` assertion and four of these go red.)
 import { registrySessionRouter } from './connection-session-router'
-import { $gatewayState } from './gateway'
+import { $gatewayState, withGatewayProfile } from './gateway'
 import { $gatewaySwitching } from './gateway-switch'
+import { $activeProfile } from './profiles'
 import { $activeSessionRoute, requestForSession, SessionRouteError } from './session-request-router'
 import { forgetSessionSources, spliceRegistrySessionRows } from './session-sources'
 
@@ -128,7 +129,40 @@ describe('the registry router', () => {
     leaseSecondary.mockRejectedValue(new Error('unreachable'))
     spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
 
-    await expect(requestForSession('s9', 'session.resume')).rejects.toBeInstanceOf(SessionRouteError)
+    await expect(requestForSession('s9', 'session.resume')).rejects.toMatchObject({ kind: 'no-gateway' })
+  })
+
+  // MJXHRM-592: the sign-in notification is already on screen; the route says
+  // why it failed so callers stay quiet about it.
+  it('reports a foreign tunnel that needs sign-in as needs-sign-in', async () => {
+    leaseSecondary.mockRejectedValue({ kind: 'credentials-needed', message: 'needs a passphrase', terminal: true })
+    spliceRegistrySessionRows([], [{ connection_id: 'laptop', ended_at: null, id: 's9', started_at: 1 } as never], 'studio')
+
+    const failure = requestForSession('s9', 'session.resume')
+
+    await expect(failure).rejects.toBeInstanceOf(SessionRouteError)
+    await expect(failure).rejects.toMatchObject({ kind: 'needs-sign-in' })
+  })
+
+  // MJXHRM-592: a unified backend runs an RPC that names no profile against its
+  // launch profile, so every primary RPC rides the active one.
+  it('names the active profile on a primary RPC that names none', () => {
+    $activeProfile.set('work')
+
+    try {
+      expect(withGatewayProfile('session.list', {})).toEqual({ profile: 'work' })
+      // A relay names the profile it delivers to; that is never overwritten.
+      expect(withGatewayProfile('bot_relay.deliver', { message: 'hi', profile: 'home' })).toEqual({
+        message: 'hi',
+        profile: 'home'
+      })
+      // `profiles.*` works ON profiles, keyed by `name` (tui_gateway/methods_profiles.py).
+      expect(withGatewayProfile('profiles.list', { include_sessions: true })).toEqual({ include_sessions: true })
+    } finally {
+      $activeProfile.set(null)
+    }
+
+    expect(withGatewayProfile('session.list', {})).toEqual({})
   })
 
   it('refuses an ambient dispatch mid-switch and with a closed socket', async () => {

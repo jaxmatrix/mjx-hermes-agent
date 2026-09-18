@@ -395,7 +395,19 @@ export const zhHant = defineLocale({
             : '此閘道啟動失敗，不會自動重試。',
       switchFailed: '無法切換閘道',
       midDialTitle: '閘道未變更',
-      midDialMessage: label => `${label} 在連線期間被修改，因此仍停留在先前的閘道。`
+      midDialMessage: label => `${label} 在連線期間被修改，因此仍停留在先前的閘道。`,
+      tunnelSignInTitle: label => `${label} 需要登入`,
+      tunnelSignInMessage: '需要登入後，Hermes 才能存取此閘道。',
+      tunnelConnect: '連線',
+      restartLocalTitle: '重新啟動後端？',
+      restartLocalDescription: (titles, more) => {
+        const list = [...titles, ...(more > 0 ? [`+${more}`] : [])].join(', ')
+
+        return `仍在進行：${list}。重新啟動會讓代理在工作途中停止，尚未寫完的內容將會遺失。`
+      },
+      restartLocalConfirm: '重新啟動',
+      profileRestartMessage: name => `正在使用 ${name}。要重新啟動後端以重新載入嗎？`,
+      profileRestartAction: '重新啟動後端'
     },
     profileScope: {
       appliesTo: '套用於',
@@ -967,6 +979,7 @@ export const zhHant = defineLocale({
       clear: '清除'
     },
     gateway: {
+      sshErrLocked: '請解鎖此裝置，以使用為此閘道儲存的 SSH 憑證。',
       sshInstallTitle: host => `在 ${host} 上安裝 Hermes？`,
       sshInstallBody: 'Hermes 將安裝在該主機的使用者帳戶中，不需要管理員權限。',
       sshInstallCancel: '暫不',

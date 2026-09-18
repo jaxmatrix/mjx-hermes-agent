@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 
 import { type GatewayEvent, JsonRpcGatewayClient, type WebSocketLike } from '@/gateway'
+import { acquireTunnel, type TunnelLease } from '@/store/connection-tunnels'
+import { SessionRouteError } from '@/store/session-request-router'
 import { TauriWebSocket } from '@/transport/tauri-websocket'
 
 /**
@@ -54,9 +56,22 @@ interface Secondary {
   inFlight: number
   lastUsed: number
   reaper: null | ReturnType<typeof setTimeout>
+  /** Held for the secondary's life when the source is local or SSH (MJXHRM-592). */
+  tunnel: null | TunnelLease
+  /** Undoes the tunnel subscriptions `close` must not leave behind. */
+  unsubscribe: (() => void)[]
+  /** The tunnel moved or closed while the socket was still opening. */
+  stale: boolean
 }
 
 const live = new Map<string, Secondary>()
+/** Opens in flight, so concurrent leases on one scope share one open — only
+ *  while no switch has invalidated it (its revision is still current). */
+const opening = new Map<string, { promise: Promise<Secondary>; revision: number }>()
+/** Bumped by `closeAllSecondaries`: an open that began before it is stale. */
+let openRevision = 0
+/** The newest switch that has settled: nothing it closed stays parked. */
+let settledRevision = 0
 const listeners = new Map<string, Set<(event: GatewayEvent) => void>>()
 
 /**
@@ -67,10 +82,7 @@ const listeners = new Map<string, Set<(event: GatewayEvent) => void>>()
  * unregister. It exists because a secondary's events have to go SOMEWHERE and
  * rule 7 says the default is nowhere.
  */
-export function addConnectionEventListener(
-  connectionId: string,
-  handler: (event: GatewayEvent) => void
-): () => void {
+export function addConnectionEventListener(connectionId: string, handler: (event: GatewayEvent) => void): () => void {
   const held = listeners.get(connectionId) ?? new Set()
 
   held.add(handler)
@@ -116,13 +128,46 @@ function armReap(secondary: Secondary): void {
   }, IDLE_REAP_MS)
 }
 
-function close(secondary: Secondary): void {
+/** Tunnel holds kept across a gateway switch, tagged with that switch's revision. */
+const parked: { revision: number; tunnel: TunnelLease }[] = []
+
+/**
+ * Keep a hold a switch closed until that switch settles — unless it already
+ * has, in which case nothing would ever release it.
+ */
+function park(tunnel: TunnelLease, revision: number): void {
+  if (settledRevision < revision) {
+    parked.push({ revision, tunnel })
+  } else {
+    tunnel.release()
+  }
+}
+
+/** `parkAt`: the revision of the switch that closed it, when a switch did. */
+function close(secondary: Secondary, parkAt?: number): void {
   if (secondary.reaper) {
     clearTimeout(secondary.reaper)
+    secondary.reaper = null
   }
 
-  live.delete(secondary.scopeKey)
+  for (const off of secondary.unsubscribe.splice(0)) {
+    off()
+  }
+
+  // Only this secondary's own entry: a replacement may already sit at the key.
+  if (live.get(secondary.scopeKey) === secondary) {
+    live.delete(secondary.scopeKey)
+  }
+
   secondary.client.close()
+
+  if (parkAt !== undefined && secondary.tunnel) {
+    park(secondary.tunnel, parkAt)
+  } else {
+    secondary.tunnel?.release()
+  }
+
+  secondary.tunnel = null
 }
 
 function evictLeastRecentlyUsed(): void {
@@ -151,6 +196,13 @@ function evictLeastRecentlyUsed(): void {
  * `connections_resolve` answers where the scope lives and whether Rust holds a
  * credential for it; the token itself is appended by `ws_open` in Rust, so it
  * never enters JS.
+ *
+ * Single-flight per scope (MJXHRM-592): a second lease while the first is
+ * still opening — a cold SSH dial takes 45–90 s — shares that open instead of
+ * starting its own and overwriting the first. Upstream's in-flight-by-key shape
+ * (`apps/desktop/src/store/managed-updates.ts`). An open a switch has since
+ * invalidated is never shared: it can only end in `switching`, so a lease after
+ * the switch starts its own (upstream `backend-connection-state.ts`).
  */
 export async function leaseSecondary(scopeKey: string, connectionId: string): Promise<SecondaryLease> {
   const existing = live.get(scopeKey)
@@ -161,18 +213,69 @@ export async function leaseSecondary(scopeKey: string, connectionId: string): Pr
     return leaseFor(existing)
   }
 
+  const pending = opening.get(scopeKey)
+  let open = pending?.revision === openRevision ? pending.promise : null
+
+  if (!open) {
+    const started = openSecondary(scopeKey, connectionId, openRevision).finally(() => {
+      // Only this open's entry: a later open may already sit at the key.
+      if (opening.get(scopeKey)?.promise === started) {
+        opening.delete(scopeKey)
+      }
+    })
+
+    opening.set(scopeKey, { promise: started, revision: openRevision })
+    open = started
+  }
+
+  const secondary = await open
+
+  secondary.lastUsed = Date.now()
+
+  return leaseFor(secondary)
+}
+
+async function openSecondary(scopeKey: string, connectionId: string, revision: number): Promise<Secondary> {
+  // A switch during the open: whatever it built goes, and the caller hears the
+  // same answer a routed request gets mid-switch.
+  const switched = () => revision !== openRevision
+
   if (live.size >= MAX_SECONDARIES) {
     evictLeastRecentlyUsed()
   }
 
-  const resolved = await invoke<{ baseUrl?: string; dialConnectionId?: string; profile?: string }>(
-    'connections_resolve',
-    { connectionId, profile: null }
-  )
+  const resolved = await invoke<{
+    baseUrl?: string
+    dialConnectionId?: string
+    kind?: string
+    label?: string
+    profile?: string
+  }>('connections_resolve', { connectionId, profile: null })
 
-  if (!resolved.baseUrl) {
-    // `local` and `ssh` are reached by CONNECTING to them; there is no address a
-    // second socket could dial from a descriptor alone.
+  if (switched()) {
+    throw new SessionRouteError('switching', scopeKey)
+  }
+
+  // `local` and `ssh` have no address of their own: they are reached through a
+  // tunnel Rust holds for as long as this secondary does.
+  const tunnel =
+    !resolved.baseUrl && (resolved.kind === 'local' || resolved.kind === 'ssh')
+      ? await acquireTunnel(connectionId, { label: resolved.label })
+      : null
+
+  if (switched()) {
+    if (tunnel) {
+      park(tunnel, openRevision)
+    }
+
+    throw new SessionRouteError('switching', scopeKey)
+  }
+
+  const baseUrl = resolved.baseUrl ?? tunnel?.baseUrl()
+
+  if (!baseUrl) {
+    tunnel?.release()
+
     throw new Error(`no addressable gateway for ${connectionId}`)
   }
 
@@ -186,31 +289,77 @@ export async function leaseSecondary(scopeKey: string, connectionId: string): Pr
     inFlight: 0,
     lastUsed: Date.now(),
     reaper: null,
-    scopeKey
+    scopeKey,
+    stale: false,
+    tunnel,
+    unsubscribe: []
+  }
+
+  // A secondary still opening is not in `live`: it is marked, and the open
+  // closes it once `connect` settles.
+  const invalidate = () => {
+    if (live.get(scopeKey) === secondary) {
+      close(secondary)
+    } else {
+      secondary.stale = true
+    }
   }
 
   client.onAny(event => deliver(connectionId, event))
-  live.set(scopeKey, secondary)
 
-  const wsUrl = `${resolved.baseUrl.replace(/^http/, 'ws')}/api/ws`
+  if (tunnel) {
+    const dialled = tunnel.generation()
+
+    secondary.unsubscribe.push(
+      // A redial moved the tunnel to a new port: this socket is dead weight, and
+      // the next request opens a fresh one against the new base. Only a LATER
+      // generation: the event for the dial this socket rides can land after it.
+      tunnel.onChange(next => {
+        if (next.generation > dialled) {
+          invalidate()
+        }
+      }),
+      // The tunnel no longer serves us (closed, forgotten, needs sign-in): a
+      // socket kept in `live` would be handed to every later request.
+      tunnel.onClosed(invalidate)
+    )
+  }
+
+  const wsUrl = tunnel ? tunnel.wsUrl() : `${baseUrl.replace(/^http/, 'ws')}/api/ws`
 
   try {
     await client.connect(wsUrl)
   } catch (error) {
+    // Releases the tunnel once, for every caller sharing this open.
     close(secondary)
 
     throw error
   }
 
+  if (switched() || secondary.stale) {
+    // Parked only when a switch caused it, as `closeAllSecondaries` parks.
+    close(secondary, switched() ? openRevision : undefined)
+
+    throw new SessionRouteError('switching', scopeKey)
+  }
+
+  // Only now can a lease reach it: never a half-open secondary.
+  live.set(scopeKey, secondary)
   armReap(secondary)
 
-  return leaseFor(secondary)
+  return secondary
 }
 
 function leaseFor(secondary: Secondary): SecondaryLease {
   return {
     connectionId: secondary.connectionId,
     async request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
+      // A lease on a closed secondary must not reach its dead socket, nor re-arm
+      // a reap timer for a secondary nothing tracks any more.
+      if (live.get(secondary.scopeKey) !== secondary) {
+        throw new Error(`secondary for ${secondary.connectionId} is closed`)
+      }
+
       secondary.inFlight += 1
 
       try {
@@ -218,7 +367,10 @@ function leaseFor(secondary: Secondary): SecondaryLease {
       } finally {
         secondary.inFlight -= 1
         secondary.lastUsed = Date.now()
-        armReap(secondary)
+
+        if (live.get(secondary.scopeKey) === secondary) {
+          armReap(secondary)
+        }
       }
     },
     scopeKey: secondary.scopeKey
@@ -241,16 +393,52 @@ export function releaseSecondary(lease: SecondaryLease): void {
  * these sockets belong to the source we are LEAVING, and a credential attached
  * per base URL in Rust has just been re-pointed.
  */
-export function closeAllSecondaries(): void {
+export function closeAllSecondaries(): number {
+  // Opens still in flight belong to the source being left too.
+  openRevision += 1
+
+  const revision = openRevision
+
   for (const secondary of [...live.values()]) {
-    close(secondary)
+    // The tunnel hold outlives the socket until the switch settles: switching
+    // ONTO a connection a secondary was riding must adopt its tunnel, not watch
+    // it torn down a moment before the new dial (MJXHRM-592).
+    close(secondary, revision)
+  }
+
+  return revision
+}
+
+/**
+ * The switch that began at `revision` settled: let go of every hold parked by
+ * it or an earlier switch, and park nothing it closed from here on. A newer
+ * switch still in flight keeps its own.
+ */
+export function releaseParkedTunnels(revision: number): void {
+  settledRevision = Math.max(settledRevision, revision)
+
+  for (let index = parked.length - 1; index >= 0; index -= 1) {
+    const entry = parked[index]
+
+    if (entry && entry.revision <= revision) {
+      parked.splice(index, 1)
+      entry.tunnel.release()
+    }
   }
 }
 
 export const __testing = {
   liveScopeKeys: (): string[] => [...live.keys()],
+  openingCount: (): number => opening.size,
+  parkedCount: (): number => parked.length,
+  /**
+   * Every module map back to empty. The revisions end settled (settled = open),
+   * as on a fresh load, but never go back to 0: an open a previous test left
+   * pending captured an old revision, and must still see that it was switched.
+   */
   reset: (): void => {
-    closeAllSecondaries()
+    releaseParkedTunnels(closeAllSecondaries())
+    opening.clear()
     listeners.clear()
   }
 }

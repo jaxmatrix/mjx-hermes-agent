@@ -180,7 +180,8 @@ export async function reachUrl(url: string): Promise<ReachOutcome> {
   }
 
   try {
-    return await reachUrlNative(url, active.scopeKey)
+    // The session's own scope: one per SSH connection, whatever the profile.
+    return await reachUrlNative(url, active.connection.sshScope ?? active.scopeKey)
   } catch {
     return { leased: false, note: 'forward-failed', url }
   }

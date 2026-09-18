@@ -430,7 +430,19 @@ export const ar = defineLocale({
             : 'فشل تشغيل هذه البوابة ولن تُعاد المحاولة تلقائيًا.',
       switchFailed: 'تعذّر تبديل البوابة',
       midDialTitle: 'لم تتغيّر البوابة',
-      midDialMessage: label => `تم تعديل ${label} أثناء الاتصال، لذا ما زلت على البوابة السابقة.`
+      midDialMessage: label => `تم تعديل ${label} أثناء الاتصال، لذا ما زلت على البوابة السابقة.`,
+      tunnelSignInTitle: label => `${label} يحتاج إلى تسجيل الدخول`,
+      tunnelSignInMessage: 'يحتاج Hermes إلى تسجيل دخولك قبل أن يتمكن من الوصول إلى هذه البوابة.',
+      tunnelConnect: 'اتصال',
+      restartLocalTitle: 'إعادة تشغيل الخادم الخلفي؟',
+      restartLocalDescription: (titles, more) => {
+        const list = [...titles, ...(more > 0 ? [`+${more}`] : [])].join(', ')
+
+        return `لا يزال يعمل: ${list}. تؤدي إعادة التشغيل إلى إيقاف الوكيل أثناء عمله، ويُفقد أي عمل لم يكتمل حفظه.`
+      },
+      restartLocalConfirm: 'إعادة التشغيل',
+      profileRestartMessage: name => `يتم الآن استخدام ${name}. هل تريد إعادة تشغيل الخادم الخلفي لإعادة تحميله؟`,
+      profileRestartAction: 'إعادة تشغيل الخادم الخلفي'
     },
     profileScope: {
       appliesTo: 'يُطبّق على',
@@ -891,6 +903,7 @@ export const ar = defineLocale({
       clear: 'مسح'
     },
     gateway: {
+      sshErrLocked: 'افتح قفل هذا الجهاز لاستخدام بيانات اعتماد SSH المحفوظة لهذه البوابة.',
       sshInstallTitle: host => `تثبيت Hermes على ${host}؟`,
       sshInstallBody: 'سيُثبَّت Hermes داخل حساب المستخدم على ذلك الجهاز. لا حاجة إلى صلاحيات المسؤول.',
       sshInstallCancel: 'ليس الآن',

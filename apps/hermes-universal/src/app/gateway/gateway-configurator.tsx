@@ -11,7 +11,6 @@ import {
   sshSecretsFromForm,
   sshTargetFromForm
 } from '@/app/gateway/ssh-panel'
-import { SshPromptDialog } from '@/app/gateway/ssh-prompt-dialog'
 import { ListRow, Pill } from '@/app/settings/primitives'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -74,8 +73,11 @@ import { $gatewayMode, setGatewayMode } from '@/store/gateway-switch'
 import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
 import { stepBackInLocalInstall } from '@/store/local-install'
 import { notify, notifyError } from '@/store/notifications'
+import { keptSshAnswer } from '@/store/ssh-answers'
 import {
+  addSshPromptAnswerListener,
   attachSshPrompts,
+  isQuietSshError,
   isSshError,
   newAttemptId,
   onSshProgress,
@@ -567,13 +569,31 @@ export function GatewayConfigurator({
    * credential we were never meant to hold.
    */
   const rememberSshPromptAnswer = (kind: SshPromptEvent['kind'], answer: string) => {
-    if (!answer || kind === 'keyboard-interactive') {
+    // The shared rules (store/ssh-answers): a passphrase or a password, never a
+    // keyboard-interactive code.
+    const kept = keptSshAnswer(kind, answer)
+
+    if (!kept) {
       return
     }
 
-    setSshForm(current => (kind === 'password' ? { ...current, password: answer } : { ...current, passphrase: answer }))
-    void mergeSshSecrets(kind === 'password' ? { password: answer } : { passphrase: answer }).catch(() => {})
+    setSshForm(current => ({ ...current, ...kept }))
+    void mergeSshSecrets(kept).catch(() => {})
   }
+
+  // The prompt dialog is the window's (app.tsx); this form only listens, and
+  // only while it is the SSH form on screen.
+  const rememberRef = useRef(rememberSshPromptAnswer)
+
+  rememberRef.current = rememberSshPromptAnswer
+
+  useEffect(() => {
+    if (!showPanels || pendingMode !== 'ssh') {
+      return
+    }
+
+    return addSshPromptAnswerListener((prompt, answer) => rememberRef.current(prompt.kind, answer))
+  }, [showPanels, pendingMode])
 
   const doConnectSsh = async () => {
     if (!trimmedSshHost) {
@@ -594,6 +614,14 @@ export function GatewayConfigurator({
       )
       notify({ kind: 'success', title: g.savedTitle, message: g.savedMessage })
     } catch (err) {
+      // A newer PRIMARY attempt owns this connection and publishes its own
+      // result (MJXHRM-592): nothing here failed, so nothing is said. The quiet
+      // flag says so, not the kind — `superseded` is also a real failure of this
+      // caller's own, and swallowing that one leaves Save silently dead.
+      if (isQuietSshError(err)) {
+        return
+      }
+
       // A remote with no Hermes is the one SSH failure we can actually fix, and
       // the user is already authenticated to that machine. Offer the install
       // instead of only reporting the dead end.
@@ -635,6 +663,11 @@ export function GatewayConfigurator({
 
       setLastTest(g.sshReachable(result.hostLabel, result.platform ?? 'unknown'))
     } catch (err) {
+      // As in Save: an attempt the book marked quiet has no verdict to report.
+      if (isQuietSshError(err)) {
+        return
+      }
+
       setLastTest(sshErrorMessage(err, g))
     } finally {
       setTesting(false)
@@ -845,7 +878,6 @@ export function GatewayConfigurator({
           offer: a connect and a remote install each authenticate, each can stop
           to ask, and only one question is ever pending. Two copies would race to
           answer it. */}
-      {showPanels && pendingMode === 'ssh' ? <SshPromptDialog onAnswered={rememberSshPromptAnswer} /> : null}
 
       {/* Sits beside the SSH panel rather than inside it: the offer is
           about the remote HOST, not about the connection form. */}

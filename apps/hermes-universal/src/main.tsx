@@ -60,6 +60,7 @@ import './store/connection-plugin-source'
 import { registerBrowserContributions } from './app/browser/context-target'
 import { installContextMenuBridge } from './app/context-menu/bridge'
 import { installBrowserBridge } from './store/browser-bridge'
+import { openTunnelPage } from './store/connection-tunnels'
 import { initializeConnectionsRegistry, startConnectionsWatcher } from './store/connections'
 import { initDownloadSync } from './store/downloads'
 import { installNotificationActivation } from './store/plugin-notify-handlers'
@@ -71,6 +72,10 @@ import { initWorkspaceProfileSync } from './store/workspace-events'
 // boot, next to the responder it feeds, because the first turn can ask before
 // any component has mounted (MJXHRM-213).
 installWindowBelowReader()
+// The page declares its start to the tunnel book before anything can acquire
+// (MJXHRM-592): a reloaded or recreated WebView ends the previous page's tunnel
+// holds here, not at its first acquire, which may never come.
+openTunnelPage()
 // Downloads are app-global but the transfer runs in whichever WebView started
 // it, so every OTHER window has to be told or its tray is blank for a file that
 // is very much being written to this device. Armed here rather than at the

@@ -3,6 +3,7 @@ import { BackgroundCloseDialog } from '@/app/background-close-dialog'
 import { CloseConfirm } from '@/app/close-confirm'
 import { AppContextMenu } from '@/app/context-menu/coordinator'
 import { ExplorerPathDialog } from '@/app/explorer-path-dialog'
+import { SshPromptDialog } from '@/app/gateway/ssh-prompt-dialog'
 import { HUD_SURFACE } from '@/app/hud/hud'
 import { HudWindowRoot } from '@/app/hud/hud-window'
 import { McpInstallDeepLinkDialog } from '@/app/mcp-install-deeplink-dialog'
@@ -109,6 +110,9 @@ export function App() {
           owns the dialog, like CloseConfirm. */}
       <ExplorerPathDialog />
       <ConfirmHost />
+      {/* Any SSH dial can ask for a credential or a host key — a switch, a
+          tunnel's Connect, an install — so the window owns the question. */}
+      <SshPromptDialog />
       <AppContextMenu />
       <McpInstallDeepLinkDialog />
       <PluginInstallModal />

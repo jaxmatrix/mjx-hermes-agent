@@ -90,7 +90,7 @@ vi.mock('@tauri-apps/api/core', () => ({
       return undefined
     }
 
-    if (command === 'local_backend_stop') {
+    if (command === 'local_backend_kill') {
       stopBackend()
 
       return undefined

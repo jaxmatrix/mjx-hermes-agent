@@ -1,6 +1,7 @@
 import { translateNow } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 import { clearTranscriptTails } from '@/lib/transcript-tail-cache'
+import { $activeConnection } from '@/store/active-connection'
 import { clearArtifactRegistry } from '@/store/artifacts'
 import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import { resetChat } from '@/store/chat'
@@ -10,7 +11,7 @@ import { setCronJobs } from '@/store/cron'
 import { closeGateway } from '@/store/gateway'
 import type { Connection, GatewayMode } from '@/store/gateway-config'
 import { dialSavedTarget, type GatewayTarget, loadGatewayTarget } from '@/store/gateway-restore'
-import { closeAllSecondaries } from '@/store/gateway-secondaries'
+import { closeAllSecondaries, releaseParkedTunnels } from '@/store/gateway-secondaries'
 import { $gatewayMode, $gatewaySwitching } from '@/store/gateway-switch'
 import { resetLiveRuntimeTracking } from '@/store/live-session-status'
 import { resetLiveSync } from '@/store/live-sync'
@@ -37,6 +38,7 @@ import {
 import { resetSessionPinMirror } from '@/store/session-pin-sync'
 import { clearAllSessionStates, resetTileRuntimeBindings } from '@/store/session-states'
 import { resetArchivedSessionsForBackendSwitch } from '@/store/sidebar-archive'
+import { disconnectSsh } from '@/store/ssh-backend'
 import { resetSystemStatusForBackendSwitch } from '@/store/system-status'
 import { clearTranscriptPaint } from '@/store/transcript-paint'
 import { resetWorkspaceCwd } from '@/store/workspace-events'
@@ -57,8 +59,10 @@ import { resetWorkspaceCwd } from '@/store/workspace-events'
  * Deliberately does NOT navigate or open a fresh chat: that would close route
  * overlays (Settings, the gateway popover) the user is standing in. Chat state is
  * cleared in place and the URL is left alone.
+ *
+ * Returns the secondaries' switch revision, for `releaseParkedTunnels`.
  */
-export function wipeSessionListsForGatewaySwitch(): void {
+export function wipeSessionListsForGatewaySwitch(): number {
   // Pins are mirrored per-backend. The next gateway has its own state.db and has
   // never seen them, so drop the "already pushed" bookkeeping and let the next
   // reconcile re-assert the whole set against the new backend — otherwise the
@@ -155,7 +159,7 @@ export function wipeSessionListsForGatewaySwitch(): void {
   resetSystemStatusForBackendSwitch()
   // A registered source's credentials are attached per BASE URL in Rust, so the
   // secondaries opened against the source we are leaving have to go with it.
-  closeAllSecondaries()
+  const secondariesRevision = closeAllSecondaries()
   // And the in-app browser (MJXHRM-447): a browsed `localhost:5173` names the
   // OLD machine, and the SSH forward lease behind it is a tunnel into a host we
   // have stopped talking to. A new host never inherits a tunnel into the old
@@ -167,6 +171,8 @@ export function wipeSessionListsForGatewaySwitch(): void {
   // Blunt, matching the profile-swap precedent in store/profiles.ts: universal has
   // no gateway-scoped key partition, so everything cached is re-fetched.
   void queryClient.invalidateQueries()
+
+  return secondariesRevision
 }
 
 /**
@@ -267,12 +273,20 @@ export async function softSwitchGateway(mode: GatewayMode, dial: () => Promise<v
 
   $gatewaySwitching.set(true)
   beginGatewaySwitch()
-  wipeSessionListsForGatewaySwitch()
+  const secondariesRevision = wipeSessionListsForGatewaySwitch()
 
   try {
-    // Leaving a local-spawned backend: stop the child, or it outlives the switch.
-    if ($connection.get()?.mode === 'local') {
+    // Leaving a local or SSH backend releases the ACTIVE hold only: a background
+    // tunnel lease keeps it up, and nothing else does (MJXHRM-592). SSH used to
+    // release nothing, so its tunnel leaked until the same scope was dialled.
+    const leaving = $connection.get()
+
+    if (leaving?.mode === 'local') {
       await stopLocalBackend().catch(() => {})
+    }
+
+    if (leaving?.mode === 'ssh') {
+      await disconnectSsh(leaving.profile ?? null, $activeConnection.get()?.dialConnectionId ?? null).catch(() => {})
     }
 
     closeGateway()
@@ -298,6 +312,9 @@ export async function softSwitchGateway(mode: GatewayMode, dial: () => Promise<v
 
     throw err
   } finally {
+    // After the dial: a tunnel the new connection now holds as primary survives.
+    // This switch's own revision: a newer switch still in flight keeps its holds.
+    releaseParkedTunnels(secondariesRevision)
     $sessionsLoading.set(false)
     // Imperative guard down before the reactive one, so the root gates never un-gate
     // while the reconnect supervisor is still suspended.

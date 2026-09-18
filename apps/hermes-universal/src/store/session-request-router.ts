@@ -55,7 +55,9 @@ export interface SessionRoute {
   scopeKey: string
 }
 
-export type SessionRouteErrorKind = 'no-gateway' | 'route-moved' | 'switching'
+/** `needs-sign-in`: the route's tunnel stopped on something only a person can
+ *  answer; the sign-in notification is already on screen (MJXHRM-592). */
+export type SessionRouteErrorKind = 'needs-sign-in' | 'no-gateway' | 'route-moved' | 'switching'
 
 /**
  * The route could not be honoured — as opposed to the session being broken.

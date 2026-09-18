@@ -67,6 +67,10 @@ export interface SshConnection {
   hermesVersion: string
   ownershipId: string
   hostLabel: string
+  /** The scope the session and its `ssh://{scope}/disconnected` event live
+   *  under: one per connection, whatever the profile (MJXHRM-592). Absent from
+   *  an older Rust core. */
+  scope?: string
 }
 
 export interface SshTestResult {
@@ -105,6 +109,14 @@ export type SshErrorKind =
 export interface SshError {
   kind: SshErrorKind
   message: string
+  /**
+   * "A newer primary attempt owns this connection and publishes its own result"
+   * (MJXHRM-592): say nothing, tear nothing down, just report upwards. Set only
+   * by Rust's tunnel book, against a witness no other site can mint — which is
+   * why this is a flag and not a `kind`: a kind can be minted anywhere, and
+   * `superseded` is also a real, loud failure of the caller's own.
+   */
+  quiet?: boolean
 }
 
 /** Narrow an unknown rejection to the typed error Rust returns. */
@@ -115,6 +127,11 @@ export function isSshError(value: unknown): value is SshError {
     typeof (value as SshError).kind === 'string' &&
     typeof (value as SshError).message === 'string'
   )
+}
+
+/** A rejection the book marked quiet: its owner publishes, so this caller does not. */
+export function isQuietSshError(value: unknown): boolean {
+  return isSshError(value) && value.quiet === true
 }
 
 export type SshStep =
@@ -287,6 +304,21 @@ export async function attachSshPrompts(attemptId: string): Promise<UnlistenFn> {
   }
 }
 
+const answerListeners = new Set<(prompt: ActiveSshPrompt, answer: string) => void>()
+
+/**
+ * Hear every answer given to a prompt. The settings form keeps a passphrase or
+ * password this way, so the next launch — which cannot prompt — has something
+ * to authenticate with. Returns an idempotent unregister.
+ */
+export function addSshPromptAnswerListener(handler: (prompt: ActiveSshPrompt, answer: string) => void): () => void {
+  answerListeners.add(handler)
+
+  return () => {
+    answerListeners.delete(handler)
+  }
+}
+
 /** Answer whatever is currently being asked. */
 export async function answerActiveSshPrompt(answer: string): Promise<void> {
   const prompt = $sshPrompt.get()
@@ -299,9 +331,30 @@ export async function answerActiveSshPrompt(answer: string): Promise<void> {
   // dialog still on screen would look like it was ignored.
   $sshPrompt.set(null)
 
+  for (const listener of answerListeners) {
+    try {
+      listener(prompt, answer)
+    } catch {
+      // A listener failing to keep the answer must not stop it reaching Rust.
+    }
+  }
+
   // A rejection here means the attempt is already gone (cancelled, or timed
   // out), which the attempt's own error reports far better than a toast would.
   await answerSshPrompt(prompt.attemptId, prompt.promptId, answer).catch(() => {})
+}
+
+/** Decline the question being asked: the attempt stops instead of timing out. */
+export async function cancelActiveSshPrompt(): Promise<void> {
+  const prompt = $sshPrompt.get()
+
+  if (!prompt) {
+    return
+  }
+
+  $sshPrompt.set(null)
+
+  await cancelSsh(prompt.attemptId).catch(() => {})
 }
 
 /** Accept or refuse the host key currently in question. */
@@ -328,12 +381,8 @@ export async function decideActiveSshHostKey(accept: boolean): Promise<void> {
  * re-dials `http://127.0.0.1:<ephemeral>`, and if the session is gone that port
  * is dead forever, so the loop just backs off and spins.
  */
-export function onSshDisconnected(
-  profile: null | string | undefined,
-  handler: () => void,
-  connectionId?: null | string
-): Promise<UnlistenFn> {
-  return listen(`ssh://${sshScopeOf(connectionId, profile)}/disconnected`, () => handler())
+export function onSshDisconnected(scope: string, handler: () => void): Promise<UnlistenFn> {
+  return listen(`ssh://${scope}/disconnected`, () => handler())
 }
 
 /**

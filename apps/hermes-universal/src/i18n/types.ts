@@ -795,6 +795,7 @@ export interface Translations {
       sshPromptTitle: string
       sshErrUnreachable: string
       sshErrAuth: string
+      sshErrLocked: string
       sshErrHostKey: string
       sshErrNotInstalled: string
       /** Offer to install Hermes on the remote host after a failed connect. */
@@ -951,6 +952,14 @@ export interface Translations {
       switchFailed: string
       midDialTitle: string
       midDialMessage: (label: string) => string
+      tunnelSignInTitle: (label: string) => string
+      tunnelSignInMessage: string
+      tunnelConnect: string
+      restartLocalTitle: string
+      restartLocalDescription: (titles: string[], more: number) => string
+      restartLocalConfirm: string
+      profileRestartMessage: (name: string) => string
+      profileRestartAction: string
     }
     keys: {
       loading: string

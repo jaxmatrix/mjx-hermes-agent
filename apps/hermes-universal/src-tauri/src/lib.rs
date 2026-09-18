@@ -13,6 +13,8 @@
 mod app_state;
 mod appearance;
 mod artifact;
+#[cfg(desktop)]
+mod backend_log;
 mod background;
 mod browser;
 mod cloud;
@@ -41,6 +43,7 @@ mod surface;
 mod telemetry;
 mod transport;
 mod tray;
+mod tunnels;
 mod updates;
 mod voice;
 mod webview_cookies;
@@ -77,7 +80,8 @@ use find_in_page::{find_in_page, stop_find_in_page};
 use keep_awake::{set_keep_awake, KeepAwakeState};
 use link_title::fetch_link_title;
 use local_backend::{
-    local_backend_spawn, local_backend_status, local_backend_stop, LocalBackendState,
+    local_backend_kill, local_backend_restart, local_backend_spawn, local_backend_status,
+    local_backend_stop, LocalBackendState,
 };
 use local_install::{local_install_cancel, local_install_detect, local_install_start};
 use marketplace::{marketplace_fetch, marketplace_search};
@@ -289,6 +293,22 @@ pub fn run() {
     #[cfg(all(desktop, feature = "update-checks"))]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
+    // A page load starting is a reload (or a first load, which holds nothing):
+    // the old page's tunnel leases are gone with its JS, so they end here and a
+    // slot they alone held lingers one reaper tick for the new page
+    // (MJXHRM-592). Desktop only, and reap-only: the epoch moves when the new
+    // page calls `tunnel_page_open`, because on Android `onPageStarted` is not
+    // ordered with the page's own IPC. Keyed by the webview's own label, so a
+    // browser guest navigating inside a window never touches its leases.
+    #[cfg(desktop)]
+    let builder = builder.on_page_load(|webview, payload| {
+        if tunnels::reaps_on_page_load(&payload.event()) {
+            use tauri::Manager;
+
+            tunnels::page_started(webview.app_handle(), webview.label());
+        }
+    });
+
     builder
         .manage(TransportState::new())
         .manage(MediaState::default())
@@ -330,6 +350,7 @@ pub fn run() {
         // Live SSH sessions. Unlike desktop's on-disk control socket, nothing
         // here outlives the process, so there is no stale master to evict.
         .manage(SshState::default())
+        .manage(tunnels::TunnelState::default())
         // Background mode's two flags — the mirrored preference, and the
         // one-way "the user asked to quit" latch that stops `ExitRequested`
         // from preventing the app's own exit (background.rs).
@@ -439,6 +460,7 @@ pub fn run() {
             }
 
             deep_link::setup(app.handle());
+            tunnels::start_reaper(app.handle());
 
             let _ = app;
             Ok(())
@@ -505,6 +527,12 @@ pub fn run() {
             local_backend_spawn,
             local_backend_status,
             local_backend_stop,
+            local_backend_restart,
+            local_backend_kill,
+            tunnels::tunnel_acquire,
+            tunnels::tunnel_release,
+            tunnels::tunnel_page_open,
+            tunnels::tunnel_status,
             local_install_detect,
             local_install_start,
             local_install_cancel,
@@ -646,6 +674,8 @@ pub fn run() {
                 pty::reap_window_ptys(app_handle, label);
 
                 transport::reap_window_sockets(app_handle, label);
+                // …and so do the tunnel leases it held (MJXHRM-592).
+                tunnels::window_destroyed(app_handle, label);
                 appearance::reap_window(app_handle, label);
                 // …and so do the guest webviews it hosted (MJXHRM-447): a child
                 // webview dies with its window, but the Rust-side registry
@@ -703,6 +733,9 @@ pub fn run() {
             // interesting one — whatever happened right before the user quit.
             // No-op without the tracing feature.
             if let tauri::RunEvent::Exit = &event {
+                // Every tunnel goes, and the local child with it, whoever holds
+                // them (MJXHRM-592).
+                tunnels::shutdown(app_handle);
                 telemetry::shutdown();
             }
 

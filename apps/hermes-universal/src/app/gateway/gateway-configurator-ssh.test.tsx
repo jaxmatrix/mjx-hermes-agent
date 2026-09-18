@@ -36,11 +36,13 @@ vi.mock('@/store/ssh-backend', async importActual => ({
 }))
 
 import { I18nProvider } from '@/i18n'
+import { TRANSLATIONS } from '@/i18n/catalog'
 import { queryClient } from '@/lib/query-client'
 import { connectSsh } from '@/store/connection'
 import { saveGatewayTarget } from '@/store/gateway-restore'
 import { softSwitchGateway } from '@/store/gateway-soft-switch'
 import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
+import { $notifications } from '@/store/notifications'
 import { testSshBackend } from '@/store/ssh-backend'
 
 import { GatewayConfigurator } from './gateway-configurator'
@@ -65,7 +67,10 @@ function connectOverSsh(host = 'deploy@box') {
 beforeEach(() => {
   localStorage.clear()
   vi.clearAllMocks()
+  $notifications.set([])
 })
+
+const gatewayCopy = TRANSLATIONS.en.settings.gateway
 
 describe('GatewayConfigurator — SSH connect', () => {
   it('dials through the soft switch rather than straight to connectSsh', async () => {
@@ -147,5 +152,59 @@ describe('GatewayConfigurator — SSH test', () => {
     expect(config.passphrase).toBeUndefined()
     expect(config.password).toBeUndefined()
     expect(config.privateKeyPem).toBeUndefined()
+  })
+})
+
+// MJXHRM-592: the row was retargeted mid-dial, so a NEWER PRIMARY attempt owns
+// this connection and publishes its own result. Neither surface has a verdict to
+// give — and it is the book's `quiet` flag that says so, not the kind, which
+// Rust also mints for a failure that is this caller's own.
+describe('GatewayConfigurator — a quiet attempt', () => {
+  it('says nothing when Save is quiet, and still reports every other failure', async () => {
+    vi.mocked(softSwitchGateway).mockRejectedValueOnce({ kind: 'superseded', message: 'replaced', quiet: true })
+    renderConfigurator()
+    connectOverSsh()
+
+    await waitFor(() => expect(softSwitchGateway).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save and reconnect' })).toBeEnabled())
+    expect($notifications.get()).toEqual([])
+
+    vi.mocked(softSwitchGateway).mockRejectedValueOnce({ kind: 'auth-failed', message: 'nope' })
+    connectOverSsh()
+
+    await waitFor(() => expect($notifications.get()).toHaveLength(1))
+    expect($notifications.get()[0]).toMatchObject({ kind: 'error', message: gatewayCopy.sshErrAuth })
+
+    // The same KIND with no flag is this caller's own failure — Save says so.
+    vi.mocked(softSwitchGateway).mockRejectedValueOnce({ kind: 'superseded', message: 'replaced' })
+    connectOverSsh()
+
+    await waitFor(() => expect($notifications.get()).toHaveLength(2))
+    expect($notifications.get()[0]).toMatchObject({ kind: 'error', message: gatewayCopy.sshErrUnknown })
+  })
+
+  it('leaves the Test result empty when it is quiet, and fills it otherwise', async () => {
+    vi.mocked(testSshBackend).mockRejectedValueOnce({ kind: 'superseded', message: 'replaced', quiet: true })
+    renderConfigurator()
+
+    fireEvent.click(screen.getByRole('button', { name: /^SSH/ }))
+    fireEvent.change(screen.getByPlaceholderText('user@example.com'), { target: { value: 'box' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Test SSH' }))
+
+    await waitFor(() => expect(testSshBackend).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Test SSH' })).toBeEnabled())
+    expect(screen.queryByText(gatewayCopy.sshErrUnknown)).toBeNull()
+    expect($notifications.get()).toEqual([])
+
+    vi.mocked(testSshBackend).mockRejectedValueOnce({ kind: 'auth-failed', message: 'nope' })
+    fireEvent.click(screen.getByRole('button', { name: 'Test SSH' }))
+
+    expect(await screen.findByText(gatewayCopy.sshErrAuth)).toBeInTheDocument()
+
+    // And the same KIND with no flag fills the result like any other failure.
+    vi.mocked(testSshBackend).mockRejectedValueOnce({ kind: 'superseded', message: 'replaced' })
+    fireEvent.click(screen.getByRole('button', { name: 'Test SSH' }))
+
+    expect(await screen.findByText(gatewayCopy.sshErrUnknown)).toBeInTheDocument()
   })
 })

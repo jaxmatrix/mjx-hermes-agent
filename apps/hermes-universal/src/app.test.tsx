@@ -80,6 +80,7 @@ vi.mock('@/store/windows', async importOriginal => ({
 
 import { HUD_SURFACE } from '@/app/hud/hud'
 import { QUICK_ENTRY_SURFACE } from '@/app/quick-entry/quick-entry'
+import { $sshPrompt } from '@/store/ssh-backend'
 import { WAKE_INDICATOR_SURFACE } from '@/store/windows'
 
 import { App } from './app'
@@ -110,6 +111,27 @@ describe('App', () => {
     expect(screen.getByTestId('remote-picker')).toBeInTheDocument()
     expect(screen.getByTestId('close-confirm')).toBeInTheDocument()
     expect(screen.getByTestId('explorer-path-dialog')).toBeInTheDocument()
+  })
+
+  // MJXHRM-592: a switch or a tunnel's Connect can ask for a credential from
+  // anywhere, so the question is the window's, not the configurator's.
+  it.each(ROOTS)('asks a pending SSH question in %s', (_name, arrange) => {
+    arrange()
+    $sshPrompt.set({
+      attemptId: 'a1',
+      kind: 'passphrase',
+      label: 'Passphrase for id_ed25519',
+      promptId: 'p1',
+      secret: true
+    })
+
+    try {
+      render(<App />)
+
+      expect(screen.getByText('Passphrase for id_ed25519')).toBeInTheDocument()
+    } finally {
+      $sshPrompt.set(null)
+    }
   })
 
   it.each(ROOTS)('owns the right-click gesture in %s', (_name, arrange) => {

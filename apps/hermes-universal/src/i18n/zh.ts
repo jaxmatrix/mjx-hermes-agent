@@ -1070,6 +1070,7 @@ export const zh: Translations = {
       sshPromptTitle: 'SSH 需要凭据',
       sshErrUnreachable: '无法通过 SSH 连接到该主机。请检查地址、端口和网络。',
       sshErrAuth: 'SSH 身份验证失败。请将密钥加入 ssh-agent、在 ~/.ssh/config 中设置 IdentityFile，或在此处提供密钥。',
+      sshErrLocked: '请解锁此设备，以使用为该网关保存的 SSH 凭据。',
       sshErrHostKey: '该主机的密钥自上次连接后已发生变更。这可能是中间人攻击，也可能是服务器被重装。连接已被拒绝。',
       sshErrNotInstalled: '该主机上未安装 Hermes。请在该机器上安装，或显式指定 Hermes 路径。',
       sshInstallTitle: host => `在 ${host} 上安装 Hermes？`,
@@ -1249,7 +1250,19 @@ export const zh: Translations = {
             : '该网关启动失败，不会自动重试。',
       switchFailed: '无法切换网关',
       midDialTitle: '网关未更改',
-      midDialMessage: label => `${label} 在连接过程中被修改，因此仍停留在之前的网关。`
+      midDialMessage: label => `${label} 在连接过程中被修改，因此仍停留在之前的网关。`,
+      tunnelSignInTitle: label => `${label} 需要登录`,
+      tunnelSignInMessage: '需要登录后，Hermes 才能访问此网关。',
+      tunnelConnect: '连接',
+      restartLocalTitle: '重启后端？',
+      restartLocalDescription: (titles, more) => {
+        const list = [...titles, ...(more > 0 ? [`+${more}`] : [])].join(', ')
+
+        return `仍在进行：${list}。重启会让智能体在任务中途停止，尚未写完的内容将会丢失。`
+      },
+      restartLocalConfirm: '重启',
+      profileRestartMessage: name => `正在使用 ${name}。要重启后端以重新加载吗？`,
+      profileRestartAction: '重启后端'
     },
     keys: {
       loading: '正在加载 API 密钥和凭据...',

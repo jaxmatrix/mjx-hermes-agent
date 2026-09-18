@@ -1,13 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { broadcastGatewaySwitch, connect, connectCloud, connectLocal, connectSsh, invoke, notify, softSwitchGateway } =
-  vi.hoisted(() => ({
+const {
+  broadcastGatewaySwitch,
+  connect,
+  connectCloud,
+  connectLocal,
+  connectSsh,
+  invoke,
+  mergeSshSecrets,
+  notify,
+  softSwitchGateway
+} = vi.hoisted(() => ({
     broadcastGatewaySwitch: vi.fn(),
     connect: vi.fn(async () => {}),
     connectCloud: vi.fn(async () => {}),
     connectLocal: vi.fn(async () => {}),
     connectSsh: vi.fn(async () => {}),
     invoke: vi.fn(),
+    mergeSshSecrets: vi.fn(async () => true),
     notify: vi.fn(),
     softSwitchGateway: vi.fn(async (_mode: string, dial: () => Promise<void>) => dial())
   }))
@@ -19,6 +29,7 @@ vi.mock('@/store/connection', () => ({ connect, connectCloud, connectLocal, conn
 vi.mock('@/store/gateway-soft-switch', () => ({ softSwitchGateway }))
 vi.mock('@/store/gateway-switch-broadcast', () => ({ broadcastGatewaySwitch }))
 vi.mock('@/store/notifications', () => ({ notify, notifyError: vi.fn() }))
+vi.mock('@/lib/secure-store', () => ({ mergeSshSecrets }))
 
 import { LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 
@@ -29,7 +40,14 @@ import {
   takePendingConnectionHint
 } from './active-connection'
 import { $latchedConnections, __resetConnectionLatches } from './connection-latches'
-import { $connectionsRegistry, $hasMultipleConnections, __testing, lastProfileFor, selectConnection } from './connections'
+import {
+  $connectionsRegistry,
+  $hasMultipleConnections,
+  __testing,
+  lastProfileFor,
+  saveTunnelAnswer,
+  selectConnection
+} from './connections'
 
 const RESOLVED = {
   connectionId: 'studio',
@@ -125,6 +143,23 @@ describe('selectConnection', () => {
     await selectConnection('studio', { allowInteractive: true })
 
     expect(connect).toHaveBeenCalledWith(expect.objectContaining({ allowInteractive: true }))
+  })
+
+  // MJXHRM-592: a click on an SSH source may answer its passphrase or host-key
+  // question; a background re-home must not raise one.
+  it('dials an ssh source interactively only when a person asked', async () => {
+    const ssh = { ...RESOLVED, baseUrl: undefined, kind: 'ssh', mode: 'ssh', remoteHost: 'deploy@box' }
+
+    invoke.mockImplementation(async (command: string) => (command === 'connections_resolve' ? ssh : undefined))
+
+    await selectConnection('studio', { allowInteractive: true })
+
+    expect(connectSsh).toHaveBeenLastCalledWith(expect.objectContaining({ host: 'deploy@box' }), { interactive: true })
+
+    publishActiveConnection(null)
+    await selectConnection('studio')
+
+    expect(connectSsh).toHaveBeenLastCalledWith(expect.anything(), { interactive: false })
   })
 
   it('is a no-op except for lastUsed when the same source is re-clicked', async () => {
@@ -237,5 +272,58 @@ describe('selectConnection', () => {
 
     __testing.rememberProfile('studio', 'work')
     expect(lastProfileFor('studio')).toBe('work')
+  })
+})
+
+// MJXHRM-592 (owner decision): a Connect's answer is kept where that row's own
+// dials read it.
+describe('saveTunnelAnswer', () => {
+  function seedSsh(legacy: boolean): void {
+    $connectionsRegistry.set({
+      ...$connectionsRegistry.get(),
+      connections: [
+        {
+          hasSshKey: true,
+          hasSshPassphrase: false,
+          hasSshPassword: false,
+          hasToken: false,
+          headerNames: [],
+          host: 'box',
+          id: 'box',
+          keyPath: '~/.ssh/id_ed25519',
+          kind: 'ssh',
+          label: 'Box',
+          legacy,
+          order: 0,
+          port: 2222,
+          user: 'deploy'
+        }
+      ]
+    })
+  }
+
+  beforeEach(() => mergeSshSecrets.mockClear())
+
+  it('saves a registered row through the editor save, secrets only', async () => {
+    seedSsh(false)
+    invoke.mockImplementation(async (command: string) =>
+      command === 'connections_save' ? { registry: $connectionsRegistry.get() } : undefined
+    )
+
+    await saveTunnelAnswer('box', { passphrase: 'open sesame' })
+
+    expect(invoke).toHaveBeenCalledWith('connections_save', {
+      input: expect.objectContaining({ host: 'box', id: 'box', kind: 'ssh', passphrase: 'open sesame', port: 2222 })
+    })
+    expect(mergeSshSecrets).not.toHaveBeenCalled()
+  })
+
+  it("writes the legacy owner's bare accounts, as the configurator does", async () => {
+    seedSsh(true)
+
+    await saveTunnelAnswer('box', { password: 'hunter2' })
+
+    expect(mergeSshSecrets).toHaveBeenCalledWith({ password: 'hunter2' })
+    expect(invoke).not.toHaveBeenCalledWith('connections_save', expect.anything())
   })
 })

@@ -1,6 +1,7 @@
 import { backendScopeKey, LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { $activeConnection } from '@/store/active-connection'
-import { $gatewayState, requestGateway } from '@/store/gateway'
+import { isTunnelSignInError } from '@/store/connection-tunnels'
+import { $gatewayState, requestGateway, setGatewayRequestProfile } from '@/store/gateway'
 import { leaseSecondary, releaseSecondary } from '@/store/gateway-secondaries'
 import { $gatewaySwitching } from '@/store/gateway-switch'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
@@ -114,10 +115,12 @@ export const registrySessionRouter: SessionRequestRouter = {
 
     // Another source. A secondary is request-only and is never handed out as
     // "the gateway" — see `store/gateway-secondaries.ts`.
-    const lease = await leaseSecondary(route.scopeKey, route.connectionId).catch(() => null)
+    let lease: Awaited<ReturnType<typeof leaseSecondary>>
 
-    if (!lease) {
-      throw new SessionRouteError('no-gateway', route.scopeKey)
+    try {
+      lease = await leaseSecondary(route.scopeKey, route.connectionId)
+    } catch (error) {
+      throw new SessionRouteError(isTunnelSignInError(error) ? 'needs-sign-in' : 'no-gateway', route.scopeKey)
     }
 
     try {
@@ -146,3 +149,12 @@ export const registrySessionRouter: SessionRequestRouter = {
 }
 
 setSessionRequestRouter(registrySessionRouter)
+
+// Every primary RPC that names no profile rides the active one (MJXHRM-592): the
+// same rule `dispatch` applies to a same-connection route, for the calls that do
+// not come through a route. `default` is the launch profile, so it is omitted.
+setGatewayRequestProfile(() => {
+  const profile = normalizeProfileKey($activeGatewayProfile.get())
+
+  return profile === 'default' ? null : profile
+})

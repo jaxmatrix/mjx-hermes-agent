@@ -916,6 +916,7 @@ export const en: Translations = {
       sshErrUnreachable: 'Could not reach that host over SSH. Check the address, the port, and your network.',
       sshErrAuth:
         'SSH authentication failed. Add your key to ssh-agent, set an IdentityFile in ~/.ssh/config, or supply a key here.',
+      sshErrLocked: 'Unlock this device to use the SSH credentials stored for this gateway.',
       sshErrHostKey:
         'The host key has CHANGED since you last connected. This could be a machine-in-the-middle attack, or the server may have been reinstalled. The connection was refused.',
       sshErrNotInstalled: 'Hermes is not installed on that host. Install it there, or set the Hermes path explicitly.',
@@ -1100,7 +1101,19 @@ export const en: Translations = {
             : 'This gateway failed to start and will not be retried automatically.',
       switchFailed: 'Could not switch gateway',
       midDialTitle: 'Gateway unchanged',
-      midDialMessage: label => `${label} was changed while connecting, so you are still on the previous gateway.`
+      midDialMessage: label => `${label} was changed while connecting, so you are still on the previous gateway.`,
+      tunnelSignInTitle: label => `${label} needs sign-in`,
+      tunnelSignInMessage: 'Hermes needs you to sign in before it can reach this gateway.',
+      tunnelConnect: 'Connect',
+      restartLocalTitle: 'Restart the backend?',
+      restartLocalDescription: (titles, more) => {
+        const list = [...titles, ...(more > 0 ? [`+${more}`] : [])].join(', ')
+
+        return `Still working: ${list}. Restarting stops the agent mid-turn, and any work it has not finished writing is lost.`
+      },
+      restartLocalConfirm: 'Restart',
+      profileRestartMessage: name => `Now using ${name}. Restart the backend to reload it?`,
+      profileRestartAction: 'Restart backend'
     },
     keys: {
       loading: 'Loading API keys and credentials...',
