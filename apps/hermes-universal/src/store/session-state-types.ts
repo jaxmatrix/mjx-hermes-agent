@@ -402,11 +402,35 @@ export function clearStoredIdIndex(): void {
 
 // --- Writers ---------------------------------------------------------------
 
+/**
+ * A slice's SCOPE is written once and never rewritten (MJXHRM-591, the
+ * slice-level twin of invariant 38).
+ *
+ * It is set where the session is born — at creation, or at the binding rekey
+ * that gives a hydrating placeholder its runtime key — and from then on it is
+ * what every request, every index entry and every cache key for that session is
+ * derived from. A later write moving it is not a correction: it is the same
+ * repoint the tab type makes impossible to compile, arriving through the one
+ * door that stays open. The first answer wins, silently, because a caller that
+ * passed the wrong scope has already sent its RPC somewhere.
+ */
+function keepScope(prev: ClientSessionState | null, next: ClientSessionState): ClientSessionState {
+  if (!prev || (prev.connectionId === null && prev.profile === null)) {
+    return next
+  }
+
+  if (prev.connectionId === next.connectionId && prev.profile === next.profile) {
+    return next
+  }
+
+  return { ...next, connectionId: prev.connectionId ?? next.connectionId, profile: prev.profile ?? next.profile }
+}
+
 /** Publish one session's state, firing the transition side-effects by diffing
  *  previous vs next. */
 export function publishSessionState(key: string, state: ClientSessionState): ClientSessionState {
   const prev = $sessionStates.get()[key] ?? null
-  const next = { ...state, lastTouchedAt: Date.now() }
+  const next = keepScope(prev, { ...state, lastTouchedAt: Date.now() })
   $sessionStates.set({ ...$sessionStates.get(), [key]: next })
   indexStoredId(prev, next, key)
   transitionHook?.(prev, next, key)

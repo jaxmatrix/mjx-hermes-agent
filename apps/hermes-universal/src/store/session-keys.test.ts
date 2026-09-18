@@ -138,3 +138,39 @@ describe('invariant 31 — keys are opaque downstream', () => {
     expect($sessionStates.get()[key]?.storedSessionId).toBe('abc12345')
   })
 })
+
+describe('a slice\u2019s scope is written once', () => {
+  it('keeps the scope its session was born with', () => {
+    const key = runtimeKeyFor('conn-a', 'run-1')
+
+    publishSessionState(key, {
+      ...emptySessionState('abc12345'),
+      connectionId: 'conn-a',
+      profile: 'work',
+      runtimeSessionId: 'run-1'
+    })
+
+    // A later write that names a different backend is the repoint the tab type
+    // makes impossible to compile, arriving through the one door left open.
+    publishSessionState(key, {
+      ...$sessionStates.get()[key],
+      connectionId: 'conn-b',
+      profile: 'default',
+      statusLine: 'still fine'
+    })
+
+    expect($sessionStates.get()[key]).toMatchObject({
+      connectionId: 'conn-a',
+      profile: 'work',
+      // …and everything else in that write still lands.
+      statusLine: 'still fine'
+    })
+  })
+
+  it('lets a scopeless draft take one at its binding', () => {
+    publishSessionState('draft:9', emptySessionState())
+    publishSessionState('draft:9', { ...emptySessionState(), connectionId: 'conn-a', profile: 'work' })
+
+    expect($sessionStates.get()['draft:9']).toMatchObject({ connectionId: 'conn-a', profile: 'work' })
+  })
+})
