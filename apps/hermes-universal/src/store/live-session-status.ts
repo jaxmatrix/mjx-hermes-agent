@@ -55,7 +55,9 @@
  *   before clearing someone else's live turn.
  */
 
+import { LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { sealOpenToolParts } from '@/lib/chat-messages'
+import { $activeConnectionId } from '@/store/active-connection'
 import { $gatewayState, requestGateway } from '@/store/gateway'
 import { clearLiveSessionStatuses, type LiveSessionStatus, setLiveSessionStatuses } from '@/store/live-session-registry'
 import { $changeEventsAvailable, $sessionsChangeTick } from '@/store/live-sync'
@@ -120,16 +122,40 @@ export interface LiveSessionStatusResponse {
  * was rekeyed from `hydrating:<stored>` onto its runtime id in the meantime is
  * no longer reachable under whatever key it had when the snapshot saw it.
  *
- * Profile-scoped: a profile only ever reaps what its OWN snapshot previously
- * reported, so a second gateway's live rows can never be darkened by this one.
+ * Scoped by CONNECTION and profile: a snapshot only ever reaps what its own
+ * backend previously reported. Profile alone was enough while the app held one
+ * socket; with tabs bound to their own connections it is not — the active
+ * backend's snapshot would settle a foreign tab's running turn, because two
+ * backends mint the same shape of runtime id and the slice is found by stored id
+ * (MJXHRM-591, invariant 37).
  */
-const liveRuntimesByProfile = new Map<string, Map<string, string>>()
+const liveRuntimesByScope = new Map<string, Map<string, string>>()
 
-/** Forget every profile's live-runtime bookkeeping. A gateway wipe already drops
- *  the slices these ids point at, so a carried-over set could only reap
- *  runtimes that no longer exist. */
-export function resetLiveRuntimeTracking(): void {
-  liveRuntimesByProfile.clear()
+const trackingScope = (connectionId: null | string, profileKey: string): string =>
+  `${connectionId ?? LOCAL_CONNECTION_ID}::${profileKey}`
+
+/**
+ * Forget live-runtime bookkeeping.
+ *
+ * With no argument, every scope — the boot and reconnect case, where the ids
+ * from the previous episode name runs on a socket that is gone. With a
+ * connection, only that one: a switch leaves the connections it did not touch
+ * alone, and their tabs keep the liveness their own clients reported.
+ */
+export function resetLiveRuntimeTracking(leavingConnectionId?: null | string): void {
+  if (leavingConnectionId) {
+    const prefix = `${leavingConnectionId}::`
+
+    for (const scope of [...liveRuntimesByScope.keys()]) {
+      if (scope.startsWith(prefix)) {
+        liveRuntimesByScope.delete(scope)
+      }
+    }
+
+    return
+  }
+
+  liveRuntimesByScope.clear()
   clearLiveSessionStatuses()
 }
 
@@ -143,7 +169,8 @@ export function resetLiveRuntimeTracking(): void {
 export function rehydrateLiveSessionStatuses(
   response: LiveSessionStatusResponse,
   nowMs = Date.now(),
-  profileKey = 'default'
+  profileKey = 'default',
+  connectionId: null | string = null
 ): void {
   const seen = new Map<string, string>()
   const live: Record<string, LiveSessionStatus> = {}
@@ -216,8 +243,8 @@ export function rehydrateLiveSessionStatuses(
     setSessionStalled(storedSessionId, isQuiet)
   }
 
-  reapVanishedRuntimes(seen, profileKey)
-  liveRuntimesByProfile.set(profileKey, seen)
+  reapVanishedRuntimes(seen, connectionId, profileKey)
+  liveRuntimesByScope.set(trackingScope(connectionId, profileKey), seen)
 
   // A stranger's turn ENDING has no slice to publish a busy→idle transition
   // through, and that transition is what marks a row unread. Do it from the
@@ -251,8 +278,8 @@ export function rehydrateLiveSessionStatuses(
  * path so the busy→idle transition fires — that edge is what clears the spinner
  * AND marks the row unread ("your turn").
  */
-function reapVanishedRuntimes(seen: Map<string, string>, profileKey: string): void {
-  const previouslyLive = liveRuntimesByProfile.get(profileKey)
+function reapVanishedRuntimes(seen: Map<string, string>, connectionId: null | string, profileKey: string): void {
+  const previouslyLive = liveRuntimesByScope.get(trackingScope(connectionId, profileKey))
 
   if (!previouslyLive) {
     return
@@ -263,7 +290,14 @@ function reapVanishedRuntimes(seen: Map<string, string>, profileKey: string): vo
       continue
     }
 
-    const key = runtimeKeyForStoredSession(storedSessionId)
+    // SCOPED: the same stored id on another connection is another conversation,
+    // and settling it here would stop a spinner on a turn this snapshot knows
+    // nothing about.
+    const key = runtimeKeyForStoredSession(storedSessionId, {
+      connectionId: connectionId ?? LOCAL_CONNECTION_ID,
+      profile: profileKey
+    })
+
     const existing = key ? $sessionStates.get()[key] : undefined
 
     // `awaitingResponse` too: a turn whose submit was acknowledged but whose
@@ -316,11 +350,14 @@ export async function pullLiveSessionStatuses(): Promise<void> {
   // Read the profile BEFORE the await: a switch mid-flight would otherwise file
   // this gateway's registry under the profile the user moved to.
   const profileKey = normalizeProfileKey($activeGatewayProfile.get())
+  // …and the connection with it: the snapshot describes the socket it came from,
+  // which is the ambient one.
+  const connectionId = $activeConnectionId.get()
 
   try {
     const response = await requestGateway<LiveSessionStatusResponse>('session.active_list', {})
 
-    rehydrateLiveSessionStatuses(response, Date.now(), profileKey)
+    rehydrateLiveSessionStatuses(response, Date.now(), profileKey, connectionId)
   } catch {
     // Older gateways may not expose session.active_list at all. Live stream
     // events still work as before; leave the current sidebar state untouched.

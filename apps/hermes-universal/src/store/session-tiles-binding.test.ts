@@ -21,7 +21,9 @@ import { $activeProfile } from '@/store/profiles'
 import { $sessionStates, emptySessionState, publishSessionState, runtimeKeyFor } from '@/store/session-state-types'
 import {
   $sessionTiles,
+  dropUnheldSessionStates,
   migrateLegacyTiles,
+  refreshTileTitles,
   saveSessionTiles,
   type SessionTile,
   tileActions,
@@ -202,5 +204,124 @@ describe('invariant 41 — the v2 migration runs once', () => {
     migrateLegacyTiles('local')
 
     expect($sessionTiles.get()[0].tileKey).toBe('abc12345')
+  })
+})
+
+describe('invariant 37 — a switch touches only what it leaves', () => {
+  const bind = (connectionId: string, runtimeId: string) => {
+    const tab = tile(connectionId, 'default', 'abc12345')
+    const key = runtimeKeyFor(connectionId, runtimeId)
+
+    publishSessionState(key, {
+      ...emptySessionState('abc12345'),
+      connectionId,
+      messages: [{ id: 'm1', parts: [{ text: 'hello', type: 'text' }], role: 'user' }],
+      profile: 'default',
+      runtimeSessionId: runtimeId
+    })
+
+    return { key, tab }
+  }
+
+  it('keeps a bound tab\u2019s slice and runtime binding when its own connection is left', () => {
+    const a = bind('conn-a', 'run-a')
+    const b = bind('conn-b', 'run-b')
+
+    saveSessionTiles([a.tab, b.tab])
+
+    // Leaving A: its tab is HANDED OVER, not unbound — the slice, the ref and
+    // the runtime id all stand, which is what lets it go on streaming on A's
+    // own client.
+    dropUnheldSessionStates('conn-a')
+
+    expect($sessionStates.get()[a.key]?.runtimeSessionId).toBe('run-a')
+    expect($sessionStates.get()[b.key]?.runtimeSessionId).toBe('run-b')
+    expect($sessionTiles.get().map(t => t.tileKey)).toEqual([a.tab.tileKey, b.tab.tileKey])
+    expect($sessionTiles.get().every(t => t.connectionId !== '')).toBe(true)
+  })
+
+  it('drops only the leaving connection\u2019s slices that no tab holds', () => {
+    const a = bind('conn-a', 'run-a')
+    const held = bind('conn-b', 'run-b')
+
+    saveSessionTiles([held.tab])
+
+    const loose = runtimeKeyFor('conn-a', 'loose')
+    const elsewhere = runtimeKeyFor('conn-c', 'stranger')
+
+    publishSessionState(loose, { ...emptySessionState('def67890'), connectionId: 'conn-a', profile: 'default' })
+    publishSessionState(elsewhere, { ...emptySessionState('def67890'), connectionId: 'conn-c', profile: 'default' })
+
+    dropUnheldSessionStates('conn-a')
+
+    expect($sessionStates.get()[loose]).toBeUndefined()
+    expect($sessionStates.get()[a.key]).toBeUndefined()
+    expect($sessionStates.get()[held.key]).toBeDefined()
+    // Another connection's loose slice is none of this switch's business.
+    expect($sessionStates.get()[elsewhere]).toBeDefined()
+  })
+})
+
+describe('invariant 37 — the headline: a bound tab keeps streaming across a switch', () => {
+  it('lands A\u2019s frames in A\u2019s slice after the app has moved to B', async () => {
+    const { $activeConnection } = await import('@/store/active-connection')
+    const { routeGatewayEvent } = await import('@/store/event-router')
+
+    const tab = tile('conn-a', 'default', 'abc12345')
+    const key = runtimeKeyFor('conn-a', 'run-a')
+
+    saveSessionTiles([tab])
+    publishSessionState(key, {
+      ...emptySessionState('abc12345'),
+      connectionId: 'conn-a',
+      profile: 'default',
+      runtimeSessionId: 'run-a'
+    })
+
+    // The app was on A, and moves to B — the switch's own wipe included.
+    $activeConnection.set({ connectionId: 'conn-a', profile: 'default', scopeKey: 'conn-a' } as unknown as never)
+    dropUnheldSessionStates('conn-a')
+    $activeConnection.set({ connectionId: 'conn-b', profile: 'default', scopeKey: 'conn-b' } as unknown as never)
+
+    // A frame delivered on A's OWN client, after the switch.
+    routeGatewayEvent({
+      connectionId: 'conn-a',
+      payload: { text: 'still mine' },
+      session_id: 'run-a',
+      type: 'status.update'
+    } as never)
+
+    const slice = $sessionStates.get()[key]
+
+    expect(slice?.statusLine).toBe('still mine')
+    expect(slice?.runtimeSessionId).toBe('run-a')
+    expect($sessionTiles.get()[0]).toMatchObject({ connectionId: 'conn-a', storedSessionId: 'abc12345' })
+
+    $activeConnection.set(null)
+  })
+})
+
+describe('invariant 43 — a tab keeps its name when the rows go', () => {
+  it('takes its title from its OWN connection\u2019s row, and persists it', () => {
+    const a = tile('conn-a', 'default', 'abc12345')
+
+    saveSessionTiles([a])
+    refreshTileTitles([
+      { connection_id: 'conn-b', id: 'abc12345', title: 'Another machine' },
+      { connection_id: 'conn-a', id: 'abc12345', title: 'Deploy notes' }
+    ])
+
+    expect($sessionTiles.get()[0].title).toBe('Deploy notes')
+    expect(JSON.parse(readKey(TILES_V3) ?? '[]')[0].title).toBe('Deploy notes')
+  })
+
+  it('keeps the last known name when the rows are emptied by a switch', () => {
+    const a = tile('conn-a', 'default', 'abc12345')
+
+    saveSessionTiles([a])
+    refreshTileTitles([{ connection_id: 'conn-a', id: 'abc12345', title: 'Deploy notes' }])
+    refreshTileTitles([])
+
+    expect($sessionTiles.get()[0].title).toBe('Deploy notes')
   })
 })

@@ -26,7 +26,23 @@ vi.mock('@/store/gateway-secondaries', () => ({ closeAllSecondaries: vi.fn(() =>
 vi.mock('@/store/chat', () => ({ resetChat: vi.fn() }))
 vi.mock('@/store/cron', () => ({ setCronJobs: vi.fn() }))
 vi.mock('@/store/workspace-events', () => ({ resetWorkspaceCwd: vi.fn() }))
-vi.mock('@/store/session-states', () => ({ clearAllSessionStates: vi.fn(), resetTileRuntimeBindings: vi.fn() }))
+// MJXHRM-591: the tabs on the connection being left are handed to its own
+// client, so the switch has to name that connection.
+vi.mock('@/store/connection-clients', () => ({ holdConnectionClient: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('@/store/session-states', async () => {
+  const { atom } = await import('@/store/atom')
+
+  // MJXHRM-591: the wipe drops only the LEAVING connection's unheld slices, and
+  // hands its tabs to that connection's own client — so the switch needs both.
+  return {
+    $sessionTiles: atom([
+      // One tab on the connection being left, one somewhere else.
+      { connectionId: 'conn-old', profile: 'work', storedSessionId: 'abc12345', tileKey: 'k1' },
+      { connectionId: 'conn-other', profile: 'default', storedSessionId: 'def67890', tileKey: 'k2' }
+    ]),
+    dropUnheldSessionStates: vi.fn()
+  }
+})
 // Both of these key their caches by the GATEWAY's absolute repo paths. What the
 // clearing actually does is asserted in their own suites; here the question is
 // whether the wipe calls them at all.
@@ -72,6 +88,7 @@ import { $activeConnection } from '@/store/active-connection'
 import { resetChat } from '@/store/chat'
 import { resetRepoStatusForBackendSwitch } from '@/store/coding-status'
 import { $connection, beginGatewaySwitch, disconnect, endGatewaySwitch } from '@/store/connection'
+import { holdConnectionClient } from '@/store/connection-clients'
 import { closeGateway } from '@/store/gateway'
 import type { Connection } from '@/store/gateway-config'
 import { dialSavedTarget, type GatewayTarget, loadGatewayTarget } from '@/store/gateway-restore'
@@ -92,7 +109,7 @@ import {
   refreshMessagingSessions,
   refreshSessions
 } from '@/store/session'
-import { clearAllSessionStates } from '@/store/session-states'
+import { dropUnheldSessionStates } from '@/store/session-states'
 import { disconnectSsh } from '@/store/ssh-backend'
 import type { SessionInfo } from '@/types/hermes'
 
@@ -113,6 +130,9 @@ beforeEach(() => {
   $gatewayMode.set('remote')
   $gatewaySwitching.set(false)
   $connection.set(null)
+  // The connection the app is LEAVING — what the wipe has to be told, so it can
+  // touch only that one (MJXHRM-591, invariant 37).
+  $activeConnection.set({ connectionId: 'conn-old', profile: 'default', scopeKey: 'conn-old' } as never)
   $sessions.set([session])
   $sessionsTotal.set(7)
   $messagingSessions.set([session])
@@ -149,7 +169,17 @@ describe('gateway soft switch', () => {
     })
 
     expect(wipedDuringDial).toBe(true)
-    expect(clearAllSessionStates).toHaveBeenCalledOnce()
+    // The LEAVING connection's unheld slices, not every slice in the app: a tab
+    // bound to another connection keeps its transcript across a switch it had no
+    // part in (MJXHRM-591, invariant 37).
+    expect(dropUnheldSessionStates).toHaveBeenCalledOnce()
+    // …and it is told WHICH connection is being left: passing nothing would drop
+    // every connection's loose slices, including ones this switch never touched.
+    expect(vi.mocked(dropUnheldSessionStates).mock.calls[0][0]).toBe('conn-old')
+    // …and the tabs bound to it are handed to its own client, keeping their
+    // runtime ids: the ambient socket was carrying them, and is about to be
+    // somebody else's.
+    expect(holdConnectionClient).toHaveBeenCalledWith('conn-old', 'work')
     // Skeletons stop once the refresh has landed.
     expect($sessionsLoading.get()).toBe(false)
   })

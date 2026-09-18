@@ -60,6 +60,7 @@ import {
   aliasStoredSessionId,
   clearStoredIdIndex,
   type ClientSessionState,
+  connectionOfSessionKey,
   DEFAULT_SESSION_PROFILE,
   dropSessionState,
   emptySessionState,
@@ -272,6 +273,47 @@ export function clearAllSessionStates() {
   $sessionStates.set({})
 }
 
+/**
+ * Drop the slices of the connection being LEFT that no open tab holds
+ * (MJXHRM-591, invariant 37).
+ *
+ * A switch touches only what it leaves. `clearAllSessionStates` was the right
+ * answer when the app held one socket and every runtime id died with it; with
+ * tabs bound to their own backends it would wipe the transcript of every tab on
+ * every OTHER connection to answer a switch none of them made — and the slices
+ * of the leaving connection's own tabs, which keep streaming on its owning
+ * client.
+ *
+ * So: only the leaving connection, and only what nothing holds. The per-key
+ * teardown (`dropSessionState`) takes the timers, prompts and queued deltas with
+ * each slice, exactly as an eviction does.
+ */
+export function dropUnheldSessionStates(leavingConnectionId: null | string): void {
+  const held = new Set<string>()
+
+  for (const tile of $sessionTiles.get()) {
+    const key = tileRuntimeKey(tile.tileKey)
+
+    if (key) {
+      held.add(key)
+    }
+  }
+
+  held.add($activeSessionKey.get())
+
+  const leaving = leavingConnectionId ?? LOCAL_SESSION_SCOPE
+
+  for (const [key, state] of Object.entries($sessionStates.get())) {
+    if (held.has(key)) {
+      continue
+    }
+
+    if ((state.connectionId ?? connectionOfSessionKey(key)) === leaving) {
+      dropSessionState(key)
+    }
+  }
+}
+
 /** Point the app at a brand-new empty draft. Used after wiping the map, so the
  *  active key never dangles at a slice that no longer exists. */
 export function startFreshActiveSession(): string {
@@ -461,6 +503,13 @@ export interface SessionTile {
   /** The backend this tab bound to (`TunnelDescriptor.instanceKey`), learned at
    *  its first resume. A different one later is a different machine. */
   readonly backendIdentity?: string
+  /** The tab's name, as last seen in a session row (invariant 43).
+   *
+   *  A tab's title resolves through the sidebar's rows, and those are the ACTIVE
+   *  backend's: a switch empties them, so a tab bound to any other connection
+   *  would fall back to rendering its id. The snapshot is persisted and
+   *  refreshed whenever that tab's own row is in front of us. */
+  title?: string
   dir?: TileDock
   anchor?: string
   before?: null | string
@@ -531,7 +580,10 @@ export function sessionRefFor(storedSessionId: string): SessionRef {
 const TILES_KEY = 'hermes.sessionTiles.v3'
 const LEGACY_TILES_KEY = 'hermes.sessionTiles.v2'
 
-type StoredTile = Pick<SessionTile, 'anchor' | 'before' | 'connectionId' | 'dir' | 'profile' | 'storedSessionId'>
+type StoredTile = Pick<
+  SessionTile,
+  'anchor' | 'before' | 'connectionId' | 'dir' | 'profile' | 'storedSessionId' | 'title'
+>
 
 const toStored = (t: SessionTile): StoredTile => ({
   anchor: t.anchor,
@@ -539,7 +591,8 @@ const toStored = (t: SessionTile): StoredTile => ({
   connectionId: t.connectionId,
   dir: t.dir,
   profile: t.profile,
-  storedSessionId: t.storedSessionId
+  storedSessionId: t.storedSessionId,
+  title: t.title
 })
 
 /** Rebuild a live tab from its persisted form. Runtime ids and the bound backend
@@ -559,7 +612,8 @@ function parseStoredTile(value: unknown, fallbackConnection: string, fallbackPro
     connectionId: typeof raw.connectionId === 'string' ? raw.connectionId : fallbackConnection,
     dir: raw.dir,
     profile: typeof raw.profile === 'string' ? raw.profile : fallbackProfile,
-    storedSessionId: raw.storedSessionId
+    storedSessionId: raw.storedSessionId,
+    title: typeof raw.title === 'string' ? raw.title : undefined
   }
 }
 
@@ -731,6 +785,50 @@ export type SessionTilePatch = Partial<
 
 export function patchSessionTile(tileKey: string, patch: SessionTilePatch) {
   saveSessionTiles($sessionTiles.get().map(t => (t.tileKey === tileKey ? { ...t, ...patch } : t)))
+}
+
+/**
+ * Keep each tab's title snapshot in step with the rows in front of us
+ * (invariant 43).
+ *
+ * Called with rows that carry their own connection, so a tab is only ever named
+ * by ITS backend's row — the same stored id on another one is another
+ * conversation, and taking its title would put a stranger's name on this tab.
+ */
+export function refreshTileTitles(
+  rows: readonly { connection_id?: null | string; id: string; title?: null | string }[]
+): void {
+  const byKey = new Map<string, string>()
+
+  for (const row of rows) {
+    const title = (row.title ?? '').trim()
+
+    if (title) {
+      byKey.set(`${row.connection_id || LOCAL_SESSION_SCOPE}\u0000${row.id}`, title)
+    }
+  }
+
+  if (byKey.size === 0) {
+    return
+  }
+
+  let changed = false
+
+  const next = $sessionTiles.get().map(tile => {
+    const title = byKey.get(`${tile.connectionId}\u0000${tile.storedSessionId}`)
+
+    if (!title || title === tile.title) {
+      return tile
+    }
+
+    changed = true
+
+    return { ...tile, title }
+  })
+
+  if (changed) {
+    saveSessionTiles(next)
+  }
 }
 
 /** What an UNAVAILABLE tab offers: exactly one verb. Its backend changed under
