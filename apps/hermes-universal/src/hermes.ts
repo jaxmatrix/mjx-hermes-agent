@@ -496,11 +496,26 @@ export function getSession(id: string, profile?: string | null): Promise<Session
 // this GET to the remote backend (which serves its own state.db); for a local
 // profile the primary opens that profile's state.db via ?profile=. Omit for
 // the current/default profile.
-export function getSessionMessages(id: string, profile?: string | null): Promise<SessionMessagesResponse> {
+/**
+ * A session's stored transcript.
+ *
+ * `connectionId` names the gateway to read it FROM (MJXHRM-591): a tab bound to
+ * a background connection must not fetch its transcript from whichever gateway
+ * the app happens to be pointed at, which would answer 404 at best and another
+ * machine's same-named session at worst. `api` resolves that connection's base
+ * URL at call time and lets Rust attach its credential (MJXHRM-446/413);
+ * omitting it keeps the legacy "the active connection" behaviour.
+ */
+export function getSessionMessages(
+  id: string,
+  profile?: string | null,
+  connectionId?: null | string
+): Promise<SessionMessagesResponse> {
   const suffix = profile ? `?profile=${encodeURIComponent(profile)}` : ''
 
   return api<SessionMessagesResponse>({
     ...(profile ? { profile } : {}),
+    ...(connectionId ? { connectionId } : {}),
     path: `/api/sessions/${encodeURIComponent(id)}/messages${suffix}`
   })
 }

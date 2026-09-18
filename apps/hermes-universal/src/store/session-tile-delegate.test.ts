@@ -7,7 +7,7 @@
  * stranded under a dead key that hung busy forever with nothing to retry.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SessionTileDelegate } from '@/store/session-states'
 
@@ -47,13 +47,25 @@ const captured = vi.fn((next: SessionTileDelegate) => {
 })
 
 vi.mock('@/store/session-states', async () => {
+  const { atom } = await import('@/store/atom')
   const types = await import('@/store/session-state-types')
 
   return {
     ...types,
+    // MJXHRM-591: the delegate reads the tab it was asked to bind, and the
+    // workspace computeds read the focused chat's cwd off this module.
+    $focusedCwd: atom(''),
+    $sessionTiles: atom([]),
     closeSessionTile: vi.fn(),
     openBranchTile: vi.fn(),
-    setSessionTileDelegate: (next: SessionTileDelegate) => captured(next)
+    setSessionTileDelegate: (next: SessionTileDelegate) => captured(next),
+    tileKeyFor: (ref: { connectionId: string; profile: string; storedSessionId: string }) =>
+      types.storedKeyFor(ref.connectionId, ref.profile, ref.storedSessionId),
+    tileRef: (tile: { connectionId: string; profile: string; storedSessionId: string }) => ({
+      connectionId: tile.connectionId,
+      profile: tile.profile,
+      storedSessionId: tile.storedSessionId
+    })
   }
 })
 
@@ -282,5 +294,97 @@ describe('branchSession', () => {
     await delegate.branchSession('stored-1')
 
     expect(openBranchTile).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * MJXHRM-591, invariant 29 — a bound tab's work goes to ITS connection.
+ *
+ * The app's own connection is deliberately somewhere else in every case below:
+ * a tab that reads `$activeConnection` at request time would send its transcript
+ * fetch, its resume and its submit to whichever backend the user is looking at,
+ * which answers 404 at best and another machine's same-named session at worst.
+ */
+describe('a tab bound to a background connection', () => {
+  const TAB = { connectionId: 'conn-a', profile: 'work', storedSessionId: 'abc12345' }
+
+  let routes: { connectionId: string; method: string; profile: string }[] = []
+  let restoreRouter: (() => void) | null = null
+
+  beforeEach(async () => {
+    const { $sessionTiles, tileKeyFor } = await import('@/store/session-states')
+    const { setSessionRequestRouter } = await import('@/store/session-request-router')
+
+    routes = []
+    getSessionMessages.mockClear()
+
+    $sessionTiles.set([{ ...TAB, tileKey: tileKeyFor(TAB) }] as never)
+
+    // The app is pointed at ANOTHER connection for the whole test.
+    restoreRouter = setSessionRequestRouter({
+      active: () => ({
+        connectionId: 'conn-elsewhere',
+        profile: 'default',
+        scopeKey: 'conn-elsewhere',
+        scopeProfile: false
+      }),
+      dispatch: async (route, method) => {
+        routes.push({ connectionId: route.connectionId, method, profile: route.profile })
+
+        return { messages: [], running: false, session_id: 'runtime-a' } as never
+      },
+      resolve: () => ({
+        connectionId: 'conn-elsewhere',
+        profile: 'default',
+        scopeKey: 'conn-elsewhere',
+        scopeProfile: false
+      }),
+      resolveRef: ref => ({
+        connectionId: ref.connectionId,
+        profile: ref.profile ?? 'default',
+        scopeKey: `conn:${ref.connectionId}::${ref.profile ?? 'default'}`,
+        scopeProfile: true
+      })
+    })
+  })
+
+  afterEach(() => {
+    restoreRouter?.()
+    restoreRouter = null
+  })
+
+  it('resumes on its own connection, and fetches its transcript from it', async () => {
+    const { tileKeyFor } = await import('@/store/session-states')
+
+    const key = await delegate.resumeTile(tileKeyFor(TAB))
+
+    expect(routes).toEqual([{ connectionId: 'conn-a', method: 'session.resume', profile: 'work' }])
+    // …and the REST transcript names the same connection, which `lib/api`
+    // resolves to that gateway's base URL at call time.
+    expect(getSessionMessages).toHaveBeenCalledWith('abc12345', 'work', 'conn-a')
+    // The slice is keyed by the connection that issued the runtime id, and
+    // carries the scope its later requests route by.
+    expect(key).toBe('@conn-a|runtime-a')
+    expect($sessionStates.get()[key]).toMatchObject({ connectionId: 'conn-a', profile: 'work' })
+  })
+
+  it('submits on its own connection, still, after the app moved on', async () => {
+    const { tileKeyFor } = await import('@/store/session-states')
+    const key = await delegate.resumeTile(tileKeyFor(TAB))
+
+    routes.length = 0
+    await delegate.submitToSession(key, 'hello')
+
+    expect(routes).toEqual([{ connectionId: 'conn-a', method: 'prompt.submit', profile: 'work' }])
+  })
+
+  it('refuses to resume a tab whose backend changed under it', async () => {
+    const { $sessionTiles, tileKeyFor } = await import('@/store/session-states')
+
+    $sessionTiles.set([{ ...TAB, tileKey: tileKeyFor(TAB), unavailable: true }] as never)
+
+    await expect(delegate.resumeTile(tileKeyFor(TAB))).rejects.toThrow()
+    expect(routes).toEqual([])
+    expect(getSessionMessages).not.toHaveBeenCalled()
   })
 })

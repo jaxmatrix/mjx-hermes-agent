@@ -88,6 +88,10 @@ export interface SessionRequestRouter {
   /** Which route should serve this session. Synchronous: the caller has already
    *  resolved the owning profile. */
   resolve(input: { ownerProfile?: null | string; storedSessionId: null | string }): SessionRoute
+  /** The route to a NAMED connection and profile, for a caller that already
+   *  knows where its work belongs — a bound tab (MJXHRM-591, invariant 29).
+   *  Optional: the single-gateway router has one route and answers with it. */
+  resolveRef?(ref: { connectionId: string; profile: null | string }): SessionRoute
   /** Send. Throws `SessionRouteError` when the route cannot be honoured. */
   dispatch<T>(route: SessionRoute, method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<T>
 }
@@ -272,4 +276,25 @@ export async function requestForSession<T>(
   const router = $currentRouter.get()
 
   return router.dispatch<T>(router.resolve({ ownerProfile, storedSessionId }), method, params, timeoutMs)
+}
+
+/**
+ * Send to the connection and profile the CALLER names.
+ *
+ * `requestForSession` asks who owns a stored id, which is right for a sidebar
+ * verb and wrong for a bound tab: the tab recorded its connection when it
+ * opened, and the merged rows that answer the ownership question can be emptied
+ * or re-merged by a switch under it. Same re-read discipline — resolve and
+ * dispatch with no await between them.
+ */
+export function requestForConnection<T>(
+  ref: { connectionId: string; profile: null | string },
+  method: string,
+  params: Record<string, unknown> = {},
+  timeoutMs?: number
+): Promise<T> {
+  const router = $currentRouter.get()
+  const route = router.resolveRef?.(ref) ?? router.resolve({ ownerProfile: ref.profile, storedSessionId: null })
+
+  return router.dispatch<T>(route, method, params, timeoutMs)
 }

@@ -134,6 +134,20 @@ export const registrySessionRouter: SessionRequestRouter = {
     }
   },
 
+  /**
+   * The route to a connection the CALLER names — a bound tab's own (MJXHRM-591,
+   * invariant 29). The dispatch is unchanged, so a ref that IS the active
+   * connection still rides the ambient socket, and any other lands on that
+   * connection's socket — which, for a connection with an open tab, is the
+   * pinned owning client `leaseSecondary` hands straight back.
+   */
+  resolveRef({ connectionId, profile }): SessionRoute {
+    const active = activeRoute()
+    const profileKey = normalizeProfileKey(profile ?? active.profile)
+
+    return routeFor(connectionId, profileKey, connectionId !== active.connectionId || profileKey !== active.profile)
+  },
+
   resolve({ ownerProfile, storedSessionId }): SessionRoute {
     const active = activeRoute()
     const owner = (ownerProfile ?? '').trim()

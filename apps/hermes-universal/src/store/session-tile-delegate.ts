@@ -40,7 +40,7 @@ import {
   takeVoicePlaybackInterrupted
 } from '@/lib/voice-playback'
 import { type ChatMessage, interruptSession, nextId } from '@/store/chat'
-import { requestGateway } from '@/store/gateway'
+import { holdConnectionClient } from '@/store/connection-clients'
 import { notifyError } from '@/store/notifications'
 import {
   $sessions,
@@ -52,17 +52,28 @@ import {
   sessionProfileIsAmbiguous
 } from '@/store/session'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
-import { requestForSession } from '@/store/session-request-router'
+import { requestForConnection } from '@/store/session-request-router'
 import {
   $sessionStates,
+  DEFAULT_SESSION_PROFILE,
   dropSessionState,
   ensureSessionSlice,
-  hydratingKey,
+  hydratingKeyFor,
   isPlaceholderKey,
+  parseSessionKey,
   rekeySession,
-  runtimeKeyForStoredSession
+  runtimeKeyFor,
+  runtimeKeyForStoredSession,
+  type SessionRef
 } from '@/store/session-state-types'
-import { closeSessionTile, openBranchTile, setSessionTileDelegate, updateSession } from '@/store/session-states'
+import {
+  $sessionTiles,
+  closeSessionTile,
+  openBranchTile,
+  setSessionTileDelegate,
+  tileRef,
+  updateSession
+} from '@/store/session-states'
 import { clearTranscriptPaint, paintCachedTail } from '@/store/transcript-paint'
 import { adoptResumedTurn, beginTurn, resumedTurnIsLive, settleTurn } from '@/store/turn-lifecycle'
 import type { SessionResumeResponse } from '@/types/hermes'
@@ -72,6 +83,24 @@ import type { SessionResumeResponse } from '@/types/hermes'
  *  and the caller's error stands. */
 function storedIdOfSession(runtimeId: string): null | string {
   return $sessionStates.get()[runtimeId]?.storedSessionId ?? null
+}
+
+/** The connection and profile a slice lives on — what its RPCs route by. A
+ *  slice with no scope of its own is the ambient chat's, on the active one. */
+function sessionScopeOf(key: string): { connectionId: string; profile: null | string } {
+  const slice = $sessionStates.get()[key]
+  const parsed = parseSessionKey(key)
+
+  return {
+    connectionId: slice?.connectionId ?? parsed.connectionId,
+    profile: slice?.profile ?? parsed.profile
+  }
+}
+
+/** The id that goes ON THE WIRE for a session key: the gateway issued the bare
+ *  runtime id, and the scope is this client's own bookkeeping. */
+function wireIdOf(key: string): string {
+  return $sessionStates.get()[key]?.runtimeSessionId ?? parseSessionKey(key).id
 }
 
 function userMessage(text: string): ChatMessage {
@@ -90,8 +119,9 @@ function userMessage(text: string): ChatMessage {
  * The tile analog of `store/session.ts#openSession`, which short-circuits the
  * same way for the same reasons.
  */
-async function resumeSessionToState(storedId: string): Promise<string> {
-  const warm = runtimeKeyForStoredSession(storedId)
+async function resumeSessionToState(ref: SessionRef): Promise<string> {
+  const { storedSessionId: storedId } = ref
+  const warm = runtimeKeyForStoredSession(storedId, ref)
 
   // A placeholder key is a hydrate still in flight (this one, or the main pane's
   // — both reserve `hydrating:<storedId>`). It is not an id a tile can be bound
@@ -100,7 +130,7 @@ async function resumeSessionToState(storedId: string): Promise<string> {
     return warm
   }
 
-  return hydrateSessionToState(storedId)
+  return hydrateSessionToState(ref)
 }
 
 /**
@@ -116,7 +146,15 @@ async function resumeSessionToState(storedId: string): Promise<string> {
  * mid-way through. It is also the same key the main pane uses, so a session
  * opened in both places now converges on one slice instead of two.
  */
-async function hydrateSessionToState(storedId: string): Promise<string> {
+async function hydrateSessionToState(ref: SessionRef): Promise<string> {
+  const { storedSessionId: storedId } = ref
+
+  // The tab's own socket, before any I/O: held for as long as the tab is open,
+  // pinned so nothing reaps it under a visible stream, and demoted when the last
+  // tab on this connection closes (invariants 32-34). A tab on the ACTIVE
+  // connection holds nothing — the app already owns that socket.
+  await holdConnectionClient(ref.connectionId, ref.profile).catch(() => undefined)
+
   // A tile can open a session from ANY profile, not just the live one. Resuming
   // (or reading the transcript) without one lets the gateway fall back to the
   // launch-profile database and fork the conversation into the wrong profile —
@@ -127,9 +165,11 @@ async function hydrateSessionToState(storedId: string): Promise<string> {
     knownSessionProfile(storedId) ?? (sessionProfileIsAmbiguous() ? await resolveSessionProfile(storedId) : undefined)
 
   const stored = $sessions.get().find(session => session.id === storedId)
-  const key = hydratingKey(storedId)
+  const key = hydratingKeyFor(ref)
 
   ensureSessionSlice(key, {
+    connectionId: ref.connectionId,
+    profile: ref.profile,
     storedSessionId: storedId,
     busy: true,
     cwd: stored?.cwd ?? '',
@@ -147,16 +187,21 @@ async function hydrateSessionToState(storedId: string): Promise<string> {
     // max(), not sum(). Awaiting the transcript first and only then resuming made
     // a tile cold open pay both round trips end to end.
     const transcriptPromise = Promise.resolve()
-      .then(() => getSessionMessages(storedId, profile))
+      .then(() => getSessionMessages(storedId, profile ?? ref.profile, ref.connectionId))
       .catch(() => null)
 
-    // ROUTED: `profile` was resolved before a possible await, and the route can
-    // move across it (see `store/session-request-router.ts`).
-    const resumePromise = requestForSession<SessionResumeResponse>(storedId, 'session.resume', {
-      session_id: storedId,
-      cols: 96,
-      ...SESSION_SOURCE_PARAMS
-    })
+    // ROUTED BY THE TAB'S OWN REF, not by asking the merged rows who owns this
+    // stored id: the tab recorded its connection when it opened, and the rows
+    // can be emptied or re-merged by a switch under it (invariant 29).
+    const resumePromise = requestForConnection<SessionResumeResponse>(
+      { connectionId: ref.connectionId, profile: profile ?? ref.profile },
+      'session.resume',
+      {
+        session_id: storedId,
+        cols: 96,
+        ...SESSION_SOURCE_PARAMS
+      }
+    )
 
     // Consumed by the `await` below; this only keeps a rejection from surfacing
     // as an unhandled one while the transcript fetch settles.
@@ -169,8 +214,13 @@ async function hydrateSessionToState(storedId: string): Promise<string> {
     const messages = appendLiveSessionProjection(restMessages ?? toChatMessages(resumed.messages ?? []), resumed)
     const runtimeId = resumed.session_id ?? storedId
     const stillRunning = resumedTurnIsLive(resumed)
+    // SCOPED: two backends mint the same shape of runtime id, so the slice is
+    // keyed by the connection that issued this one.
+    const runtimeKey = runtimeKeyFor(ref.connectionId, runtimeId)
 
-    rekeySession(key, runtimeId, {
+    rekeySession(key, runtimeKey, {
+      connectionId: ref.connectionId,
+      profile: ref.profile,
       // Without this the slice has no wire-facing id, so `prompt.submit` /
       // `session.interrupt` for this tile would go out with `undefined`.
       runtimeSessionId: runtimeId,
@@ -186,11 +236,11 @@ async function hydrateSessionToState(storedId: string): Promise<string> {
     // Adopting it is what puts the tile into `$inflightTurns`, and therefore into
     // the set `reconcileInflightTurns` walks on every WS re-open — without it a
     // tile's live turn was invisible to reconnect reconciliation.
-    adoptResumedTurn(runtimeId, resumed)
+    adoptResumedTurn(runtimeKey, resumed)
     // The authority has landed; the picture of it is spent.
     clearTranscriptPaint(key)
 
-    return runtimeId
+    return runtimeKey
   } catch (err) {
     // Nothing bound. CLEAR THE PAINT FIRST: a tile showing a healthy transcript
     // that can neither stream nor submit is worse than an empty one, and typing
@@ -265,7 +315,14 @@ async function submitTextToSession(runtimeId: string, text: string, displayText?
     await withSessionNotFoundResume(
       runtimeId,
       storedIdOfSession(runtimeId),
-      live => requestGateway('prompt.submit', { session_id: live, text, ...(interrupted && { interrupted: true }) }),
+      live =>
+        requestForConnection(
+          sessionScopeOf(runtimeId),
+          'prompt.submit',
+          // `live` is the wire id the recovery resolved; the KEY it is folded
+          // under is this closure's `submitKey`.
+          { session_id: wireIdOf(live), text, ...(interrupted && { interrupted: true }) }
+        ),
       {
         onRecovered: live => {
           rekeySession(submitKey, live, { runtimeSessionId: live })
@@ -289,7 +346,35 @@ async function submitTextToSession(runtimeId: string, text: string, displayText?
 }
 
 setSessionTileDelegate({
-  resumeTile: storedId => resumeSessionToState(storedId),
+  /**
+   * Bind the tab named by `tileKey`.
+   *
+   * An UNAVAILABLE tab is refused outright (invariant 38): its backend changed
+   * under it, so there is nothing here to resume, no client to open and no
+   * request to route — its one verb is Close.
+   */
+  resumeTile: tileKey => {
+    const tile = $sessionTiles.get().find(open => open.tileKey === tileKey)
+
+    if (tile?.unavailable) {
+      return Promise.reject(new Error('this conversation belongs to a backend that is no longer there'))
+    }
+
+    // The tab record when there is one; otherwise the key itself, which IS the
+    // ref encoded — so a caller holding only a key (a bubble, a legacy bare
+    // stored id) resolves to the same place without a second lookup.
+    const parsed = parseSessionKey(tileKey)
+
+    const ref = tile
+      ? tileRef(tile)
+      : {
+          connectionId: parsed.connectionId,
+          profile: parsed.profile ?? DEFAULT_SESSION_PROFILE,
+          storedSessionId: parsed.id
+        }
+
+    return resumeSessionToState(ref)
+  },
 
   async submitToSession(runtimeId, text, displayText) {
     await submitTextToSession(runtimeId, text, displayText)
