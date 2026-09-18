@@ -55,6 +55,41 @@ export interface SessionRoute {
   scopeKey: string
 }
 
+/**
+ * Desktop's owner-route surface, verbatim, so its ported callers resolve. The
+ * exact owner of a session: the connection whose socket minted the runtime plus
+ * the profile that selects it. A `SessionTile` (`connectionId` + `profile`)
+ * already satisfies the shape.
+ */
+export interface SessionOwnerRoute {
+  connectionId: string
+  mode?: 'local' | 'remote'
+  profile: string
+  targetProfile?: string
+}
+
+/** @deprecated Alias kept for existing imports; new code names SessionOwnerRoute. */
+export type SessionProfileRoute = SessionOwnerRoute
+
+export type SessionOwnerScope = undefined | null | string | SessionOwnerRoute
+
+/** Exact owner from a connection-tagged session row. A row without a connection
+ *  tag yields undefined — a bare profile is not an exact owner. */
+export function sessionOwnerRouteFromRow(
+  row: { connection_id?: null | string; profile?: null | string } | null | undefined
+): SessionOwnerRoute | undefined {
+  const connectionId = String(row?.connection_id ?? '').trim()
+
+  if (!connectionId) {
+    return undefined
+  }
+
+  return { connectionId, profile: String(row?.profile ?? '').trim() || 'default' }
+}
+
+export const isSessionOwnerRoute = (owner: SessionOwnerScope): owner is SessionOwnerRoute =>
+  Boolean(owner && typeof owner === 'object' && 'connectionId' in owner)
+
 /** `needs-sign-in`: the route's tunnel stopped on something only a person can
  *  answer; the sign-in notification is already on screen (MJXHRM-592). */
 export type SessionRouteErrorKind = 'needs-sign-in' | 'no-gateway' | 'route-moved' | 'switching'
