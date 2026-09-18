@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Tip } from '@/components/ui/tooltip'
-import { deleteSession, getDefaultCwd, listSessions, setSessionArchived } from '@/hermes'
+import { deleteSession, listSessions, setSessionArchived } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { desktopDefaultCwd } from '@/lib/desktop-fs'
 import { pathLeaf } from '@/lib/display-path'
 import { Archive, ArchiveOff, FolderOpen, Loader2, Trash } from '@/lib/icons'
 import { IS_DESKTOP } from '@/lib/platform'
@@ -46,9 +47,11 @@ function DefaultProjectDirSetting() {
   // Best-effort backend cwd for the "Defaults to …" hint when unset.
   useEffect(() => {
     let alive = true
-    void getDefaultCwd()
+    // desktopDefaultCwd answers null in local mode, where the monolith's
+    // getDefaultCwd always returned an object — hence the optional chain.
+    void desktopDefaultCwd()
       .then(res => {
-        if (alive && res.cwd) {
+        if (alive && res?.cwd) {
           setFallback(res.cwd)
         }
       })

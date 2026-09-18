@@ -25,8 +25,12 @@ vi.mock('@/hermes', () => ({
     offset: 0
   })),
   setSessionArchived: vi.fn(async () => ({ ok: true })),
-  deleteSession: vi.fn(async () => ({ ok: true })),
-  getDefaultCwd: vi.fn(async () => ({ cwd: '/home/u', branch: null }))
+  deleteSession: vi.fn(async () => ({ ok: true }))
+}))
+// The backend-cwd hint moved off the @/hermes monolith onto desktop-fs when
+// desktop's barrel took over @/hermes.
+vi.mock('@/lib/desktop-fs', () => ({
+  desktopDefaultCwd: vi.fn(async () => ({ cwd: '/home/u', branch: null }))
 }))
 // `isSessionPinned` is exercised for real in store/session.test.ts (it reads
 // the backend flag AND the lineage-root-keyed local pin set). Here it is a

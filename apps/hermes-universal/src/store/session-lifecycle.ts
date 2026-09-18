@@ -26,6 +26,7 @@ import {
   getSession,
   getSessionMessages,
   listAllProfileSessions,
+  listProfileSessionsPage,
   renameSession,
   searchSessions,
   setSessionArchived
@@ -1103,7 +1104,10 @@ export async function loadMoreSessions(): Promise<void> {
   $sessionsLoading.set(true)
 
   try {
-    const res = await listAllProfileSessions(
+    // listProfileSessionsPage, not listAllProfileSessions: desktop's version
+    // hardcodes offset=0, so paging through it would re-fetch page 1 forever.
+    // See src/api/universal.ts.
+    const res = await listProfileSessionsPage(
       PAGE,
       1,
       'exclude',

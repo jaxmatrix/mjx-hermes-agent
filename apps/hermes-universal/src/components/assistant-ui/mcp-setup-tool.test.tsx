@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as Hermes from '@/hermes'
 import { I18nProvider } from '@/i18n'
 import type * as GatewayRpc from '@/lib/gateway-rpc'
+import type * as McpDashboardOAuth from '@/lib/mcp-dashboard-oauth'
 import type * as McpServers from '@/lib/mcp-servers'
 import type * as Notifications from '@/store/notifications'
 
@@ -45,11 +46,8 @@ vi.mock('@/hermes', async importActual => {
 
   return {
     ...actual,
-    authMcpServer: vi.fn(),
-    cancelMcpOAuthFlow: vi.fn().mockResolvedValue({ ok: true, status: 'expired' }),
     getActionStatus: vi.fn(),
     getMcpCatalog: vi.fn().mockResolvedValue({ entries: [], diagnostics: [] }),
-    getMcpOAuthFlow: vi.fn(),
     installMcpCatalogEntry: vi.fn().mockResolvedValue({ ok: true }),
     setMcpServerEnabled: vi.fn().mockResolvedValue({ ok: true })
   }
@@ -73,15 +71,20 @@ vi.mock('@/store/notifications', async importActual => {
   return { ...actual, notify: vi.fn(), notifyError: vi.fn() }
 })
 
+vi.mock('@/lib/mcp-dashboard-oauth', async importActual => {
+  const actual = await importActual<typeof McpDashboardOAuth>()
+
+  return { ...actual, completeMcpDesktopOAuth: vi.fn() }
+})
+
 import {
-  authMcpServer,
   getActionStatus,
   getMcpCatalog,
-  getMcpOAuthFlow,
   installMcpCatalogEntry,
   setMcpServerEnabled
 } from '@/hermes'
 import { respondMcpSetup } from '@/lib/gateway-rpc'
+import { completeMcpDesktopOAuth } from '@/lib/mcp-dashboard-oauth'
 import { removeMcpServerEntry, writeMcpServerEntry } from '@/lib/mcp-servers'
 import { requestGateway } from '@/store/gateway-client'
 import { notifyError } from '@/store/notifications'
@@ -257,14 +260,7 @@ describe('McpSetupTool — the consent card', () => {
 
   it('installs a URL-only remote through the shared config-merge path', async () => {
     park()
-    vi.mocked(authMcpServer).mockResolvedValue({
-      authorization_url: 'https://linear.app/oauth',
-      error: null,
-      flow_id: 'f1',
-      server_name: 'linear',
-      status: 'authorization_required'
-    })
-    vi.mocked(getMcpOAuthFlow).mockResolvedValue({
+    vi.mocked(completeMcpDesktopOAuth).mockResolvedValue({
       authorization_url: null,
       error: null,
       flow_id: 'f1',
@@ -289,7 +285,7 @@ describe('McpSetupTool — the consent card', () => {
   // that the next turn tries to spawn and fails on.
   it('rolls the config write back when the OAuth flow dies', async () => {
     park()
-    vi.mocked(authMcpServer).mockRejectedValue(new Error('oauth refused'))
+    vi.mocked(completeMcpDesktopOAuth).mockRejectedValue(new Error('oauth refused'))
 
     renderCard(<McpSetupTool {...setupProps({ server: 'linear' })} />)
     fireEvent.click(screen.getByRole('button', { name: /Install/ }))
