@@ -219,6 +219,17 @@ impl Slot {
 }
 
 /// What a caller does with a dial that ended while the key moved on.
+///
+/// Invariant 28: a primary caller whose dial the key no longer belongs to never
+/// tears that key down, never takes a hold it was not given, and never leaves
+/// the UI unresolved. It JOINS the key's current dial when the key still serves
+/// its target under a newer primary attempt; it fails QUIETLY, with kind
+/// `superseded` and releasing nothing, when a newer primary attempt pointed the
+/// key elsewhere — that attempt publishes; it fails with ITS OWN kind, so its
+/// caller tears down as usual, when a lease owns the key now — the lease's
+/// holder keeps the slot through that release. No verdict writes book state.
+/// Only a removal with no re-creation, or a quit, ends a hold AND ITS SLOT
+/// through a failed caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     /// Wait for the key's current dial and adopt what it installs.
@@ -375,44 +386,44 @@ impl SlotBook {
     }
 
     /// Who the key belongs to now, for a caller whose dial `serial` has ended.
+    /// Asked by the primary's dial alone; a lease never joins (invariant 28).
     ///
-    /// Two independent questions. The FINGERPRINT decides join or fail: may this
-    /// caller adopt what the key serves now? And, when it may not, who moved the
-    /// origin decides quiet or loud: a newer PRIMARY attempt publishes its own
-    /// result, so the displaced caller says nothing; a lease does not, so the
-    /// caller must resolve its own UI.
-    pub fn join(&mut self, key: &str, serial: u64, fingerprint: &str, primary: bool) -> Verdict {
-        if !self.slots.contains_key(key) {
+    /// WHO moved the origin decides first: only a newer PRIMARY attempt holds
+    /// the key, so only it leaves something this caller may adopt or trust to
+    /// publish. Under it, the FINGERPRINT decides join or quiet: may this caller
+    /// adopt what the key serves now? A lease owns nothing on this caller's
+    /// behalf, so the caller fails with its own kind and resolves its own UI.
+    ///
+    /// `&self`: a verdict is not a hold. It answers whose key this is and
+    /// writes nothing — `slot.primary` belongs to `hold_primary` and
+    /// `release_primary`, the only two that can end what they began.
+    pub fn join(&self, key: &str, serial: u64, fingerprint: &str) -> Verdict {
+        let Some(slot) = self.slots.get(key) else {
             return Verdict::Fail;
-        }
+        };
 
         // Still this caller's slot: it joins only a newer dial of it.
         if self.superseded(key, serial) {
             return Verdict::Join;
         }
 
-        let slot = self.slots.get_mut(key).expect("the key was just checked");
-
         if serial >= slot.origin {
             return Verdict::Fail;
         }
 
-        if slot.spec.fingerprint != fingerprint {
-            return if slot.origin_primary {
-                Verdict::Quiet
-            } else {
-                Verdict::Fail
-            };
+        // Older than the origin: the key was retargeted or re-created under it.
+        match (slot.origin_primary, slot.spec.fingerprint == fingerprint) {
+            // The key still serves what this caller asked for, under a newer
+            // primary attempt that took the hold and owns its release.
+            (true, true) => Verdict::Join,
+            // That attempt pointed the key elsewhere: it publishes its own
+            // result, so this caller says nothing and releases nothing.
+            (true, false) => Verdict::Quiet,
+            // A lease owns the key now, whatever it points at: its holder keeps
+            // the slot through this caller's release, and `primary` stays false
+            // so the slot goes when that lease does.
+            (false, _) => Verdict::Fail,
         }
-
-        // The key still serves what this caller asked for — a re-creation, or a
-        // retarget back to the same target. A re-creation dropped the primary's
-        // hold, so it is re-asserted here, under the same book lock.
-        if primary {
-            slot.primary = true;
-        }
-
-        Verdict::Join
     }
 
     /// What an existing slot does for a request (a lease or the primary).
@@ -855,6 +866,12 @@ impl SlotBook {
     }
 }
 
+/// A verdict reads the book and never writes it (invariant 28). Pinned as a
+/// `fn` over `&SlotBook`, so a branch that re-asserted the primary's hold —
+/// which left a hold nobody owned, and a slot nothing could reap — would not
+/// compile.
+const _: fn(&SlotBook, &str, u64, &str) -> Verdict = SlotBook::join;
+
 /// Whether a webview's page keeps a tunnel epoch: only a window's own webview.
 /// Holders are keyed by the window label, and a guest webview (MJXHRM-447) is
 /// never destroyed under a label the book would ever remove.
@@ -1223,17 +1240,12 @@ pub(crate) enum Joined {
     Quiet,
 }
 
-/// Who the key belongs to now, for a caller whose dial ended. A `Join` verdict
-/// also re-asserts a primary's hold, under the same book lock.
-pub(crate) fn join_dial(
-    app: &AppHandle,
-    key: &str,
-    serial: u64,
-    fingerprint: &str,
-    primary: bool,
-) -> Joined {
+/// Who the key belongs to now, for a caller whose dial ended. Asked by the
+/// primary's dial alone, and it takes no hold: the successor it joins is the
+/// attempt that already holds the key (invariant 28).
+pub(crate) fn join_dial(app: &AppHandle, key: &str, serial: u64, fingerprint: &str) -> Joined {
     locked(app, |inner| {
-        match inner.book.join(key, serial, fingerprint, primary) {
+        match inner.book.join(key, serial, fingerprint) {
             Verdict::Join => Joined::Successor(signal(inner, key).subscribe()),
             Verdict::Fail => Joined::Fail,
             Verdict::Quiet => Joined::Quiet,
@@ -2522,17 +2534,14 @@ mod tests {
         // 1. No slot at all, and a dial nothing newer replaced: the caller fails.
         let mut book = pages();
 
-        assert_eq!(
-            book.join("conn:a::default", 1, &target(&a), true),
-            Verdict::Fail
-        );
+        assert_eq!(book.join("conn:a::default", 1, &target(&a)), Verdict::Fail);
 
         let (key, own) = book
             .hold_primary("conn:a::default", a.clone(), false, false, "p")
             .unwrap();
 
         assert_eq!(
-            book.join(&key, serial_of(&own), &target(&a), true),
+            book.join(&key, serial_of(&own), &target(&a)),
             Verdict::Fail,
             "its own dial is still the key's"
         );
@@ -2540,18 +2549,16 @@ mod tests {
         // 2. Superseded within the same origin era: join.
         let restart = book.restart(&key, "restart");
 
+        assert_eq!(book.join(&key, serial_of(&own), &target(&a)), Verdict::Join);
         assert_eq!(
-            book.join(&key, serial_of(&own), &target(&a), true),
-            Verdict::Join
-        );
-        assert_eq!(
-            book.join(&key, serial_of(&restart), &target(&a), true),
+            book.join(&key, serial_of(&restart), &target(&a)),
             Verdict::Fail,
             "the current dial"
         );
 
-        // 3. Older than origin, same target (a re-creation): join, and the
-        // primary's hold comes back — the removal dropped it.
+        // 3b. Older than origin, same target, but a LEASE re-created the key:
+        // the caller fails with its own kind, and takes no hold — a verdict is
+        // not a hold, and there was never one to restore.
         book.remove_slot(&key);
 
         let (_, fresh) = acquire(&mut book, &key, a.clone(), lease("l1"));
@@ -2560,16 +2567,48 @@ mod tests {
             !book.slot(&key).unwrap().primary,
             "the re-created slot is a lease's"
         );
-        assert_eq!(
-            book.join(&key, serial_of(&own), &target(&a), true),
-            Verdict::Join
+        assert_eq!(book.join(&key, serial_of(&own), &target(&a)), Verdict::Fail);
+        assert!(
+            !book.slot(&key).unwrap().primary,
+            "the verdict took no hold"
         );
+        assert_eq!(
+            book.join(&key, serial_of(&fresh), &target(&a)),
+            Verdict::Fail,
+            "the re-created slot's own dial"
+        );
+
+        // …so the slot stays the lease's to end: once that lease goes, the
+        // linger reaps it. Re-asserting the hold left `unheld()` false forever,
+        // and the session, forward and remote backend lived until quit.
+        book.release("a", &lease("l1"), 0);
+
+        assert_eq!(
+            book.expire(LINGER_MS),
+            vec![(key.clone(), Action::Teardown)]
+        );
+        assert!(book.slot(&key).is_none(), "no tunnel outlives its holders");
+
+        // 3a. The same key re-created by a newer PRIMARY attempt instead: that
+        // attempt holds it and owns its release, so the displaced caller joins.
+        let mut book = pages();
+        let (key, own) = book
+            .hold_primary("conn:a::default", a.clone(), false, false, "p")
+            .unwrap();
+
+        book.remove_slot(&key);
+
+        let (_, fresh) = book
+            .hold_primary(&key, a.clone(), false, false, "p2")
+            .unwrap();
+
         assert!(
             book.slot(&key).unwrap().primary,
-            "a joining primary holds the key again"
+            "the re-creating attempt took the hold"
         );
+        assert_eq!(book.join(&key, serial_of(&own), &target(&a)), Verdict::Join);
         assert_eq!(
-            book.join(&key, serial_of(&fresh), &target(&a), true),
+            book.join(&key, serial_of(&fresh), &target(&a)),
             Verdict::Fail,
             "the re-created slot's own dial"
         );
@@ -2585,12 +2624,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            book.join(&key, serial_of(&own), &target(&a), true),
+            book.join(&key, serial_of(&own), &target(&a)),
             Verdict::Quiet
         );
         // A caller that asked for the target the key now serves joins instead.
         assert_eq!(
-            book.join(&key, serial_of(&own), &target(&moved), true),
+            book.join(&key, serial_of(&own), &target(&moved)),
             Verdict::Join
         );
 
@@ -2604,10 +2643,7 @@ mod tests {
 
         acquire(&mut book, &key, moved.clone(), lease("l2"));
 
-        assert_eq!(
-            book.join(&key, serial_of(&own), &target(&a), true),
-            Verdict::Fail
-        );
+        assert_eq!(book.join(&key, serial_of(&own), &target(&a)), Verdict::Fail);
         assert!(
             book.slot(&key).unwrap().primary,
             "the hold stands until its caller releases"
@@ -2626,13 +2662,11 @@ mod tests {
         book.remove_slot(&key);
         acquire(&mut book, &key, moved.clone(), lease("l4"));
 
-        assert_eq!(
-            book.join(&key, serial_of(&own), &target(&a), true),
-            Verdict::Fail
-        );
+        assert_eq!(book.join(&key, serial_of(&own), &target(&a)), Verdict::Fail);
 
-        // Local never reaches Quiet: it has one constant fingerprint, so a
-        // re-created local key is always a Join for the caller it displaced.
+        // Local mirrors 3b: one constant fingerprint, so Quiet is unreachable
+        // and only who re-created the key decides. A lease's local child is the
+        // lease's, and `stopLocalBackend` during a cold start leaves no hold.
         let mut book = pages();
         let (local_key, first) = book
             .hold_primary(LOCAL_SLOT, local(), false, false, "p")
@@ -2642,15 +2676,29 @@ mod tests {
         acquire(&mut book, &local_key, local(), lease("l3"));
 
         assert_eq!(
-            book.join(&local_key, serial_of(&first), LOCAL_INSTANCE_KEY, true),
-            Verdict::Join
+            book.join(&local_key, serial_of(&first), LOCAL_INSTANCE_KEY),
+            Verdict::Fail
         );
+        assert!(!book.slot(&local_key).unwrap().primary);
+
+        book.release("local", &lease("l3"), 0);
+
+        assert_eq!(
+            book.expire(LINGER_MS),
+            vec![(local_key.clone(), Action::Teardown)]
+        );
+        assert!(book.slot(&local_key).is_none(), "the child is reaped");
 
         // Quit leaves no key to belong to.
+        let mut book = pages();
+        let (local_key, first) = book
+            .hold_primary(LOCAL_SLOT, local(), false, false, "p")
+            .unwrap();
+
         book.quit();
 
         assert_eq!(
-            book.join(&local_key, serial_of(&first), LOCAL_INSTANCE_KEY, true),
+            book.join(&local_key, serial_of(&first), LOCAL_INSTANCE_KEY),
             Verdict::Fail
         );
     }
@@ -2905,8 +2953,7 @@ mod tests {
 
         m.check();
         assert_eq!(
-            m.book
-                .join(&r, serial_of(&before), &ssh("r").fingerprint, true),
+            m.book.join(&r, serial_of(&before), &ssh("r").fingerprint),
             Verdict::Quiet,
             "a primary retarget"
         );
@@ -2916,6 +2963,35 @@ mod tests {
             "the retarget's dial runs"
         );
         assert_eq!(serial_of(&after), token_serial(&m.book, &r));
+
+        // A primary dial whose key is removed and then re-created by a LEASE:
+        // the displaced serial fails, takes no hold, and the slot is still the
+        // lease's to end — nothing is left holding a tunnel nobody owns.
+        let (n, before) = m
+            .book
+            .hold_primary("conn:n::default", ssh("n"), false, false, "p")
+            .unwrap();
+
+        m.check();
+        m.book.remove_slot(&n);
+        m.acquire(&n, ssh("n"), lease("n1"));
+
+        assert_eq!(
+            m.book.join(&n, serial_of(&before), &ssh("n").fingerprint),
+            Verdict::Fail,
+            "a lease re-created the key"
+        );
+        assert!(
+            !m.book.slot(&n).unwrap().primary,
+            "the verdict took no hold"
+        );
+
+        m.book.release("n", &lease("n1"), 0);
+        m.check();
+        m.book.expire(LINGER_MS);
+        m.check();
+
+        assert!(m.book.slot(&n).is_none(), "the lease's slot is reapable");
 
         // A lease retargets a slot whose dial is in flight.
         let (d, _) = m.acquire("conn:d::default", ssh("d"), lease("d1"));

@@ -1054,18 +1054,17 @@ pub async fn ssh_connect(
     };
 
     // Who the key belongs to now. Joining is how a supersede, a restart or a
-    // re-creation of the same target keeps the primary from failing and
-    // releasing its hold under the dial that replaced it.
-    let successor =
-        match crate::tunnels::join_dial(&app, &dial.key, dial.serial, &fingerprint, true) {
-            crate::tunnels::Joined::Successor(successor) => successor,
-            // A newer PRIMARY attempt pointed the key at a different target: it
-            // publishes its own result, so this caller says nothing and releases
-            // nothing. A lease-driven retarget gets the error as it is, because its
-            // own holder keeps the slot and this caller must resolve its UI.
-            crate::tunnels::Joined::Quiet => return Err(retarget_error(error, true)),
-            crate::tunnels::Joined::Fail => return Err(error),
-        };
+    // newer PRIMARY attempt at the same target keeps the primary from failing
+    // and releasing its hold under the dial that replaced it.
+    let successor = match crate::tunnels::join_dial(&app, &dial.key, dial.serial, &fingerprint) {
+        crate::tunnels::Joined::Successor(successor) => successor,
+        // A newer PRIMARY attempt pointed the key at a different target: it
+        // publishes its own result, so this caller says nothing and releases
+        // nothing. A key a LEASE owns now gets the error as it is, because that
+        // lease's holder keeps the slot and this caller must resolve its own UI.
+        crate::tunnels::Joined::Quiet => return Err(superseded_error(error)),
+        crate::tunnels::Joined::Fail => return Err(error),
+    };
 
     crate::tunnels::wait(successor)
         .await
@@ -1074,14 +1073,11 @@ pub async fn ssh_connect(
     live_connection(&state, &dial.key).await
 }
 
-/// A failure whose dial was retargeted is reported as `Superseded`, keeping the
-/// message it failed with. Every other failure is its own.
-fn retarget_error(error: SshError, retargeted: bool) -> SshError {
-    if retargeted {
-        SshError::new(SshErrorKind::Superseded, error.message)
-    } else {
-        error
-    }
+/// A failure whose key a newer primary attempt took over is reported as
+/// `Superseded`, keeping the message it failed with. Every other failure is
+/// reported as it is, by the caller itself.
+fn superseded_error(error: SshError) -> SshError {
+    SshError::new(SshErrorKind::Superseded, error.message)
 }
 
 fn cancelled_error() -> SshError {
@@ -2142,35 +2138,22 @@ mod tests {
     }
 
     #[test]
-    fn a_retargeted_dial_fails_as_superseded_whatever_it_failed_on() {
+    fn a_superseded_dial_fails_as_superseded_whatever_it_failed_on() {
         let kept = |error: SshError| (error.kind, error.message);
 
         assert_eq!(
-            kept(retarget_error(cancelled_error(), true)),
+            kept(superseded_error(cancelled_error())),
             (
                 SshErrorKind::Superseded,
                 "The connection attempt was cancelled.".to_string()
             )
         );
         assert_eq!(
-            kept(retarget_error(
-                SshError::new(SshErrorKind::AuthFailed, "wrong passphrase"),
-                true
-            )),
+            kept(superseded_error(SshError::new(
+                SshErrorKind::AuthFailed,
+                "wrong passphrase"
+            ))),
             (SshErrorKind::Superseded, "wrong passphrase".to_string())
-        );
-
-        // Not retargeted: the failure is the caller's own.
-        assert_eq!(
-            kept(retarget_error(
-                SshError::new(SshErrorKind::AuthFailed, "wrong passphrase"),
-                false
-            )),
-            (SshErrorKind::AuthFailed, "wrong passphrase".to_string())
-        );
-        assert_eq!(
-            kept(retarget_error(cancelled_error(), false)).0,
-            SshErrorKind::Cancelled
         );
     }
 

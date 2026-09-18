@@ -484,7 +484,8 @@ mod imp {
     /// The primary's dial. A dial a newer one superseded (a restart, an
     /// interactive request) never fails its caller — failing would release the
     /// hold and tear down the successor. It waits for the successor instead and
-    /// hands back the child that dial installed. Only a removal or quit fails it.
+    /// hands back the child that dial installed. A removal, a quit, or a key a
+    /// lease has since re-created for itself fails it.
     pub async fn run_dial_or_join(
         app: &AppHandle,
         state: &LocalBackendState,
@@ -498,12 +499,13 @@ mod imp {
         };
 
         // The same verdict the SSH tail takes. `LOCAL_INSTANCE_KEY` is one
-        // constant fingerprint, so a local key re-created under this caller is
-        // always a Join: it adopts the new child instead of failing into a stop
-        // that would remove that slot and cancel its dial. Quiet is unreachable
-        // here, for the same reason.
+        // constant fingerprint, so Quiet is unreachable here and the verdict
+        // turns on who the key belongs to: a newer PRIMARY attempt's child is
+        // adopted instead of failing into a stop that would remove that slot and
+        // cancel its dial, while a key a LEASE re-created is that lease's — this
+        // caller fails, holding nothing, and the slot goes when the lease does.
         let crate::tunnels::Joined::Successor(successor) =
-            crate::tunnels::join_dial(app, &key, serial, LOCAL_INSTANCE_KEY, true)
+            crate::tunnels::join_dial(app, &key, serial, LOCAL_INSTANCE_KEY)
         else {
             return Err(error.message);
         };
