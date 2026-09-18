@@ -35,7 +35,8 @@ import { registry } from '@/contrib/registry'
 
 import { $sessionTiles, nextSessionTileForWorkspace, type SessionTile } from './session-states'
 
-const tile = (storedSessionId: string): SessionTile => ({ storedSessionId }) as SessionTile
+const tile = (storedSessionId: string): SessionTile =>
+  ({ connectionId: 'local', profile: 'default', storedSessionId, tileKey: storedSessionId }) as SessionTile
 
 beforeEach(() => {
   $detachedTiles.set(new Map())

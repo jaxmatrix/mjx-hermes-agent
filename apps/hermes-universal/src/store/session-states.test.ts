@@ -310,7 +310,9 @@ describe('focusWorkspaceSession', () => {
 
     it('anchors the branch to the PARENT strip when the parent is a tile', () => {
       seedTree([WORKSPACE_PANE_ID])
-      $sessionTiles.set([{ dir: 'center', storedSessionId: 'parent-1' }])
+      $sessionTiles.set([
+        { dir: 'center', connectionId: 'local', profile: 'default', storedSessionId: 'parent-1', tileKey: 'parent-1' }
+      ])
 
       openBranchTile('branch-1', 'parent-1')
 
@@ -355,13 +357,31 @@ describe('focusWorkspaceSession', () => {
     it('opens no second tab for a chat already on screen — in main, or as a tile in another zone', () => {
       seedTree([WORKSPACE_PANE_ID])
       $activeStoredSessionId.set('loaded')
-      $sessionTiles.set([{ anchor: 'elsewhere', dir: 'left', storedSessionId: 'tiled' }])
+      $sessionTiles.set([
+        {
+          anchor: 'elsewhere',
+          dir: 'left',
+          connectionId: 'local',
+          profile: 'default',
+          storedSessionId: 'tiled',
+          tileKey: 'tiled'
+        }
+      ])
 
       openSessionTab('loaded')
       openSessionTab('tiled')
 
       // Not moved either: `openSessionTile` would drag the tile out of its zone.
-      expect($sessionTiles.get()).toEqual([{ anchor: 'elsewhere', dir: 'left', storedSessionId: 'tiled' }])
+      expect($sessionTiles.get()).toEqual([
+        {
+          anchor: 'elsewhere',
+          connectionId: 'local',
+          dir: 'left',
+          profile: 'default',
+          storedSessionId: 'tiled',
+          tileKey: 'tiled'
+        }
+      ])
     })
   })
 
@@ -382,7 +402,9 @@ describe('focusWorkspaceSession', () => {
     it('reveals the tile already open under the lineage root rather than adding a second', () => {
       seedTree([WORKSPACE_PANE_ID, sessionTilePaneId('root')], WORKSPACE_PANE_ID)
       $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
-      $sessionTiles.set([{ dir: 'right', storedSessionId: 'root' }])
+      $sessionTiles.set([
+        { dir: 'right', connectionId: 'local', profile: 'default', storedSessionId: 'root', tileKey: 'root' }
+      ])
 
       openSessionTile('tip', 'center')
 
@@ -406,7 +428,9 @@ describe('focusWorkspaceSession', () => {
     it('still opens a tile for a genuinely different session', () => {
       seedTree([WORKSPACE_PANE_ID])
       $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
-      $sessionTiles.set([{ dir: 'right', storedSessionId: 'root' }])
+      $sessionTiles.set([
+        { dir: 'right', connectionId: 'local', profile: 'default', storedSessionId: 'root', tileKey: 'root' }
+      ])
 
       openSessionTile('unrelated')
 
@@ -441,8 +465,8 @@ describe('focusWorkspaceSession', () => {
       seedTree([WORKSPACE_PANE_ID])
       $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
       $sessionTiles.set([
-        { dir: 'right', storedSessionId: wanted },
-        { dir: 'right', storedSessionId: 'root' }
+        { dir: 'right', connectionId: 'local', profile: 'default', storedSessionId: wanted, tileKey: wanted },
+        { dir: 'right', connectionId: 'local', profile: 'default', storedSessionId: 'root', tileKey: 'root' }
       ])
       closeSessionTile(wanted)
       closeSessionTile('root')
@@ -451,7 +475,9 @@ describe('focusWorkspaceSession', () => {
 
     it('moves past a tab whose conversation is open again under its live tip', () => {
       stackDecoyOver('wanted-1')
-      $sessionTiles.set([{ dir: 'right', storedSessionId: 'tip' }])
+      $sessionTiles.set([
+        { dir: 'right', connectionId: 'local', profile: 'default', storedSessionId: 'tip', tileKey: 'tip' }
+      ])
 
       reopenLastClosedTile()
 
@@ -495,7 +521,15 @@ describe('focusWorkspaceSession', () => {
    */
   describe('tile strip order follows the layout tree', () => {
     const tiles = (...ids: string[]) =>
-      $sessionTiles.set(ids.map(id => ({ dir: 'right' as const, storedSessionId: id })))
+      $sessionTiles.set(
+        ids.map(id => ({
+          dir: 'right' as const,
+          connectionId: 'local',
+          profile: 'default',
+          storedSessionId: id,
+          tileKey: id
+        }))
+      )
 
     const order = () => $sessionTiles.get().map(t => t.storedSessionId)
 

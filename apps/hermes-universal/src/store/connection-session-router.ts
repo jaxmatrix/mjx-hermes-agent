@@ -1,6 +1,7 @@
 import { backendScopeKey, LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { $activeConnection } from '@/store/active-connection'
 import { isTunnelSignInError } from '@/store/connection-tunnels'
+import { $connectionsRegistry } from '@/store/connections'
 import { $gatewayState, requestGateway, setGatewayRequestProfile } from '@/store/gateway'
 import { leaseSecondary, releaseSecondary } from '@/store/gateway-secondaries'
 import { $gatewaySwitching } from '@/store/gateway-switch'
@@ -13,6 +14,7 @@ import {
   setSessionRequestRouter
 } from '@/store/session-request-router'
 import { connectionIdForSession } from '@/store/session-sources'
+import { migrateLegacyTiles, setSessionRefResolver } from '@/store/session-states'
 
 /**
  * THE MULTI-CONNECTION ROUTER — MJXHRM-480's interface, second implementation.
@@ -157,4 +159,31 @@ setGatewayRequestProfile(() => {
   const profile = normalizeProfileKey($activeGatewayProfile.get())
 
   return profile === 'default' ? null : profile
+})
+
+// Where a tab for a bare stored id belongs (MJXHRM-591). The SAME answer this
+// router dispatches on — the merged rows' owner, else the connection the app is
+// on — resolved once, when the tab opens, and carried by the tab from then on.
+// Registered here rather than imported by the tile layer, so the dependency
+// keeps pointing one way.
+setSessionRefResolver(storedSessionId => {
+  const active = activeRoute()
+
+  return {
+    connectionId: connectionIdForSession(storedSessionId) ?? active.connectionId,
+    profile: active.profile,
+    storedSessionId
+  }
+})
+
+// v2 tabs were keyed by profile alone, so the only connection they could have
+// belonged to is the one the app was pointed at: the registry's primary. Run as
+// soon as the registry names it, and once.
+let tilesMigrated = false
+
+$connectionsRegistry.listen(registry => {
+  if (!tilesMigrated && registry.connections.length > 0) {
+    tilesMigrated = true
+    migrateLegacyTiles(registry.primary)
+  }
 })

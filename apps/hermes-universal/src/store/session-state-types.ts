@@ -29,6 +29,12 @@ export interface ClientSessionState {
    *  created. This is the only value safe to send as `session_id` on the wire. */
   runtimeSessionId: null | string
   storedSessionId: string | null
+  /** The connection this session lives on, and the profile its stored id
+   *  belongs to (MJXHRM-591). Carried on the slice rather than read from
+   *  `$activeConnection`, because a background tab's session outlives every
+   *  switch; `null` only for an unbound draft, which has no backend yet. */
+  connectionId: null | string
+  profile: null | string
   messages: ChatMessage[]
   branch: string
   cwd: string
@@ -82,8 +88,100 @@ let draftCounter = 0
  *  mobile bubble strip allows more than one). */
 export const newDraftKey = (): string => `${DRAFT_KEY_PREFIX}${++draftCounter}`
 
-/** The key a stored session hydrates under until its resume returns a runtime id. */
-export const hydratingKey = (storedSessionId: string): string => `${HYDRATING_KEY_PREFIX}${storedSessionId}`
+// ---------------------------------------------------------------------------
+// SCOPED KEYS (MJXHRM-591). A session key names a session on ONE connection.
+//
+// Backend session ids are `uuid4().hex[:8]` minted per state.db
+// (`tui_gateway/methods_session.py`), so 32 bits per database: two connections —
+// and two profiles of one connection — collide in practice, not in theory. Every
+// key therefore carries the scope that makes the id unique:
+//
+//   * a RUNTIME id is unique within one gateway process, so the connection alone
+//     scopes it (one backend serves every profile of a connection);
+//   * a STORED id lives in one profile's database, so the pair scopes it.
+//
+// Encoding. `local` (+ `default` for stored ids) keeps the BARE id, so every
+// legacy key, persisted blob and log line stays byte-identical for single-source
+// users — the rule `lib/backend-scope.ts` already states for pool keys. Every
+// other scope is `@<part>|<part>[|<part>]`, each part `encodeURIComponent`d.
+//
+// Injective by construction: bare ids are hex (and placeholders are prefixed),
+// so neither can begin with `@` — the two arms are prefix-free — and
+// `encodeURIComponent` escapes both `|` (%7C) and `@` (%40) inside every part,
+// so the separator cannot occur within one. `parseSessionKey` is the only reader:
+// keys are OPAQUE to turn-lifecycle, prompts, journals and transcript paint,
+// which take a string and never split it.
+// ---------------------------------------------------------------------------
+
+const SCOPED_KEY_MARKER = '@'
+const SCOPED_KEY_SEPARATOR = '|'
+/** The connection whose ids keep the bare, legacy spelling. */
+export const LOCAL_SESSION_SCOPE = 'local'
+/** The profile whose stored ids keep the bare, legacy spelling. */
+export const DEFAULT_SESSION_PROFILE = 'default'
+
+const scopeOf = (connectionId: null | string | undefined): string =>
+  String(connectionId ?? '').trim() || LOCAL_SESSION_SCOPE
+
+const profileOf = (profile: null | string | undefined): string =>
+  String(profile ?? '').trim() || DEFAULT_SESSION_PROFILE
+
+const scopedKey = (parts: readonly string[]): string =>
+  SCOPED_KEY_MARKER + parts.map(encodeURIComponent).join(SCOPED_KEY_SEPARATOR)
+
+/** Where a session lives: its connection, its profile and its stored id. The
+ *  value a tab carries so no path has to ask which connection is active. */
+export interface SessionRef {
+  readonly connectionId: string
+  readonly profile: string
+  readonly storedSessionId: string
+}
+
+/** The map key for a LIVE session on `connectionId`. */
+export function runtimeKeyFor(connectionId: null | string | undefined, runtimeId: string): string {
+  const connection = scopeOf(connectionId)
+
+  return connection === LOCAL_SESSION_SCOPE ? runtimeId : scopedKey([connection, runtimeId])
+}
+
+/** The reverse-index key for a STORED session in one profile of one connection. */
+export function storedKeyFor(
+  connectionId: null | string | undefined,
+  profile: null | string | undefined,
+  storedSessionId: string
+): string {
+  const connection = scopeOf(connectionId)
+  const profileKey = profileOf(profile)
+
+  return connection === LOCAL_SESSION_SCOPE && profileKey === DEFAULT_SESSION_PROFILE
+    ? storedSessionId
+    : scopedKey([connection, profileKey, storedSessionId])
+}
+
+/** The scope and id a key names. The ONLY reader of a key's shape. */
+export function parseSessionKey(key: string): { connectionId: string; id: string; profile: null | string } {
+  if (!key.startsWith(SCOPED_KEY_MARKER)) {
+    return { connectionId: LOCAL_SESSION_SCOPE, id: key, profile: null }
+  }
+
+  const parts = key.slice(SCOPED_KEY_MARKER.length).split(SCOPED_KEY_SEPARATOR).map(decodeURIComponent)
+
+  return parts.length >= 3
+    ? { connectionId: parts[0], id: parts[2], profile: parts[1] }
+    : { connectionId: parts[0], id: parts[1] ?? '', profile: null }
+}
+
+/** The connection a session key belongs to — what routing and teardown ask. */
+export const connectionOfSessionKey = (key: string): string => parseSessionKey(key).connectionId
+
+/** The key a stored session hydrates under until its resume returns a runtime
+ *  id. Scoped, so two connections hydrating the same stored id are two slices. */
+export const hydratingKeyFor = (ref: SessionRef): string =>
+  `${HYDRATING_KEY_PREFIX}${storedKeyFor(ref.connectionId, ref.profile, ref.storedSessionId)}`
+
+/** The local connection's hydrating key — the bare, legacy spelling. */
+export const hydratingKey = (storedSessionId: string): string =>
+  hydratingKeyFor({ connectionId: LOCAL_SESSION_SCOPE, profile: DEFAULT_SESSION_PROFILE, storedSessionId })
 
 export const isDraftKey = (key: string): boolean => key.startsWith(DRAFT_KEY_PREFIX)
 
@@ -95,6 +193,8 @@ export function emptySessionState(storedSessionId: string | null = null): Client
   return {
     runtimeSessionId: null,
     storedSessionId,
+    connectionId: null,
+    profile: null,
     messages: [],
     branch: '',
     cwd: '',
@@ -214,15 +314,21 @@ function fireSessionKeyHook(run: (hooks: SessionKeyHooks) => void): void {
 
 const keyByStoredId = new Map<string, string>()
 
+/** The index key for a stored id belonging to the session under `key`: the
+ *  slice's own connection scopes it, so connection A's `abc12345` and
+ *  connection B's are two entries and never one (MJXHRM-591). */
+const indexKeyFor = (key: string, state: ClientSessionState, storedSessionId: string): string =>
+  storedKeyFor(state.connectionId ?? connectionOfSessionKey(key), state.profile, storedSessionId)
+
 function indexStoredId(prev: ClientSessionState | null, next: ClientSessionState, key: string) {
   if (prev?.storedSessionId && prev.storedSessionId !== next.storedSessionId) {
     // Keep the old id pointing here — it is the same conversation, and the
     // callers holding it have no way to learn about the rotation.
-    keyByStoredId.set(prev.storedSessionId, key)
+    keyByStoredId.set(indexKeyFor(key, prev, prev.storedSessionId), key)
   }
 
   if (next.storedSessionId) {
-    keyByStoredId.set(next.storedSessionId, key)
+    keyByStoredId.set(indexKeyFor(key, next, next.storedSessionId), key)
   }
 }
 
@@ -249,19 +355,23 @@ function remapStoredIdIndex(key: string, nextKey: string) {
  * returned when the slice still exists — either under its current stored id, or
  * under one we deliberately aliased across a compaction rotation.
  */
-export function runtimeKeyForStoredSession(storedSessionId: null | string): null | string {
+export function runtimeKeyForStoredSession(
+  storedSessionId: null | string,
+  scope?: Pick<SessionRef, 'connectionId' | 'profile'>
+): null | string {
   if (!storedSessionId) {
     return null
   }
 
-  const key = keyByStoredId.get(storedSessionId)
+  const indexKey = storedKeyFor(scope?.connectionId, scope?.profile, storedSessionId)
+  const key = keyByStoredId.get(indexKey)
 
   if (!key) {
     return null
   }
 
   if (!(key in $sessionStates.get())) {
-    keyByStoredId.delete(storedSessionId)
+    keyByStoredId.delete(indexKey)
 
     return null
   }
@@ -270,12 +380,19 @@ export function runtimeKeyForStoredSession(storedSessionId: null | string): null
 }
 
 /** Register a stored id as an alias of an already-open session — used to seed
- *  the index from the backend's `_lineage_root_id` on a session-list refresh. */
-export function aliasStoredSessionId(aliasStoredId: string, liveStoredId: string): void {
-  const key = runtimeKeyForStoredSession(liveStoredId)
+ *  the index from the backend's `_lineage_root_id` on a session-list refresh.
+ *  Both ids are scoped to the same connection and profile: an alias names the
+ *  same conversation, so it can only ever live where the session does. */
+export function aliasStoredSessionId(
+  aliasStoredId: string,
+  liveStoredId: string,
+  scope?: Pick<SessionRef, 'connectionId' | 'profile'>
+): void {
+  const key = runtimeKeyForStoredSession(liveStoredId, scope)
+  const indexKey = storedKeyFor(scope?.connectionId, scope?.profile, aliasStoredId)
 
-  if (key && !keyByStoredId.has(aliasStoredId)) {
-    keyByStoredId.set(aliasStoredId, key)
+  if (key && !keyByStoredId.has(indexKey)) {
+    keyByStoredId.set(indexKey, key)
   }
 }
 
