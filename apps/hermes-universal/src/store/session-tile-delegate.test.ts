@@ -63,6 +63,9 @@ vi.mock('@/store/session-states', async () => {
     $focusedCwd: atom(''),
     $sessionTiles: atom([]),
     closeSessionTile: vi.fn(),
+    // MJXHRM-591: the resume learns which backend answered. The real rule is
+    // pinned in `session-tiles-binding.test.ts`; here it only has to say "yes".
+    noteTileBackendIdentity: () => true,
     openBranchTile: vi.fn(),
     setSessionTileDelegate: (next: SessionTileDelegate) => captured(next),
     tileKeyFor: (ref: { connectionId: string; profile: string; storedSessionId: string }) =>

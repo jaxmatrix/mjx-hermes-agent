@@ -41,6 +41,7 @@ import {
 } from '@/lib/voice-playback'
 import { type ChatMessage, interruptSession, nextId } from '@/store/chat'
 import { holdConnectionClient, setConnectionClientTransport } from '@/store/connection-clients'
+import { $tunnelStatus } from '@/store/connection-tunnels'
 import { notifyError } from '@/store/notifications'
 import {
   $sessions,
@@ -70,8 +71,10 @@ import {
 import {
   $sessionTiles,
   closeSessionTile,
+  noteTileBackendIdentity,
   openBranchTile,
   setSessionTileDelegate,
+  tileKeyFor,
   tileRef,
   updateSession
 } from '@/store/session-states'
@@ -156,6 +159,13 @@ async function hydrateSessionToState(ref: SessionRef): Promise<string> {
   // tab on this connection closes (invariants 32-34). A tab on the ACTIVE
   // connection holds nothing — the app already owns that socket.
   await holdConnectionClient(ref.connectionId, ref.profile).catch(() => undefined)
+
+  // WHICH BACKEND answered. The first one a tab sees is its binding; a different
+  // one later is a different machine, and the tab goes unavailable rather than
+  // adopting a stranger's conversation under its own history (invariant 38).
+  if (!noteTileBackendIdentity(tileKeyFor(ref), $tunnelStatus.get()[ref.connectionId]?.instanceKey)) {
+    throw new Error('this conversation belongs to a backend that is no longer there')
+  }
 
   // A tile can open a session from ANY profile, not just the live one. Resuming
   // (or reading the transcript) without one lets the gateway fall back to the

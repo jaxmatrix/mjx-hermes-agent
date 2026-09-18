@@ -816,6 +816,44 @@ export function refreshTileTitles(
   }
 }
 
+/**
+ * Learn the backend a tab bound to — or find out it changed under it
+ * (MJXHRM-591, invariant 38).
+ *
+ * The identity is `TunnelDescriptor.instanceKey`: the machine and the install,
+ * not the session. The FIRST one a tab sees is its binding, and is written once
+ * (which is why `backendIdentity` is absent from `SessionTilePatch` — nothing
+ * else may set it). A DIFFERENT one later is a different backend: the tab goes
+ * UNAVAILABLE, keeping its ref, because a shared stored id across two backends
+ * is expected rather than meaningful and adopting it would show another
+ * machine's chat under this tab's history.
+ *
+ * Returns whether the tab may still be used.
+ */
+export function noteTileBackendIdentity(tileKey: string, instanceKey: null | string | undefined): boolean {
+  const key = (instanceKey ?? '').trim()
+  const tiles = $sessionTiles.get()
+  const tile = tiles.find(open => open.tileKey === tileKey)
+
+  if (!tile || !key) {
+    return !tile?.unavailable
+  }
+
+  if (!tile.backendIdentity) {
+    saveSessionTiles(tiles.map(open => (open.tileKey === tileKey ? { ...open, backendIdentity: key } : open)))
+
+    return true
+  }
+
+  if (tile.backendIdentity === key) {
+    return !tile.unavailable
+  }
+
+  saveSessionTiles(tiles.map(open => (open.tileKey === tileKey ? { ...open, unavailable: true } : open)))
+
+  return false
+}
+
 /** What an UNAVAILABLE tab offers: exactly one verb. Its backend changed under
  *  it, so there is nothing to resume, retry or reopen — only to close. */
 export const UNAVAILABLE_TILE_ACTIONS: readonly ['close'] = ['close']

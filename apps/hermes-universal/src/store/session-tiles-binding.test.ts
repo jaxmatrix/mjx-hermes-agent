@@ -23,6 +23,7 @@ import {
   $sessionTiles,
   dropUnheldSessionStates,
   migrateLegacyTiles,
+  noteTileBackendIdentity,
   refreshTileTitles,
   saveSessionTiles,
   type SessionTile,
@@ -122,6 +123,37 @@ describe('invariant 38 — a bound tab’s ref is immutable', () => {
 
     expect($sessionTiles.get()[0].connectionId).toBe('conn-a')
     expect(JSON.parse(readKey(TILES_V3) ?? '[]')[0].connectionId).toBe('conn-a')
+  })
+
+  it('learns the backend it bound to, once', () => {
+    const tab = tile('conn-a', 'default', 'abc12345')
+
+    saveSessionTiles([tab])
+
+    expect(noteTileBackendIdentity(tab.tileKey, 'ssh:deploy@box:22')).toBe(true)
+    expect($sessionTiles.get()[0].backendIdentity).toBe('ssh:deploy@box:22')
+
+    // The same machine again is just the same tab.
+    expect(noteTileBackendIdentity(tab.tileKey, 'ssh:deploy@box:22')).toBe(true)
+    expect($sessionTiles.get()[0].unavailable).toBeUndefined()
+  })
+
+  it('goes unavailable when a DIFFERENT backend answers, keeping its ref', () => {
+    const tab = tile('conn-a', 'default', 'abc12345')
+
+    saveSessionTiles([tab])
+    noteTileBackendIdentity(tab.tileKey, 'ssh:deploy@box:22')
+
+    // The row was re-pointed at another host. A shared stored id across two
+    // backends is expected, not meaningful — adopting it would show another
+    // machine's chat under this tab's history.
+    expect(noteTileBackendIdentity(tab.tileKey, 'ssh:deploy@other:22')).toBe(false)
+
+    const after = $sessionTiles.get()[0]
+
+    expect(after).toMatchObject({ connectionId: 'conn-a', storedSessionId: 'abc12345', unavailable: true })
+    expect(after.backendIdentity).toBe('ssh:deploy@box:22')
+    expect(tileActions(after)).toEqual(['close'])
   })
 
   it('offers an unavailable tab exactly one verb', () => {
