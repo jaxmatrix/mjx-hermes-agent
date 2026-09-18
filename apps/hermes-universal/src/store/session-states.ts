@@ -43,7 +43,6 @@ import { requestClose } from '@/store/close-confirm'
 import { clearAllCompaction } from '@/store/compaction'
 import { resetUnscopedStreamPin } from '@/store/event-router'
 import { clearLiveSessionStatuses } from '@/store/live-session-registry'
-import { normalizeProfileKey } from '@/store/profile'
 import { clearAllPrompts } from '@/store/prompts'
 import {
   $activeStoredSessionId,
@@ -74,10 +73,10 @@ import {
   type SessionRef,
   setSessionDisposeHook,
   setSessionTransitionHook,
-  storedKeyFor,
   updateSession
 } from '@/store/session-state-types'
 import { clearAllSubagents } from '@/store/subagents'
+import { sameTabRef, setTabRefResolver, tabKeyFor, tabRefFor, tabRefOf, takeProfileKeyedTabs } from '@/store/tab-ref'
 import { clearAllTurns } from '@/store/turn-lifecycle'
 import { isSecondaryWindow, ownsPersistedAppState } from '@/store/windows'
 
@@ -533,17 +532,12 @@ export interface SessionTile {
 }
 
 /** The identity of the tab for `ref`. */
-export const tileKeyFor = (ref: SessionRef): string => storedKeyFor(ref.connectionId, ref.profile, ref.storedSessionId)
-
-/** The ref a tab carries, as the value the rest of the app passes around. */
-export const tileRef = (tile: SessionTile): SessionRef => ({
-  connectionId: tile.connectionId,
-  profile: tile.profile,
-  storedSessionId: tile.storedSessionId
-})
-
-const sameRef = (a: SessionRef, b: SessionRef): boolean =>
-  a.connectionId === b.connectionId && a.profile === b.profile && a.storedSessionId === b.storedSessionId
+// The ref, the key and the resolver are `store/tab-ref`'s — ONE set of rules for
+// the desktop's tabs and the phone's bubbles (invariant 44). The tile layer
+// keeps its own names for them, so the rest of the app reads as it always did.
+export const tileKeyFor = tabKeyFor
+export const tileRef = tabRefOf
+const sameRef = sameTabRef
 
 /**
  * Is this tab the same CONVERSATION as `ref` — on the same backend?
@@ -569,21 +563,8 @@ const sameTileConversation = (tile: SessionTile, ref: SessionRef): boolean =>
  * dependency-light, and resolved ONCE, at open: nothing re-reads it afterwards,
  * which is what makes the tab self-contained rather than "usually right".
  */
-let refResolver: ((storedSessionId: string) => SessionRef) | null = null
-
-export function setSessionRefResolver(resolve: (storedSessionId: string) => SessionRef): void {
-  refResolver = resolve
-}
-
-export function sessionRefFor(storedSessionId: string): SessionRef {
-  return (
-    refResolver?.(storedSessionId) ?? {
-      connectionId: LOCAL_SESSION_SCOPE,
-      profile: DEFAULT_SESSION_PROFILE,
-      storedSessionId
-    }
-  )
-}
+export const setSessionRefResolver = setTabRefResolver
+export const sessionRefFor = tabRefFor
 
 // Tabs persist as ONE FLAT LIST, because a tab now stays put across a connection
 // or profile switch: it carries its own connection, so there is no "visible set"
@@ -670,37 +651,29 @@ function persistTiles() {
  * deleted, so no later read can resurrect the profile-keyed shape.
  */
 export function migrateLegacyTiles(primaryConnectionId: string): void {
-  const parsed = readJson<unknown>(LEGACY_TILES_KEY)
+  const legacy = takeProfileKeyedTabs(LEGACY_TILES_KEY)
 
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  if (!legacy) {
     return
   }
 
   const migrated: StoredTile[] = []
 
-  for (const [profile, list] of Object.entries(parsed as Record<string, unknown>)) {
-    if (!Array.isArray(list)) {
+  for (const { entry, profile } of legacy) {
+    const tile = parseStoredTile(entry, primaryConnectionId, profile)
+
+    if (!tile) {
       continue
     }
 
-    for (const entry of list) {
-      const tile = parseStoredTile(entry, primaryConnectionId, normalizeProfileKey(profile))
+    const next: StoredTile = { ...tile, connectionId: primaryConnectionId, profile }
+    const key = tileKeyFor(next)
 
-      if (!tile) {
-        continue
-      }
-
-      const next: StoredTile = { ...tile, connectionId: primaryConnectionId, profile: normalizeProfileKey(profile) }
-      const key = tileKeyFor(next)
-
-      if (!migrated.some(t => tileKeyFor(t) === key)) {
-        migrated.push(next)
-        renameTreePane(`${TILE_PANE_PREFIX}${next.storedSessionId}`, `${TILE_PANE_PREFIX}${key}`)
-      }
+    if (!migrated.some(t => tileKeyFor(t) === key)) {
+      migrated.push(next)
+      renameTreePane(`${TILE_PANE_PREFIX}${next.storedSessionId}`, `${TILE_PANE_PREFIX}${key}`)
     }
   }
-
-  writeJson(LEGACY_TILES_KEY, null)
 
   if (migrated.length === 0) {
     return

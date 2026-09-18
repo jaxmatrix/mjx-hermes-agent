@@ -1,5 +1,6 @@
 import { backendScopeKey, LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { $activeConnection } from '@/store/active-connection'
+import { migrateLegacyBubbles } from '@/store/chat-bubbles'
 import { isTunnelSignInError } from '@/store/connection-tunnels'
 import { $connectionsRegistry } from '@/store/connections'
 import { $gatewayState, requestGateway, setGatewayRequestProfile } from '@/store/gateway'
@@ -199,5 +200,6 @@ $connectionsRegistry.listen(registry => {
   if (!tilesMigrated && registry.connections.length > 0) {
     tilesMigrated = true
     migrateLegacyTiles(registry.primary)
+    migrateLegacyBubbles(registry.primary)
   }
 })

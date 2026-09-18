@@ -59,7 +59,10 @@ describe('BubbleRow session rows', () => {
         repos: []
       }
     ] as never)
-    $chatBubbles.set([{ storedSessionId: 'recent-1' }, { storedSessionId: 'older-2' }])
+    $chatBubbles.set([
+      { connectionId: 'local', profile: 'default', storedSessionId: 'recent-1', tabKey: 'recent-1' },
+      { connectionId: 'local', profile: 'default', storedSessionId: 'older-2', tabKey: 'older-2' }
+    ])
 
     render(<BubbleRow />)
 
@@ -69,7 +72,10 @@ describe('BubbleRow session rows', () => {
   })
 
   it('subscribes to the fallback sources, so a late-arriving tree retitles', () => {
-    $chatBubbles.set([{ storedSessionId: 'recent-1' }, { storedSessionId: 'older-2' }])
+    $chatBubbles.set([
+      { connectionId: 'local', profile: 'default', storedSessionId: 'recent-1', tabKey: 'recent-1' },
+      { connectionId: 'local', profile: 'default', storedSessionId: 'older-2', tabKey: 'older-2' }
+    ])
     $sessions.set([row('recent-1', 'On the page')])
 
     const { rerender } = render(<BubbleRow />)
@@ -91,7 +97,10 @@ describe('BubbleRow session rows', () => {
  */
 describe('BubbleRow draft naming', () => {
   it('names the unsaved chat after what is typed into it', () => {
-    $chatBubbles.set([{ storedSessionId: null }, { storedSessionId: 'recent-1' }])
+    $chatBubbles.set([
+      { connectionId: 'local', profile: 'default', storedSessionId: null, tabKey: 'draft' },
+      { connectionId: 'local', profile: 'default', storedSessionId: 'recent-1', tabKey: 'recent-1' }
+    ])
     $sessions.set([row('recent-1', 'On the page')])
     // The composer stashes under the LIVE session key, which for an unsaved chat
     // is the draft slice `bubbleRuntimeKey(null)` resolves to.
@@ -103,7 +112,10 @@ describe('BubbleRow draft naming', () => {
   })
 
   it('keeps the placeholder while the draft is empty', () => {
-    $chatBubbles.set([{ storedSessionId: null }, { storedSessionId: 'recent-1' }])
+    $chatBubbles.set([
+      { connectionId: 'local', profile: 'default', storedSessionId: null, tabKey: 'draft' },
+      { connectionId: 'local', profile: 'default', storedSessionId: 'recent-1', tabKey: 'recent-1' }
+    ])
     $sessions.set([row('recent-1', 'On the page')])
 
     render(<BubbleRow />)
@@ -134,7 +146,10 @@ describe('BubbleRow gesture surface', () => {
   }
 
   it('starts the gesture from empty track, not just from a bubble', () => {
-    $chatBubbles.set([{ storedSessionId: 'recent-1' }, { storedSessionId: 'older-2' }])
+    $chatBubbles.set([
+      { connectionId: 'local', profile: 'default', storedSessionId: 'recent-1', tabKey: 'recent-1' },
+      { connectionId: 'local', profile: 'default', storedSessionId: 'older-2', tabKey: 'older-2' }
+    ])
     $sessions.set([row('recent-1', 'On the page'), row('older-2', 'Older chat')])
     $activeStoredSessionId.set('recent-1')
 
@@ -149,7 +164,10 @@ describe('BubbleRow gesture surface', () => {
   })
 
   it('closes the centred chat on a drag up that starts anywhere in the row', async () => {
-    $chatBubbles.set([{ storedSessionId: 'recent-1' }, { storedSessionId: 'older-2' }])
+    $chatBubbles.set([
+      { connectionId: 'local', profile: 'default', storedSessionId: 'recent-1', tabKey: 'recent-1' },
+      { connectionId: 'local', profile: 'default', storedSessionId: 'older-2', tabKey: 'older-2' }
+    ])
     $sessions.set([row('recent-1', 'On the page'), row('older-2', 'Older chat')])
     $activeStoredSessionId.set('older-2')
 
@@ -167,7 +185,10 @@ describe('BubbleRow gesture surface', () => {
   // jsdom gives every element a zero rect, so x=0 is the only point inside a
   // bubble and anything else is empty track.
   it('switches to the bubble a tap lands on', () => {
-    $chatBubbles.set([{ storedSessionId: 'recent-1' }, { storedSessionId: 'older-2' }])
+    $chatBubbles.set([
+      { connectionId: 'local', profile: 'default', storedSessionId: 'recent-1', tabKey: 'recent-1' },
+      { connectionId: 'local', profile: 'default', storedSessionId: 'older-2', tabKey: 'older-2' }
+    ])
     $sessions.set([row('recent-1', 'On the page'), row('older-2', 'Older chat')])
     $activeStoredSessionId.set('older-2')
 
@@ -179,7 +200,10 @@ describe('BubbleRow gesture surface', () => {
   })
 
   it('falls back to the centred bubble when the press was not on one', () => {
-    $chatBubbles.set([{ storedSessionId: 'recent-1' }, { storedSessionId: 'older-2' }])
+    $chatBubbles.set([
+      { connectionId: 'local', profile: 'default', storedSessionId: 'recent-1', tabKey: 'recent-1' },
+      { connectionId: 'local', profile: 'default', storedSessionId: 'older-2', tabKey: 'older-2' }
+    ])
     $sessions.set([row('recent-1', 'On the page'), row('older-2', 'Older chat')])
     $activeStoredSessionId.set('older-2')
 
@@ -193,7 +217,10 @@ describe('BubbleRow gesture surface', () => {
   })
 
   it('leaves the row alone when the same drag goes sideways', async () => {
-    $chatBubbles.set([{ storedSessionId: 'recent-1' }, { storedSessionId: 'older-2' }])
+    $chatBubbles.set([
+      { connectionId: 'local', profile: 'default', storedSessionId: 'recent-1', tabKey: 'recent-1' },
+      { connectionId: 'local', profile: 'default', storedSessionId: 'older-2', tabKey: 'older-2' }
+    ])
     $sessions.set([row('recent-1', 'On the page'), row('older-2', 'Older chat')])
     $activeStoredSessionId.set('older-2')
 
