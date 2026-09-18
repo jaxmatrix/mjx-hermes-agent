@@ -78,6 +78,8 @@ store/chat.ts
 store/transcript-paint.*
 store/artifacts.*
 store/windows.ts
+store/windows.test.ts
+store/windows-kind.test.ts
 lib/connection-color.*
 components/chat/chat-connection-banner.*
 components/chat/connection-accent.*

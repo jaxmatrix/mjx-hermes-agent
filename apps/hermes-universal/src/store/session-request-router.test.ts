@@ -11,6 +11,9 @@ const $gatewayState = atom<string>('open')
 
 vi.mock('@/store/gateway-client', () => ({
   $gatewayState,
+  // `store/event-router.ts` registers at module scope, and the router's graph
+  // reaches it through `store/session-states`.
+  addGatewayEventListener: vi.fn(),
   requestGateway: (...args: unknown[]) => requestGateway(...args)
 }))
 
