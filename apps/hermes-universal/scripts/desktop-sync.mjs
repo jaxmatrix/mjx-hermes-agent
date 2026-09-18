@@ -233,7 +233,11 @@ fs.writeFileSync(
 )
 
 const losing = rows.filter((r) => r.dropped?.length)
-fs.writeFileSync(
+// Only meaningful during a real resync, when the classification above still saw
+// universal's pre-copy files. A dry run AFTER one compares desktop against
+// itself and finds nothing — writing that would erase a worklist still being
+// worked through, which is exactly what happened once.
+if (apply || losing.length) fs.writeFileSync(
   path.join(SYNC_DIR, 'dropped-exports.txt'),
   '# Symbols universal exported that desktop\'s version of the same file does not.\n' +
     '# Each is either a symbol desktop MOVED (re-point the caller at its new home)\n' +

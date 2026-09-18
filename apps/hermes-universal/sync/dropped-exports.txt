@@ -3,7 +3,7 @@
 # Each is either genuinely universal-only (restore it from the pre-import tree)
 # or desktop dropped the capability (re-point or remove the caller).
 #
-#   git show main-sync-3:apps/hermes-universal/src/<path>
+#   git show 9ce16c77f9:apps/hermes-universal/src/<path>
 #
 # 147 files, 572 symbols.
 
