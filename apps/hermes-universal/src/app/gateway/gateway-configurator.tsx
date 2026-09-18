@@ -77,6 +77,7 @@ import { keptSshAnswer } from '@/store/ssh-answers'
 import {
   addSshPromptAnswerListener,
   attachSshPrompts,
+  isQuietSshError,
   isSshError,
   newAttemptId,
   onSshProgress,
@@ -613,9 +614,11 @@ export function GatewayConfigurator({
       )
       notify({ kind: 'success', title: g.savedTitle, message: g.savedMessage })
     } catch (err) {
-      // A newer attempt owns this connection and publishes its own result
-      // (MJXHRM-592): nothing here failed, so nothing is said.
-      if (isSshError(err) && err.kind === 'superseded') {
+      // A newer PRIMARY attempt owns this connection and publishes its own
+      // result (MJXHRM-592): nothing here failed, so nothing is said. The quiet
+      // flag says so, not the kind — `superseded` is also a real failure of this
+      // caller's own, and swallowing that one leaves Save silently dead.
+      if (isQuietSshError(err)) {
         return
       }
 
@@ -660,8 +663,8 @@ export function GatewayConfigurator({
 
       setLastTest(g.sshReachable(result.hostLabel, result.platform ?? 'unknown'))
     } catch (err) {
-      // As in Save: a superseded attempt has no verdict of its own to report.
-      if (isSshError(err) && err.kind === 'superseded') {
+      // As in Save: an attempt the book marked quiet has no verdict to report.
+      if (isQuietSshError(err)) {
         return
       }
 

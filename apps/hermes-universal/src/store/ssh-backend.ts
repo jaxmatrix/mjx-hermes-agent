@@ -109,6 +109,14 @@ export type SshErrorKind =
 export interface SshError {
   kind: SshErrorKind
   message: string
+  /**
+   * "A newer primary attempt owns this connection and publishes its own result"
+   * (MJXHRM-592): say nothing, tear nothing down, just report upwards. Set only
+   * by Rust's tunnel book, against a witness no other site can mint — which is
+   * why this is a flag and not a `kind`: a kind can be minted anywhere, and
+   * `superseded` is also a real, loud failure of the caller's own.
+   */
+  quiet?: boolean
 }
 
 /** Narrow an unknown rejection to the typed error Rust returns. */
@@ -119,6 +127,11 @@ export function isSshError(value: unknown): value is SshError {
     typeof (value as SshError).kind === 'string' &&
     typeof (value as SshError).message === 'string'
   )
+}
+
+/** A rejection the book marked quiet: its owner publishes, so this caller does not. */
+export function isQuietSshError(value: unknown): boolean {
+  return isSshError(value) && value.quiet === true
 }
 
 export type SshStep =

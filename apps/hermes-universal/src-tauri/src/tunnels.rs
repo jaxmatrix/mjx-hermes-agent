@@ -223,22 +223,51 @@ impl Slot {
 /// Invariant 28: a primary caller whose dial the key no longer belongs to never
 /// tears that key down, never takes a hold it was not given, and never leaves
 /// the UI unresolved. It JOINS the key's current dial when the key still serves
-/// its target under a newer primary attempt; it fails QUIETLY, with kind
-/// `superseded` and releasing nothing, when a newer primary attempt pointed the
-/// key elsewhere — that attempt publishes; it fails with ITS OWN kind, so its
-/// caller tears down as usual, when a lease owns the key now — the lease's
-/// holder keeps the slot through that release. No verdict writes book state.
-/// Only a removal with no re-creation, or a quit, ends a hold AND ITS SLOT
-/// through a failed caller.
+/// its target under a newer primary attempt; it fails QUIETLY — carrying the
+/// `Quiet` witness, releasing nothing — when a newer primary attempt pointed the
+/// key elsewhere, because that attempt publishes; it fails with ITS OWN kind, so
+/// its caller tears down as usual, when a lease owns the key now. No verdict
+/// writes book state, and no caller can forge the quiet signal. A release with
+/// no hold to release does nothing. Only a removal with no re-creation, a quit,
+/// or the explicit hard stop `stop_slot` (the tray's Keep Running off and
+/// `local_backend_kill`) ends a hold AND ITS SLOT.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     /// Wait for the key's current dial and adopt what it installs.
     Join,
     /// Fail with the caller's own kind; its JS tears down as usual.
     Fail,
-    /// Fail with kind `superseded`, releasing nothing: a newer primary attempt
-    /// owns this connection and publishes its own result.
+    /// Fail quietly, releasing nothing: a newer primary attempt owns this
+    /// connection and publishes its own result.
     Quiet,
+}
+
+/// The right to fail quietly, minted only on a `Verdict::Quiet`.
+///
+/// The field is private, so no module outside `tunnels` can build one, and
+/// carrying it by value into `SshError::quiet` is the only way an error reaches
+/// JS with the quiet flag set. The signal is a capability, not a kind: a failure
+/// that is genuinely the caller's own — `settle_scope`'s stale `Superseded`,
+/// say — can never be mistaken for it, whatever kind it was classified as. The
+/// same "only the owner mints the token" shape as `InFlight.cancel` and the page
+/// epoch.
+#[derive(Debug, Clone)]
+pub struct Quiet(());
+
+/// What the witness is worth on the wire: `"quiet": true`, or no key at all.
+impl serde::Serialize for Quiet {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bool(true)
+    }
+}
+
+#[cfg(test)]
+impl Quiet {
+    /// A witness for a test that cannot reach `join_dial`, which needs a running
+    /// `AppHandle`. Test-only: no production path outside this module mints one.
+    pub(crate) fn for_test() -> Self {
+        Self(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -565,10 +594,17 @@ impl SlotBook {
     }
 
     /// Leaving the active connection. `None` when there was no slot at all.
+    ///
+    /// A release with no hold to release does nothing (invariant 28): a caller
+    /// the key has moved on from — one the verdict failed, or a second release
+    /// after the first — must not remove a slot a lease owns, nor cancel a dial
+    /// from that lease's era. The slot leaves on the lease's own linger.
     pub fn release_primary(&mut self, key: &str) -> Option<Action> {
         let slot = self.slots.get_mut(key)?;
 
-        slot.primary = false;
+        if !std::mem::replace(&mut slot.primary, false) {
+            return Some(Action::None);
+        }
 
         if slot.holders.is_empty() {
             self.remove_slot(key);
@@ -1234,10 +1270,11 @@ pub(crate) fn is_current(app: &AppHandle, key: &str, serial: u64) -> bool {
 pub(crate) enum Joined {
     /// Wait for this, then read what the key installed.
     Successor(watch::Receiver<Outcome>),
-    /// Fail with the caller's own error.
+    /// Fail with the caller's own error, whatever kind it carries.
     Fail,
-    /// Fail as `superseded`: a newer primary attempt owns this connection.
-    Quiet,
+    /// Fail quietly: a newer primary attempt owns this connection and publishes
+    /// its own result. The witness is what marks the error quiet for JS.
+    Quiet(Quiet),
 }
 
 /// Who the key belongs to now, for a caller whose dial ended. Asked by the
@@ -1248,7 +1285,7 @@ pub(crate) fn join_dial(app: &AppHandle, key: &str, serial: u64, fingerprint: &s
         match inner.book.join(key, serial, fingerprint) {
             Verdict::Join => Joined::Successor(signal(inner, key).subscribe()),
             Verdict::Fail => Joined::Fail,
-            Verdict::Quiet => Joined::Quiet,
+            Verdict::Quiet => Joined::Quiet(Quiet(())),
         }
     })
 }
@@ -2700,6 +2737,37 @@ mod tests {
         assert_eq!(
             book.join(&local_key, serial_of(&first), LOCAL_INSTANCE_KEY),
             Verdict::Fail
+        );
+    }
+
+    #[test]
+    fn i28_a_release_with_no_hold_to_release_does_nothing() {
+        let mut book = pages();
+        let (key, dial) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
+        let dial_token = token(&book, &key);
+
+        assert!(!book.slot(&key).unwrap().primary, "the slot is a lease's");
+
+        // The caller the verdict failed tears down as usual, and its release
+        // finds no hold of its own: the lease's slot stands, and so does the
+        // dial of the lease's era, which a removal here would have cancelled.
+        assert_eq!(book.release_primary(&key), Some(Action::None));
+        assert!(book.slot(&key).is_some(), "the lease keeps its slot");
+        assert!(!dial_token.is_cancelled(), "and its dial keeps running");
+        assert_eq!(token_serial(&book, &key), serial_of(&dial));
+
+        // And once that lease lets go, the linger is still the lease's to spend:
+        // a release arriving during it has nothing to give up either, so it
+        // removes nothing, cancels nothing, and the grace runs its course.
+        book.release("a", &lease("l1"), 0);
+
+        assert_eq!(book.release_primary(&key), Some(Action::None));
+        assert!(book.slot(&key).is_some(), "the grace is not cut short");
+        assert!(!dial_token.is_cancelled(), "nor the lease's dial killed");
+        assert!(book.expire(LINGER_MS - 1).is_empty());
+        assert_eq!(
+            book.expire(LINGER_MS),
+            vec![(key.clone(), Action::Teardown)]
         );
     }
 

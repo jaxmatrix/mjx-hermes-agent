@@ -1060,9 +1060,11 @@ pub async fn ssh_connect(
         crate::tunnels::Joined::Successor(successor) => successor,
         // A newer PRIMARY attempt pointed the key at a different target: it
         // publishes its own result, so this caller says nothing and releases
-        // nothing. A key a LEASE owns now gets the error as it is, because that
-        // lease's holder keeps the slot and this caller must resolve its own UI.
-        crate::tunnels::Joined::Quiet => return Err(superseded_error(error)),
+        // nothing. The book's witness is what says so; the kind is left alone.
+        crate::tunnels::Joined::Quiet(witness) => return Err(SshError::quiet(witness, error)),
+        // A key a LEASE owns now: the error goes back exactly as it came, so this
+        // caller tears down and resolves its own UI. Safe whatever kind
+        // `settle_scope` chose, because no kind can imply the quiet flag.
         crate::tunnels::Joined::Fail => return Err(error),
     };
 
@@ -1071,13 +1073,6 @@ pub async fn ssh_connect(
         .map_err(|e| SshError::new(ssh_kind_of(e.kind), e.message))?;
 
     live_connection(&state, &dial.key).await
-}
-
-/// A failure whose key a newer primary attempt took over is reported as
-/// `Superseded`, keeping the message it failed with. Every other failure is
-/// reported as it is, by the caller itself.
-fn superseded_error(error: SshError) -> SshError {
-    SshError::new(SshErrorKind::Superseded, error.message)
 }
 
 fn cancelled_error() -> SshError {
@@ -2138,22 +2133,37 @@ mod tests {
     }
 
     #[test]
-    fn a_superseded_dial_fails_as_superseded_whatever_it_failed_on() {
-        let kept = |error: SshError| (error.kind, error.message);
+    fn a_fail_verdict_can_never_carry_the_quiet_signal() {
+        // What `settle_scope` mints for its own caller when a newer dial won the
+        // install race (SSH:1386). Its kind says the work was thrown away; the
+        // caller still tears down, so the flag must be absent from the wire.
+        let stale = SshError::new(
+            SshErrorKind::Superseded,
+            "A newer connection attempt replaced this one.",
+        );
 
         assert_eq!(
-            kept(superseded_error(cancelled_error())),
-            (
-                SshErrorKind::Superseded,
-                "The connection attempt was cancelled.".to_string()
-            )
+            serde_json::to_value(&stale).unwrap(),
+            serde_json::json!({
+                "kind": "superseded",
+                "message": "A newer connection attempt replaced this one."
+            }),
+            "a caller's own failure must not look quiet"
         );
+
+        // Only the book's witness sets it, and it changes nothing else.
+        let quiet = SshError::quiet(
+            crate::tunnels::Quiet::for_test(),
+            SshError::new(SshErrorKind::AuthFailed, "wrong passphrase"),
+        );
+
         assert_eq!(
-            kept(superseded_error(SshError::new(
-                SshErrorKind::AuthFailed,
-                "wrong passphrase"
-            ))),
-            (SshErrorKind::Superseded, "wrong passphrase".to_string())
+            serde_json::to_value(&quiet).unwrap(),
+            serde_json::json!({
+                "kind": "auth-failed",
+                "message": "wrong passphrase",
+                "quiet": true
+            })
         );
     }
 

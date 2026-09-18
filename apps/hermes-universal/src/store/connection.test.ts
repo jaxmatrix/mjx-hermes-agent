@@ -52,6 +52,9 @@ vi.mock('@/store/ssh-backend', async () => {
     disconnectSsh: vi.fn().mockResolvedValue(undefined),
     isSshError: (value: unknown) =>
       typeof value === 'object' && value !== null && typeof (value as { kind?: unknown }).kind === 'string',
+    // Mirrors the real predicate: the QUIET FLAG, never the kind (MJXHRM-592).
+    isQuietSshError: (value: unknown) =>
+      typeof value === 'object' && value !== null && (value as { quiet?: unknown }).quiet === true,
     newAttemptId: () => 'attempt-1',
     onSshDisconnected: vi.fn().mockResolvedValue(() => {}),
     onSshProgress: vi.fn().mockResolvedValue(() => {}),
@@ -233,16 +236,18 @@ describe('connectLocal — desktop local spawn', () => {
   })
 })
 
-// MJXHRM-592: the row was retargeted mid-dial, so a NEWER attempt owns this
-// connection. Tearing down here would release the hold under it.
-describe('connectSsh — a superseded dial', () => {
+// MJXHRM-592: the row was retargeted mid-dial, so a NEWER PRIMARY attempt owns
+// this connection. Tearing down here would release the hold under it. Rust says
+// so with the `quiet` flag, which only its tunnel book can set.
+describe('connectSsh — a quiet dial', () => {
   const target = { host: 'box', port: 22, user: 'deploy', profile: null }
 
   it('leaves the connection alone and never disconnects', async () => {
     $connection.set({ baseUrl: 'http://127.0.0.1:7001', mode: 'ssh', authMode: 'token', token: 'NEWER' })
     vi.mocked(connectSshBackend).mockRejectedValue({
       kind: 'superseded',
-      message: 'A newer connection attempt replaced this one.'
+      message: 'A newer connection attempt replaced this one.',
+      quiet: true
     })
 
     await expect(connectSsh(target)).rejects.toMatchObject({ kind: 'superseded' })
@@ -250,6 +255,24 @@ describe('connectSsh — a superseded dial', () => {
     expect(disconnectSsh).not.toHaveBeenCalled()
     expect($connection.get()).toMatchObject({ baseUrl: 'http://127.0.0.1:7001', token: 'NEWER' })
     expect($connectionError.get()).toBeNull()
+  })
+
+  // Rust mints this kind for a failure that IS this caller's own: a newer dial
+  // won the install race, or a lease owns the key now. Keying on the kind
+  // skipped the teardown, so the primary hold stayed latched with no owner here
+  // and the session, forward and remote backend lived until quit.
+  it('tears down on a superseded kind carrying no quiet flag', async () => {
+    $connection.set({ baseUrl: 'http://127.0.0.1:7001', mode: 'ssh', authMode: 'token', token: 'OLD' })
+    vi.mocked(connectSshBackend).mockRejectedValue({
+      kind: 'superseded',
+      message: 'A newer connection attempt replaced this one.'
+    })
+
+    await expect(connectSsh(target)).rejects.toMatchObject({ kind: 'superseded' })
+
+    expect(disconnectSsh).toHaveBeenCalled()
+    expect($connectionPhase.get()).toBe('error')
+    expect($connection.get()).toBeNull()
   })
 
   it('still tears down for any other failure', async () => {

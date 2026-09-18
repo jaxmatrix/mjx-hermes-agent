@@ -60,7 +60,7 @@ import {
   cancelSsh,
   connectSshBackend,
   disconnectSsh,
-  isSshError,
+  isQuietSshError,
   newAttemptId,
   onSshDisconnected,
   onSshProgress,
@@ -503,11 +503,15 @@ export async function connectSsh(
     // serves every profile of a connection. An older core keyed it per profile.
     await watchSshTunnel(backend.scope ?? sshScopeOf(hint?.dialConnectionId ?? null, profile))
   } catch (err) {
-    // `superseded`: the row was retargeted mid-dial, so a NEWER attempt owns
-    // this connection and is publishing its own result (MJXHRM-592). Tearing
-    // down here would release the primary hold under that attempt and cancel
-    // its dial, so this one only reports upwards.
-    if (isSshError(err) && err.kind === 'superseded') {
+    // The QUIET flag: the row was retargeted mid-dial, so a NEWER primary
+    // attempt owns this connection and is publishing its own result
+    // (MJXHRM-592). Tearing down here would release the primary hold under that
+    // attempt and cancel its dial, so this one only reports upwards.
+    //
+    // The flag, never the kind: Rust mints `superseded` for a failure that IS
+    // this caller's own (a newer dial won the install race), and skipping the
+    // teardown for that one latched the primary hold with no owner here.
+    if (isQuietSshError(err)) {
       throw err
     }
 
@@ -768,8 +772,8 @@ async function rebootstrapSsh(): Promise<void> {
   } catch {
     // connectSsh already set $connectionError + phase; the connecting screen
     // surfaces it and the ordinary supervisor keeps retrying the socket. Except
-    // for a `superseded` rejection: a newer attempt owns the connection and
-    // publishes its own result, so there is nothing here to surface.
+    // for a rejection carrying the QUIET flag: a newer primary attempt owns the
+    // connection and publishes its own result, so there is nothing to surface.
   } finally {
     rebootstrapping = false
   }

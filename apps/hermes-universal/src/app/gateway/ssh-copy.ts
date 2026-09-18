@@ -32,8 +32,9 @@ const ERROR_COPY: Record<SshErrorKind, (g: Gateway) => string> = {
   // The lockfile pointed at a backend that turned out not to be ours. Rust has
   // already cleaned up and will respawn, so this only surfaces if that failed too.
   'authenticated-stale': g => g.sshErrUnknown,
-  // A newer attempt took over. Never shown: both call sites return early on
-  // this kind — mapped only so the union stays exhaustive.
+  // A newer attempt threw away work this caller had finished — its own failure,
+  // so it IS surfaced. The quiet contract is the `quiet` flag, not this kind
+  // (MJXHRM-592): a caller that stays silent does so on the flag alone.
   superseded: g => g.sshErrUnknown,
   cancelled: g => g.sshErrUnknown,
   unknown: g => g.sshErrUnknown
