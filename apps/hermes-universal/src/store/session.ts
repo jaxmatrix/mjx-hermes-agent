@@ -10,6 +10,7 @@ import {
 } from '@/hermes'
 import { translateNow } from '@/i18n'
 import { isNotFoundError } from '@/lib/api'
+import { backendScopeKey, backendScopePrefix, LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { chatMessageText } from '@/lib/chat-messages'
 import { sessionTitle } from '@/lib/chat-runtime'
 import { Codecs, persistentAtom } from '@/lib/persisted'
@@ -19,6 +20,7 @@ import { stableArray } from '@/lib/stable-array'
 import { readJson, writeJson } from '@/lib/storage'
 import { reuseUnchanged } from '@/lib/structural-share'
 import { dropTranscriptTails } from '@/lib/transcript-tail-cache'
+import { $activeConnectionId } from '@/store/active-connection'
 import { atom, computed } from '@/store/atom'
 import { $busy, $clarify, $currentCwd, $messages, $sessionId, type ChatMessage, resetChat } from '@/store/chat'
 import { confirm } from '@/store/confirm'
@@ -35,13 +37,17 @@ import { requestForSession, SessionRouteError, setSessionOwnerResolver } from '@
 import {
   $activeSessionKey,
   $sessionStates,
+  ambientSessionScope,
   type ClientSessionState,
   dropSessionState,
   ensureSessionSlice,
   hydratingKey,
+  hydratingKeyFor,
   isPlaceholderKey,
   rekeySession,
   runtimeKeyForStoredSession,
+  type SessionRef,
+  setAmbientSessionScope,
   updateSession
 } from '@/store/session-state-types'
 import { clearTranscriptPaint, paintCachedTail } from '@/store/transcript-paint'
@@ -93,7 +99,16 @@ export const $activeSessionId = $activeStoredSessionId
 // writes — it does not own the user's place in the app.
 const LAST_SESSION_KEY = 'hermes.lastSessionId.byProfile'
 
+// Keyed by BACKEND SCOPE, not by profile alone (MJXHRM-591): stored ids are
+// unique per backend database, so a marker that names only a profile can send
+// the next boot to open connection A's id against connection B — against a
+// database that never heard of it, or worse a recycled one that names somebody
+// else's conversation. `backendScopeKey` keeps the local connection's bare
+// profile key, so a single-source install's persisted markers are unchanged.
 const $lastSessionByProfile = persistentAtom<Record<string, string>>(LAST_SESSION_KEY, {}, Codecs.stringRecord)
+
+/** Where this profile's place on this connection is remembered. */
+const markerScope = (profile: string): string => backendScopeKey($activeConnectionId.get(), profile)
 
 /**
  * Sessions a plugin owns and keeps HIDDEN — a bot's forever-chat.
@@ -110,7 +125,7 @@ if (ownsPersistedAppState()) {
       return
     }
 
-    const owner = knownSessionProfile(id) ?? $activeGatewayProfile.get()
+    const owner = markerScope(knownSessionProfile(id) ?? $activeGatewayProfile.get())
     const current = $lastSessionByProfile.get()
 
     if (current[owner] !== id) {
@@ -121,7 +136,7 @@ if (ownsPersistedAppState()) {
 
 /** The session to land on at boot, if any — the one last open on THIS profile. */
 export function lastOpenedSessionId(): null | string {
-  return $lastSessionByProfile.get()[$activeGatewayProfile.get()] ?? null
+  return $lastSessionByProfile.get()[markerScope($activeGatewayProfile.get())] ?? null
 }
 
 /**
@@ -163,9 +178,54 @@ export function markPluginOwnedSession(storedSessionId: string): void {
  * database, so the marker is gateway-bound state and belongs in the wipe list
  * (rule 20).
  */
-export function forgetLastSessionMarkers(): void {
-  if (Object.keys($lastSessionByProfile.get()).length) {
+/**
+ * The ref the AMBIENT chat's slices are minted under (MJXHRM-591, invariant 45).
+ *
+ * Legitimate here and only here: a tab's identity is the connection it recorded
+ * when it opened (invariant 29), but the ambient chat's identity IS the active
+ * connection — it is the chat the app itself is having. Every slice this module
+ * creates is one of those, so the scope comes from the same place the socket
+ * does, and no slice is ever left for the router to guess at.
+ */
+export function activeSessionRef(storedSessionId: string): SessionRef {
+  return { ...ambientSessionScope(storedSessionId), storedSessionId }
+}
+
+// THE one definition of "the ambient chat's scope", for the writers (slice
+// creation, above) and the readers (`runtimeKeyForStoredSession` with no scope
+// of its own) alike — so the stored-id index cannot disagree with itself.
+setAmbientSessionScope(storedSessionId => ({
+  connectionId: $activeConnectionId.get() ?? LOCAL_CONNECTION_ID,
+  profile: normalizeProfileKey(knownSessionProfile(storedSessionId ?? '') ?? $activeGatewayProfile.get())
+}))
+
+export function forgetLastSessionMarkers(leavingConnectionId?: null | string): void {
+  const remembered = $lastSessionByProfile.get()
+
+  if (!Object.keys(remembered).length) {
+    return
+  }
+
+  if (!leavingConnectionId) {
     $lastSessionByProfile.set({})
+
+    return
+  }
+
+  // Only the connection being left (invariant 37). Its own markers go because
+  // the marker is where boot lands and the app is no longer there; the places
+  // remembered on every OTHER connection are not this switch's to forget.
+  const local = leavingConnectionId === LOCAL_CONNECTION_ID
+  const prefix = backendScopePrefix(leavingConnectionId)
+
+  const kept = Object.fromEntries(
+    // The local connection's markers keep the BARE profile key, so its entries
+    // are the ones that carry no `conn:` prefix at all.
+    Object.entries(remembered).filter(([scope]) => (local ? scope.startsWith('conn:') : !scope.startsWith(prefix)))
+  )
+
+  if (Object.keys(kept).length !== Object.keys(remembered).length) {
+    $lastSessionByProfile.set(kept)
   }
 }
 
@@ -1219,14 +1279,17 @@ export function adoptLiveSession(input: {
     markPluginOwnedSession(storedSessionId)
   }
 
-  ensureSessionSlice(runtimeSessionId, {
-    busy: false,
-    cwd: (input.cwd ?? '').trim(),
-    messages: [],
-    runtimeSessionId,
-    sessionStartedAt: Date.now(),
-    storedSessionId
-  })
+  ensureSessionSlice(
+    { ref: activeSessionRef(storedSessionId), runtimeId: runtimeSessionId },
+    {
+      busy: false,
+      cwd: (input.cwd ?? '').trim(),
+      messages: [],
+      runtimeSessionId,
+      sessionStartedAt: Date.now(),
+      storedSessionId
+    }
+  )
 
   if (input.activate === false) {
     return
@@ -1397,14 +1460,18 @@ async function hydrateColdSession(storedId: string): Promise<void> {
   // a blank heartbeat never overwrites either.
   const row = $sessions.get().find(session => session.id === storedId)
 
-  let key = hydratingKey(storedId)
+  const ref = activeSessionRef(storedId)
+  let key = hydratingKeyFor(ref)
 
-  ensureSessionSlice(key, {
-    storedSessionId: storedId,
-    busy: true,
-    cwd: row?.cwd ?? '',
-    model: row?.model ?? ''
-  })
+  ensureSessionSlice(
+    { ref },
+    {
+      storedSessionId: storedId,
+      busy: true,
+      cwd: row?.cwd ?? '',
+      model: row?.model ?? ''
+    }
+  )
 
   $activeStoredSessionId.set(storedId)
   $activeSessionKey.set(key)
@@ -1952,14 +2019,17 @@ async function forkBranchSession({
     // id — it does not overwrite the parent's, which stays open behind it.
     // Paint the copied turns locally rather than re-fetching: the branch has no
     // committed transcript until its first real message lands.
-    ensureSessionSlice(branched.session_id, {
-      runtimeSessionId: branched.session_id,
-      storedSessionId: storedId,
-      messages: branchMessages.map(({ source }) => source),
-      busy: false,
-      cwd: (branched.info?.cwd ?? cwd ?? '').trim(),
-      sessionStartedAt: Date.now()
-    })
+    ensureSessionSlice(
+      { ref: activeSessionRef(branched.stored_session_id ?? storedId), runtimeId: branched.session_id },
+      {
+        runtimeSessionId: branched.session_id,
+        storedSessionId: storedId,
+        messages: branchMessages.map(({ source }) => source),
+        busy: false,
+        cwd: (branched.info?.cwd ?? cwd ?? '').trim(),
+        sessionStartedAt: Date.now()
+      }
+    )
 
     const preview = branchMessages.map(({ content }) => content).find(Boolean) ?? ''
     // The BRANCH's directory — the backend's resolved one, else the parent's —

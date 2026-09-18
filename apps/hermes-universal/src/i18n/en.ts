@@ -207,6 +207,17 @@ export const en: Translations = {
     dismiss: 'Dismiss'
   },
 
+  chatConnection: {
+    lostTitle: 'Connection lost',
+    lostMessage: label => `This chat lives on ${label}, which is not reachable right now.`,
+    retry: 'Retry',
+    changedTitle: 'Conversation unavailable',
+    changedMessage: 'The backend behind this chat changed, so this tab can only be closed.',
+    notOnThisDevice: 'Local connections are not available on this device, so this tab can only be closed.',
+    close: 'Close tab',
+    reconnectToLoad: 'Reconnect to load this conversation.'
+  },
+
   remoteDisplayBanner: {
     message: reason =>
       `Software rendering active — remote display detected (${reason}). GPU acceleration is disabled to prevent flickering.`

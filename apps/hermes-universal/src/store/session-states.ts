@@ -41,9 +41,14 @@ import { discardDeltas, disposeStreamBatch, flushDeltas } from '@/lib/stream-bat
 import { beginDetached, endSpan } from '@/observability'
 import { requestClose } from '@/store/close-confirm'
 import { clearAllCompaction } from '@/store/compaction'
+import {
+  type ClientHold,
+  holdConnectionClient,
+  isAmbientConnection,
+  releaseConnectionClient
+} from '@/store/connection-clients'
 import { resetUnscopedStreamPin } from '@/store/event-router'
 import { clearLiveSessionStatuses } from '@/store/live-session-registry'
-import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import { clearAllPrompts } from '@/store/prompts'
 import {
   $activeStoredSessionId,
@@ -60,19 +65,24 @@ import {
   aliasStoredSessionId,
   clearStoredIdIndex,
   type ClientSessionState,
+  connectionOfSessionKey,
+  DEFAULT_SESSION_PROFILE,
   dropSessionState,
   emptySessionState,
   ensureSessionSlice,
   isPlaceholderKey,
+  LOCAL_SESSION_SCOPE,
   newDraftKey,
   publishSessionState,
   rekeySession,
   runtimeKeyForStoredSession,
+  type SessionRef,
   setSessionDisposeHook,
   setSessionTransitionHook,
   updateSession
 } from '@/store/session-state-types'
 import { clearAllSubagents } from '@/store/subagents'
+import { sameTabRef, setTabRefResolver, tabKeyFor, tabRefFor, tabRefOf, takeProfileKeyedTabs } from '@/store/tab-ref'
 import { clearAllTurns } from '@/store/turn-lifecycle'
 import { isSecondaryWindow, ownsPersistedAppState } from '@/store/windows'
 
@@ -160,7 +170,11 @@ function handleTransition(previous: ClientSessionState | null, next: ClientSessi
   // and the mobile bubble folds the id in (chat-bubbles.ts, via its own
   // `$activeStoredSessionId` watcher).
   if (!previous?.storedSessionId && next.storedSessionId) {
-    adoptDraftTile(next.storedSessionId)
+    adoptDraftTile({
+      connectionId: next.connectionId ?? LOCAL_SESSION_SCOPE,
+      profile: next.profile ?? DEFAULT_SESSION_PROFILE,
+      storedSessionId: next.storedSessionId
+    })
   }
 
   if (next.busy) {
@@ -264,11 +278,84 @@ export function clearAllSessionStates() {
   $sessionStates.set({})
 }
 
+/**
+ * Drop the slices of the connection being LEFT that no open tab holds
+ * (MJXHRM-591, invariant 37).
+ *
+ * A switch touches only what it leaves. `clearAllSessionStates` was the right
+ * answer when the app held one socket and every runtime id died with it; with
+ * tabs bound to their own backends it would wipe the transcript of every tab on
+ * every OTHER connection to answer a switch none of them made — and the slices
+ * of the leaving connection's own tabs, which keep streaming on its owning
+ * client.
+ *
+ * So: only the leaving connection, and only what nothing holds. The per-key
+ * teardown (`dropSessionState`) takes the timers, prompts and queued deltas with
+ * each slice, exactly as an eviction does.
+ */
+/** Every session key an open tab depends on: its live slice, and the durable
+ *  key its tail and its artifacts are filed under (which a resume does not
+ *  move). What a switch may not drop. */
+/** A draft tab's slice: the placeholder it was opened under, whether or not it
+ *  is the one on screen. */
+function draftSliceKeyOf(tile: SessionTile): null | string {
+  const active = $activeSessionKey.get()
+
+  if (isPlaceholderKey(active) && tileRuntimeKey(tile.tileKey) === active) {
+    return active
+  }
+
+  return tile.runtimeId ?? null
+}
+
+export function heldSessionKeys(): Set<string> {
+  const held = new Set<string>()
+
+  for (const tile of $sessionTiles.get()) {
+    // EVERY record's slice key, focused or not (Design v1.3, N8): the draft
+    // tile's resolver answers for the ACTIVE placeholder only, so a background
+    // draft — a second tab the user started and moved away from — was not in
+    // this set and a switch could drop the slice under it.
+    const key = tile.tileKey === DRAFT_TILE_KEY ? draftSliceKeyOf(tile) : tileRuntimeKey(tile.tileKey)
+
+    if (key) {
+      held.add(key)
+    }
+
+    // …and the durable key its artifacts and its tail are filed under, which a
+    // resume does not move.
+    held.add(tileKeyFor(tileRef(tile)))
+  }
+
+  held.add($activeSessionKey.get())
+
+  return held
+}
+
+export function dropUnheldSessionStates(leavingConnectionId: null | string): void {
+  const held = heldSessionKeys()
+  const leaving = leavingConnectionId ?? LOCAL_SESSION_SCOPE
+
+  for (const [key, state] of Object.entries($sessionStates.get())) {
+    if (held.has(key)) {
+      continue
+    }
+
+    const scope = state.connectionId ?? connectionOfSessionKey(key)
+
+    // An UNSCOPED slice is an unbound draft (invariant 42): it belongs to no
+    // connection, so no connection's departure may take it (N8).
+    if (scope !== null && scope === leaving) {
+      dropSessionState(key)
+    }
+  }
+}
+
 /** Point the app at a brand-new empty draft. Used after wiping the map, so the
  *  active key never dangles at a slice that no longer exists. */
 export function startFreshActiveSession(): string {
   const key = newDraftKey()
-  ensureSessionSlice(key)
+  ensureSessionSlice({ draftKey: key })
   $activeSessionKey.set(key)
   resetUnscopedStreamPin()
 
@@ -429,117 +516,292 @@ export const $activeSessionState = computed(
 export type SplitDir = 'bottom' | 'left' | 'right' | 'top'
 export type TileDock = 'center' | SplitDir
 
+/**
+ * An open tab.
+ *
+ * The REF — connection, profile, stored id, and the backend identity it bound to
+ * — is `readonly`, and is the tab's whole address (MJXHRM-591, invariant 38). A
+ * tab is self-contained: no tab path asks which connection is active, and no
+ * path can repoint one. Backends mint `uuid4().hex[:8]`, per state.db, so the
+ * same stored id turning up on two of them is expected rather than meaningful —
+ * a tab whose backend changed under it goes UNAVAILABLE and offers Close, since
+ * rebinding would show another machine's chat under this tab's history.
+ *
+ * `tileKey` is the tab's identity: its ref, encoded by `storedKeyFor`. Pane ids,
+ * the closed-tab stack and every verb below address a tab by it — and for the
+ * local connection's default profile it IS the bare stored id, so a
+ * single-source install's pane ids and storage stay byte-identical.
+ */
 export interface SessionTile {
-  storedSessionId: string
+  readonly tileKey: string
+  readonly connectionId: string
+  readonly profile: string
+  readonly storedSessionId: string
+  /** The backend this tab bound to (`TunnelDescriptor.instanceKey`), learned at
+   *  its first resume. A different one later is a different machine. */
+  readonly backendIdentity?: string
+  /** The tab's name, as last seen in a session row (invariant 43).
+   *
+   *  A tab's title resolves through the sidebar's rows, and those are the ACTIVE
+   *  backend's: a switch empties them, so a tab bound to any other connection
+   *  would fall back to rendering its id. The snapshot is persisted and
+   *  refreshed whenever that tab's own row is in front of us. */
+  title?: string
   dir?: TileDock
   anchor?: string
   before?: null | string
   runtimeId?: string
   error?: string
+  /** The tab's backend changed under it: it routes nothing, resumes nothing and
+   *  offers exactly one verb (`tileActions`). */
+  unavailable?: boolean
 }
 
-// Tiles are persisted PER PROFILE (the live gateway is scoped to one profile at
-// a time). Switching profiles swaps the visible set and drops runtime bindings.
-const TILES_KEY = 'hermes.sessionTiles.v2'
+/** The identity of the tab for `ref`. */
+// The ref, the key and the resolver are `store/tab-ref`'s — ONE set of rules for
+// the desktop's tabs and the phone's bubbles (invariant 44). The tile layer
+// keeps its own names for them, so the rest of the app reads as it always did.
+export const tileKeyFor = tabKeyFor
+export const tileRef = tabRefOf
+const sameRef = sameTabRef
 
-type StoredTile = Pick<SessionTile, 'anchor' | 'before' | 'dir' | 'storedSessionId'>
+/**
+ * Is this tab the same CONVERSATION as `ref` — on the same backend?
+ *
+ * "Already open?" is asked by conversation, not by string, because auto-
+ * compression rotates a stored id and the tab keeps the one it opened with
+ * (MJX-133). It is now also asked WITHIN one connection and profile: the same
+ * `uuid4().hex[:8]` on two backends is two chats, and matching across them
+ * would front a tab onto another machine's session.
+ */
+const sameTileConversation = (tile: SessionTile, ref: SessionRef): boolean =>
+  tile.connectionId === ref.connectionId &&
+  tile.profile === ref.profile &&
+  sameStoredSession(tile.storedSessionId, ref.storedSessionId)
+
+/**
+ * Where a bare stored id's tab belongs.
+ *
+ * Every tab records its FULL ref when it opens, and a caller holding a row (a
+ * sidebar entry, a waiting prompt, a deep link) knows which connection that row
+ * came from — `store/session-sources` tags every merged row with its owner.
+ * This is that lookup, INJECTED rather than imported so the tile layer stays
+ * dependency-light, and resolved ONCE, at open: nothing re-reads it afterwards,
+ * which is what makes the tab self-contained rather than "usually right".
+ */
+export const setSessionRefResolver = setTabRefResolver
+export const sessionRefFor = tabRefFor
+
+// Tabs persist as ONE FLAT LIST, because a tab now stays put across a connection
+// or profile switch: it carries its own connection, so there is no "visible set"
+// to swap. v2 was keyed BY PROFILE and swapped on every switch; it is migrated
+// once, then deleted.
+const TILES_KEY = 'hermes.sessionTiles.v3'
+const LEGACY_TILES_KEY = 'hermes.sessionTiles.v2'
+
+type StoredTile = Pick<
+  SessionTile,
+  'anchor' | 'before' | 'connectionId' | 'dir' | 'profile' | 'storedSessionId' | 'title'
+>
 
 const toStored = (t: SessionTile): StoredTile => ({
   anchor: t.anchor,
   before: t.before,
+  connectionId: t.connectionId,
   dir: t.dir,
-  storedSessionId: t.storedSessionId
+  profile: t.profile,
+  storedSessionId: t.storedSessionId,
+  title: t.title
 })
 
-function parseTileList(value: unknown): StoredTile[] {
-  return Array.isArray(value)
-    ? value
-        .filter((t): t is SessionTile => Boolean(t && typeof (t as SessionTile).storedSessionId === 'string'))
-        .map(t => {
-          const raw = t as SessionTile
+/** Rebuild a live tab from its persisted form. Runtime ids and the bound backend
+ *  identity are process-scoped, and deliberately not restored. */
+const fromStored = (t: StoredTile): SessionTile => ({ ...t, tileKey: tileKeyFor(t) })
 
-          return {
-            anchor: typeof raw.anchor === 'string' ? raw.anchor : undefined,
-            before: typeof raw.before === 'string' || raw.before === null ? raw.before : undefined,
-            dir: raw.dir,
-            storedSessionId: raw.storedSessionId
-          }
-        })
-    : []
+function parseStoredTile(value: unknown, fallbackConnection: string, fallbackProfile: string): null | StoredTile {
+  const raw = value as null | Partial<SessionTile>
+
+  if (!raw || typeof raw.storedSessionId !== 'string') {
+    return null
+  }
+
+  return {
+    anchor: typeof raw.anchor === 'string' ? raw.anchor : undefined,
+    before: typeof raw.before === 'string' || raw.before === null ? raw.before : undefined,
+    connectionId: typeof raw.connectionId === 'string' ? raw.connectionId : fallbackConnection,
+    dir: raw.dir,
+    profile: typeof raw.profile === 'string' ? raw.profile : fallbackProfile,
+    storedSessionId: raw.storedSessionId,
+    title: typeof raw.title === 'string' ? raw.title : undefined
+  }
 }
 
-function loadTilesByProfile(): Record<string, StoredTile[]> {
-  const byProfile: Record<string, StoredTile[]> = {}
+function loadTiles(): StoredTile[] {
   const parsed = readJson<unknown>(TILES_KEY)
+  const tiles: StoredTile[] = []
 
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    for (const [profile, list] of Object.entries(parsed as Record<string, unknown>)) {
-      const tiles = parseTileList(list)
+  if (Array.isArray(parsed)) {
+    for (const entry of parsed) {
+      const tile = parseStoredTile(entry, LOCAL_SESSION_SCOPE, DEFAULT_SESSION_PROFILE)
 
-      if (tiles.length > 0) {
-        byProfile[normalizeProfileKey(profile)] = tiles
+      if (tile) {
+        tiles.push(tile)
       }
     }
   }
 
-  return byProfile
+  return tiles
 }
 
-const tilesByProfile = loadTilesByProfile()
-const profileKey = () => normalizeProfileKey($activeGatewayProfile.get())
+let storedTiles = loadTiles()
 
-// Runtime ids are process-scoped; the live atom hydrates from the stored
-// (runtime-less) tiles for the active profile. A secondary window shows no tiles.
-export const $sessionTiles = atom<SessionTile[]>(isSecondaryWindow() ? [] : [...(tilesByProfile[profileKey()] ?? [])])
+// A secondary window shows no tiles.
+export const $sessionTiles = atom<SessionTile[]>(isSecondaryWindow() ? [] : storedTiles.map(fromStored))
 
 function persistTiles() {
   if (!ownsPersistedAppState()) {
     return
   }
 
-  writeJson(TILES_KEY, Object.keys(tilesByProfile).length === 0 ? null : tilesByProfile)
+  writeJson(TILES_KEY, storedTiles.length === 0 ? null : storedTiles)
 }
 
-function saveTiles(tiles: SessionTile[]) {
-  $sessionTiles.set(tiles)
+/**
+ * v2 → v3, run once, as soon as the registry names a primary.
+ *
+ * A v2 tile was keyed by PROFILE alone, so the only connection it could have
+ * belonged to is the one the app was pointed at: the registry's primary. Each
+ * tab's pane id moves with its key in the same pass — `renameTreePane` is what
+ * the draft's first-message rename already uses, so a restored layout keeps the
+ * slot, the width and the active flag it had. ONE-WAY: v3 is written and v2
+ * deleted, so no later read can resurrect the profile-keyed shape.
+ */
+export function migrateLegacyTiles(primaryConnectionId: string): void {
+  const legacy = takeProfileKeyedTabs(LEGACY_TILES_KEY)
+
+  if (!legacy) {
+    return
+  }
+
+  const migrated: StoredTile[] = []
+
+  for (const { entry, profile } of legacy) {
+    const tile = parseStoredTile(entry, primaryConnectionId, profile)
+
+    if (!tile) {
+      continue
+    }
+
+    const next: StoredTile = { ...tile, connectionId: primaryConnectionId, profile }
+    const key = tileKeyFor(next)
+
+    if (!migrated.some(t => tileKeyFor(t) === key)) {
+      migrated.push(next)
+      renameTreePane(`${TILE_PANE_PREFIX}${next.storedSessionId}`, `${TILE_PANE_PREFIX}${key}`)
+    }
+  }
+
+  if (migrated.length === 0) {
+    return
+  }
+
+  const carried = new Set(migrated.map(tileKeyFor))
+
+  storedTiles = [...migrated, ...storedTiles.filter(t => !carried.has(tileKeyFor(t)))]
+  persistTiles()
+
+  if (!isSecondaryWindow()) {
+    const live = $sessionTiles.get()
+    const known = new Set(live.map(t => t.tileKey))
+
+    $sessionTiles.set([...migrated.filter(t => !known.has(tileKeyFor(t))).map(fromStored), ...live])
+  }
+}
+
+/**
+ * THE write path for the tab list, and the only one that persists.
+ *
+ * Exported because it is also the guard: every list write goes through it, so a
+ * caller that assembles a list — a merge, a restore, a reorder — cannot smuggle
+ * a repointed tab past the type system by rebuilding the record.
+ */
+/**
+ * THE HOLD LEDGER (MJXHRM-591, invariant 47).
+ *
+ * A hold belongs to the tab RECORD, not to a network path: this map is written
+ * by the commit below and by nothing else, so "how many tabs want this
+ * connection" is the set of tab records, counted where that set changes. A
+ * rebind is no change in presence and cannot double-count; a failed resume
+ * cannot leak, because it never took one; and an UNAVAILABLE tab gives its hold
+ * back, because it will never use that connection again.
+ */
+const holdsByTab = new Map<string, ClientHold>()
+
+/** Which records are entitled to a hold: present, and still usable. */
+const heldTabs = (tiles: readonly SessionTile[]): Map<string, SessionTile> =>
+  new Map(tiles.filter(tile => !tile.unavailable && tile.tileKey !== DRAFT_TILE_KEY).map(tile => [tile.tileKey, tile]))
+
+function commitTabHolds(next: readonly SessionTile[]): void {
+  const wanted = heldTabs(next)
+
+  for (const [tabKey, tile] of wanted) {
+    if (!holdsByTab.has(tabKey)) {
+      const hold = holdConnectionClient(tile.connectionId, { ambient: isAmbientConnection(tile.connectionId) })
+
+      if (hold) {
+        holdsByTab.set(tabKey, hold)
+      }
+    }
+  }
+
+  for (const [tabKey, hold] of [...holdsByTab]) {
+    if (!wanted.has(tabKey)) {
+      holdsByTab.delete(tabKey)
+      releaseConnectionClient(hold)
+    }
+  }
+}
+
+export function saveSessionTiles(tiles: SessionTile[]) {
+  // A write may not repoint a tab. `patchSessionTile` makes a repoint impossible
+  // to COMPILE; this catches one assembled dynamically — a merged list, a
+  // restored blob — and keeps the live tab rather than adopting the stranger.
+  const live = new Map($sessionTiles.get().map(tile => [tile.tileKey, tile]))
+
+  const guarded = tiles.map(tile => {
+    const current = live.get(tile.tileKey)
+
+    if (current && !sameRef(current, tile)) {
+      console.warn('[tiles] refused a write that would repoint a bound tab', { tileKey: tile.tileKey })
+
+      return current
+    }
+
+    return tile
+  })
+
+  $sessionTiles.set(guarded)
+  // …and the holds follow the records, in the same commit.
+  commitTabHolds(guarded)
   // The draft tile is never persisted: `draft` names no session, so restoring it
   // would reopen an empty tab pointing at nothing. Same rule the bubble row
   // already applies to its draft.
-  const stored = tiles.filter(t => t.storedSessionId !== DRAFT_TILE_KEY).map(toStored)
-
-  if (stored.length > 0) {
-    tilesByProfile[profileKey()] = stored
-  } else {
-    delete tilesByProfile[profileKey()]
-  }
+  storedTiles = guarded.filter(t => t.tileKey !== DRAFT_TILE_KEY).map(toStored)
 
   persistTiles()
 }
 
-// Profile switch: surface the new profile's tiles with runtime ids cleared.
-// Runtime ids are issued by the gateway and scoped to one profile, so EVERY
-// slice is dead — keeping them would leave sessions that can never receive
-// another event, and whose ids could collide with the new profile's.
-let lastProfileKey = profileKey()
+// A connection or profile switch changes NOTHING here (invariant 37): a tab
+// carries its own connection and keeps its slice, its client and its place. The
+// v2 code swapped the visible set per profile and called `clearAllSessionStates`
+// — with tabs bound to their own backends, that would wipe the transcripts of
+// every tab on every OTHER connection to answer a switch none of them made.
 
-if (ownsPersistedAppState()) {
-  $activeGatewayProfile.subscribe(() => {
-    const next = profileKey()
-
-    if (next === lastProfileKey) {
-      return
-    }
-
-    lastProfileKey = next
-    $sessionTiles.set([...(tilesByProfile[next] ?? [])])
-    clearAllSessionStates()
-    startFreshActiveSession()
-  })
-}
-
-/** The live session key behind a tile, following a compaction id rotation. */
-export function tileRuntimeKey(storedSessionId: null | string): null | string {
-  if (!storedSessionId) {
+/** The live session key behind a tab, following a compaction id rotation. Takes
+ *  the tab's KEY, so two connections' identical stored ids resolve to their own
+ *  slices rather than to whichever was indexed last (MJXHRM-591). */
+export function tileRuntimeKey(tileKey: null | string): null | string {
+  if (!tileKey) {
     return null
   }
 
@@ -547,21 +809,124 @@ export function tileRuntimeKey(storedSessionId: null | string): null | string {
   // slice is the active placeholder one. Resolving it HERE rather than in the
   // pane is what makes the draft a tile like any other: its view, its busy
   // state and its close-confirm all read through this one function.
-  if (storedSessionId === DRAFT_TILE_KEY) {
+  if (tileKey === DRAFT_TILE_KEY) {
     const active = $activeSessionKey.get()
 
     return isPlaceholderKey(active) ? active : null
   }
 
-  return (
-    runtimeKeyForStoredSession(storedSessionId) ??
-    $sessionTiles.get().find(t => t.storedSessionId === storedSessionId)?.runtimeId ??
-    null
-  )
+  const tile = $sessionTiles.get().find(t => t.tileKey === tileKey)
+
+  return runtimeKeyForStoredSession(tile?.storedSessionId ?? tileKey, tile && tileRef(tile)) ?? tile?.runtimeId ?? null
 }
 
-export function patchSessionTile(storedSessionId: string, patch: Partial<SessionTile>) {
-  saveTiles($sessionTiles.get().map(t => (t.storedSessionId === storedSessionId ? { ...t, ...patch } : t)))
+/**
+ * Everything about a tab EXCEPT where it points.
+ *
+ * The ref fields are absent from the patch type, so a repoint does not compile —
+ * the same shape as 592's `&self` pin on the tunnel verdict. A tab that can be
+ * repointed is a tab that can show another machine's chat under this one's
+ * history, and no UI verb, recovery path or migration is allowed to do it
+ * (invariant 38).
+ */
+export type SessionTilePatch = Partial<
+  Omit<SessionTile, 'backendIdentity' | 'connectionId' | 'profile' | 'storedSessionId' | 'tileKey'>
+>
+
+export function patchSessionTile(tileKey: string, patch: SessionTilePatch) {
+  saveSessionTiles($sessionTiles.get().map(t => (t.tileKey === tileKey ? { ...t, ...patch } : t)))
+}
+
+/**
+ * Keep each tab's title snapshot in step with the rows in front of us
+ * (invariant 43).
+ *
+ * Called with rows that carry their own connection, so a tab is only ever named
+ * by ITS backend's row — the same stored id on another one is another
+ * conversation, and taking its title would put a stranger's name on this tab.
+ */
+export function refreshTileTitles(
+  rows: readonly { connection_id?: null | string; id: string; title?: null | string }[]
+): void {
+  const byKey = new Map<string, string>()
+
+  for (const row of rows) {
+    const title = (row.title ?? '').trim()
+
+    if (title) {
+      byKey.set(`${row.connection_id || LOCAL_SESSION_SCOPE}\u0000${row.id}`, title)
+    }
+  }
+
+  if (byKey.size === 0) {
+    return
+  }
+
+  let changed = false
+
+  const next = $sessionTiles.get().map(tile => {
+    const title = byKey.get(`${tile.connectionId}\u0000${tile.storedSessionId}`)
+
+    if (!title || title === tile.title) {
+      return tile
+    }
+
+    changed = true
+
+    return { ...tile, title }
+  })
+
+  if (changed) {
+    saveSessionTiles(next)
+  }
+}
+
+/**
+ * Learn the backend a tab bound to — or find out it changed under it
+ * (MJXHRM-591, invariant 38).
+ *
+ * The identity is `TunnelDescriptor.instanceKey`: the machine and the install,
+ * not the session. The FIRST one a tab sees is its binding, and is written once
+ * (which is why `backendIdentity` is absent from `SessionTilePatch` — nothing
+ * else may set it). A DIFFERENT one later is a different backend: the tab goes
+ * UNAVAILABLE, keeping its ref, because a shared stored id across two backends
+ * is expected rather than meaningful and adopting it would show another
+ * machine's chat under this tab's history.
+ *
+ * Returns whether the tab may still be used.
+ */
+export function noteTileBackendIdentity(tileKey: string, instanceKey: null | string | undefined): boolean {
+  const key = (instanceKey ?? '').trim()
+  const tiles = $sessionTiles.get()
+  const tile = tiles.find(open => open.tileKey === tileKey)
+
+  if (!tile || !key) {
+    return !tile?.unavailable
+  }
+
+  if (!tile.backendIdentity) {
+    saveSessionTiles(tiles.map(open => (open.tileKey === tileKey ? { ...open, backendIdentity: key } : open)))
+
+    return true
+  }
+
+  if (tile.backendIdentity === key) {
+    return !tile.unavailable
+  }
+
+  saveSessionTiles(tiles.map(open => (open.tileKey === tileKey ? { ...open, unavailable: true } : open)))
+
+  return false
+}
+
+/** What an UNAVAILABLE tab offers: exactly one verb. Its backend changed under
+ *  it, so there is nothing to resume, retry or reopen — only to close. */
+export const UNAVAILABLE_TILE_ACTIONS: readonly ['close'] = ['close']
+
+/** The verbs a tab offers. Anything but `close` requires a tab still bound to
+ *  the backend it was opened against. */
+export function tileActions(tile: SessionTile): readonly string[] {
+  return tile.unavailable ? UNAVAILABLE_TILE_ACTIONS : ['close', 'retry', 'branch', 'archive', 'delete']
 }
 
 /** Drop live runtime bindings so every tile re-resumes — used on gateway reconnect. */
@@ -569,7 +934,7 @@ export function resetTileRuntimeBindings() {
   const tiles = $sessionTiles.get()
 
   if (tiles.some(t => t.runtimeId)) {
-    $sessionTiles.set(tiles.map(toStored))
+    $sessionTiles.set(tiles.map(({ runtimeId: _runtimeId, ...tile }) => tile))
   }
 }
 
@@ -599,7 +964,7 @@ export function sessionTileDelegate(): SessionTileDelegate | null {
 
 /** Reorder tiles to match layout-tree encounter order. Returns `null` when
  *  nothing moves so callers can skip a needless persist. */
-export function orderTilesByTree<T extends { storedSessionId: string }>(
+export function orderTilesByTree<T extends { tileKey: string }>(
   tree: LayoutNode | null,
   tiles: readonly T[]
 ): null | T[] {
@@ -627,9 +992,7 @@ export function orderTilesByTree<T extends { storedSessionId: string }>(
 
   const rank = new Map(order.map((id, i) => [id, i]))
 
-  const next = [...tiles].sort(
-    (a, b) => (rank.get(a.storedSessionId) ?? Infinity) - (rank.get(b.storedSessionId) ?? Infinity)
-  )
+  const next = [...tiles].sort((a, b) => (rank.get(a.tileKey) ?? Infinity) - (rank.get(b.tileKey) ?? Infinity))
 
   return next.some((t, i) => t !== tiles[i]) ? next : null
 }
@@ -669,7 +1032,7 @@ function syncTileStripOrder() {
   const next = orderTilesByTree($layoutTree.get(), $sessionTiles.get())
 
   if (next) {
-    saveTiles(next)
+    saveSessionTiles(next)
   }
 }
 
@@ -737,12 +1100,15 @@ export function openSessionTile(
     return
   }
 
-  const open = tiles.find(tile => sameStoredSession(tile.storedSessionId, storedSessionId))
+  const ref = sessionRefFor(storedSessionId)
+  const open = tiles.find(tile => sameTileConversation(tile, ref))
 
   if (!open) {
     // No session id in the attributes — these spans end up in shared traces.
     opening.set(storedSessionId, beginDetached('chat.open', { dir }))
-    saveTiles([...tiles, { anchor, before, dir, storedSessionId }])
+    // The FULL ref, resolved once, here: from this point the tab addresses its
+    // own connection and nothing re-asks which one is active (invariant 29).
+    saveSessionTiles([...tiles, { ...ref, anchor, before, dir, tileKey: tileKeyFor(ref) }])
 
     return
   }
@@ -754,8 +1120,8 @@ export function openSessionTile(
     // No explicit re-order here: `moveTreePane` commits the tree, and the tree
     // is what `syncTileStripOrder` now listens to. `patchSessionTile` maps the
     // list in place, so it cannot disturb the order that landed first.
-    moveTreePane(`${TILE_PANE_PREFIX}${open.storedSessionId}`, { before: before ?? null, groupId: target, pos: dir })
-    patchSessionTile(open.storedSessionId, { anchor, before: before ?? undefined, dir })
+    moveTreePane(`${TILE_PANE_PREFIX}${open.tileKey}`, { before: before ?? null, groupId: target, pos: dir })
+    patchSessionTile(open.tileKey, { anchor, before: before ?? undefined, dir })
   }
 }
 
@@ -779,8 +1145,8 @@ export function openSessionTile(
  */
 export function openBranchTile(branchStoredId: string, parentStoredId: null | string): void {
   const anchor =
-    parentStoredId && $sessionTiles.get().some(t => t.storedSessionId === parentStoredId)
-      ? `${TILE_PANE_PREFIX}${parentStoredId}`
+    parentStoredId && $sessionTiles.get().some(t => t.tileKey === tileKeyFor(sessionRefFor(parentStoredId)))
+      ? `${TILE_PANE_PREFIX}${tileKeyFor(sessionRefFor(parentStoredId))}`
       : WORKSPACE_PANE_ID
 
   openSessionTile(branchStoredId, 'center', anchor)
@@ -799,9 +1165,11 @@ export function openBranchTile(branchStoredId: string, parentStoredId: null | st
  * tile resumes itself on mount, and binds straight to a slice already warm.
  */
 export function openSessionTab(storedSessionId: string, focus = true): void {
+  const ref = sessionRefFor(storedSessionId)
+
   const onScreen =
     sameStoredSession(storedSessionId, $activeStoredSessionId.get()) ||
-    $sessionTiles.get().some(tile => sameStoredSession(tile.storedSessionId, storedSessionId))
+    $sessionTiles.get().some(tile => sameTileConversation(tile, ref))
 
   if (!onScreen) {
     openSessionTile(storedSessionId, 'center', WORKSPACE_PANE_ID)
@@ -835,8 +1203,21 @@ export function newSessionTab(): void {
   // tab belongs in the strip you asked from, not docked to the side.
   const anchor = activeChatPaneId()
 
-  if (!$sessionTiles.get().some(t => t.storedSessionId === DRAFT_TILE_KEY)) {
-    saveTiles([...$sessionTiles.get(), { anchor, dir: 'center', storedSessionId: DRAFT_TILE_KEY }])
+  if (!$sessionTiles.get().some(t => t.tileKey === DRAFT_TILE_KEY)) {
+    // The one UNBOUND tab (invariant 42): it holds no ref, so it renders and
+    // routes against the active connection and re-points on every switch, until
+    // its first `session.create` dispatch binds it once and for good.
+    saveSessionTiles([
+      ...$sessionTiles.get(),
+      {
+        anchor,
+        connectionId: LOCAL_SESSION_SCOPE,
+        dir: 'center',
+        profile: DEFAULT_SESSION_PROFILE,
+        storedSessionId: DRAFT_TILE_KEY,
+        tileKey: DRAFT_TILE_KEY
+      }
+    ])
   }
 
   focusDraftTile(anchor)
@@ -872,9 +1253,10 @@ function focusDraftTile(anchor: string): void {
  *  the workspace. What a new tab anchors to. */
 function activeChatPaneId(): string {
   const active = $activeStoredSessionId.get()
-  const tile = active && $sessionTiles.get().some(t => t.storedSessionId === active)
+  const key = active ? tileKeyFor(sessionRefFor(active)) : null
+  const tile = key && $sessionTiles.get().some(t => t.tileKey === key)
 
-  return tile ? `${TILE_PANE_PREFIX}${active}` : WORKSPACE_PANE_ID
+  return tile ? `${TILE_PANE_PREFIX}${key}` : WORKSPACE_PANE_ID
 }
 
 /**
@@ -885,23 +1267,30 @@ function activeChatPaneId(): string {
  * zones at the exact moment the user hit send. `renameTreePane` carries the slot,
  * the width and the active flag; this carries the tile record.
  */
-function adoptDraftTile(storedSessionId: string): void {
+function adoptDraftTile(ref: SessionRef): void {
   const tiles = $sessionTiles.get()
 
-  if (!tiles.some(t => t.storedSessionId === DRAFT_TILE_KEY)) {
+  if (!tiles.some(t => t.tileKey === DRAFT_TILE_KEY)) {
     return
   }
+
+  const tileKey = tileKeyFor(ref)
 
   // Already open as its own tile (the draft was abandoned onto an existing
   // chat): drop the draft rather than creating a duplicate tab for one session.
-  if (tiles.some(t => t.storedSessionId === storedSessionId)) {
-    saveTiles(tiles.filter(t => t.storedSessionId !== DRAFT_TILE_KEY))
+  if (tiles.some(t => t.tileKey === tileKey)) {
+    saveSessionTiles(tiles.filter(t => t.tileKey !== DRAFT_TILE_KEY))
 
     return
   }
 
-  renameTreePane(DRAFT_TILE_PANE_ID, `${TILE_PANE_PREFIX}${storedSessionId}`)
-  saveTiles(tiles.map(t => (t.storedSessionId === DRAFT_TILE_KEY ? { ...t, storedSessionId } : t)))
+  // THE BINDING MOMENT, and the only one (invariant 42). The ref comes from the
+  // slice, which took it synchronously at its `session.create` dispatch — not
+  // from `$activeConnection`, which a switch during the round trip would have
+  // moved. From here the tab is an ordinary bound tab: irreversible, and
+  // Close-only if its backend ever changes.
+  renameTreePane(DRAFT_TILE_PANE_ID, `${TILE_PANE_PREFIX}${tileKey}`)
+  saveSessionTiles(tiles.map(t => (t.tileKey === DRAFT_TILE_KEY ? { ...t, ...ref, tileKey } : t)))
 }
 
 /**
@@ -928,9 +1317,11 @@ export function focusWorkspaceSession(): void {
 /** If a session is already ON SCREEN — an open tile OR the one loaded in main —
  *  front its tab (and focus its zone) and return true; `false` = the caller must
  *  load it into main. */
-export function focusOpenSession(storedSessionId: string): boolean {
-  if ($sessionTiles.get().some(t => t.storedSessionId === storedSessionId)) {
-    const paneId = `${TILE_PANE_PREFIX}${storedSessionId}`
+export function focusOpenSession(storedSessionId: string, ref?: SessionRef): boolean {
+  const tileKey = tileKeyFor(ref ?? sessionRefFor(storedSessionId))
+
+  if ($sessionTiles.get().some(t => t.tileKey === tileKey)) {
+    const paneId = `${TILE_PANE_PREFIX}${tileKey}`
     revealTreePane(paneId)
     const tree = $layoutTree.get()
     const group = tree ? findGroupOfPane(tree, paneId) : null
@@ -951,21 +1342,30 @@ export function focusOpenSession(storedSessionId: string): boolean {
   return false
 }
 
-// Closed-tab stack for ⌘⇧T reopen (in-memory), keyed PER PROFILE.
-const closedTilesByProfile: Record<string, SessionTile[]> = {}
-const closedStack = (): SessionTile[] => (closedTilesByProfile[profileKey()] ??= [])
+// Closed-tab stack for ⌘⇧T reopen (in-memory). One stack, not one per profile:
+// a closed tab carries its own connection and profile, so reopening it restores
+// the tab that was closed rather than "the one with that id on whatever the app
+// is pointed at now".
+const closedTiles: SessionTile[] = []
+const closedStack = (): SessionTile[] => closedTiles
 
-export function closeSessionTile(storedSessionId: string) {
-  const tile = $sessionTiles.get().find(t => t.storedSessionId === storedSessionId)
+export function closeSessionTile(tileKey: string) {
+  const tile = $sessionTiles.get().find(t => t.tileKey === tileKey)
 
   // The draft is not reopenable: ⌘⇧T would restore a tab for a chat that never
   // existed. Closing an empty draft discards it, which is what closing an empty
   // draft means.
-  if (tile && storedSessionId !== DRAFT_TILE_KEY) {
-    closedStack().push({ anchor: tile.anchor, before: tile.before, dir: tile.dir, storedSessionId })
+  if (tile && tile.tileKey !== DRAFT_TILE_KEY) {
+    closedStack().push({
+      ...tileRef(tile),
+      anchor: tile.anchor,
+      before: tile.before,
+      dir: tile.dir,
+      tileKey: tile.tileKey
+    })
   }
 
-  saveTiles($sessionTiles.get().filter(t => t.storedSessionId !== storedSessionId))
+  saveSessionTiles($sessionTiles.get().filter(t => t.tileKey !== tileKey))
 }
 
 /**
@@ -991,23 +1391,23 @@ export function sessionKeyNeedsCloseConfirm(runtimeKey: null | string): boolean 
  *  The key is resolved through the reverse index rather than the tile's cached
  *  runtimeId, so a session whose stored id rotated under a background compaction
  *  is still recognised as busy instead of closing without a prompt (MJX-133). */
-export function requestCloseSessionTile(storedSessionId: string): void {
+export function requestCloseSessionTile(tileKey: string): void {
   requestClose(
-    { close: () => closeSessionTile(storedSessionId), id: storedSessionId, kind: 'session' },
-    sessionKeyNeedsCloseConfirm(tileRuntimeKey(storedSessionId))
+    { close: () => closeSessionTile(tileKey), id: tileKey, kind: 'session' },
+    sessionKeyNeedsCloseConfirm(tileRuntimeKey(tileKey))
   )
 }
 
 /** Drop a DEAD tile — a persisted tile whose session no longer exists (resume
  *  404s). Leaves no ⌘⇧T undo and evicts any cached state. */
-export function discardSessionTile(storedSessionId: string) {
-  const key = tileRuntimeKey(storedSessionId)
+export function discardSessionTile(tileKey: string) {
+  const key = tileRuntimeKey(tileKey)
 
   if (key) {
     dropSessionState(key)
   }
 
-  saveTiles($sessionTiles.get().filter(t => t.storedSessionId !== storedSessionId))
+  saveSessionTiles($sessionTiles.get().filter(t => t.tileKey !== tileKey))
 }
 
 /** ⌘⇧T — reopen the most recently closed tab where it was, then FOCUS it.
@@ -1027,9 +1427,9 @@ export function reopenLastClosedTile(): void {
       continue
     }
 
-    if (!$sessionTiles.get().some(t => sameStoredSession(t.storedSessionId, storedSessionId))) {
+    if (!$sessionTiles.get().some(t => sameTileConversation(t, tileRef(tile)))) {
       openSessionTile(storedSessionId, tile.dir, tile.anchor, tile.before)
-      focusOpenSession(storedSessionId)
+      focusOpenSession(storedSessionId, tileRef(tile))
 
       return
     }
@@ -1047,7 +1447,7 @@ export function blankDraftTile(
 ): null | SessionTile {
   // Reverse scan rather than `findLast` — this project's lib target predates it.
   for (let i = tiles.length - 1; i >= 0; i--) {
-    const key = tileRuntimeKey(tiles[i].storedSessionId)
+    const key = tileRuntimeKey(tiles[i].tileKey)
     const state = key ? states[key] : undefined
 
     if (state && !state.busy && state.messages.length === 0) {
@@ -1069,9 +1469,9 @@ export function reuseBlankDraftTile(storedSessionId: string): boolean {
     return false
   }
 
-  discardSessionTile(tile.storedSessionId)
+  discardSessionTile(tile.tileKey)
   openSessionTile(storedSessionId, tile.dir, tile.anchor, tile.before)
-  revealTreePane(`${TILE_PANE_PREFIX}${storedSessionId}`)
+  revealTreePane(`${TILE_PANE_PREFIX}${tileKeyFor(sessionRefFor(storedSessionId))}`)
 
   return true
 }
@@ -1109,7 +1509,7 @@ export function nextSessionTileForWorkspace(): null | string {
       continue
     }
 
-    if (storedSessionId && tiles.some(t => t.storedSessionId === storedSessionId)) {
+    if (storedSessionId && tiles.some(t => t.tileKey === storedSessionId)) {
       return storedSessionId
     }
   }

@@ -1,6 +1,9 @@
 import { backendScopeKey, LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { $activeConnection } from '@/store/active-connection'
+import { migrateLegacyBubbles } from '@/store/chat-bubbles'
+import { connectionScopeKey } from '@/store/connection-clients'
 import { isTunnelSignInError } from '@/store/connection-tunnels'
+import { $connectionsRegistry } from '@/store/connections'
 import { $gatewayState, requestGateway, setGatewayRequestProfile } from '@/store/gateway'
 import { leaseSecondary, releaseSecondary } from '@/store/gateway-secondaries'
 import { $gatewaySwitching } from '@/store/gateway-switch'
@@ -13,6 +16,7 @@ import {
   setSessionRequestRouter
 } from '@/store/session-request-router'
 import { connectionIdForSession } from '@/store/session-sources'
+import { migrateLegacyTiles, setSessionRefResolver } from '@/store/session-states'
 
 /**
  * THE MULTI-CONNECTION ROUTER — MJXHRM-480's interface, second implementation.
@@ -118,7 +122,13 @@ export const registrySessionRouter: SessionRequestRouter = {
     let lease: Awaited<ReturnType<typeof leaseSecondary>>
 
     try {
-      lease = await leaseSecondary(route.scopeKey, route.connectionId)
+      // ONE socket per CONNECTION (MJXHRM-591, Design v1.3 N2), not per
+      // connection+profile: `connections_resolve` is already called with
+      // `profile: null`, so the socket was never profile-specific, and the call
+      // below names its profile anyway. Two pool keys for two profiles of one
+      // connection meant two sockets, two streams of the same events and two
+      // tunnel holds.
+      lease = await leaseSecondary(connectionScopeKey(route.connectionId), route.connectionId)
     } catch (error) {
       throw new SessionRouteError(isTunnelSignInError(error) ? 'needs-sign-in' : 'no-gateway', route.scopeKey)
     }
@@ -130,6 +140,20 @@ export const registrySessionRouter: SessionRequestRouter = {
     } finally {
       releaseSecondary(lease)
     }
+  },
+
+  /**
+   * The route to a connection the CALLER names — a bound tab's own (MJXHRM-591,
+   * invariant 29). The dispatch is unchanged, so a ref that IS the active
+   * connection still rides the ambient socket, and any other lands on that
+   * connection's socket — which, for a connection with an open tab, is the
+   * pinned owning client `leaseSecondary` hands straight back.
+   */
+  resolveRef({ connectionId, profile }): SessionRoute {
+    const active = activeRoute()
+    const profileKey = normalizeProfileKey(profile ?? active.profile)
+
+    return routeFor(connectionId, profileKey, connectionId !== active.connectionId || profileKey !== active.profile)
   },
 
   resolve({ ownerProfile, storedSessionId }): SessionRoute {
@@ -157,4 +181,32 @@ setGatewayRequestProfile(() => {
   const profile = normalizeProfileKey($activeGatewayProfile.get())
 
   return profile === 'default' ? null : profile
+})
+
+// Where a tab for a bare stored id belongs (MJXHRM-591). The SAME answer this
+// router dispatches on — the merged rows' owner, else the connection the app is
+// on — resolved once, when the tab opens, and carried by the tab from then on.
+// Registered here rather than imported by the tile layer, so the dependency
+// keeps pointing one way.
+setSessionRefResolver(storedSessionId => {
+  const active = activeRoute()
+
+  return {
+    connectionId: connectionIdForSession(storedSessionId) ?? active.connectionId,
+    profile: active.profile,
+    storedSessionId
+  }
+})
+
+// v2 tabs were keyed by profile alone, so the only connection they could have
+// belonged to is the one the app was pointed at: the registry's primary. Run as
+// soon as the registry names it, and once.
+let tilesMigrated = false
+
+$connectionsRegistry.listen(registry => {
+  if (!tilesMigrated && registry.connections.length > 0) {
+    tilesMigrated = true
+    migrateLegacyTiles(registry.primary)
+    migrateLegacyBubbles(registry.primary)
+  }
 })

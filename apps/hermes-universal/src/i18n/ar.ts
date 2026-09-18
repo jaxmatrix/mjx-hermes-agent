@@ -3264,5 +3264,16 @@ export const ar = defineLocale({
 
   mobileWorkspace: {
     menu: 'القائمة'
+  },
+
+  chatConnection: {
+    lostTitle: 'انقطع الاتصال',
+    lostMessage: label => `توجد هذه المحادثة على ${label}، وهو غير متاح حاليًا.`,
+    retry: 'إعادة المحاولة',
+    changedTitle: 'المحادثة غير متاحة',
+    changedMessage: 'تغيّرت الواجهة الخلفية لهذه المحادثة، لذا لا يمكن سوى إغلاق هذه العلامة.',
+    notOnThisDevice: 'الاتصالات المحلية غير متاحة على هذا الجهاز، لذا لا يمكن سوى إغلاق هذه العلامة.',
+    close: 'إغلاق العلامة',
+    reconnectToLoad: 'أعد الاتصال لتحميل هذه المحادثة.'
   }
 })

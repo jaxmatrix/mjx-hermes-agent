@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { artifactContentHash, type ArtifactDetection, type ArtifactKind, artifactSlug } from '@/lib/artifact-detect'
 import { IS_TAURI } from '@/lib/platform'
 import { atom } from '@/store/atom'
+import { LOCAL_SESSION_SCOPE, parseSessionKey } from '@/store/session-state-types'
 
 import { closeArtifactPreviewTabs, openArtifactPreviewTab } from './preview'
 
@@ -278,5 +279,38 @@ export async function releaseStagedArtifact(documentId: string): Promise<void> {
 export function clearArtifactRegistry() {
   $artifactRegistry.set({})
   $artifactVersionSelection.set({})
+  closeArtifactPreviewTabs()
+}
+
+/**
+ * Drop one connection's artifacts, keeping the ones an open tab still shows
+ * (MJXHRM-591, invariant 37).
+ *
+ * The registry is keyed by the SCOPED session key, so "whose are these?" is a
+ * question the key answers. A switch used to clear the lot, which was the only
+ * honest thing to do while the key was a bare stored id that another backend
+ * could recycle — and which cost every bound tab the artifacts it was showing.
+ */
+export function dropArtifactsForConnection(connectionId: null | string, keep: ReadonlySet<string>): void {
+  const leaving = connectionId ?? LOCAL_SESSION_SCOPE
+  const registry = $artifactRegistry.get()
+  const kept: ArtifactRegistry = {}
+  let dropped = false
+
+  for (const [sessionKey, records] of Object.entries(registry)) {
+    if (!keep.has(sessionKey) && parseSessionKey(sessionKey).connectionId === leaving) {
+      dropped = true
+
+      continue
+    }
+
+    kept[sessionKey] = records
+  }
+
+  if (!dropped) {
+    return
+  }
+
+  $artifactRegistry.set(kept)
   closeArtifactPreviewTabs()
 }

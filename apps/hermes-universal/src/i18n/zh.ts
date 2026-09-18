@@ -191,6 +191,17 @@ export const zh: Translations = {
     }
   },
 
+  chatConnection: {
+    lostTitle: '连接已断开',
+    lostMessage: label => `此对话位于 ${label}，目前无法连接。`,
+    retry: '重试',
+    changedTitle: '对话不可用',
+    changedMessage: '此对话的后端已更改，因此该标签页只能关闭。',
+    notOnThisDevice: '此设备不支持本地连接，因此该标签页只能关闭。',
+    close: '关闭标签页',
+    reconnectToLoad: '请重新连接以加载此对话。'
+  },
+
   billingBlock: {
     titleNous: 'Nous 额度已用尽',
     titleProvider: provider => `额度已用尽 — ${provider}`,

@@ -23,6 +23,12 @@ import { requestGateway } from '@/store/gateway'
 import { $activeProfile } from '@/store/profiles'
 import { $activeSessionKey, $sessionStates, ensureSessionSlice } from '@/store/session-state-types'
 
+/** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
+const localSite = (runtimeId: string) => ({
+  ref: { connectionId: 'local', profile: 'default', storedSessionId: runtimeId },
+  runtimeId
+})
+
 const event = (type: string, payload: Record<string, unknown>, sessionId = 's1'): GatewayEvent =>
   ({ type, session_id: sessionId, payload }) as GatewayEvent
 
@@ -39,7 +45,7 @@ describe('event-router → unsolicited session pushes', () => {
   beforeEach(() => {
     $sessionStates.set({})
     $activeSessionKey.set('s1')
-    ensureSessionSlice('s1')
+    ensureSessionSlice(localSite('s1'))
     $approvalModes.set({})
     // `$activeGatewayProfile` is COMPUTED over this one, so this is the only
     // way to move it — setting the computed is a silent no-op.
@@ -108,7 +114,7 @@ describe('event-router → unsolicited session pushes', () => {
     })
 
     it('folds a background tick into THAT session, not the visible one', () => {
-      ensureSessionSlice('s2')
+      ensureSessionSlice(localSite('s2'))
       $sessionStates.set({
         s1: { ...slice(), usage: { calls: 1, input: 0, output: 0, total: 0 } },
         s2: { ...slice('s2'), usage: null }
@@ -154,7 +160,7 @@ describe('event-router → unsolicited session pushes', () => {
     it('leaves the cache alone for a background session', () => {
       // s2 needs a SLICE, or the router fails closed on an unknown session and
       // the test passes without the active-session gate ever running.
-      ensureSessionSlice('s2')
+      ensureSessionSlice(localSite('s2'))
       $approvalModes.set({ work: 'smart' })
 
       routeGatewayEvent(event('session.info', { approval_mode: 'off' }, 's2'))

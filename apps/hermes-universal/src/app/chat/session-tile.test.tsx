@@ -60,7 +60,7 @@ beforeEach(() => {
 describe('SessionTilePane composer scope', () => {
   it('sees a clarify raised after a recovery moved the slice', async () => {
     publishSessionState('runtime-1', { ...emptySessionState('stored-1'), runtimeSessionId: 'runtime-1' })
-    $sessionTiles.set([{ storedSessionId: 'stored-1' }])
+    $sessionTiles.set([{ connectionId: 'local', profile: 'default', storedSessionId: 'stored-1', tileKey: 'stored-1' }])
     patchSessionTile('stored-1', { runtimeId: 'runtime-1' })
 
     render(<SessionTilePane storedSessionId="stored-1" />)

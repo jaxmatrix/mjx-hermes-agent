@@ -26,7 +26,43 @@ vi.mock('@/store/gateway-secondaries', () => ({ closeAllSecondaries: vi.fn(() =>
 vi.mock('@/store/chat', () => ({ resetChat: vi.fn() }))
 vi.mock('@/store/cron', () => ({ setCronJobs: vi.fn() }))
 vi.mock('@/store/workspace-events', () => ({ resetWorkspaceCwd: vi.fn() }))
-vi.mock('@/store/session-states', () => ({ clearAllSessionStates: vi.fn(), resetTileRuntimeBindings: vi.fn() }))
+// MJXHRM-591 B2: NOT mocked. Review 1 named the wholesale mock here as the
+// reason a broken hand-over passed — it asserted that a function was called,
+// which is true of a hand-over that hands over nothing. The real module runs
+// over a fake secondary (the `@/store/gateway-secondaries` mock below), so the
+// assertion is that A's frames land in A's slice after the switch.
+vi.mock('@/store/gateway-secondaries', async importActual => {
+  const actual = await importActual<Record<string, unknown>>()
+
+  return {
+    ...actual,
+    closeAllSecondaries: vi.fn(actual.closeAllSecondaries as () => number),
+    leaseSecondary: vi.fn(async (_scopeKey: string, connectionId: string) => ({
+      connectionId,
+      request: vi.fn(),
+      scopeKey: _scopeKey
+    })),
+    pinSecondary: vi.fn(),
+    releaseParkedTunnels: vi.fn(actual.releaseParkedTunnels as (revision: number) => void),
+    setPinnedSecondaryClosedListener: vi.fn(),
+    unpinSecondary: vi.fn()
+  }
+})
+vi.mock('@/store/session-states', async () => {
+  const { atom } = await import('@/store/atom')
+
+  // MJXHRM-591: the wipe drops only the LEAVING connection's unheld slices, and
+  // hands its tabs to that connection's own client — so the switch needs both.
+  return {
+    $sessionTiles: atom([
+      // One tab on the connection being left, one somewhere else.
+      { connectionId: 'conn-old', profile: 'work', storedSessionId: 'abc12345', tileKey: 'k1' },
+      { connectionId: 'conn-other', profile: 'default', storedSessionId: 'def67890', tileKey: 'k2' }
+    ]),
+    dropUnheldSessionStates: vi.fn(),
+    heldSessionKeys: () => new Set<string>()
+  }
+})
 // Both of these key their caches by the GATEWAY's absolute repo paths. What the
 // clearing actually does is asserted in their own suites; here the question is
 // whether the wipe calls them at all.
@@ -72,6 +108,7 @@ import { $activeConnection } from '@/store/active-connection'
 import { resetChat } from '@/store/chat'
 import { resetRepoStatusForBackendSwitch } from '@/store/coding-status'
 import { $connection, beginGatewaySwitch, disconnect, endGatewaySwitch } from '@/store/connection'
+import { $connectionClients, connectionHoldCount } from '@/store/connection-clients'
 import { closeGateway } from '@/store/gateway'
 import type { Connection } from '@/store/gateway-config'
 import { dialSavedTarget, type GatewayTarget, loadGatewayTarget } from '@/store/gateway-restore'
@@ -92,7 +129,7 @@ import {
   refreshMessagingSessions,
   refreshSessions
 } from '@/store/session'
-import { clearAllSessionStates } from '@/store/session-states'
+import { dropUnheldSessionStates } from '@/store/session-states'
 import { disconnectSsh } from '@/store/ssh-backend'
 import type { SessionInfo } from '@/types/hermes'
 
@@ -113,6 +150,9 @@ beforeEach(() => {
   $gatewayMode.set('remote')
   $gatewaySwitching.set(false)
   $connection.set(null)
+  // The connection the app is LEAVING — what the wipe has to be told, so it can
+  // touch only that one (MJXHRM-591, invariant 37).
+  $activeConnection.set({ connectionId: 'conn-old', profile: 'default', scopeKey: 'conn-old' } as never)
   $sessions.set([session])
   $sessionsTotal.set(7)
   $messagingSessions.set([session])
@@ -137,6 +177,7 @@ describe('gateway soft switch', () => {
 
   it('wipes gateway-bound session state before dialling', async () => {
     let wipedDuringDial = false
+    let handedOverDuringDial: { held: boolean; phase: boolean } | null = null
 
     await softSwitchGateway('remote', async () => {
       wipedDuringDial =
@@ -146,10 +187,25 @@ describe('gateway soft switch', () => {
         $unreadFinishedSessionIds.get().length === 0 &&
         $activeStoredSessionId.get() === null &&
         $sessionsLoading.get()
+      handedOverDuringDial = {
+        held: connectionHoldCount('conn-old') > 0,
+        phase: Boolean($connectionClients.get()['conn-old'])
+      }
     })
 
     expect(wipedDuringDial).toBe(true)
-    expect(clearAllSessionStates).toHaveBeenCalledOnce()
+    // The LEAVING connection's unheld slices, not every slice in the app: a tab
+    // bound to another connection keeps its transcript across a switch it had no
+    // part in (MJXHRM-591, invariant 37).
+    expect(dropUnheldSessionStates).toHaveBeenCalledOnce()
+    // …and it is told WHICH connection is being left: passing nothing would drop
+    // every connection's loose slices, including ones this switch never touched.
+    expect(vi.mocked(dropUnheldSessionStates).mock.calls[0][0]).toBe('conn-old')
+    // …and the tabs bound to it were handed to its OWN client DURING the gap:
+    // the hold and the phase exist while the ambient socket is gone and the new
+    // one is not yet up, which is only true if the hand-over named A explicitly
+    // rather than asking who is active (invariant 46).
+    expect(handedOverDuringDial).toEqual({ held: true, phase: true })
     // Skeletons stop once the refresh has landed.
     expect($sessionsLoading.get()).toBe(false)
   })
@@ -168,22 +224,28 @@ describe('gateway soft switch', () => {
     expect(clearedDuringDial).toBe(true)
   })
 
-  // ANOTHER BACKEND CAN RECYCLE STORED IDS. A cached tail carried across paints
-  // another machine's conversation under a same-named id, which is worse than a
-  // loader — and the remembered-chat marker sends the next boot to open that id
-  // over there. `$activeStoredSessionId.set(null)` does not clear the marker (its
-  // subscriber ignores null), so it has to be wiped explicitly.
-  it('wipes the cached transcript tails and the remembered chat, which name ids on the old gateway', async () => {
-    saveTranscriptTail('s1', [{ id: 'm1', parts: [{ text: 'over there', type: 'text' }], role: 'user' }])
-    expect(readTranscriptTail('s1')).not.toBeNull()
+  // ANOTHER BACKEND CAN RECYCLE STORED IDS — which is why the tail cache is now
+  // keyed by `storedKeyFor(connection, profile, id)` rather than by the id
+  // alone (MJXHRM-591). With the two spellings unable to collide, the wipe that
+  // answered that hazard would only cost every bound tab its cache, so the tails
+  // STAY and the remembered-chat marker still goes: `$activeStoredSessionId.set(
+  // null)` does not clear the marker (its subscriber ignores null), so it has to
+  // be wiped explicitly or the next boot opens backend A's id on backend B.
+  it('keeps the cached transcript tails, and still forgets the remembered chat', async () => {
+    saveTranscriptTail('@conn-old|default|s1', [
+      { id: 'm1', parts: [{ text: 'over there', type: 'text' }], role: 'user' }
+    ])
 
-    let wipedDuringDial: boolean | null = null
+    let forgotDuringDial: boolean | null = null
 
     await softSwitchGateway('remote', async () => {
-      wipedDuringDial = readTranscriptTail('s1') === null && vi.mocked(forgetLastSessionMarkers).mock.calls.length > 0
+      forgotDuringDial = vi.mocked(forgetLastSessionMarkers).mock.calls.length > 0
     })
 
-    expect(wipedDuringDial).toBe(true)
+    expect(forgotDuringDial).toBe(true)
+    // The tail of a conversation on the connection we left is still there — it
+    // is what makes reopening its tab instant instead of a loader.
+    expect(readTranscriptTail('@conn-old|default|s1')).not.toBeNull()
   })
 
   // A repo path is not gateway-scoped: `/home/me/work` exists on the laptop AND
@@ -229,16 +291,31 @@ describe('gateway soft switch', () => {
   // across a switch, an open artifact tab names an id the new backend has never
   // heard of — and the registry keeps the old backend's generated pages alive
   // for the rest of the process.
-  it('drops the artifact registry and its tabs', async () => {
-    const artifact = upsertArtifact('s1', { kind: 'html', language: 'html', title: 'Dashboard' }, '<html>v1</html>')!
+  // MJXHRM-591: the registry is keyed by the SCOPED session key, so the switch
+  // drops the leaving connection's artifacts and leaves every other
+  // connection's alone — a bound tab goes on showing the artifact it was
+  // showing, which the old wholesale clear made impossible.
+  it('drops the leaving connection\u2019s artifacts and its tabs, and no others', async () => {
+    const leaving = upsertArtifact(
+      '@conn-old|default|s1',
+      { kind: 'html', language: 'html', title: 'Dashboard' },
+      '<html>v1</html>'
+    )!
 
-    openArtifact(artifact.artifactId)
+    const elsewhere = upsertArtifact(
+      '@conn-other|default|s2',
+      { kind: 'html', language: 'html', title: 'Elsewhere' },
+      '<html>other</html>'
+    )!
+
+    openArtifact(leaving.artifactId)
 
     expect($previewTabs.get()).toHaveLength(1)
 
     await softSwitchGateway('remote', vi.fn().mockResolvedValue(undefined))
 
-    expect(artifactsForSession('s1')).toEqual([])
+    expect(artifactsForSession('@conn-old|default|s1')).toEqual([])
+    expect(artifactsForSession('@conn-other|default|s2').map(a => a.id)).toEqual([elsewhere.artifactId])
     expect($previewTabs.get()).toEqual([])
     expect($activePreviewPath.get()).toBeNull()
   })
@@ -334,8 +411,11 @@ describe('gateway soft switch', () => {
     finishDial()
     await switching
 
-    // The revision this switch began, not whatever is newest by now.
-    expect(releaseParkedTunnels).toHaveBeenCalledExactlyOnceWith(7)
+    // The revision THIS switch began — the one `closeAllSecondaries` answered
+    // with — not whatever is newest by the time the dial lands.
+    expect(releaseParkedTunnels).toHaveBeenCalledExactlyOnceWith(
+      vi.mocked(closeAllSecondaries).mock.results[0]?.value as number
+    )
   })
 
   it('leaves a remote backend alone', async () => {

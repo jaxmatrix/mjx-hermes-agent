@@ -49,6 +49,7 @@ import {
   $sessionStates,
   emptySessionState,
   publishSessionState,
+  runtimeKeyFor,
   runtimeKeyForStoredSession
 } from '@/store/session-state-types'
 import { $stalledSessionIds, clearAllSessionStates, SESSION_WATCHDOG_TIMEOUT_MS } from '@/store/session-states'
@@ -374,5 +375,114 @@ describe('startLiveSessionSync', () => {
     second()
 
     expect(pulls).toBe(1)
+  })
+})
+
+/**
+ * MJXHRM-591, invariant 37 — the reaper only reaps its own backend.
+ *
+ * The snapshot comes from the socket the app is on, and the slice it would
+ * settle is found by STORED id: two backends mint the same shape of id, so an
+ * unscoped lookup lets the active backend's "that run is gone" stop a spinner on
+ * a turn running on another connection entirely.
+ */
+describe('a foreign tab\u2019s live turn', () => {
+  it('is not settled by the active backend\u2019s snapshot', () => {
+    const foreign = runtimeKeyFor('conn-b', 'rt-shared')
+
+    seed(foreign, {
+      busy: true,
+      connectionId: 'conn-b',
+      profile: 'default',
+      runtimeSessionId: 'rt-shared',
+      storedSessionId: 'shared-id'
+    })
+
+    // Connection A reported the same runtime id live, then stopped reporting it.
+    rehydrateLiveSessionStatuses(
+      snapshot({ id: 'rt-shared', session_key: 'shared-id', status: 'working' }),
+      Date.now(),
+      'default',
+      'conn-a'
+    )
+    rehydrateLiveSessionStatuses(snapshot(), Date.now(), 'default', 'conn-a')
+
+    expect($sessionStates.get()[foreign]?.busy).toBe(true)
+  })
+
+  it('is not reaped by ANOTHER connection\u2019s snapshot that never saw it', () => {
+    // The hazard the tracking scope exists for: A reports a runtime live, B's
+    // own snapshot does not mention it, and a reap set shared between them lets
+    // B conclude that A's run has ended — then finds B's same-named slice and
+    // settles it.
+    const foreign = runtimeKeyFor('conn-b', 'rt-x')
+
+    seed(foreign, {
+      busy: true,
+      connectionId: 'conn-b',
+      profile: 'default',
+      runtimeSessionId: 'rt-x',
+      storedSessionId: 'shared'
+    })
+
+    rehydrateLiveSessionStatuses(
+      snapshot({ id: 'rt-x', session_key: 'shared', status: 'working' }),
+      Date.now(),
+      'default',
+      'conn-a'
+    )
+    rehydrateLiveSessionStatuses(snapshot(), Date.now(), 'default', 'conn-b')
+
+    expect($sessionStates.get()[foreign]?.busy).toBe(true)
+  })
+
+  it('is settled by its OWN connection\u2019s snapshot', () => {
+    const own = runtimeKeyFor('conn-b', 'rt-own')
+
+    seed(own, {
+      busy: true,
+      connectionId: 'conn-b',
+      profile: 'default',
+      runtimeSessionId: 'rt-own',
+      storedSessionId: 'own-id'
+    })
+
+    rehydrateLiveSessionStatuses(
+      snapshot({ id: 'rt-own', session_key: 'own-id', status: 'working' }),
+      Date.now(),
+      'default',
+      'conn-b'
+    )
+    rehydrateLiveSessionStatuses(snapshot(), Date.now(), 'default', 'conn-b')
+
+    expect($sessionStates.get()[own]?.busy).toBe(false)
+  })
+})
+
+describe('invariant 37 / N4 — a switch forgets only the connection it leaves', () => {
+  it('keeps a background connection\u2019s live-runtime tracking', () => {
+    const foreign = runtimeKeyFor('conn-b', 'rt-keep')
+
+    seed(foreign, {
+      busy: true,
+      connectionId: 'conn-b',
+      profile: 'default',
+      runtimeSessionId: 'rt-keep',
+      storedSessionId: 'keep-id'
+    })
+
+    rehydrateLiveSessionStatuses(
+      snapshot({ id: 'rt-keep', session_key: 'keep-id', status: 'working' }),
+      Date.now(),
+      'default',
+      'conn-b'
+    )
+
+    // The app leaves conn-a. B's bookkeeping is not this switch's to forget…
+    resetLiveRuntimeTracking('conn-a')
+    // …so when B's own snapshot next says the run ended, it still reaps it.
+    rehydrateLiveSessionStatuses(snapshot(), Date.now(), 'default', 'conn-b')
+
+    expect($sessionStates.get()[foreign]?.busy).toBe(false)
   })
 })

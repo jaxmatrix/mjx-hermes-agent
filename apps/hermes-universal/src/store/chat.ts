@@ -28,6 +28,7 @@ import {
   stopVoicePlayback,
   takeVoicePlaybackInterrupted
 } from '@/lib/voice-playback'
+import { $activeConnectionId } from '@/store/active-connection'
 import { replayPendingApproval } from '@/store/approvals'
 import { atom, computed } from '@/store/atom'
 import { requestGateway } from '@/store/gateway'
@@ -35,6 +36,7 @@ import { newSessionOverrides } from '@/store/model'
 import { clearNotifications, notifyError } from '@/store/notifications'
 import { setPetActivity } from '@/store/pet'
 import { clearPreviewArtifacts } from '@/store/preview-status'
+import { normalizeProfileKey } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
 import { resolveNewSessionCwd } from '@/store/project-scope'
 import {
@@ -63,8 +65,10 @@ import {
   emptySessionState,
   ensureSessionSlice,
   isDraftKey,
+  LOCAL_SESSION_SCOPE,
   newDraftKey,
   rekeySession,
+  runtimeKeyFor,
   runtimeKeyForStoredSession,
   updateSession
 } from '@/store/session-state-types'
@@ -322,6 +326,12 @@ export async function ensureSession(): Promise<{ created: boolean; id: string; s
   // an `await import()` here would issue the create a tick late — callers
   // interrupting a draft rely on it being in flight synchronously.)
   const profile = $activeProfile.get()
+  // THE BINDING MOMENT (MJXHRM-591, invariant 42). The one tab that follows the
+  // active connection is an UNBOUND draft, and it stops following the instant
+  // this create goes out — bound to the connection the ambient socket is on AT
+  // THE DISPATCH, read here, synchronously, and not after the await: a switch
+  // during the round trip must not repoint a chat that was created elsewhere.
+  const boundTo = $activeConnectionId.get() ?? LOCAL_SESSION_SCOPE
 
   const created = await requestGateway<SessionCreateResponse>('session.create', {
     cols: 96,
@@ -347,7 +357,15 @@ export async function ensureSession(): Promise<{ created: boolean; id: string; s
   // `info.model/provider` echo the override (or the profile default) now, so
   // the composer — which reads the slice — paints the right name before the
   // deferred agent build's `session.info` lands.
-  rekeySession(draftKey, id, {
+  // …and the binding is written in the SAME synchronous step as the rekey, so
+  // there is no frame in which the slice exists under its runtime key without
+  // knowing which backend issued it. The key is scoped for the same reason the
+  // slice is: two gateways mint the same shape of id.
+  const runtimeKey = runtimeKeyFor(boundTo, id)
+
+  rekeySession(draftKey, runtimeKey, {
+    connectionId: boundTo,
+    profile: normalizeProfileKey(profile),
     runtimeSessionId: id,
     storedSessionId: storedId,
     cwd: (created.info?.cwd ?? cwd ?? '').trim(),
@@ -1947,7 +1965,7 @@ export function resetChat(cwd?: string): void {
   // meant each of them had to remember, and only two ever did — which is the
   // whole shape of this ticket. Desktop resolves it in the one place too
   // (`startFreshSessionDraft`).
-  ensureSessionSlice(draftKey, { cwd: cwd?.trim() || resolveNewSessionCwd() })
+  ensureSessionSlice({ draftKey }, { cwd: cwd?.trim() || resolveNewSessionCwd() })
   $activeSessionKey.set(draftKey)
 
   // Drop the OLD draft — an unsaved chat the user walked away from has nothing

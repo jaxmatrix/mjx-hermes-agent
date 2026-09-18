@@ -261,6 +261,21 @@ export interface Translations {
     dismiss: string
   }
 
+  /** A tab bound to a connection that is down, or to a backend that is gone
+   *  (MJXHRM-591). Colour carries which connection a tab belongs to; these are
+   *  the two states that need words. */
+  chatConnection: {
+    lostTitle: string
+    lostMessage: (label: string) => string
+    retry: string
+    changedTitle: string
+    changedMessage: string
+    notOnThisDevice: string
+    close: string
+    /** The transcript area, when the connection is down and nothing was cached. */
+    reconnectToLoad: string
+  }
+
   remoteDisplayBanner: {
     message: (reason: string) => string
   }

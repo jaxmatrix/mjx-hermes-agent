@@ -36,7 +36,7 @@
 import type { ChatMessage } from '@/lib/chat-messages'
 import { readTranscriptTail } from '@/lib/transcript-tail-cache'
 import { atom } from '@/store/atom'
-import { $sessionStates } from '@/store/session-state-types'
+import { $sessionStates, scopedStoredKey } from '@/store/session-state-types'
 
 export interface PaintedTail {
   /** The slice key this paint belongs to — `hydrating:<storedId>` for a cold
@@ -68,6 +68,19 @@ export const $transcriptPaint = atom<Record<string, PaintedTail>>({})
  * session's transcript is already correct and richer than any cache, so painting
  * over it would be a flicker on top of the right answer.
  */
+/**
+ * The cache key a slice's tail is filed under (MJXHRM-591).
+ *
+ * The SCOPED stored key, not the bare id: two backends mint the same
+ * `uuid4().hex[:8]`, so one cache keyed by the id alone would paint another
+ * machine's conversation under a same-named session — the hazard the switch
+ * used to answer by wiping every tail, which cost every bound tab its cache
+ * along with it. Scoping the key closes the bleed AND keeps the tails; for the
+ * local connection's default profile it is the bare id, so a single-source
+ * install's entries are byte-identical to the ones already on disk.
+ */
+export const transcriptTailKey = scopedStoredKey
+
 export function paintCachedTail(key: string, storedSessionId: null | string): boolean {
   if (!key || !storedSessionId) {
     return false
@@ -81,7 +94,7 @@ export function paintCachedTail(key: string, storedSessionId: null | string): bo
     return false
   }
 
-  const messages = readTranscriptTail(storedSessionId)
+  const messages = readTranscriptTail(transcriptTailKey(key, storedSessionId))
 
   if (!messages?.length) {
     return false

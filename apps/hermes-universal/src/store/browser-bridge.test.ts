@@ -63,7 +63,7 @@ describe('sessionIsOnScreen', () => {
   })
 
   it('is true for a phone chat bubble', () => {
-    $chatBubbles.set([{ storedSessionId: 'sess-c' }])
+    $chatBubbles.set([{ connectionId: 'local', profile: 'default', storedSessionId: 'sess-c', tabKey: 'sess-c' }])
 
     expect(sessionIsOnScreen('sess-c')).toBe(true)
   })

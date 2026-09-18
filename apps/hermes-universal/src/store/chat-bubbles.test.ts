@@ -387,7 +387,10 @@ describe('chat-bubbles store', () => {
   // itself as "New session". The draft needs a bubble of its own to stop it
   // borrowing a neighbour's.
   it('gives an active draft its own bubble when the row already has some', () => {
-    $chatBubbles.set([{ storedSessionId: 'a' }, { storedSessionId: 'b' }])
+    $chatBubbles.set([
+      { connectionId: 'local', profile: 'default', storedSessionId: 'a', tabKey: 'a' },
+      { connectionId: 'local', profile: 'default', storedSessionId: 'b', tabKey: 'b' }
+    ])
 
     $activeStoredSessionId.set('a')
     $activeStoredSessionId.set(null)
@@ -396,7 +399,7 @@ describe('chat-bubbles store', () => {
   })
 
   it('does not stack up draft bubbles', () => {
-    $chatBubbles.set([{ storedSessionId: 'a' }])
+    $chatBubbles.set([{ connectionId: 'local', profile: 'default', storedSessionId: 'a', tabKey: 'a' }])
 
     $activeStoredSessionId.set('a')
     $activeStoredSessionId.set(null)

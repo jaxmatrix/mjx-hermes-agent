@@ -6,6 +6,12 @@ import { $sessionStates, ensureSessionSlice, updateSession } from '@/store/sessi
 
 import { applyReaction, applyReactionEvent } from './reactions'
 
+/** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
+const localSite = (runtimeId: string) => ({
+  ref: { connectionId: 'local', profile: 'default', storedSessionId: runtimeId },
+  runtimeId
+})
+
 const user = (emoji: string) => ({ at: 0, author: 'user' as const, emoji })
 const agent = (emoji: string) => ({ at: 0, author: 'agent' as const, emoji })
 
@@ -69,7 +75,7 @@ describe('applyReactionEvent', () => {
   const seed = (messages: ChatMessage[]) => {
     $sessionStates.set({})
     clearReactionOverlays()
-    ensureSessionSlice('s1')
+    ensureSessionSlice(localSite('s1'))
     updateSession('s1', state => ({ ...state, messages }))
   }
 

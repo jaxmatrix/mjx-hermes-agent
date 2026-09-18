@@ -1,12 +1,12 @@
 import { translateNow } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
-import { clearTranscriptTails } from '@/lib/transcript-tail-cache'
-import { $activeConnection } from '@/store/active-connection'
-import { clearArtifactRegistry } from '@/store/artifacts'
+import { $activeConnection, $activeConnectionId } from '@/store/active-connection'
+import { dropArtifactsForConnection } from '@/store/artifacts'
 import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import { resetChat } from '@/store/chat'
 import { resetRepoStatusForBackendSwitch } from '@/store/coding-status'
 import { $connection, beginGatewaySwitch, disconnect, endGatewaySwitch } from '@/store/connection'
+import { type ClientHold, holdConnectionClient, releaseConnectionClient } from '@/store/connection-clients'
 import { setCronJobs } from '@/store/cron'
 import { closeGateway } from '@/store/gateway'
 import type { Connection, GatewayMode } from '@/store/gateway-config'
@@ -36,7 +36,7 @@ import {
   sessionMatchesStoredId
 } from '@/store/session'
 import { resetSessionPinMirror } from '@/store/session-pin-sync'
-import { clearAllSessionStates, resetTileRuntimeBindings } from '@/store/session-states'
+import { $sessionTiles, dropUnheldSessionStates, heldSessionKeys } from '@/store/session-states'
 import { resetArchivedSessionsForBackendSwitch } from '@/store/sidebar-archive'
 import { disconnectSsh } from '@/store/ssh-backend'
 import { resetSystemStatusForBackendSwitch } from '@/store/system-status'
@@ -62,7 +62,55 @@ import { resetWorkspaceCwd } from '@/store/workspace-events'
  *
  * Returns the secondaries' switch revision, for `releaseParkedTunnels`.
  */
-export function wipeSessionListsForGatewaySwitch(): number {
+/**
+ * The tabs bound to the connection being left move from the ambient socket to
+ * that connection's OWN client (MJXHRM-591, invariant 37).
+ *
+ * They were riding the app's socket because their connection was the active one;
+ * it is about to be somebody else's. Holding the owning client here keeps their
+ * runtime ids, their slices and their streams. A tab whose client cannot open
+ * goes lost and keeps its ids for the replay path — the same outcome as any
+ * other drop, and not this switch's business to decide.
+ *
+ * Tabs on every OTHER connection were never on the ambient socket, and are not
+ * touched.
+ */
+let handOverHold: ClientHold | null = null
+
+/** Give the hand-over's bridging hold back. The tab records keep their own. */
+function releaseHandOverHold(): void {
+  releaseConnectionClient(handOverHold)
+  handOverHold = null
+}
+
+function handOverTabsToOwningClient(leaving: null | string): void {
+  if (!leaving) {
+    return
+  }
+
+  if (!$sessionTiles.get().some(tile => tile.connectionId === leaving && !tile.unavailable)) {
+    return
+  }
+
+  // `ambient: false`, explicitly (invariant 46): at this moment the leaving
+  // connection is STILL the active one, so a client that asked the store would
+  // short-circuit and hand these tabs nothing. The tab records already hold
+  // their own client; this is the extra hold that keeps the socket up for the
+  // window in which the ambient one is gone and the new one is not yet there —
+  // it is given back on the next commit of the tab list.
+  // Given back once the tab list commits again — the records' own holds carry
+  // the connection from there.
+  releaseConnectionClient(handOverHold)
+  handOverHold = holdConnectionClient(leaving, { ambient: false })
+}
+
+export function wipeSessionListsForGatewaySwitch(leavingConnectionId?: null | string): number {
+  // A switch touches only what it LEAVES (MJXHRM-591, invariant 37). Everything
+  // below is either the active backend's own — its lists, its host's
+  // filesystem, its status — or the ambient chat; a tab bound to any connection
+  // keeps its slice, its runtime binding, its client and its place.
+  const leaving = leavingConnectionId ?? $activeConnectionId.get()
+
   // Pins are mirrored per-backend. The next gateway has its own state.db and has
   // never seen them, so drop the "already pushed" bookkeeping and let the next
   // reconcile re-assert the whole set against the new backend — otherwise the
@@ -82,36 +130,51 @@ export function wipeSessionListsForGatewaySwitch(): number {
   $messagingSessions.set([])
   $unreadFinishedSessionIds.set([])
   setCronJobs([])
-  // Clearing $sessionStates also clears $workingSessionIds / $attentionSessionIds
-  // (computed off it) and the stalled ids it owns.
-  clearAllSessionStates()
-  // Runtime ids belong to the old backend — tiles must re-bind against the new one.
-  resetTileRuntimeBindings()
+  // Only the LEAVING connection's slices, and only the ones no open tab holds.
+  // The wipe used to be unconditional, which with bound tabs would take the
+  // transcript of every tab on every other connection to answer a switch none
+  // of them made — and the leaving connection's own tabs, which go on streaming
+  // on its owning client.
+  dropUnheldSessionStates(leaving)
+  // …and the runtime bindings STAY. They used to be dropped because every id
+  // belonged to the socket being torn down; a bound tab's ids belong to its own
+  // connection's client, which this switch does not touch. The hand-over itself
+  // happens later, in `softSwitchGateway`, where the ambient socket is already
+  // closed and the new one is not yet up — see invariant 46.
   // The new gateway re-advertises `change_events` on its own gateway.ready. A
   // stale `true` would leave every consumer on its slow backstop against a
   // backend that never broadcasts (store/live-sync.ts).
   resetLiveSync()
-  // The live-runtime ids the rehydrate snapshot remembers belong to the old
-  // backend's registry, and `clearAllSessionStates()` just dropped the slices
-  // they point at — keeping them could only reap sessions that no longer exist.
-  resetLiveRuntimeTracking()
+  // The live-runtime ids the LEAVING connection's snapshot remembers belong to a
+  // registry we are walking away from. Only that connection's, and no wipe of
+  // the statuses themselves (Design v1.3, N4): a background tab's row is lit by
+  // its OWN connection's snapshot, and clearing the lot would darken it to
+  // answer a switch it had no part in.
+  resetLiveRuntimeTracking(leaving)
   resetSessionsPaging()
   // Artifacts are keyed by sessions on the PREVIOUS backend, so both the
   // registry and any preview tab pointing into it go with them. Without this an
   // artifact tab survives the switch naming an id the new gateway has never
   // heard of, and re-opens as "artifact unavailable" — or worse, silently
   // collides with a same-shaped id over there.
-  clearArtifactRegistry()
+  // …except the ones an open tab is still showing. The registry is keyed by the
+  // scoped session key, so this drops the leaving connection's and nothing else.
+  dropArtifactsForConnection(leaving, heldSessionKeys())
 
-  // Another backend can recycle stored ids, so a cached tail from the previous
-  // one would paint ANOTHER MACHINE'S conversation under a same-named id — worse
-  // than a loader. The remembered-chat marker goes with it: setting
-  // `$activeStoredSessionId` to null below does not clear it (the subscriber
-  // ignores null), so without this the next boot opens backend A's id on
-  // backend B.
-  clearTranscriptTails()
+  // The tails STAY (MJXHRM-591). The wipe was here because "another backend can
+  // recycle stored ids, so a cached tail from the previous one would paint
+  // ANOTHER MACHINE'S conversation under a same-named id" — true of a cache
+  // keyed by the bare id, and no longer true of one keyed by
+  // `storedKeyFor(connection, profile, id)`: the two spellings cannot collide.
+  // Keeping them is what lets a bound tab reopen instantly after a switch
+  // instead of staring at a loader, and closes the loss half of the same
+  // hazard. The painted copies go: a paint is a picture of a slice being
+  // hydrated, and the slices this switch drops are not being hydrated by anyone.
   clearTranscriptPaint()
-  forgetLastSessionMarkers()
+  // The remembered-chat marker still goes: setting `$activeStoredSessionId` to
+  // null below does not clear it (the subscriber ignores null), so without this
+  // the next boot opens backend A's id on backend B.
+  forgetLastSessionMarkers(leaving)
 
   // BEFORE `resetChat`, which reads it. The project tree is the OLD gateway's
   // filesystem — `projects.tree` is a gateway RPC — and the sidebar only
@@ -266,6 +329,9 @@ export async function softSwitchGateway(mode: GatewayMode, dial: () => Promise<v
   // $connection itself, and a connect* only persists its target once it has succeeded,
   // so after this point neither is still the old one.
   const previous = $connection.get()
+  // The connection we are LEAVING, captured before any teardown: the hand-over
+  // names it rather than asking the store, which by then answers about B.
+  const previousConnectionId = $activeConnectionId.get()
   const previousTarget = loadGatewayTarget()
   // The wipe nulls this, so grab it first: it is what tells us, once the new
   // gateway's list has landed, whether the chat the user was on came across.
@@ -273,7 +339,7 @@ export async function softSwitchGateway(mode: GatewayMode, dial: () => Promise<v
 
   $gatewaySwitching.set(true)
   beginGatewaySwitch()
-  const secondariesRevision = wipeSessionListsForGatewaySwitch()
+  const secondariesRevision = wipeSessionListsForGatewaySwitch($activeConnectionId.get())
 
   try {
     // Leaving a local or SSH backend releases the ACTIVE hold only: a background
@@ -290,8 +356,17 @@ export async function softSwitchGateway(mode: GatewayMode, dial: () => Promise<v
     }
 
     closeGateway()
+    // THE HAND-OVER (invariant 46), here and not in the wipe: A's ambient socket
+    // is gone and B is not yet active, which is the one window where "the tabs
+    // on A move to A's own client" is unambiguous. It names A explicitly —
+    // captured in `previous` before any teardown — so it is correct whatever the
+    // store says about who is active.
+    handOverTabsToOwningClient(previousConnectionId)
     $gatewayMode.set(mode)
     await dial()
+    // B is up and A's tabs are carried by their own records now: the extra hold
+    // the hand-over took for the gap is given back.
+    releaseHandOverHold()
     // Universal doesn't refresh session lists on gateway open, so the switch does it.
     let listed = true
     await Promise.all([

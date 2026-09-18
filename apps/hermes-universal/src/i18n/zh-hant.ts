@@ -266,6 +266,17 @@ export const zhHant = defineLocale({
     }
   },
 
+  chatConnection: {
+    lostTitle: '連線已中斷',
+    lostMessage: label => `此對話位於 ${label}，目前無法連線。`,
+    retry: '重試',
+    changedTitle: '對話無法使用',
+    changedMessage: '此對話的後端已變更，因此這個分頁只能關閉。',
+    notOnThisDevice: '此裝置不支援本機連線，因此這個分頁只能關閉。',
+    close: '關閉分頁',
+    reconnectToLoad: '請重新連線以載入此對話。'
+  },
+
   billingBlock: {
     titleNous: 'Nous 額度已用盡',
     titleProvider: provider => `額度已用盡 — ${provider}`,

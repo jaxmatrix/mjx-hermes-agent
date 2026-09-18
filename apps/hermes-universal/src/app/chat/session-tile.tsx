@@ -7,6 +7,7 @@ import { paneMirror } from '@/app/chat/pane-mirror'
 import { startSessionDrag } from '@/app/chat/session-drag'
 import { type SessionView, SessionViewProvider } from '@/app/chat/session-view'
 import { buildSessionView } from '@/app/chat/session-view-build'
+import { ConnectionDot } from '@/components/chat/connection-accent'
 import { detachTile } from '@/components/pane-shell/tile/detach'
 import { findGroupOfPane } from '@/components/pane-shell/tree/model'
 import {
@@ -48,6 +49,7 @@ import {
   sessionTileDelegate,
   tileRuntimeKey
 } from '@/store/session-states'
+import { refFromTabKey } from '@/store/tab-ref'
 
 import { SessionStatusDot } from './session-status-dot'
 import { SessionContextMenu } from './sidebar/session-actions-menu'
@@ -256,9 +258,18 @@ function tileTitle(storedSessionId: string): string {
  *  an older session's tab permanently uncoloured. */
 function TileTabLead({ storedSessionId }: { storedSessionId: string }) {
   const draft = isDraftTileKey(storedSessionId)
-  const stored = useSessionRow(draft ? null : storedSessionId)
+  // The pane id names the TAB KEY, which is the ref encoded (MJXHRM-591) — so
+  // the tab's connection is recoverable without a lookup, and its colour is the
+  // one thing that says "this chat is on another machine" without a word.
+  const ref = draft ? null : refFromTabKey(storedSessionId)
+  const stored = useSessionRow(ref?.storedSessionId ?? null)
 
-  return <SessionStatusDot session={stored} storedSessionId={draft ? null : storedSessionId} />
+  return (
+    <span className="flex items-center gap-1">
+      <ConnectionDot connectionId={ref?.connectionId ?? null} />
+      <SessionStatusDot session={stored} storedSessionId={ref?.storedSessionId ?? null} />
+    </span>
+  )
 }
 
 /** The `@session` drag payload for a tile's own tab — same identity a sidebar

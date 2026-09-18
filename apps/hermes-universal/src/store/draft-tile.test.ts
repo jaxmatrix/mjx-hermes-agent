@@ -130,7 +130,16 @@ describe('tileRuntimeKey', () => {
 describe('the draft taking its issued id', () => {
   it('renames the tile in place, keeping its slot and its active flag', () => {
     seedTree([WORKSPACE_PANE_ID, DRAFT_TILE_PANE_ID], DRAFT_TILE_PANE_ID)
-    $sessionTiles.set([{ anchor: WORKSPACE_PANE_ID, dir: 'center', storedSessionId: DRAFT_TILE_KEY }])
+    $sessionTiles.set([
+      {
+        anchor: WORKSPACE_PANE_ID,
+        dir: 'center',
+        connectionId: 'local',
+        profile: 'default',
+        storedSessionId: DRAFT_TILE_KEY,
+        tileKey: DRAFT_TILE_KEY
+      }
+    ])
 
     // First submit: the slice goes from "no stored id" to an issued one.
     seed('draft:1', { storedSessionId: null })
@@ -147,8 +156,15 @@ describe('the draft taking its issued id', () => {
   it('drops the draft rather than duplicating a session that already has a tab', () => {
     seedTree([WORKSPACE_PANE_ID, DRAFT_TILE_PANE_ID])
     $sessionTiles.set([
-      { storedSessionId: EXISTING },
-      { anchor: WORKSPACE_PANE_ID, dir: 'center', storedSessionId: DRAFT_TILE_KEY }
+      { connectionId: 'local', profile: 'default', storedSessionId: EXISTING, tileKey: EXISTING },
+      {
+        anchor: WORKSPACE_PANE_ID,
+        dir: 'center',
+        connectionId: 'local',
+        profile: 'default',
+        storedSessionId: DRAFT_TILE_KEY,
+        tileKey: DRAFT_TILE_KEY
+      }
     ])
 
     seed('draft:1', { storedSessionId: null })
@@ -171,7 +187,9 @@ describe('the draft taking its issued id', () => {
 describe('closing the draft', () => {
   it('leaves no reopen entry — there is no chat to bring back', () => {
     seedTree([WORKSPACE_PANE_ID, DRAFT_TILE_PANE_ID])
-    $sessionTiles.set([{ storedSessionId: DRAFT_TILE_KEY }])
+    $sessionTiles.set([
+      { connectionId: 'local', profile: 'default', storedSessionId: DRAFT_TILE_KEY, tileKey: DRAFT_TILE_KEY }
+    ])
 
     closeSessionTile(DRAFT_TILE_KEY)
 

@@ -13,6 +13,12 @@ import {
   upsertSubagent
 } from './subagents'
 
+/** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
+const localSite = (runtimeId: string) => ({
+  ref: { connectionId: 'local', profile: 'default', storedSessionId: runtimeId },
+  runtimeId
+})
+
 const SID = 's1'
 
 describe('subagents reducer', () => {
@@ -167,7 +173,7 @@ describe('subagents reducer', () => {
    */
   describe('session scope', () => {
     it('drops a session’s rows when its slice is evicted', () => {
-      ensureSessionSlice('runtime-1')
+      ensureSessionSlice(localSite('runtime-1'))
       upsertSubagent('runtime-1', { subagent_id: 'a', goal: 'root', status: 'running' }, true, 'subagent.start')
 
       dropSessionState('runtime-1')
@@ -176,7 +182,7 @@ describe('subagents reducer', () => {
     })
 
     it('follows the slice across a rekey', () => {
-      ensureSessionSlice('draft:1')
+      ensureSessionSlice({ draftKey: 'draft:1' })
       upsertSubagent('draft:1', { subagent_id: 'a', goal: 'root', status: 'running' }, true, 'subagent.start')
 
       rekeySession('draft:1', 'runtime-1')
@@ -186,7 +192,7 @@ describe('subagents reducer', () => {
     })
 
     it('merges into rows the destination key already had, without duplicating', () => {
-      ensureSessionSlice('draft:1')
+      ensureSessionSlice({ draftKey: 'draft:1' })
       upsertSubagent('draft:1', { subagent_id: 'a', goal: 'moved', status: 'running' }, true, 'subagent.start')
       upsertSubagent('draft:1', { subagent_id: 'c', goal: 'also moved', status: 'running' }, true, 'subagent.start')
       upsertSubagent(
