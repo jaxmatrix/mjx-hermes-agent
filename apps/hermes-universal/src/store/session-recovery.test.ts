@@ -17,8 +17,8 @@ vi.mock('@/store/gateway', () => ({
   requestGateway: (...args: unknown[]) => requestGateway(...args)
 }))
 
-vi.mock('@/store/session', () => ({
-  knownSessionProfile: (id: string) => knownSessionProfile(id),
+vi.mock('@/store/session-lifecycle', () => ({
+  knownSessionProfileFor: (id: string) => knownSessionProfile(id),
   resolveSessionProfile: () => resolveSessionProfile(),
   sessionProfileIsAmbiguous: () => sessionProfileIsAmbiguous()
 }))

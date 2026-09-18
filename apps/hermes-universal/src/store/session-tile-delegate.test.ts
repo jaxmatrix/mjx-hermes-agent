@@ -78,7 +78,7 @@ vi.mock('@/store/session-states', async () => {
   }
 })
 
-vi.mock('@/store/session', async () => {
+vi.mock('@/store/session-lifecycle', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -86,7 +86,7 @@ vi.mock('@/store/session', async () => {
     archiveSessionLocal: vi.fn(),
     branchStoredSession: vi.fn(),
     deleteSessionLocal: vi.fn(),
-    knownSessionProfile: () => undefined,
+    knownSessionProfileFor: () => undefined,
     resolveSessionProfile: async () => undefined,
     sessionProfileIsAmbiguous: () => false
   }

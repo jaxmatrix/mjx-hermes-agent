@@ -32,7 +32,7 @@ import {
 import { $browserConsole, appendBrowserConsole, drainBrowserConsole, isModuleMimeFailure } from '@/store/browser-console'
 import { $guestOccluded } from '@/store/browser-occlusion'
 import { notify, notifyError } from '@/store/notifications'
-import { $activeStoredSessionId } from '@/store/session'
+import { $activeStoredSessionId } from '@/store/session-lifecycle'
 
 /**
  * The pane the guest sits over.

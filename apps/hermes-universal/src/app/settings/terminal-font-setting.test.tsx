@@ -2,14 +2,10 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { $terminalFontFamily } from '@/app/right-pane/terminal/terminal-font'
+import { $terminalFontFamily } from '../right-pane/terminal/terminal-font'
 
 import { TerminalFontSetting } from './terminal-font-setting'
 
-// Ported from apps/desktop/src/app/settings/terminal-font-setting.test.tsx — the
-// component was ported without it, which left universal's copy of the two
-// historically-broken settings shapes (debounced whole-record autosave, and the
-// profile-switch reseed) covered nowhere.
 const mocks = vi.hoisted(() => ({
   cache: vi.fn(),
   loadedConfig: {} as Record<string, unknown>,
@@ -43,12 +39,12 @@ vi.mock('@/store/notifications', () => ({
   notifyError: (...args: unknown[]) => mocks.notifyError(...args)
 }))
 
-vi.mock('./use-config-record', () => ({
+vi.mock('../hooks/use-config-record', () => ({
   setHermesConfigCache: (config: Record<string, unknown>) => mocks.cache(config),
   useHermesConfigRecord: () => ({ data: mocks.loadedConfig })
 }))
 
-vi.mock('@/app/hooks/use-on-profile-switch', () => ({
+vi.mock('../hooks/use-on-profile-switch', () => ({
   useOnProfileSwitch: (callback: () => void) => {
     mocks.profileSwitch = callback
   }
@@ -86,36 +82,18 @@ describe('TerminalFontSetting', () => {
 
     fireEvent.change(input, { target: { value: 'MesloLGS NF' } })
 
-    // The atom is pushed on the KEYSTROKE, not on the save — that is what makes
-    // an already-open terminal re-face while the write is still debounced.
     expect($terminalFontFamily.get()).toBe('MesloLGS NF')
     expect((screen.getByLabelText('Glyph preview') as HTMLElement).style.fontFamily).toContain('MesloLGS NF')
-    expect(mocks.save).not.toHaveBeenCalled()
 
     await flushAutosave()
 
-    // saveHermesConfig REPLACES the whole record, so every sibling key has to
-    // survive the write — this is the shape that has silently dropped config
-    // before (It.43).
-    expect(mocks.save).toHaveBeenCalledWith({
+    // Only the font key goes over the wire (PUT deep-merges); the shared cache
+    // gets the merged record so sibling terminal keys survive.
+    expect(mocks.save).toHaveBeenCalledWith({ terminal: { font_family: 'MesloLGS NF' } })
+    expect(mocks.cache).toHaveBeenCalledWith({
       display: { skin: 'hermes' },
       terminal: { backend: 'local', cwd: '/workspace', font_family: 'MesloLGS NF' }
     })
-    expect(mocks.cache).toHaveBeenCalledWith(mocks.save.mock.calls[0][0])
-  })
-
-  it('re-asserts the saved font over anything that moved the atom mid-save', async () => {
-    render(<TerminalFontSetting />)
-    const input = screen.getByRole('combobox', { name: 'Terminal Font' })
-
-    fireEvent.change(input, { target: { value: 'MesloLGS NF' } })
-    // A peer WebView revalidating its config record during the debounce reads
-    // the PRE-save value and pushes it back over the cross-WebView bus.
-    $terminalFontFamily.set('Stale From Peer')
-
-    await flushAutosave()
-
-    expect($terminalFontFamily.get()).toBe('MesloLGS NF')
   })
 
   it('accepts an arbitrary CSS stack and resets to the bundled default', async () => {
@@ -129,8 +107,8 @@ describe('TerminalFontSetting', () => {
     fireEvent.change(input, { target: { value: "'Custom Powerline', monospace" } })
     await flushAutosave()
 
-    expect(mocks.save.mock.calls[0][0]).toMatchObject({
-      terminal: { backend: 'local', font_family: "'Custom Powerline', monospace" }
+    expect(mocks.save.mock.calls[0][0]).toEqual({
+      terminal: { font_family: "'Custom Powerline', monospace" }
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Use default' }))
@@ -138,9 +116,7 @@ describe('TerminalFontSetting', () => {
     expect((screen.getByLabelText('Glyph preview') as HTMLElement).style.fontFamily).toContain('JetBrains Mono')
     await flushAutosave()
 
-    expect(mocks.save.mock.calls[1][0]).toMatchObject({
-      terminal: { backend: 'local', font_family: '' }
-    })
+    expect(mocks.save.mock.calls[1][0]).toEqual({ terminal: { font_family: '' } })
   })
 
   it('rolls back the optimistic font when autosave fails', async () => {
@@ -153,7 +129,6 @@ describe('TerminalFontSetting', () => {
     expect($terminalFontFamily.get()).toBe('Hack Nerd Font')
     await flushAutosave()
 
-    // The live terminal must not keep rendering a face that was never persisted.
     expect((input as HTMLInputElement).value).toBe('MesloLGS NF')
     expect($terminalFontFamily.get()).toBe('MesloLGS NF')
     expect(mocks.notifyError).toHaveBeenCalledWith(expect.any(Error), 'Autosave failed')

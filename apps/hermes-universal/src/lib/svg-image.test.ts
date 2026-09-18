@@ -2,59 +2,65 @@ import { describe, expect, it } from 'vitest'
 
 import { normalizeSvgSize, svgSize } from './svg-image'
 
-// Mermaid emits `width="100%"` plus a viewBox. That percentage is not an
-// intrinsic size: the zoom overlay's shrink-to-fit grid collapses it, and
-// `parseFloat('100%')` made a 100px PNG — so copy fell back to raw SVG text.
-describe('normalizeSvgSize', () => {
-  it('replaces a percentage width with the viewBox pixels', () => {
-    const out = normalizeSvgSize('<svg width="100%" viewBox="0 0 640 480"></svg>')
+// Real mermaid 11.16 render output shape (verified against the installed
+// package): width="100%" + inline style="max-width: Npx" + viewBox.
+const MERMAID_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" class="flowchart" style="max-width: 260.34375px;" viewBox="0 0 260.34375 70" role="graphics-document document"><g><rect x="0" y="0" width="260.34375" height="70" fill="#eee"/></g></svg>`
 
-    expect(out).toContain('width="640"')
+describe('svgSize', () => {
+  it('reads explicit pixel width/height', () => {
+    expect(svgSize('<svg width="312" height="90"><rect/></svg>')).toEqual({ width: 312, height: 90 })
   })
 
-  it('fills in the height mermaid omits', () => {
-    const out = normalizeSvgSize('<svg width="100%" viewBox="0 0 640 480"></svg>')
-
-    expect(out).toContain('height="480"')
+  it('falls back to the viewBox when width is a percentage (mermaid)', () => {
+    expect(svgSize(MERMAID_SVG)).toEqual({ width: 260.34375, height: 70 })
   })
 
-  it('leaves an explicit pixel height alone', () => {
-    const out = normalizeSvgSize('<svg width="100%" height="123" viewBox="0 0 640 480"></svg>')
-
-    expect(out).toContain('height="123"')
+  it('falls back to the viewBox when width/height are absent', () => {
+    expect(svgSize('<svg viewBox="0 0 400 100"><rect/></svg>')).toEqual({ width: 400, height: 100 })
   })
 
-  it('is a no-op when both attrs are already pixels', () => {
-    const svg = '<svg width="640" height="480" viewBox="0 0 640 480"></svg>'
-
-    expect(normalizeSvgSize(svg)).toBe(svg)
+  it('falls back to a default size when nothing usable exists', () => {
+    expect(svgSize('<svg><rect/></svg>')).toEqual({ width: 800, height: 600 })
   })
 
-  it('is a no-op when the percentage has no viewBox to fall back on', () => {
-    const svg = '<svg width="100%"></svg>'
-
-    expect(normalizeSvgSize(svg)).toBe(svg)
+  it('treats mixed-unit widths as absent (not parseFloat(100) == 100)', () => {
+    expect(svgSize('<svg width="100%" height="70" viewBox="0 0 500 200"><rect/></svg>')).toEqual({
+      width: 500,
+      height: 200
+    })
   })
 })
 
-describe('svgSize', () => {
-  it('does not read a percentage as pixels', () => {
-    // The seed disagrees with the answer on purpose: parseFloat('100%') is 100,
-    // so the pre-fix code returned 100x100 rather than the viewBox.
-    expect(svgSize('<svg width="100%" height="100%" viewBox="0 0 640 480"></svg>')).toEqual({
-      height: 480,
-      width: 640
-    })
+describe('normalizeSvgSize', () => {
+  it('replaces a 100% width with the viewBox pixel size', () => {
+    const out = normalizeSvgSize(MERMAID_SVG)
+
+    expect(out).toContain('width="260.34375"')
+    expect(out).toContain('height="70"')
+    expect(out).not.toContain('width="100%"')
+    expect(out).toContain('viewBox="0 0 260.34375 70"')
+    expect(out).toContain('role="graphics-document document"')
   })
 
-  it('prefers explicit pixel attributes over the viewBox', () => {
-    expect(svgSize('<svg width="200" height="100" viewBox="0 0 640 480"></svg>')).toEqual({
-      height: 100,
-      width: 200
-    })
+  it('leaves an explicit pixel height when only width is a percentage', () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="70" viewBox="0 0 500 200"><rect/></svg>'
+
+    const out = normalizeSvgSize(svg)
+
+    expect(out).toContain('width="500"')
+    expect(out).toContain('height="70"')
+    expect(out).not.toContain('height="200"')
   })
 
-  it('falls back to a default when there is neither', () => {
-    expect(svgSize('<svg></svg>')).toEqual({ height: 600, width: 800 })
+  it('leaves svgs without a percentage width untouched', () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="312" viewBox="0 0 312 90"><rect/></svg>'
+
+    expect(normalizeSvgSize(svg)).toBe(svg)
+  })
+
+  it('leaves svgs with a percentage width but no viewBox untouched', () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="100%"><rect/></svg>'
+
+    expect(normalizeSvgSize(svg)).toBe(svg)
   })
 })

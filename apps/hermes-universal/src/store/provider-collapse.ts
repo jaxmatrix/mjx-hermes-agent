@@ -1,6 +1,6 @@
 import { Codecs, persistentAtom } from '@/lib/persisted'
 
-const STORAGE_KEY = 'hermes.collapsed-providers'
+const STORAGE_KEY = 'hermes.desktop.collapsed-providers'
 
 /** Set of provider slugs whose model groups are currently collapsed in the
  *  model picker dropdown. Persisted to localStorage globally — this is a
@@ -8,7 +8,7 @@ const STORAGE_KEY = 'hermes.collapsed-providers'
  *
  *  We deliberately do NOT prune this set when the active provider catalog
  *  changes (e.g. profile switch, Refresh Models, API key revoked). The catalog
- *  the picker renders is profile-scoped (`requestModelOptions` routes through
+ *  the picker renders is profile-scoped (`getGlobalModelOptions` routes through
  *  `profileScoped()`), so pruning against only the active catalog would delete
  *  a user's collapse preference every time they switch to a profile whose
  *  configured providers don't include it — silently losing state across what

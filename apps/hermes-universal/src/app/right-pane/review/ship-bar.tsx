@@ -9,11 +9,14 @@ import { SplitButton } from '@/components/ui/split-button'
 import { Textarea } from '@/components/ui/textarea'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
+import { isSubmitEnter } from '@/lib/ime'
+import { formatCombo } from '@/lib/keybinds/combo'
 import { notifyError } from '@/store/notifications'
 import {
   $reviewCommitDefault,
   $reviewCommitMsgBusy,
   $reviewFiles,
+  $reviewScopeTarget,
   $reviewShipBusy,
   $reviewShipInfo,
   cancelCommitMessage,
@@ -34,6 +37,7 @@ export function ReviewShipBar() {
   const c = t.statusStack.coding
   const files = useStore($reviewFiles)
   const ship = useStore($reviewShipInfo)
+  const scopeTarget = useStore($reviewScopeTarget)
   const busy = useStore($reviewShipBusy)
   const generating = useStore($reviewCommitMsgBusy)
   const commitDefault = useStore($reviewCommitDefault)
@@ -78,22 +82,22 @@ export function ReviewShipBar() {
           fills the right edge on one row, then sticks to the top as it grows. */}
       <div className="relative">
         <Textarea
-          className="field-sizing-content max-h-40 min-h-0 resize-none pe-9"
+          className="field-sizing-content max-h-40 min-h-0 resize-none pr-9"
           disabled={generating}
           onChange={event => setMessage(event.target.value)}
           onKeyDown={event => {
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            if ((event.metaKey || event.ctrlKey) && isSubmitEnter(event)) {
               event.preventDefault()
               runCommit(commitDefault)
             }
           }}
-          placeholder={c.commitPlaceholder}
+          placeholder={c.commitPlaceholder(formatCombo('mod+enter'))}
           rows={1}
           size="sm"
           value={message}
         />
         <GenerateButton
-          className="absolute top-px end-px h-6 w-8 rounded-s-none rounded-e-[2px]"
+          className="absolute top-px right-px h-6 w-8 rounded-l-none rounded-r-[2px]"
           disabled={!canGenerate}
           generating={generating}
           generatingLabel={c.stopGenerating}
@@ -128,14 +132,18 @@ export function ReviewShipBar() {
         <Button
           className="min-w-0 flex-1 justify-center px-7 text-[0.7rem] text-muted-foreground/85 hover:text-foreground"
           disabled={!hasFiles}
-          onClick={() => requestComposerSubmit(c.agentShipPrompt, { target: 'main' })}
+          onClick={() => {
+            if (!requestComposerSubmit(c.agentShipPrompt, { target: scopeTarget })) {
+              notifyError(new Error(c.agentShipUnavailable), c.agentShip)
+            }
+          }}
           size="sm"
           variant="ghost"
         >
           <span className="truncate underline underline-offset-2">{c.agentShip}</span>
         </Button>
         <Tip label={ship.ghReady ? prLabel : c.ghMissing}>
-          <span className="absolute inset-y-0 end-0 flex items-center">
+          <span className="absolute inset-y-0 right-0 flex items-center">
             <Button
               aria-label={prLabel}
               className="size-7 text-muted-foreground/80 hover:text-foreground"

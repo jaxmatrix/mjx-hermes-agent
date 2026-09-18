@@ -1,34 +1,55 @@
 /**
- * VS Code color-theme → DesktopTheme converter. Ported verbatim from
- * apps/desktop/src/themes/vscode.ts (the color helpers + types are identical in
- * universal). `applyTheme` derives every glass/shadcn token from a small seed
- * chain via color-mix(); this maps the ~6 load-bearing VS Code workbench keys and
- * derives the rest.
+ * VS Code color-theme → DesktopTheme converter.
+ *
+ * VS Code themes carry ~hundreds of `workbench.colorCustomization` keys, but the
+ * desktop theme model only needs a `DesktopThemeColors` struct — `applyTheme`
+ * derives every glass/shadcn token from a small seed chain via `color-mix()`.
+ * In practice ~6 workbench keys carry the whole look (background, foreground,
+ * accent, elevated surface, sidebar, error); everything else we derive by mixing
+ * those toward the background/foreground. That's the "naive token converter".
+ *
+ * A VS Code theme is single-mode (light OR dark). Rather than synthesise the
+ * opposite mode, we set both `colors` and `darkColors` to the converted palette
+ * so the imported theme renders faithfully no matter where the light/dark toggle
+ * sits — `renderedModeFor` still picks the `.dark` class from the real
+ * background luminance, so surface-bound UI matches what's on screen.
  */
 
-import { ensureContrast, luminance, mix, normalizeHex, readableOn } from './color'
+import { ensureContrast, mix } from '@hermes/shared/color'
+
+import { luminance, normalizeHex, readableInk } from './color'
 import type { DesktopTerminalPalette, DesktopTheme, DesktopThemeColors } from './types'
 
+// Section headers / sidebar labels render in --theme-primary directly on the
+// sidebar surface as small (~10px) uppercase text, so the accent has to clear
+// WCAG AA for normal text (4.5:1) or it's unreadable — the "invisible purple
+// label" case. Imported accents below this get nudged lighter/darker.
 const ACCENT_MIN_CONTRAST = 4.5
 
 /** The shape of a VS Code `*-color-theme.json` (only the fields we read). */
 export interface VscodeColorTheme {
   name?: string
   type?: string
+  /** Relative path to a base theme this one extends. We don't follow it. */
   include?: string
   colors?: Record<string, unknown>
   tokenColors?: unknown
 }
 
 export interface ConvertOptions {
+  /** Stable id (slug). Defaults to a slug of `raw.name`. */
   slug?: string
+  /** Display label. Defaults to `raw.name`. */
   label?: string
+  /** Shown under the label in the picker (e.g. the marketplace extension id). */
   source?: string
 }
 
 export interface ConvertResult {
   theme: DesktopTheme
+  /** The source theme's own light/dark (from `type`, else background luminance). */
   mode: 'light' | 'dark'
+  /** Workbench keys we wanted but the theme omitted (we derived fallbacks). */
   derived: string[]
 }
 
@@ -45,13 +66,17 @@ export function vscodeThemeSlug(name: string): string {
 }
 
 /**
- * Parse a VS Code theme file. These ship as JSONC (comments + trailing commas),
- * so strip those, then parse. Throws on hard syntax errors.
+ * Parse a VS Code theme file. These ship as JSONC (line/block comments and
+ * trailing commas), so a plain `JSON.parse` rejects most real-world files.
+ * Strips comments + trailing commas, then parses. Throws on hard syntax errors.
  */
 export function parseVscodeTheme(text: string): VscodeColorTheme {
   const stripped = text
+    // Block comments.
     .replace(/\/\*[\s\S]*?\*\//g, '')
+    // Line comments (not inside strings — naive but fine for theme files).
     .replace(/(^|[^:"'\\])\/\/[^\n\r]*/g, '$1')
+    // Trailing commas before } or ].
     .replace(/,(\s*[}\]])/g, '$1')
 
   const parsed: unknown = JSON.parse(stripped)
@@ -74,9 +99,12 @@ const isDarkType = (raw: VscodeColorTheme, background: string): boolean => {
     return true
   }
 
+  // No usable `type` — bucket by background luminance.
   return luminance(background) < 0.4
 }
 
+// xterm ITheme ANSI slots ← VS Code `terminal.ansi*` tokens. Background is
+// deliberately excluded — the pane keeps the live skin surface (transparency).
 const ANSI_TOKENS: ReadonlyArray<readonly [keyof DesktopTerminalPalette, string]> = [
   ['black', 'terminal.ansiBlack'],
   ['red', 'terminal.ansiRed'],
@@ -109,6 +137,14 @@ const BASE_ANSI: ReadonlyArray<keyof DesktopTerminalPalette> = [
 
 const HEX_RE = /^#[0-9a-f]{3,8}$/i
 
+/**
+ * Lift a theme's integrated-terminal ANSI palette, if it ships one.
+ *
+ * All-or-nothing on the base-8 colors: a half-filled palette mixed with our
+ * defaults reads worse than just keeping the defaults, so we adopt the theme's
+ * palette only when the full base set is present. ANSI slots flatten alpha over
+ * the editor background; selection keeps its alpha so xterm can blend it.
+ */
 function extractTerminalPalette(
   colors: Record<string, unknown>,
   background: string
@@ -151,6 +187,7 @@ function extractTerminalPalette(
   return palette
 }
 
+/** First normalizable hex among `keys`, composited over `backdrop`. */
 const pick = (
   colors: Record<string, unknown>,
   keys: string[],
@@ -176,6 +213,7 @@ export function convertVscodeColorTheme(raw: VscodeColorTheme, opts: ConvertOpti
 
   const derived: string[] = []
 
+  // Background first: it's the backdrop every other token flattens alpha over.
   const backgroundHit = pick(
     colors,
     ['editor.background', 'editorPane.background', 'editorGroup.background'],
@@ -189,6 +227,7 @@ export function convertVscodeColorTheme(raw: VscodeColorTheme, opts: ConvertOpti
     derived.push('editor.background')
   }
 
+  // `take` records a derived fallback when the theme omits the key.
   const take = (keys: string[], fallback: string): string => {
     const hit = pick(colors, keys, background)
 
@@ -203,6 +242,11 @@ export function convertVscodeColorTheme(raw: VscodeColorTheme, opts: ConvertOpti
 
   const foreground = take(['editor.foreground', 'foreground'], dark ? '#d4d4d4' : '#1f1f1f')
 
+  // Brand accent — the single most load-bearing token. Drives primary buttons,
+  // focus rings, the streaming cursor, active-session pills, and sidebar labels.
+  // Prefer the saturated "brand" tokens (button / link / badge) over focusBorder,
+  // which many themes set to a muted gray — picking it first made imported
+  // accents look like the desktop defaults. We enforce contrast below regardless.
   const accentSource = take(
     [
       'button.background',
@@ -242,6 +286,8 @@ export function convertVscodeColorTheme(raw: VscodeColorTheme, opts: ConvertOpti
     mix(background, foreground, dark ? 0.02 : 0.012)
   )
 
+  // The accent labels the sidebar (--theme-primary), so guarantee it reads
+  // there — otherwise low-contrast brand colors leave invisible section headers.
   const accent = ensureContrast(accentSource, sidebar, ACCENT_MIN_CONTRAST)
 
   const border = take(
@@ -283,7 +329,7 @@ export function convertVscodeColorTheme(raw: VscodeColorTheme, opts: ConvertOpti
     popover: elevated,
     popoverForeground: foreground,
     primary: accent,
-    primaryForeground: readableOn(accent),
+    primaryForeground: readableInk(accent),
     secondary,
     secondaryForeground: foreground,
     accent: accentSoft,
@@ -292,10 +338,10 @@ export function convertVscodeColorTheme(raw: VscodeColorTheme, opts: ConvertOpti
     input,
     ring: accent,
     midground: accent,
-    midgroundForeground: readableOn(accent),
+    midgroundForeground: readableInk(accent),
     composerRing: accent,
     destructive,
-    destructiveForeground: readableOn(destructive),
+    destructiveForeground: readableInk(destructive),
     sidebarBackground: sidebar,
     sidebarBorder: border,
     userBubble: mix(card, accent, dark ? 0.18 : 0.12),
@@ -313,8 +359,13 @@ export function convertVscodeColorTheme(raw: VscodeColorTheme, opts: ConvertOpti
       name: slug,
       label,
       description: opts.source ? `VS Code · ${opts.source}` : 'Imported from VS Code',
+      // Single palette in both slots. A lone VS Code theme is one-mode; callers
+      // that have both a light and dark variant (a Marketplace extension family)
+      // recombine them into proper colors/darkColors via buildThemeFromMarketplace.
       colors: palette,
       darkColors: palette,
+      // Only set when the theme ships a full ANSI palette — the terminal keeps
+      // its built-in VS Code defaults otherwise.
       ...(terminal ? { terminal } : {})
     }
   }

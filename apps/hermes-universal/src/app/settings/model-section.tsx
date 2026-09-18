@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 
 import { useOnProfileSwitch } from '@/app/hooks/use-on-profile-switch'
 import { ModelPickerDialog } from '@/components/model-picker'

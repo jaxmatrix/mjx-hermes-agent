@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react'
 import { atom, computed } from 'nanostores'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/store/gateway', async () => {

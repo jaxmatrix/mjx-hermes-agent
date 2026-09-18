@@ -1,6 +1,5 @@
+import type { KnownBillingRefusalCode } from '@hermes/shared/billing'
 import { describe, expect, it } from 'vitest'
-
-import type { KnownBillingRefusalCode } from '@/lib/billing/billing-types'
 
 import type { BillingRefusal } from './api'
 import { resolveRefusal } from './errors'

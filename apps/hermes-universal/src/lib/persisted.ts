@@ -1,16 +1,12 @@
-import { atom, type WritableAtom } from '@/store/atom'
+import { atom, type WritableAtom } from 'nanostores'
 
-import { readKey, writeKey } from './persist'
+import { readKey, writeKey } from './storage'
 
-// A nanostore that auto-persists. Ported near-verbatim from the desktop app
-// (apps/desktop/src/lib/persisted.ts). Reads its seed from localStorage through
-// the ./persist choke point and writes back on every change — no per-atom
-// subscribe boilerplate.
+// A nanostore that auto-persists. Reads its seed from localStorage through the
+// storage choke point (so every read/write is observable in one place) and
+// writes back on every change — no per-atom subscribe boilerplate.
 //
-//   export const $foo = persistentAtom('hermes.foo', false, Codecs.bool)
-//
-// NOTE: plain localStorage — non-secret UI prefs only. Secrets go through the
-// OS keyring (@/lib/secure-store), never here.
+//   export const $foo = persistentAtom('hermes.desktop.foo', false, Codecs.bool)
 
 // Maps a value to/from its stored string form. `decode` only ever sees a real
 // stored string (absence falls back); `encode` returning null removes the key.
@@ -23,7 +19,7 @@ export const Codecs = {
   bool: { decode: raw => raw === 'true', encode: (value: boolean) => String(value) } as Codec<boolean>,
   nullableText: { decode: raw => raw, encode: value => value } as Codec<null | string>,
   text: { decode: raw => raw, encode: (value: string) => value } as Codec<string>,
-  // Drops non-strings and empties; empty array → key removed.
+  // Mirrors storedStringArray/persistStringArray: drops non-strings, empty → removed.
   stringArray: {
     decode: raw => {
       const parsed = JSON.parse(raw) as unknown
@@ -34,7 +30,7 @@ export const Codecs = {
     },
     encode: value => (value.length === 0 ? null : JSON.stringify(value))
   } as Codec<string[]>,
-  // Keeps only string values.
+  // Mirrors storedStringRecord/persistStringRecord: keeps only string values.
   stringRecord: {
     decode: raw => {
       const parsed = JSON.parse(raw) as unknown
@@ -76,7 +72,26 @@ export function persistentAtom<T>(key: string, fallback: T, codec: Codec<T> = Co
 
   const $value = atom<T>(initial)
 
-  $value.subscribe(value => writeKey(key, codec.encode(value)))
+  // Persist CHANGES only — never the creation-time value. nanostores'
+  // subscribe fires immediately, and writing what was just read back is a
+  // no-op at best; at worst it is a data-loss clobber: on a cold boot the
+  // renderer bundle can run against a storage snapshot that has not caught
+  // up yet (an early hidden/boot load of the same bundle sees an empty
+  // area), and echoing the fallback back out overwrites the real record
+  // other loads are about to read. Observed with the unread-dot records:
+  // the early load wrote `{}` over a populated store between the disk read
+  // and the main window's module init.
+  let creationEmission = true
+
+  $value.subscribe(value => {
+    if (creationEmission) {
+      creationEmission = false
+
+      return
+    }
+
+    writeKey(key, codec.encode(value))
+  })
 
   return $value
 }

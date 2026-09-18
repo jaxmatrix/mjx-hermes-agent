@@ -1,13 +1,18 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { stubResizeObserver } from '@/test/jsdom'
 import type { ConfigFieldSchema } from '@/types/hermes'
 
-import { ConfigField } from './config-section'
+import { ConfigField } from './config-field'
 import { rankSearchOption, SearchableSelect } from './searchable-select'
 
-// The scrollIntoView / pointer-capture / ResizeObserver shims Radix Popover and
-// cmdk need in jsdom already live in src/test-setup.ts.
+beforeAll(() => {
+  stubResizeObserver()
+  Element.prototype.scrollIntoView = vi.fn()
+  Element.prototype.hasPointerCapture = vi.fn(() => false)
+  Element.prototype.releasePointerCapture = vi.fn()
+})
 
 afterEach(() => {
   cleanup()
@@ -78,6 +83,22 @@ describe('SearchableSelect', () => {
     expect(screen.queryByText('System default')).toBeNull()
   })
 
+  it('lets the option list size to its content instead of the shrink-wrapped trigger', () => {
+    // The trigger shrink-wraps to its current value inside the settings grid
+    // (~120px for "Europe/Berlin"); pinning the popover width to it clipped
+    // every IANA row after "Africa/A…". The popover may grow to cover a wider
+    // trigger, but must never be capped at the trigger's width.
+    render(<SearchableSelect onChange={vi.fn()} options={options} value="Europe/Berlin" />)
+
+    fireEvent.click(screen.getByRole('combobox'))
+
+    const content = screen.getByRole('listbox', { hidden: true }).closest('[data-slot="popover-content"]')
+    const classes = content?.className.split(/\s+/) ?? []
+
+    expect(classes.some(c => c.startsWith('min-w-') && c.includes('radix-popover-trigger-width'))).toBe(true)
+    expect(classes.some(c => /^w-[[(].*radix-popover-trigger-width/.test(c))).toBe(false)
+  })
+
   it('shows the placeholder when the value is blank', () => {
     render(<SearchableSelect onChange={vi.fn()} options={options} placeholder="Search…" value="" />)
 
@@ -121,20 +142,5 @@ describe('ConfigField searchable routing', () => {
     fireEvent.click(screen.getByText('System default'))
 
     expect(onChange).toHaveBeenCalledWith('')
-  })
-
-  it('routes FREE_INPUT_KEYS to a typeable combobox rather than a closed select', () => {
-    render(
-      <ConfigField
-        onChange={vi.fn()}
-        schema={{ type: 'select', options: ['rachel'] }}
-        schemaKey="tts.elevenlabs.voice_id"
-        value="custom-clone-id"
-      />
-    )
-
-    // The value is a voice id absent from the option list — it must survive.
-    expect(screen.getByDisplayValue('custom-clone-id')).not.toBeNull()
-    expect(screen.getByLabelText('Show options')).not.toBeNull()
   })
 })

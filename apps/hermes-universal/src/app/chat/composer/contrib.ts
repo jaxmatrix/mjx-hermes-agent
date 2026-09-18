@@ -13,7 +13,6 @@
  *   data kinds (`data`):      composer.middleware    (ComposerMiddleware)
  *                             composer.attachments   (ComposerAttachmentProvider)
  *                             composer.microActions  (ComposerMicroActionProvider)
- *                             composer.atCompletions (ComposerAtCompletionSource)
  *
  * Core keeps ownership of the transcript, input, and submit engine — these
  * seams AUGMENT the composer, they never replace it. Middleware runs as an
@@ -25,6 +24,7 @@ import { useMemo } from 'react'
 
 import { useContributions } from '@/contrib/react/use-contributions'
 import { registry } from '@/contrib/registry'
+import type { TodoItem } from '@/lib/todos'
 import type { ComposerAttachment } from '@/store/composer'
 import type { ComposerAction } from '@/store/composer-actions'
 
@@ -59,22 +59,15 @@ export interface ComposerAtCompletionItem {
   display?: string
   /** Secondary line (e.g. "Bot · Homelab"). */
   meta?: string
-  /** Icon slug the completion popover understands; defaults to 'simple'. */
+  /** Icon slug understood by the completion popover; defaults to 'simple'. */
   icon?: string
 }
 
-/**
- * Payload of a `composer.atCompletions` data contribution — an extra source
- * merged into the composer's `@` popover ABOVE the path/reference results.
- * `query` is the text typed after `@` (no leading `@`).
- *
- * SYNCHRONOUS, and that is the contract rather than a simplification: `provide`
- * runs on every keystroke past the debounce, so a source that could await would
- * need a budget and a race to keep the popover from stalling — while a
- * synchronous one cannot stall it at all. A slow lookup belongs behind the
- * source's own cache, with `provide` answering from whatever that cache holds.
- * Desktop's shape, verbatim, so a source written for one app works in the other.
- */
+/** Payload of a `composer.atCompletions` data contribution — an extra source
+ *  merged into the composer's `@` popover ABOVE the path/reference results.
+ *  `query` is the text typed after `@` (no leading `@`). Sources must be
+ *  fast and synchronous-ish (called per keystroke after the debounce); slow
+ *  lookups belong behind the source's own cache. */
 export interface ComposerAtCompletionSource {
   provide: (query: string) => ComposerAtCompletionItem[]
 }
@@ -137,27 +130,22 @@ export function useComposerAttachmentProviders(): Array<ComposerAttachmentProvid
  *
  * `resolve` is called with the live session context and returns the badges to
  * show right now, or `[]` for "nothing from me". Returning a list rather than
- * a static badge is what lets a provider be conditional ("only while idle")
- * without a reactive `when()`, which the registry deliberately doesn't offer.
+ * a static badge is what lets a provider be conditional ("only while idle",
+ * "only with unfinished tasks") without a reactive `when()`, which the
+ * registry deliberately doesn't offer.
  */
 export interface ComposerMicroActionProvider {
   resolve: (ctx: ComposerMicroActionContext) => ComposerAction[]
 }
 
-/**
- * What a micro-action provider gets to branch on. Deliberately small: every
- * field here is a standing compatibility promise to the plugins using it.
- *
- * Desktop also passes the session's live `todos`. Universal has no todo feed —
- * there is no `$todosBySession` here and todos are only ever derived from a
- * transcript scan — so the field is left OUT rather than shipped permanently
- * empty: a provider that reads it would silently never fire. Add it here, and
- * in `use-micro-actions.ts`, the day universal grows the feed.
- */
+/** What a micro-action provider gets to branch on. Deliberately small: every
+ *  field here is a standing compatibility promise to the plugins using it. */
 export interface ComposerMicroActionContext {
   /** A turn is currently running in this session. */
   busy: boolean
   sessionId: string
+  /** Live todo list for the session (empty when there is none). */
+  todos: readonly TodoItem[]
 }
 
 /** Micro-action providers, memoised against the registry's own stable

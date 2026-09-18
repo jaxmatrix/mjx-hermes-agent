@@ -7,13 +7,16 @@ import type { HermesGateway } from '@/hermes'
 import { cachedPathCompletion, hasCachedPathCompletion } from '@/lib/slash-completion-cache'
 import { normalize } from '@/lib/text'
 
-import { COMPOSER_AREAS, type ComposerAtCompletionSource } from '../contrib'
+import type { ComposerAtCompletionSource } from '../contrib'
+import { COMPOSER_AREAS } from '../contrib'
 
 import type { CompletionEntry, CompletionPayload } from './use-live-completion-adapter'
 import { useLiveCompletionAdapter } from './use-live-completion-adapter'
 
 const KIND_RE = /^@(file|folder|url|image|tool|git):(.*)$/
 const REF_STARTERS = new Set(['file', 'folder', 'url', 'image', 'tool', 'git'])
+// These bare tokens are context actions, not profile handles.
+const SIMPLE_CONTEXT_REFS = new Set(['@diff', '@staged'])
 
 const STARTER_META: Record<string, string> = {
   file: 'Attach a file reference',
@@ -34,6 +37,26 @@ function starterEntries(query: string): CompletionEntry[] {
     display: `@${kind}:`,
     meta: STARTER_META[kind] || ''
   }))
+}
+
+function mergeCompletionEntries(preferred: CompletionEntry[], fallback: CompletionEntry[]): CompletionEntry[] {
+  const seenHandles = new Set<string>()
+
+  return [...preferred, ...fallback].filter(entry => {
+    const key = normalize(entry.text)
+
+    if (!/^@[^:\s]+$/.test(key) || SIMPLE_CONTEXT_REFS.has(key)) {
+      return true
+    }
+
+    if (seenHandles.has(key)) {
+      return false
+    }
+
+    seenHandles.add(key)
+
+    return true
+  })
 }
 
 interface AtItemMetadata extends Record<string, string> {
@@ -65,14 +88,13 @@ function classify(entry: CompletionEntry): {
     return {
       type: kind,
       insertId: rest,
-      // The row must show exactly what picking it produces. The gateway's
-      // `display` is a BASENAME (`methods_complete.py` emits `entry + suffix`),
-      // while the chip this row inserts is labelled by `refChipLabel` off the
-      // full `@kind:value` — so taking `display` verbatim gave one folder two
-      // names: the list said `desktop/`, the editor said `apps/desktop/`. Worse
-      // on the fuzzy branch, which ranks matches from anywhere in the tree and
-      // returned every `index.ts` in the repo as the same undifferentiated row.
-      // Both ends derive from `refChipLabel` now, so they cannot drift.
+      // The row shows exactly what picking it produces. Upstream keeps one
+      // label per item and hands it to the chip verbatim (DirectiveNode's
+      // `__label = item.label`); our wire format is `@kind:value`, which can't
+      // carry a label the way their `:type[label]{name=id}` does, so the same
+      // invariant is held by deriving both ends from refChipLabel. Without
+      // this the list said `desktop/`, the editor said `apps/desktop/`, and
+      // the chip said `desktop` — three names for one folder.
       display: rest ? refChipLabel(kind, rest) : textValue(entry.display, `@${kind}:`),
       meta: textValue(entry.meta)
     }
@@ -87,7 +109,7 @@ function classify(entry: CompletionEntry): {
 }
 
 /** Live `@` completions backed by the gateway's `complete.path` RPC, with
- *  contributed sources (`composer.atCompletions` — e.g. Bot Mode agent handles)
+ *  contributed sources (composer.atCompletions — e.g. Bot Mode agent handles)
  *  merged ahead of the path results. */
 export function useAtCompletions(options: {
   gateway: HermesGateway | null
@@ -99,10 +121,9 @@ export function useAtCompletions(options: {
 
   const contributed = useContributions(COMPOSER_AREAS.atCompletions)
 
-  // Contributed rows for the query, mapped into the gateway's entry shape so ONE
-  // classify/toItem path renders every row. Provider errors are isolated: a
-  // throwing source drops ITS rows, never the popover — and it is not toasted,
-  // because a completion list is not the place to report a plugin bug.
+  // Contributed rows for the query, mapped into the gateway entry shape so
+  // one classify/toItem path renders every row. Provider errors are isolated:
+  // a throwing source drops ITS rows, never the popover.
   const contributedEntries = useCallback(
     (query: string): CompletionEntry[] => {
       const out: CompletionEntry[] = []
@@ -110,23 +131,25 @@ export function useAtCompletions(options: {
       for (const contribution of contributed) {
         const source = contribution.data as ComposerAtCompletionSource | undefined
 
-        if (typeof source?.provide !== 'function') {
+        if (!source || typeof source.provide !== 'function') {
           continue
         }
 
         try {
           for (const item of source.provide(query) || []) {
-            if (typeof item?.insert === 'string' && item.insert) {
-              out.push({
-                display: item.display || item.insert,
-                icon: item.icon || '',
-                meta: item.meta || '',
-                text: item.insert
-              } as CompletionEntry)
+            if (!item || typeof item.insert !== 'string' || !item.insert) {
+              continue
             }
+
+            out.push({
+              text: item.insert,
+              display: item.display || item.insert,
+              meta: item.meta || '',
+              icon: item.icon || ''
+            } as CompletionEntry)
           }
         } catch {
-          // A broken source must not take down `@` completions.
+          /* a broken source must not take down @ completions */
         }
       }
 
@@ -135,14 +158,10 @@ export function useAtCompletions(options: {
     [contributed]
   )
 
-  // The scope a listing is relative to. It namespaces the response cache below
-  // AND is handed to the adapter as its epoch — both are needed. The cache key
-  // alone protected nothing: the adapter answers a repeated query from the items
-  // it is already holding and never calls the fetcher, so `@src/` typed in one
-  // repo kept listing that repo's files after a session or project switch moved
-  // the cwd. Changing the epoch is what makes it ask again.
-  const scope = `${cwd ?? ''}|${sessionId ?? ''}`
-  const cacheKey = useCallback((query: string) => `${scope}|${query}`, [scope])
+  // Cache key: the completion depends on the query AND the directory it's
+  // resolved against, so a cwd or session change can't serve another tree's
+  // listing.
+  const cacheKey = useCallback((query: string) => `${cwd ?? ''}|${sessionId ?? ''}|${query}`, [cwd, sessionId])
 
   const fetcher = useCallback(
     async (query: string): Promise<CompletionPayload> => {
@@ -150,7 +169,7 @@ export function useAtCompletions(options: {
       const extras = contributedEntries(query)
 
       if (!gateway) {
-        return { items: [...extras, ...starters], query }
+        return { items: mergeCompletionEntries(extras, starters), query }
       }
 
       const word = REF_STARTERS.has(query) ? `@${query}:` : `@${query}`
@@ -167,8 +186,9 @@ export function useAtCompletions(options: {
       try {
         // De-duplicated the same way `/` completions are. Walking a path is
         // inherently repetitive — Tab into a folder, Backspace out, retype a
-        // segment — and every one of those steps was a fresh listing + rank on
-        // the backend.
+        // segment — and every one of those steps used to be a fresh
+        // `git ls-files` + rank on the backend (~40ms of the ~50ms round trip
+        // measured on this repo's 8k files).
         const result = await cachedPathCompletion(cacheKey(query), () =>
           gateway.request<{ items?: CompletionEntry[] }>('complete.path', params)
         )
@@ -176,12 +196,9 @@ export function useAtCompletions(options: {
         const items = result.items ?? []
         const base = items.length > 0 ? items : starters
 
-        // Contributed rows sort ABOVE the path results, matching desktop: a
-        // plugin's handles are a small named set, and burying them under a file
-        // listing is the same as not offering them.
-        return { items: [...extras, ...base], query }
+        return { items: mergeCompletionEntries(extras, base), query }
       } catch {
-        return { items: [...extras, ...starters], query }
+        return { items: mergeCompletionEntries(extras, starters), query }
       }
     },
     [cacheKey, contributedEntries, gateway, sessionId, cwd]
@@ -215,7 +232,7 @@ export function useAtCompletions(options: {
   // nothing when the answer is already in hand.
   const isCached = useCallback((query: string) => hasCachedPathCompletion(cacheKey(query)), [cacheKey])
 
-  return useLiveCompletionAdapter({ enabled, epoch: scope, fetcher, isCached, toItem })
+  return useLiveCompletionAdapter({ enabled, fetcher, isCached, toItem })
 }
 
 /** Re-export `classify` for use by the formatter (insertion side). */

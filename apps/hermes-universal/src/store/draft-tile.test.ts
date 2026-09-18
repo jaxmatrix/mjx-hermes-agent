@@ -20,7 +20,7 @@ import type { Tile } from '@/components/pane-shell/tile/types'
 import { findGroupOfPane, group, split } from '@/components/pane-shell/tree/model'
 import { $layoutTree } from '@/components/pane-shell/tree/store'
 import { DRAFT_TILE_KEY, DRAFT_TILE_PANE_ID, sessionTilePaneId, WORKSPACE_PANE_ID } from '@/lib/pane-ids'
-import { $activeStoredSessionId } from '@/store/session'
+import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
   type ClientSessionState,

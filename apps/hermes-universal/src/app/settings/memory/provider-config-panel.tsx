@@ -5,9 +5,7 @@ import { Button } from '@/components/ui/button'
 import { DisclosureCaret } from '@/components/ui/disclosure-caret'
 import { getMemoryProviderConfig, saveMemoryProviderConfig } from '@/hermes'
 import { SlidersHorizontal } from '@/lib/icons'
-import { useStore } from '@/store/atom'
 import { notifyError } from '@/store/notifications'
-import { $settingsScopeOverride } from '@/store/settings-scope'
 import type { MemoryProviderConfig, MemoryProviderField } from '@/types/hermes'
 
 import { ListRow, Pill } from '../primitives'
@@ -22,10 +20,7 @@ function seedValues(config: MemoryProviderConfig): Record<string, string> {
   )
 }
 
-export function ProviderConfigPanel({ provider }: { provider: string }) {
-  // Memory provider settings live in the profile's own config, so read and
-  // write the profile this settings page is scoped to ("Applies to").
-  const scopeProfile = useStore($settingsScopeOverride)
+export function ProviderConfigPanel({ profile, provider }: { profile?: string; provider: string }) {
   const [config, setConfig] = useState<MemoryProviderConfig | null>(null)
   const [loadError, setLoadError] = useState<null | string>(null)
   const [values, setValues] = useState<Record<string, string>>({})
@@ -35,7 +30,7 @@ export function ProviderConfigPanel({ provider }: { provider: string }) {
 
   const refresh = useCallback(async () => {
     try {
-      const next = await getMemoryProviderConfig(provider, scopeProfile ?? undefined)
+      const next = await getMemoryProviderConfig(provider, profile)
       const seed = seedValues(next)
       setConfig(next)
       setValues(seed)
@@ -45,7 +40,7 @@ export function ProviderConfigPanel({ provider }: { provider: string }) {
       setConfig(null)
       setLoadError(err instanceof Error ? err.message : 'Memory provider settings failed to load')
     }
-  }, [provider, scopeProfile])
+  }, [profile, provider])
 
   useEffect(() => {
     setConfig(null)
@@ -61,7 +56,7 @@ export function ProviderConfigPanel({ provider }: { provider: string }) {
       }
 
       try {
-        await saveMemoryProviderConfig(provider, { [field.key]: value }, scopeProfile ?? undefined)
+        await saveMemoryProviderConfig(provider, { [field.key]: value }, profile)
 
         if (field.kind === 'secret') {
           setValues(current => ({ ...current, [field.key]: '' }))
@@ -79,7 +74,7 @@ export function ProviderConfigPanel({ provider }: { provider: string }) {
         notifyError(err, `Failed to save ${field.label}`)
       }
     },
-    [provider, saved, scopeProfile]
+    [profile, provider, saved]
   )
 
   // Providers without a declared config surface (e.g. builtin) render nothing.
@@ -113,7 +108,7 @@ export function ProviderConfigPanel({ provider }: { provider: string }) {
       <div className="flex items-center gap-2 py-2">
         <button
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-2 text-start"
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
           onClick={() => setExpanded(open => !open)}
           type="button"
         >
@@ -134,7 +129,7 @@ export function ProviderConfigPanel({ provider }: { provider: string }) {
       </div>
 
       {expanded && (
-        <div className="ms-1.5 border-s-2 border-(--ui-accent-secondary)/25 pb-4 ps-4 pe-4">
+        <div className="ml-1.5 border-l-2 border-(--ui-accent-secondary)/25 pb-4 pl-4 pr-4">
           {inlineFields.map(field => (
             <div className="border-b border-border/40 last:border-b-0" key={field.key}>
               <ListRow
@@ -160,6 +155,7 @@ export function ProviderConfigPanel({ provider }: { provider: string }) {
           onOpenChange={setShowModal}
           onSaved={refresh}
           open={showModal}
+          profile={profile}
           provider={provider}
         />
       )}

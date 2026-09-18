@@ -5,7 +5,7 @@
 import '@/app/contrib/controller'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 
 import { ChatScreen } from '@/app/chat/chat-screen'
 import { routeSessionId, sessionRoute } from '@/app/routes'
@@ -23,7 +23,7 @@ import { $busy, $messages } from '@/store/chat'
 import { $attachmentMenuDropdownOpen } from '@/store/composer'
 import { $connectionError, $connectionPhase } from '@/store/connection'
 import { $modelMenuDropdownOpen } from '@/store/model'
-import { $activeStoredSessionId, openSession, refreshSessions } from '@/store/session'
+import { $activeStoredSessionId, openSession, refreshSessions } from '@/store/session-lifecycle'
 import { showAppWindow } from '@/store/windows'
 
 import { reportHudSession } from './handoff'

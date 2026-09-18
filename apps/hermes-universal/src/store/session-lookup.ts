@@ -37,14 +37,8 @@ import { sessionTitle } from '@/lib/chat-runtime'
 import { useStore } from '@/store/atom'
 import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
 import { $projectTree } from '@/store/projects'
-import {
-  $activeStoredSessionId,
-  $pinnedSessionCache,
-  $sessions,
-  archiveSessionLocal,
-  sessionMatchesStoredId,
-  sessionPinId
-} from '@/store/session'
+import { $sessions, sessionMatchesStoredId, sessionPinId } from '@/store/session'
+import { $activeStoredSessionId, $pinnedSessionCache, archiveSessionLocal } from '@/store/session-lifecycle'
 import { withSessionOwner } from '@/store/session-owner-label'
 import { $focusedStoredSessionId } from '@/store/session-states'
 import type { SessionInfo } from '@/types/hermes'

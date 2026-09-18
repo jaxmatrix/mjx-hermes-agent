@@ -10,7 +10,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type * as SessionStore from '@/store/session'
+import type * as SessionStore from '@/store/session-lifecycle'
 
 const archiveSessionLocal = vi.fn(async (_id: string) => {})
 
@@ -25,7 +25,7 @@ vi.mock('@/store/gateway', async () => {
   }
 })
 
-vi.mock('@/store/session', async importOriginal => ({
+vi.mock('@/store/session-lifecycle', async importOriginal => ({
   ...(await importOriginal<typeof SessionStore>()),
   archiveSessionLocal: (id: string) => archiveSessionLocal(id)
 }))
@@ -35,7 +35,7 @@ import { declareDefaultTree, noteActiveTreeGroup } from '@/components/pane-shell
 import { registry } from '@/contrib/registry'
 import { KEYBIND_ACTIONS } from '@/lib/keybinds/actions'
 
-import { $activeStoredSessionId } from './session'
+import { $activeStoredSessionId } from './session-lifecycle'
 import { archiveActiveSession } from './session-lookup'
 import { $sessionTiles, type SessionTile } from './session-states'
 

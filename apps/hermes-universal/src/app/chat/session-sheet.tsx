@@ -5,18 +5,17 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useStore } from '@/store/atom'
+import { $sessions, $sessionsLoading } from '@/store/session'
 import {
   $activeStoredSessionId,
   $searchLoading,
-  $sessions,
   $sessionSearch,
-  $sessionsLoading,
   $sessionsTotal,
   loadMoreSessions,
   openSession,
   refreshSessions,
   searchSessionsQuery
-} from '@/store/session'
+} from '@/store/session-lifecycle'
 import type { SessionSearchResult } from '@/types/hermes'
 
 function SearchRow({ result, onOpen }: { result: SessionSearchResult; onOpen: () => void }) {

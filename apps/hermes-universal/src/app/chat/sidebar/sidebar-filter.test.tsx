@@ -18,7 +18,7 @@
  */
 
 import { act, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type * as SidebarArchive from '@/store/sidebar-archive'
@@ -69,7 +69,8 @@ import {
 } from '@/store/layout'
 import { $showAllProfiles } from '@/store/profile'
 import { $projectScope, $projectTree, ALL_PROJECTS } from '@/store/projects'
-import { $activeStoredSessionId, $searchLoading, $sessions, $unreadFinishedSessionIds } from '@/store/session'
+import { $sessions, $unreadFinishedSessionIds } from '@/store/session'
+import { $activeStoredSessionId, $searchLoading } from '@/store/session-lifecycle'
 import { $archivedSessionsFetched } from '@/store/sidebar-archive'
 
 import { SidebarScrollBody } from './sidebar-content'

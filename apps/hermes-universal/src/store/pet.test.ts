@@ -1,21 +1,17 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import {
-  $petActive,
   $petActivity,
-  $petInfo,
+  $petAtRest,
   $petMotion,
   $petState,
   derivePetState,
   flashPetActivity,
+  hasPetSpriteForMeta,
+  mergePetInfoMeta,
+  type PetInfo,
   setPetActivity
 } from './pet'
-
-afterEach(() => {
-  $petActivity.set({})
-  $petMotion.set(null)
-  $petInfo.set({ enabled: false })
-})
 
 describe('derivePetState', () => {
   it('rests at idle by default and uses waiting when awaiting input', () => {
@@ -36,42 +32,35 @@ describe('derivePetState', () => {
 
   it('waits (blocked on the user) above the in-flight signals', () => {
     expect(derivePetState({ awaitingInput: true, toolRunning: true, busy: true })).toBe('waiting')
-    // but a greeting beat still wins over waiting
-    expect(derivePetState({ greeting: true, awaitingInput: true })).toBe('wave')
+    // but a finish beat still wins over waiting
+    expect(derivePetState({ justCompleted: true, awaitingInput: true })).toBe('wave')
   })
 
-  it('honors the full priority chain: error > greeting > awaitingInput', () => {
-    expect(derivePetState({ error: true, greeting: true, busy: true })).toBe('failed')
-    expect(derivePetState({ greeting: true, awaitingInput: true, toolRunning: true })).toBe('wave')
-  })
-
-  it('celebrates (jump) above everything — affection lands even mid-turn', () => {
-    expect(derivePetState({ celebrate: true })).toBe('jump')
-    expect(derivePetState({ celebrate: true, error: true, busy: true })).toBe('jump')
+  it('honors the full priority chain: error > celebrate > complete > tool', () => {
+    expect(derivePetState({ error: true, celebrate: true, busy: true })).toBe('failed')
+    expect(derivePetState({ celebrate: true, justCompleted: true, toolRunning: true })).toBe('jump')
+    expect(derivePetState({ justCompleted: true, toolRunning: true })).toBe('wave')
   })
 })
 
-describe('$petActive', () => {
-  it('is true only once the pet is enabled AND its spritesheet has loaded', () => {
-    $petInfo.set({ enabled: false })
-    expect($petActive.get()).toBe(false)
+describe('roam motion', () => {
+  it('only reports at-rest when the agent-driven state is plain idle', () => {
+    $petActivity.set({})
+    expect($petAtRest.get()).toBe(true)
 
-    // Enabled but still fetching the sheet — nothing to draw, so no reactions.
-    $petInfo.set({ enabled: true })
-    expect($petActive.get()).toBe(false)
+    $petActivity.set({ busy: true })
+    expect($petAtRest.get()).toBe(false)
 
-    $petInfo.set({ enabled: true, spritesheetBase64: 'AAAA' })
-    expect($petActive.get()).toBe(true)
+    $petActivity.set({})
+    expect($petAtRest.get()).toBe(true)
   })
-})
 
-describe('roam motion ($petState folding)', () => {
   it('shows the roam pose while wandering, but never overrides real activity', () => {
     $petActivity.set({})
     $petMotion.set('run')
     expect($petState.get()).toBe('run')
 
-    // Hops/falls surface the jump pose.
+    // Hops surface the jump pose.
     $petMotion.set('jump')
     expect($petState.get()).toBe('jump')
 
@@ -84,30 +73,74 @@ describe('roam motion ($petState folding)', () => {
     expect($petState.get()).toBe('jump')
     $petMotion.set(null)
     expect($petState.get()).toBe('idle')
+
+    $petActivity.set({})
+  })
+})
+
+describe('pet info metadata cache helpers', () => {
+  it('treats matching slug and spritesheet revision as a reusable sprite payload', () => {
+    const current = {
+      enabled: true,
+      slug: 'boba',
+      displayName: 'Old Boba',
+      scale: 0.33,
+      spritesheetBase64: 'large-sprite-payload',
+      spritesheetRevision: '100:2048'
+    }
+
+    const meta = {
+      enabled: true,
+      slug: 'boba',
+      displayName: 'Boba',
+      scale: 0.5,
+      spritesheetRevision: '100:2048'
+    }
+
+    expect(hasPetSpriteForMeta(current, meta)).toBe(true)
+    expect(mergePetInfoMeta(current, meta)).toMatchObject({
+      enabled: true,
+      slug: 'boba',
+      displayName: 'Boba',
+      scale: 0.5,
+      spritesheetBase64: 'large-sprite-payload',
+      spritesheetRevision: '100:2048'
+    })
+  })
+
+  it('returns the same reference when nothing changed to avoid redundant store updates', () => {
+    const current: PetInfo = {
+      enabled: true,
+      slug: 'boba',
+      displayName: 'Boba',
+      scale: 0.33,
+      spritesheetBase64: 'large-sprite-payload',
+      spritesheetRevision: '100:2048'
+    }
+
+    const meta = {
+      enabled: true,
+      slug: 'boba',
+      displayName: 'Boba',
+      scale: 0.33,
+      spritesheetRevision: '100:2048'
+    }
+
+    expect(mergePetInfoMeta(current, meta)).toBe(current)
   })
 })
 
 describe('flashPetActivity', () => {
-  it('clears stale sibling beats so a greeting never inherits a prior error', () => {
-    // A turn errors (crying), then the app opens / a new chat starts (wave). The
-    // greeting beat must win — error is highest priority, so a merge-only flash
-    // would keep the pet on the failed pose.
+  it('clears stale sibling beats so a completion never inherits a prior error', () => {
+    // A turn errors (sad), then the next turn finishes cleanly. The celebrate
+    // beat must win — error is highest priority, so a merge-only flash would
+    // keep the pet on the failed pose.
     setPetActivity({ error: true })
-    flashPetActivity({ greeting: true })
+    flashPetActivity({ celebrate: true })
 
     expect($petActivity.get().error).toBe(false)
-    expect($petState.get()).toBe('wave')
-  })
-
-  it('clears a stale celebrate so hearts do not pin the pet mid-jump', () => {
-    flashPetActivity({ celebrate: true })
     expect($petState.get()).toBe('jump')
 
-    // A later beat of a different kind must reset it — celebrate outranks
-    // everything, so a merge-only flash would leave the pet stuck hopping.
-    flashPetActivity({ error: true })
-
-    expect($petActivity.get().celebrate).toBe(false)
-    expect($petState.get()).toBe('failed')
+    setPetActivity({})
   })
 })

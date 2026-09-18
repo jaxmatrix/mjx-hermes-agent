@@ -1,6 +1,7 @@
+import { atom } from 'nanostores'
+
 import { translateNow } from '@/i18n'
 import { MCP_DEEPLINK_ERROR_KEYS, type McpInstallRequest, parseMcpInstallDeepLink } from '@/lib/mcp-deeplink'
-import { atom } from '@/store/atom'
 
 import { notify } from './notifications'
 

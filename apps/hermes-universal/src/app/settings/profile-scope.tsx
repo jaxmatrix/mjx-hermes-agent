@@ -1,13 +1,15 @@
+import { useStore } from '@nanostores/react'
 import { useEffect } from 'react'
 
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { useStore } from '@/store/atom'
-import { $activeGatewayProfile, normalizeProfileKey, profileLabel, refreshProfiles } from '@/store/profile'
-import { $profiles } from '@/store/profiles'
+import { $activeGatewayProfile, $profiles, normalizeProfileKey, refreshProfiles } from '@/store/profile'
 import { $settingsScopeOverride, setSettingsScope } from '@/store/settings-scope'
 
-/** One profile chip. Ported from apps/desktop/src/app/settings/profile-scope.tsx. */
+// The same chip affordance the Gateway page uses for its per-profile
+// connection overrides (gateway-settings ScopeChip). That one stays local to
+// gateway-settings — its `null` chip means "all profiles", while here every
+// chip is a concrete profile whose config the page edits.
 export function ScopeChip({ active, label, onSelect }: { active: boolean; label: string; onSelect: () => void }) {
   return (
     <button
@@ -27,13 +29,10 @@ export function ScopeChip({ active, label, onSelect }: { active: boolean; label:
 
 /** Shared "Applies to" profile selector for the config-backed settings pages
  *  (Model, Workspace, Safety, Memory & Context, Voice, Tools & Keys) and the
- *  Messaging page. Backed by one nanostore ($settingsScopeOverride) so the
+ *  Messaging overlay. Backed by one nanostore ($settingsScopeOverride) so the
  *  selection persists across pages. Hidden with fewer than two profiles, so
  *  single-profile users never see it and every request keeps its unscoped
- *  default shape.
- *
- *  The chips carry `profileLabel`, not the raw name: a renamed default profile
- *  is "default" on the wire and its display name on screen. */
+ *  default shape. */
 export function SettingsProfileScope({ className }: { className?: string }) {
   const { t } = useI18n()
   const scope = t.settings.profileScope
@@ -52,7 +51,6 @@ export function SettingsProfileScope({ className }: { className?: string }) {
   }
 
   const selected = normalizeProfileKey(override ?? active)
-  const selectedProfile = profiles.find(profile => normalizeProfileKey(profile.name) === selected)
 
   return (
     <div className={cn('grid gap-2', className)}>
@@ -64,14 +62,14 @@ export function SettingsProfileScope({ className }: { className?: string }) {
           <ScopeChip
             active={normalizeProfileKey(profile.name) === selected}
             key={profile.name}
-            label={profileLabel(profile)}
+            label={profile.name}
             onSelect={() => setSettingsScope(profile.name)}
           />
         ))}
       </div>
       {override !== null ? (
         <p className="text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) text-(--ui-text-tertiary)">
-          {scope.editsProfile(selectedProfile ? profileLabel(selectedProfile) : selected)}
+          {scope.editsProfile(selected)}
         </p>
       ) : null}
     </div>

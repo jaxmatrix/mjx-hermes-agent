@@ -41,16 +41,14 @@ import { dismissNotification, notify, notifyError } from '@/store/notifications'
 import { setPetScale } from '@/store/pet-gallery'
 import { openPetGenerate } from '@/store/pet-generate'
 import { $activeGatewayProfile, normalizeProfileKey, selectProfile } from '@/store/profile'
+import { $sessions, $yoloActive, setSessions } from '@/store/session'
 import {
   $activeStoredSessionId,
-  $sessions,
-  $yoloActive,
   branchCurrentSession,
   openSession,
-  refreshSessions,
-  setSessionPickerOpen,
-  setSessions
-} from '@/store/session'
+  openSessionPickerRoute,
+  refreshSessions
+} from '@/store/session-lifecycle'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
 import { $activeSessionKey, $sessionStates, updateSession } from '@/store/session-state-types'
 import { openAppRoute } from '@/store/windows'
@@ -850,7 +848,7 @@ export function useSlashCommand() {
         const query = ctx.arg.trim()
 
         if (!query) {
-          setSessionPickerOpen(true)
+          openSessionPickerRoute(true)
 
           return
         }

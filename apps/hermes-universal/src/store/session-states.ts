@@ -50,15 +50,15 @@ import {
 import { resetUnscopedStreamPin } from '@/store/event-router'
 import { clearLiveSessionStatuses } from '@/store/live-session-registry'
 import { clearAllPrompts } from '@/store/prompts'
+import { $unreadFinishedSessionIds } from '@/store/session'
 import {
   $activeStoredSessionId,
-  $unreadFinishedSessionIds,
+  applyActiveSessionStoredIdRotation,
   clearUnreadFinishedSession,
   newSession,
   sameStoredSession,
-  setActiveSessionStoredIdRotation,
   unreadPersistenceHooks
-} from '@/store/session'
+} from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
   $sessionStates,
@@ -153,7 +153,7 @@ function handleTransition(previous: ClientSessionState | null, next: ClientSessi
   // provenance that the consumer can reject it if the user navigated away.
   if (previous?.storedSessionId && next.storedSessionId && previous.storedSessionId !== next.storedSessionId) {
     if (key === $activeSessionKey.get()) {
-      setActiveSessionStoredIdRotation({
+      applyActiveSessionStoredIdRotation({
         nextStoredSessionId: next.storedSessionId,
         previousStoredSessionId: previous.storedSessionId,
         runtimeSessionId: next.runtimeSessionId ?? key

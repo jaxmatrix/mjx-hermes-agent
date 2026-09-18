@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 
 import { PlatformAvatar } from '@/app/messaging/platform-icon'
 import { cronJobRoute, sessionRoute } from '@/app/routes'
@@ -75,14 +75,13 @@ import {
   refreshPullRequests,
   sessionPrKey
 } from '@/store/pull-requests'
+import { $messagingSessions, $sessions, $sessionsLoading, sessionPinId } from '@/store/session'
+import { $sessionDotStateById, sessionStatusBucket, sessionStatusRank } from '@/store/session-dot-state'
 import {
   $activeStoredSessionId,
-  $messagingSessions,
   $pinnedSessionCache,
   $searchLoading,
-  $sessions,
   $sessionSearch,
-  $sessionsLoading,
   $sessionsTotal,
   $workingSessionIds,
   archiveSessionLocal,
@@ -95,10 +94,8 @@ import {
   refreshMessagingSessions,
   refreshSessions,
   resetSessionsPaging,
-  searchSessionsQuery,
-  sessionPinId
-} from '@/store/session'
-import { $sessionDotStateById, sessionStatusBucket, sessionStatusRank } from '@/store/session-dot-state'
+  searchSessionsQuery
+} from '@/store/session-lifecycle'
 import { $archivedSessions, loadArchivedSessions, sessionCostUsd } from '@/store/sidebar-archive'
 import { openAppRoute } from '@/store/windows'
 import type { SessionInfo, SessionSearchResult } from '@/types/hermes'

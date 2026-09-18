@@ -2,18 +2,15 @@ import { useAuiState, useMessageRuntime } from '@assistant-ui/react'
 import { useStore } from '@nanostores/react'
 import { type MouseEvent, useCallback } from 'react'
 
-import { useSessionView } from '@/app/chat/session-view'
+import type { ChatMessage } from '@/lib/chat-messages'
 import { triggerHaptic } from '@/lib/haptics'
-import { QUICK_REACTIONS, type ReactionTarget, toggleMessageReaction } from '@/store/reactions'
+import { QUICK_REACTIONS, toggleMessageReaction } from '@/store/reactions'
 import { $reactionsEnabled } from '@/store/reactions-enabled'
-import {
-  $agentReactions,
-  $localReactions,
-  $reactionRowIds,
-  mergeReactions,
-  NO_REACTIONS
-} from '@/store/reactions-local'
+import { $agentReactions, $localReactions, mergeReactions, setLocalReaction } from '@/store/reactions-local'
 import type { MessageReaction } from '@/types/hermes'
+
+// Stable empty identity — a fresh [] per render would re-run every consumer.
+const EMPTY_REACTIONS: MessageReaction[] = []
 
 /** The tapback a double-click lands: Apple's first Tapback, and ours. */
 export const DOUBLE_CLICK_REACTION = QUICK_REACTIONS[0]
@@ -21,14 +18,6 @@ export const DOUBLE_CLICK_REACTION = QUICK_REACTIONS[0]
 // Double-click means something else on these: links and controls act, inputs
 // and code blocks select. The gesture only claims plain message body.
 const NOT_A_TAPBACK = 'a, button, input, pre, select, textarea, [contenteditable="true"], [role="button"]'
-
-/** What the transcript carries on a message, as assistant-ui surfaces it. */
-interface ReactionMetadata {
-  reactions?: MessageReaction[]
-  rowId?: number
-}
-
-const reactionMetadata = (custom: unknown): ReactionMetadata => (custom ?? {}) as ReactionMetadata
 
 /**
  * Is this double-click the "heart it" gesture?
@@ -46,53 +35,60 @@ export function isTapbackDoubleClick(event: { detail: number; target: EventTarge
   return target instanceof Element ? !target.closest(NOT_A_TAPBACK) : true
 }
 
-/**
- * The row a reaction should address.
- *
- * The transcript's own `rowId` is preferred — it is the durable identity that
- * survives a resume. The learned map is the fallback for the window between a
- * `message.react` response and the transcript write that follows it.
- */
-function resolveRowId(messageId: string, metadataRowId: number | undefined): number | undefined {
-  return metadataRowId ?? $reactionRowIds.get()[messageId]
+/** Paint the tapback locally, then persist behind it. */
+function commitReaction(
+  messageId: string,
+  role: ChatMessage['role'],
+  rowId: number | undefined,
+  reactions: MessageReaction[],
+  emoji: null | string
+): void {
+  // Flip the UI immediately — a tapback is direct manipulation and must never
+  // wait on a round-trip. Persistence follows in the background.
+  setLocalReaction(messageId, emoji)
+  void toggleMessageReaction({ id: messageId, role, rowId, reactions } as ChatMessage, emoji)
 }
 
 /**
  * A message's reactions and the one way to change them.
  *
- * Reads the durable list off the transcript, layers this window's live overlays
- * on top (the user's own click, the agent's mid-turn event), and hands back a
- * `react` that paints locally first and persists behind it. Shared by the
- * assistant footer slot, the user bubble's picker, and the double-click
- * gesture, so all three apply identical tapback semantics.
+ * Reads the durable list off `metadata.custom`, layers this window's live
+ * overlays on top (the user's own click, the agent's mid-turn event), and
+ * hands back a `react` that paints locally first and persists behind it.
+ * Shared by the assistant footer slot, the user bubble's picker, and the
+ * double-click gesture so all three apply identical tapback semantics.
  */
 export function useMessageReactions(
   messageId: string,
-  role: ReactionTarget['role']
+  role: ChatMessage['role']
 ): {
   enabled: boolean
   react: (emoji: null | string) => void
   reactions: MessageReaction[]
 } {
-  const persisted = useAuiState(s => reactionMetadata(s.message.metadata?.custom).reactions ?? NO_REACTIONS)
-  const rowId = useAuiState(s => reactionMetadata(s.message.metadata?.custom).rowId)
+  const reactions = useAuiState(s => {
+    const custom = (s.message.metadata?.custom ?? {}) as { reactions?: MessageReaction[] }
+
+    return custom.reactions ?? EMPTY_REACTIONS
+  })
+
+  const rowId = useAuiState(s => {
+    const custom = (s.message.metadata?.custom ?? {}) as { rowId?: number }
+
+    return custom.rowId
+  })
 
   const enabled = useStore($reactionsEnabled)
   const localAll = useStore($localReactions)
   const agentLive = useStore($agentReactions)
-  const sessionId = useStore(useSessionView().$runtimeId) ?? ''
 
   return {
     enabled,
-    // The row id is re-read at CLICK time rather than closed over: it is learned
-    // from the first response, and a callback pinned to the id at render time
-    // would keep asking the backend to re-resolve "newest of this role" forever.
     react: useCallback(
-      (emoji: null | string) =>
-        void toggleMessageReaction({ id: messageId, role, rowId: resolveRowId(messageId, rowId) }, sessionId, emoji),
-      [messageId, role, rowId, sessionId]
+      (emoji: null | string) => commitReaction(messageId, role, rowId, reactions, emoji),
+      [messageId, reactions, role, rowId]
     ),
-    reactions: mergeReactions(persisted, localAll[messageId], rowId === undefined ? undefined : agentLive[rowId])
+    reactions: mergeReactions(reactions, localAll[messageId], rowId === undefined ? undefined : agentLive[rowId])
   }
 }
 
@@ -107,14 +103,13 @@ export function useMessageReactions(
  */
 export function useTapbackDoubleClick(
   messageId: string,
-  role: ReactionTarget['role']
-): ((event: MouseEvent) => void) | undefined {
+  role: ChatMessage['role']
+): ((event: MouseEvent<HTMLElement>) => void) | undefined {
   const enabled = useStore($reactionsEnabled)
   const messageRuntime = useMessageRuntime()
-  const sessionId = useStore(useSessionView().$runtimeId) ?? ''
 
   const onDoubleClick = useCallback(
-    (event: MouseEvent) => {
+    (event: MouseEvent<HTMLElement>) => {
       if (!isTapbackDoubleClick(event)) {
         return
       }
@@ -124,21 +119,27 @@ export function useTapbackDoubleClick(
       window.getSelection()?.removeAllRanges()
       triggerHaptic('selection')
 
-      const metadata = reactionMetadata(messageRuntime.getState().metadata?.custom)
-      const rowId = resolveRowId(messageId, metadata.rowId)
+      const custom = (messageRuntime.getState().metadata?.custom ?? {}) as {
+        reactions?: MessageReaction[]
+        rowId?: number
+      }
+
+      const reactions = custom.reactions ?? EMPTY_REACTIONS
 
       // Same toggle semantics as the picker: a second double-click retracts.
-      const mine = mergeReactions(metadata.reactions, $localReactions.get()[messageId]).find(
+      const mine = mergeReactions(reactions, $localReactions.get()[messageId]).find(
         reaction => reaction.author === 'user'
       )
 
-      void toggleMessageReaction(
-        { id: messageId, role, rowId },
-        sessionId,
+      commitReaction(
+        messageId,
+        role,
+        custom.rowId,
+        reactions,
         mine?.emoji === DOUBLE_CLICK_REACTION ? null : DOUBLE_CLICK_REACTION
       )
     },
-    [messageId, messageRuntime, role, sessionId]
+    [messageId, messageRuntime, role]
   )
 
   return enabled ? onDoubleClick : undefined

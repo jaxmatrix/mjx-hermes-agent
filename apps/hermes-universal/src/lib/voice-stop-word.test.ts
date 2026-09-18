@@ -38,7 +38,6 @@ describe('isVoiceStopCommand', () => {
   it('does NOT match substantive requests that merely contain "stop"', () => {
     for (const phrase of [
       'stop the docker container',
-      'stop the server and restart it',
       'how do I stop a running process',
       'can you stop the deployment',
       'stop the music and play something else',
@@ -76,12 +75,7 @@ describe('interceptsTypedVoiceStop', () => {
   })
 
   it('passes through substantive messages during a conversation', () => {
-    for (const text of [
-      'stop the docker container',
-      'stop the server and restart it',
-      'how do I stop a process',
-      'hello'
-    ]) {
+    for (const text of ['stop the docker container', 'how do I stop a process', 'hello']) {
       expect(interceptsTypedVoiceStop(true, text)).toBe(false)
     }
   })

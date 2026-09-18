@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 // Type-only, so these are erased and cannot trip vi.mock's hoisting.
-import type * as RouterModule from 'react-router-dom'
+import type * as RouterModule from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as NotificationsModule from '@/store/notifications'
@@ -15,7 +15,7 @@ import type * as SessionModule from '@/store/session'
 
 const navigate = vi.fn()
 
-vi.mock('react-router-dom', async importActual => ({
+vi.mock('react-router', async importActual => ({
   ...(await importActual<typeof RouterModule>()),
   useNavigate: () => navigate
 }))
@@ -40,7 +40,7 @@ vi.mock('@/app/right-pane/preview/preview-artifact', () => ({
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }))
 // Partial: session-states/chat-bubbles reach for other exports through the import
 // graph, so replacing the whole module breaks the render.
-vi.mock('@/store/session', async importActual => ({
+vi.mock('@/store/session-lifecycle', async importActual => ({
   ...(await importActual<typeof SessionModule>()),
   newSession: vi.fn(),
   openSession: vi.fn().mockResolvedValue(undefined),
@@ -53,7 +53,7 @@ import { sessionMissingFromCurrentGateway } from '@/store/gateway-soft-switch'
 import { $gatewaySwitching } from '@/store/gateway-switch'
 import { notify } from '@/store/notifications'
 import { $activePreviewPath, $previewTabs, closePreviewTab, setPreviewTarget } from '@/store/preview'
-import { newSession, openSession } from '@/store/session'
+import { newSession, openSession } from '@/store/session-lifecycle'
 
 import { TileWindowRoot } from './tile-window'
 

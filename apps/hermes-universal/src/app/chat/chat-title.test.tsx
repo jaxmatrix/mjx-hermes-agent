@@ -11,13 +11,14 @@
  */
 
 import { cleanup, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { SidebarProjectTree } from '@/app/chat/sidebar/projects/model'
 import { $pinnedSessionIds } from '@/store/layout'
 import { $projectTree } from '@/store/projects'
-import { $activeStoredSessionId, $sessions } from '@/store/session'
+import { $sessions } from '@/store/session'
+import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import { resetSessionStates, seedActiveSession } from '@/test-sessions'
 import type { SessionInfo } from '@/types/hermes'
 

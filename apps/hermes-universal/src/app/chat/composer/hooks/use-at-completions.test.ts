@@ -1,337 +1,107 @@
-/**
- * `@` path completions — the popover's live source (MJXHRM-406).
- *
- * Two things are pinned here, and the first is the reason the file exists.
- *
- * ONE NAME PER REFERENCE. `tui_gateway`'s `complete.path` emits a BASENAME in
- * `display` (`methods_complete.py`: `entry + suffix`) while its `text` carries
- * the full `@kind:value`. The chip a pick inserts is labelled from that value by
- * `refChipLabel`, so taking `display` verbatim gave one folder two names — the
- * row said `desktop/`, the editor said `apps/desktop/`. On the fuzzy branch,
- * which ranks matches from anywhere in the tree, it was worse: every `index.ts`
- * in the repo came back as an identical row. Both ends derive from
- * `refChipLabel` now, and the last case in the first block asserts the row and
- * the real chip agree by construction rather than by inspection.
- *
- * DE-DUPLICATION. Walking a path is repetitive — Tab in, Backspace out, retype
- * — and every step used to be a fresh listing + rank on the backend. A repeat
- * must cost no round trip AND skip the 60ms debounce, without ever flipping the
- * spinner on.
- */
-
 import { act, renderHook } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { COMPOSER_AREAS, type ComposerAtCompletionSource } from '@/app/chat/composer/contrib'
-import { refChipElement } from '@/app/chat/composer/rich-editor'
-import { registry } from '@/contrib/registry'
 import { queryClient } from '@/lib/query-client'
 
-import { classify, useAtCompletions } from './use-at-completions'
-import type { CompletionEntry } from './use-live-completion-adapter'
+import { useAtCompletions } from './use-at-completions'
 
-/** A row exactly as `complete.path` emits it. */
-const row = (text: string, display = '', meta = ''): CompletionEntry => ({ text, display, meta })
-
-/** The gateway stub, recording the `word` each request asked for. */
-function gatewayStub(items: CompletionEntry[] = [row('@folder:apps/desktop/', 'desktop/', 'dir')]) {
-  const words: string[] = []
+function gatewayStub(latencyMs = 40) {
+  const calls: string[] = []
 
   const gateway = {
     request: vi.fn(async (_method: string, params: { word: string }) => {
-      words.push(params.word)
-      await new Promise(resolve => setTimeout(resolve, 40))
+      calls.push(params.word)
+      await new Promise(r => setTimeout(r, latencyMs))
 
-      return { items }
+      return { items: [{ text: `@folder:${params.word.slice(1)}x/`, display: 'x/', meta: 'dir' }] }
     })
   }
 
-  return { gateway, words }
+  return { calls, gateway }
 }
 
-type Adapter = { current: { adapter: { search?: (query: string) => unknown }; loading: boolean } }
+function setup(latencyMs = 40) {
+  const { calls, gateway } = gatewayStub(latencyMs)
 
-function setup(options: { cwd?: null | string; items?: CompletionEntry[]; sessionId?: null | string } = {}) {
-  const { gateway, words } = gatewayStub(options.items)
+  const { result } = renderHook(() => useAtCompletions({ gateway: gateway as never, sessionId: 's1', cwd: '/repo' }))
 
-  const { result, rerender } = renderHook(
-    (props: { cwd: null | string; sessionId: null | string }) =>
-      useAtCompletions({ gateway: gateway as never, sessionId: props.sessionId, cwd: props.cwd }),
-    { initialProps: { cwd: options.cwd ?? '/repo', sessionId: options.sessionId ?? 's1' } }
-  )
-
-  return { rerender, result: result as Adapter, words }
+  return { calls, result }
 }
 
-/** Type a query and let the debounce + the round trip settle. */
-async function search(result: Adapter, query: string) {
-  act(() => void result.current.adapter.search?.(query))
-  await act(async () => void (await vi.advanceTimersByTimeAsync(200)))
+/** Type a burst of keystrokes `gapMs` apart, like a person. */
+async function type(
+  result: { current: { adapter: { search?: (q: string) => unknown } } },
+  queries: string[],
+  gapMs: number
+) {
+  for (const q of queries) {
+    act(() => {
+      result.current.adapter.search?.(q)
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(gapMs)
+    })
+  }
 }
 
-beforeEach(() => {
-  vi.useFakeTimers()
-  queryClient.clear()
-})
-
-afterEach(() => {
-  vi.useRealTimers()
-  queryClient.clear()
-})
-
-describe('one name per reference', () => {
-  it('labels a folder row with its PATH, not the basename the gateway sent', () => {
-    // The gateway's own words for this row: text carries the path, display the
-    // basename. Trusting `display` is what produced two names for one folder.
-    expect(classify(row('@folder:apps/desktop/', 'desktop/', 'dir')).display).toBe('apps/desktop/')
-    expect(classify(row('@file:apps/desktop/src/main.tsx', 'main.tsx', 'apps/desktop/src')).display).toBe(
-      'apps/desktop/src/main.tsx'
-    )
-  })
-
-  it('keeps two same-named files apart in the fuzzy list', () => {
-    // `@index` ranks matches from anywhere in the tree; both rows carried the
-    // display `index.ts`, so the popover offered the same row twice.
-    const labels = [row('@file:src/index.ts', 'index.ts', 'src'), row('@file:lib/index.ts', 'index.ts', 'lib')].map(
-      entry => classify(entry).display
-    )
-
-    expect(labels).toEqual(['src/index.ts', 'lib/index.ts'])
-    expect(new Set(labels).size).toBe(2)
-  })
-
-  it('reads a url as host + path on the row, as the chip does', () => {
-    // The gateway sends no display for a url, so the old fallback was the whole
-    // raw value.
-    expect(classify(row('@url:https://github.com/NousResearch/hermes-agent/pull/74533')).display).toBe(
-      'github.com/NousResearch/hermes-agent/pull/74533'
-    )
-  })
-
-  it('leaves a starter and a simple ref alone', () => {
-    // `@folder:` has no value to label, so the gateway's own display stands.
-    expect(classify(row('@folder:', '@folder:', 'attach folder'))).toMatchObject({
-      display: '@folder:',
-      insertId: '',
-      type: 'folder'
-    })
-
-    // `@diff` is not a `@kind:value` at all.
-    expect(classify(row('@diff', '@diff', 'git diff'))).toMatchObject({
-      display: '@diff',
-      insertId: '@diff',
-      type: 'simple'
-    })
-  })
-
-  // The invariant itself, asserted through the REAL chip builder the pick path
-  // uses (`replaceTriggerWithChip` → `refChipElement(kind, value)`), so the two
-  // ends cannot drift without this failing.
-  it.each([
-    ['@folder:apps/desktop/', 'desktop/'],
-    ['@file:apps/desktop/src/main.tsx', 'main.tsx'],
-    ['@url:https://github.com/NousResearch/hermes-agent/pull/74533', '']
-  ])('the row and the chip it inserts read the same for %s', (text, display) => {
-    const classified = classify(row(text, display))
-    const chip = refChipElement(classified.type, classified.insertId)
-
-    expect(chip.textContent).toBe(classified.display)
-  })
-})
-
-describe('the popover item', () => {
-  it('carries the raw wire text and the insertable value, keyed uniquely', async () => {
-    const { result } = setup({ items: [row('@folder:apps/desktop/', 'desktop/', 'dir')] })
-
-    await search(result, 'apps/')
-
-    const [item] = result.current.adapter.search?.('apps/') as {
-      id: string
-      description?: string
-      label: string
-      metadata: Record<string, string>
-      type: string
-    }[]
-
-    expect(item).toMatchObject({
-      id: '@folder:apps/desktop/|0',
-      description: 'dir',
-      label: 'apps/desktop/',
-      type: 'folder'
-    })
-    // `insertId` is the value the chip is built from; `rawText` is what the
-    // gateway said, kept so nothing downstream has to re-derive it.
-    expect(item.metadata).toMatchObject({
-      icon: 'folder',
-      insertId: 'apps/desktop/',
-      rawText: '@folder:apps/desktop/'
-    })
-  })
-
-  it('offers the ref starters when the gateway answers with nothing, and when it fails', async () => {
-    const { result: empty } = setup({ items: [] })
-
-    await search(empty, 'fi')
-
-    expect((empty.current.adapter.search?.('fi') as { label: string }[]).map(item => item.label)).toEqual(['@file:'])
-
-    // A thrown request must fall back to the same static list rather than
-    // leaving the popover blank.
-    const failing = {
-      request: vi.fn(async () => {
-        throw new Error('gateway down')
-      })
-    }
-
-    const { result } = renderHook(() =>
-      useAtCompletions({ gateway: failing as never, sessionId: 's1', cwd: '/repo' })
-    ) as { result: Adapter }
-
-    await search(result, 'fol')
-
-    expect((result.current.adapter.search?.('fol') as { label: string }[]).map(item => item.label)).toEqual([
-      '@folder:'
-    ])
-  })
-
-  it('asks for the keyword form once a bare starter is fully typed', async () => {
-    const { result, words } = setup()
-
-    await search(result, 'fi')
-    await search(result, 'file')
-
-    // `@fi` is a path prefix; `@file` is the keyword, and the backend only
-    // lists a directory for `@file:`.
-    expect(words).toEqual(['@fi', '@file:'])
-  })
-})
-
-describe('de-duplication', () => {
+describe('PERF: @ path completions are cached and skip the debounce', () => {
   it('serves a repeated query with no round trip and no spinner', async () => {
-    const { result, words } = setup()
+    vi.useFakeTimers()
+    queryClient.clear()
 
-    await search(result, 'apps/')
-    expect(words.length).toBe(1)
+    const { calls, result } = setup()
 
-    // Tab in, Backspace out, retype — every step used to be a fresh listing.
-    for (const query of ['apps/desktop/', 'apps/', 'apps/desktop/', 'apps/']) {
-      await search(result, query)
-    }
-
-    expect(words).toEqual(['@apps/', '@apps/desktop/'])
-    expect(result.current.loading).toBe(false)
-  })
-
-  it('paints a cached query without waiting out the debounce', async () => {
-    const { result, words } = setup()
-
-    await search(result, 'apps/')
-    expect(words.length).toBe(1)
-
-    act(() => void result.current.adapter.search?.('apps/'))
-    // Far less than the 60ms debounce: a cached answer resolves in a microtask,
-    // so it must paint on its own without the timer, and never flip the spinner.
-    await act(async () => void (await vi.advanceTimersByTimeAsync(1)))
-
-    expect(result.current.loading).toBe(false)
-    expect(words.length).toBe(1)
-  })
-
-  it('never serves another directory tree listing after the cwd moves', async () => {
-    const { rerender, result, words } = setup({ cwd: '/repo' })
-
-    await search(result, 'src/')
-    expect(words.length).toBe(1)
-
-    // Same query, different working directory: the cache key carries the cwd,
-    // so this must go back to the gateway rather than reuse /repo's listing.
-    rerender({ cwd: '/other', sessionId: 's1' })
-    await search(result, 'src/')
-
-    expect(words.length).toBe(2)
-  })
-})
-
-// ── contributed sources (MJXHRM-455) ─────────────────────────────────────────
-// `composer.atCompletions` is what MJXHRM-445's bot handles land in. The rows
-// merge ABOVE the path results, and a broken source drops its own rows only.
-
-describe('contributed @ sources', () => {
-  const registered: (() => void)[] = []
-
-  const contribute = (id: string, provide: ComposerAtCompletionSource['provide']) => {
-    registered.push(registry.register({ area: COMPOSER_AREAS.atCompletions, data: { provide }, id, source: 'test' }))
-  }
-
-  afterEach(() => {
-    registered.splice(0).forEach(dispose => dispose())
-  })
-
-  const labels = async (query: string) => {
-    const { result } = setup()
-    await search(result, query)
-
-    return (result.current.adapter.search?.(query) as { label: string }[]).map(item => item.label)
-  }
-
-  it('is byte-identical to today when no source is registered', async () => {
-    expect(await labels('apps/')).toEqual(['apps/desktop/'])
-  })
-
-  it('sorts contributed rows ABOVE the path results', async () => {
-    contribute('bots', () => [{ display: '@researcher', insert: '@researcher', meta: 'Bot' }])
-
-    expect(await labels('apps/')).toEqual(['@researcher', 'apps/desktop/'])
-  })
-
-  it('passes the query through, without the leading @', async () => {
-    const seen: string[] = []
-    contribute('bots', query => {
-      seen.push(query)
-
-      return []
+    // First visit to `apps/` pays the round trip.
+    await type(result, ['apps/'], 0)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
     })
 
-    await labels('resea')
+    const afterFirst = calls.length
 
-    expect(seen).toContain('resea')
-  })
+    expect(afterFirst).toBe(1)
 
-  it('drops a row with no insertable text rather than offering a dead pick', async () => {
-    contribute('bots', () => [{ insert: '' }, { insert: '@ok' }] as never)
-
-    expect(await labels('apps/')).toEqual(['@ok', 'apps/desktop/'])
-  })
-
-  it('drops ONE throwing source\u2019s rows, never the popover', async () => {
-    contribute('broken', () => {
-      throw new Error('plugin bug')
+    // Walk away and come back — Tab in, Backspace out, retype. Every one of
+    // these used to be a fresh git ls-files + rank on the backend.
+    await type(result, ['apps/desktop/', 'apps/', 'apps/desktop/', 'apps/'], 0)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
     })
-    contribute('bots', () => [{ insert: '@researcher' }])
 
-    // The path results and the healthy source both survive — a completion
-    // popover is not the place to report a plugin bug.
-    expect(await labels('apps/')).toEqual(['@researcher', 'apps/desktop/'])
+    // Two distinct paths, so exactly two round trips total — the repeats are free.
+    expect(calls.length).toBe(2)
+    expect(result.current.loading).toBe(false)
+
+    vi.useRealTimers()
   })
 
-  it('still offers contributed rows when the gateway is down', async () => {
-    contribute('bots', () => [{ insert: '@researcher' }])
+  it('a cached query paints without waiting out the debounce', async () => {
+    vi.useFakeTimers()
+    queryClient.clear()
 
-    const failing = {
-      request: vi.fn(async () => {
-        throw new Error('gateway down')
-      })
-    }
+    const { calls, result } = setup()
 
-    const { result } = renderHook(() =>
-      useAtCompletions({ gateway: failing as never, sessionId: 's1', cwd: '/repo' })
-    ) as { result: Adapter }
+    await type(result, ['apps/'], 0)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
+    })
 
-    await search(result, 'fi')
+    expect(calls.length).toBe(1)
 
-    expect((result.current.adapter.search?.('fi') as { label: string }[]).map(item => item.label)).toEqual([
-      '@researcher',
-      '@file:'
-    ])
+    // Re-ask for the cached query and advance by far less than the 60ms
+    // debounce. A cached answer resolves in a microtask, so it must paint
+    // without the timer and without ever flipping the spinner on.
+    act(() => {
+      result.current.adapter.search?.('apps/')
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+
+    expect(result.current.loading).toBe(false)
+    expect(calls.length).toBe(1)
+
+    vi.useRealTimers()
   })
 })

@@ -3,23 +3,23 @@
  *
  * A preset is a CONTRIBUTION (`area: 'layouts'`, `data: LayoutNode`): the app
  * registers its bundled presets as `source: 'core'`, plugins register theirs
- * exactly the same way, and user-saved presets round-trip through storage and
- * re-register as `source: 'user'`. The picker (renderer/layout-picker.tsx) and
- * the titlebar's layout menu read one uniform list via `useContributions`.
- *
- * Ported from desktop `components/pane-shell/tree/presets.ts`; only the storage
- * key namespace differs.
+ * exactly the same way, and user-saved presets round-trip through localStorage
+ * and re-register as `source: 'user'`. The picker (renderer.tsx) reads one
+ * uniform list via `useContributions('layouts')`.
  */
 
 import { registry } from '@/contrib/registry'
-import { readJson, writeJson } from '@/lib/storage'
+import { readJson, writeJson, writeKey } from '@/lib/storage'
 
 import { isLayoutNode, type LayoutNode } from './model'
 import { $layoutTree, applyTree, markActivePreset } from './store'
 
 export const LAYOUTS_AREA = 'layouts'
 
-const USER_KEY = 'hermes.universal.layoutPresets.v1'
+// v2: v1 presets predate semantic placement (see store.ts) — retire them.
+const USER_KEY = 'hermes.desktop.layoutPresets.v2'
+
+writeKey('hermes.desktop.layoutPresets.v1', null)
 
 interface StoredPreset {
   name: string
@@ -49,7 +49,7 @@ function registerUserPreset(id: string, preset: StoredPreset) {
   userDisposers.get(id)?.()
   userDisposers.set(
     id,
-    registry.register({ area: LAYOUTS_AREA, data: preset.tree, id, source: 'user', title: preset.name })
+    registry.register({ id, area: LAYOUTS_AREA, source: 'user', title: preset.name, data: preset.tree })
   )
 }
 
@@ -61,7 +61,7 @@ for (const [id, preset] of Object.entries(userPresets)) {
 }
 
 /** Save any tree as a named user preset (and make it active). */
-export function saveLayoutPresetTree(name: string, tree: LayoutNode): null | string {
+export function saveLayoutPresetTree(name: string, tree: LayoutNode): string | null {
   const trimmed = name.trim()
 
   if (!tree || !trimmed) {

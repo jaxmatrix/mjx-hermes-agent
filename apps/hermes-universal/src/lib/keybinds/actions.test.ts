@@ -1,33 +1,33 @@
 import { describe, expect, it } from 'vitest'
 
-import { KEYBIND_ACTIONS } from './actions'
+import { en } from '@/i18n/en'
 
-const defaultsFor = (id: string): readonly string[] => KEYBIND_ACTIONS.find(action => action.id === id)?.defaults ?? []
+import { defaultBindings, KEYBIND_ACTIONS, keybindAction } from './actions'
 
-describe('keybind defaults', () => {
-  it('ships the model picker bound to ⌘⇧M', () => {
-    // The chord shipped EMPTY while universal had no picker surface to raise.
-    // `app/model-picker-overlay` is that surface, so an unbound action here
-    // means ⌘⇧M silently does nothing — the whole point of the shortcut.
-    expect(defaultsFor('composer.modelPicker')).toEqual(['mod+shift+m'])
+describe('session.archive keybind action', () => {
+  it('is registered under the session category', () => {
+    const action = keybindAction('session.archive')
+
+    expect(action).toBeDefined()
+    expect(action?.category).toBe('session')
   })
 
-  it('gives no two built-in actions the same default combo', () => {
-    const owners = new Map<string, string>()
-    const clashes: string[] = []
+  it('ships unbound so it does not claim a chord for every user', () => {
+    const action = keybindAction('session.archive')
 
-    for (const action of KEYBIND_ACTIONS) {
-      for (const combo of action.defaults) {
-        const owner = owners.get(combo)
+    expect(action?.defaults).toEqual([])
+    // A missing entry would silently drop from the panel; an accidental
+    // default binding would change behaviour for everyone. Guard both.
+    expect(defaultBindings()['session.archive']).toEqual([])
+  })
 
-        if (owner) {
-          clashes.push(`${combo}: ${owner} vs ${action.id}`)
-        } else {
-          owners.set(combo, action.id)
-        }
-      }
-    }
+  it('has an English label so it renders in the shortcuts panel', () => {
+    expect(en.keybinds.actions['session.archive']).toBe('Archive current session')
+  })
 
-    expect(clashes).toEqual([])
+  it('appears exactly once in KEYBIND_ACTIONS', () => {
+    const matches = KEYBIND_ACTIONS.filter(action => action.id === 'session.archive')
+
+    expect(matches).toHaveLength(1)
   })
 })

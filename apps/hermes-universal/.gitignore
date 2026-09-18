@@ -22,3 +22,9 @@ src-tauri/plugins/*/Cargo.lock
 
 # Storybook build output — the composer design harness (.storybook/), dev-only.
 storybook-static/
+
+# Desktop resync working files (scripts/desktop-sync.mjs). The manifests and the
+# phase-3 patch worklist are tracked; these two are regenerated output, and
+# `incoming/` is a staging area for files a human still has to fold in.
+sync/report.tsv
+sync/incoming/

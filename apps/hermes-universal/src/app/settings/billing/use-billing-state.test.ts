@@ -1,11 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
-
-// These are pure view-model assertions, but the module graph reaches the real
-// gateway store (use-billing-state → ./api → @/store/gateway), which sits in an
-// import cycle with @/store/connection — entering that cycle from here evaluates
-// connection.ts before $gatewayState is initialized. Stubbing the seam keeps the
-// test to the pure builders it actually exercises.
-vi.mock('@/store/gateway', () => ({ requestGateway: vi.fn() }))
+import { describe, expect, it } from 'vitest'
 
 import {
   billingDevFixtures,
@@ -175,6 +168,32 @@ describe('deriveBillingView', () => {
     expect(view.paymentRow).toBeUndefined()
     expect(view.topupRow).toBeUndefined()
     expect(view.refillRow).toBeUndefined()
+    expect(view.usageRows).toEqual([])
+  })
+
+  it('derives the free-tier view before the logged-out one, with nothing to pay', () => {
+    // A free-tier install is logged_in:false, so this branch must win — otherwise
+    // the generic "connect your account" notice sends the user to the portal.
+    const view = deriveBillingView(
+      okBilling({ ...loggedOutBillingState, free_tier: true, free_tier_model: 'nous/welcome' }),
+      okSubscription(loggedOutSubscriptionState)
+    )
+
+    expect(view.status).toBe('free_tier')
+    expect(view.notice).toMatchObject({ title: "You're on the Nous free tier", tone: 'info' })
+    expect(view.notice?.action?.label).toBe('Sign in')
+    expect(view.summary).toEqual([
+      { label: 'Plan', value: 'Free tier' },
+      { label: 'Model', value: 'nous/welcome' },
+      { label: 'Connectors', tone: 'primary', value: 'Included' }
+    ])
+    expect(view.plan).toMatchObject({ tierName: 'Nous · free tier' })
+    expect(view.plan?.action).toBeUndefined()
+    expect(view.planFootnote).toContain('no balance and nothing to pay')
+    expect(view.paymentRow).toBeUndefined()
+    expect(view.topupRow).toBeUndefined()
+    expect(view.refillRow).toBeUndefined()
+    expect(view.tiers).toEqual([])
     expect(view.usageRows).toEqual([])
   })
 

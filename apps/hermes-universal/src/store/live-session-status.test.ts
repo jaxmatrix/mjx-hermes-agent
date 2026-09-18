@@ -38,12 +38,8 @@ import {
   startLiveSessionSync
 } from '@/store/live-session-status'
 import { $changeEventsAvailable, $sessionsChangeTick, resetLiveSync } from '@/store/live-sync'
-import {
-  $activeStoredSessionId,
-  $attentionSessionIds,
-  $unreadFinishedSessionIds,
-  $workingSessionIds
-} from '@/store/session'
+import { $unreadFinishedSessionIds } from '@/store/session'
+import { $activeStoredSessionId, $attentionSessionIds, $workingSessionIds } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
   $sessionStates,

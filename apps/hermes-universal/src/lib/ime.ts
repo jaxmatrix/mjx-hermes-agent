@@ -1,8 +1,6 @@
 /**
  * IME-aware Enter handling, shared by every text field whose bare Enter
- * performs an action (submit, rename, commit, adopt, …). Ported from
- * apps/desktop/src/lib/ime.ts so the shared sample plugins, which import
- * `isSubmitEnter` from the plugin SDK, compile against both apps.
+ * performs an action (submit, rename, commit, adopt, …).
  *
  * CJK/IME users press Enter to *commit a composition* — the candidate text
  * they are still assembling — and that keystroke must never double as the
@@ -14,8 +12,9 @@
  *   Enter that can arrive *after* `compositionend` with `isComposing`
  *   already false.
  *
- * The chat composers keep their own richer stale-flag handling
- * (`lib/ime-composition.ts`); everything simpler belongs here.
+ * One predicate owns that policy so call sites can't drift apart
+ * (the main chat composer keeps its own richer stale-flag handling in
+ * `app/chat/composer/index.tsx`; everything simpler belongs here).
  *
  * Accepts both React synthetic events (composition state lives on
  * `nativeEvent`) and plain DOM `KeyboardEvent`s (state lives on the event

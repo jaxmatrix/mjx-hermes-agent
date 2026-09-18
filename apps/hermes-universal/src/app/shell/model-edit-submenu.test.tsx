@@ -1,75 +1,131 @@
-/**
- * The Thinking toggle must not be offered where the route rejects a disable.
- *
- * Some routes take no reasoning parameter at all, and some take one they will
- * not let you turn off — the provider catalog marks those "mandatory", and the
- * inventory forwards it as `can_disable_reasoning: false`. Switching the toggle
- * there is an HTTP 400, so the control could only ever fail. Desktop hid it in
- * `d15cd18fa1`; universal never read the field.
- *
- * `undefined` is the third state and the reason every read is `!== false`: a
- * catalog that says nothing must keep offering the toggle, or every provider
- * without reasoning metadata silently loses it.
- */
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger
+} from '@/components/ui/dropdown-menu'
 
-import { DropdownMenu, DropdownMenuContent, DropdownMenuSub } from '@/components/ui/dropdown-menu'
-import { I18nProvider } from '@/i18n'
-import { en } from '@/i18n/en'
+import { type FastControl, ModelEditSubmenu } from './model-edit-submenu'
 
-import { ModelEditSubmenu } from './model-edit-submenu'
+// Radix calls these on open; jsdom doesn't implement them.
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn()
+  Element.prototype.hasPointerCapture = vi.fn(() => false)
+  Element.prototype.releasePointerCapture = vi.fn()
+})
 
-const renderSubmenu = (props: { canDisableReasoning?: boolean; reasoning?: boolean }) =>
-  render(
-    <I18nProvider>
-      <DropdownMenu open>
-        <DropdownMenuContent>
-          <DropdownMenuSub open>
-            <ModelEditSubmenu
-              effort="high"
-              fastControl={{ kind: 'none' }}
-              isActive
-              onSelectModel={vi.fn()}
-              onSetOptions={vi.fn()}
-              reasoning
-              {...props}
-            />
-          </DropdownMenuSub>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </I18nProvider>
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
+
+// Render the submenu inside an open menu/sub so its content (switches) mounts.
+function renderSubmenu(opts: {
+  defaultEffort?: string
+  effort?: string
+  fastControl: FastControl
+  isActive?: boolean
+  onSelectModel?: (model: string) => void
+  onSetOptions: (patch: { effort?: string; fast?: boolean }) => void
+  reasoning: boolean
+}) {
+  return render(
+    <DropdownMenu open>
+      <DropdownMenuContent>
+        <DropdownMenuSub open>
+          <DropdownMenuSubTrigger>edit</DropdownMenuSubTrigger>
+          <ModelEditSubmenu
+            defaultEffort={opts.defaultEffort ?? 'medium'}
+            effort={opts.effort ?? 'medium'}
+            fastControl={opts.fastControl}
+            isActive={opts.isActive ?? true}
+            model="m1"
+            onSelectModel={opts.onSelectModel ?? vi.fn()}
+            onSetOptions={opts.onSetOptions}
+            provider="p1"
+            reasoning={opts.reasoning}
+          />
+        </DropdownMenuSub>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
+}
 
-afterEach(cleanup)
+// The submenu is PURE: it reports edits and never writes to a session, a
+// preset store, or the gateway. That's the invariant that lets the same
+// component drive a live chat session AND a detached per-task override — if it
+// ever writes directly again, picking an effort for a kanban card would reach
+// over and change the user's live chat.
+describe('ModelEditSubmenu reports edits without performing them', () => {
+  it('param fast: reports the toggle', () => {
+    const onSetOptions = vi.fn()
+    renderSubmenu({ fastControl: { kind: 'param', on: true }, onSetOptions, reasoning: false })
 
-describe('ModelEditSubmenu thinking toggle', () => {
-  it('offers it when the catalog says nothing', () => {
-    renderSubmenu({})
+    fireEvent.click(screen.getByRole('switch'))
 
-    expect(screen.getByText(en.shell.modelOptions.thinking)).toBeTruthy()
+    expect(onSetOptions).toHaveBeenCalledWith({ fast: false })
   })
 
-  it('offers it when the catalog says the route allows a disable', () => {
-    renderSubmenu({ canDisableReasoning: true })
+  it('thinking: toggling off reports the none level', () => {
+    const onSetOptions = vi.fn()
+    renderSubmenu({ fastControl: { kind: 'none' }, onSetOptions, reasoning: true })
 
-    expect(screen.getByText(en.shell.modelOptions.thinking)).toBeTruthy()
+    // Thinking starts on (medium); toggling it off reports 'none'.
+    fireEvent.click(screen.getByRole('switch'))
+
+    expect(onSetOptions).toHaveBeenCalledWith({ effort: 'none' })
   })
 
-  it('hides it for a route that rejects a disable', () => {
-    renderSubmenu({ canDisableReasoning: false })
+  it('thinking: toggling back on restores the row level, not the hardcoded default', () => {
+    const onSetOptions = vi.fn()
+    renderSubmenu({
+      defaultEffort: 'high',
+      effort: 'none',
+      fastControl: { kind: 'none' },
+      onSetOptions,
+      reasoning: true
+    })
 
-    expect(screen.queryByText(en.shell.modelOptions.thinking)).toBeNull()
-    // The effort scale is a different question: the model still reasons, it
-    // just cannot be asked to stop.
-    expect(screen.getByText(en.shell.modelOptions.effort)).toBeTruthy()
-    expect(screen.getByText(en.shell.modelOptions.ultra)).toBeTruthy()
+    fireEvent.click(screen.getByRole('switch'))
+
+    expect(onSetOptions).toHaveBeenCalledWith({ effort: 'high' })
   })
 
-  it('hides it for a model with no reasoning at all', () => {
-    renderSubmenu({ canDisableReasoning: true, reasoning: false })
+  it('variant fast: swaps the model only when the row is active', () => {
+    const onSelectModel = vi.fn()
+    const onSetOptions = vi.fn()
 
-    expect(screen.queryByText(en.shell.modelOptions.thinking)).toBeNull()
+    renderSubmenu({
+      fastControl: { baseId: 'm1', fastId: 'm1-fast', kind: 'variant', on: false },
+      isActive: false,
+      onSelectModel,
+      onSetOptions,
+      reasoning: false
+    })
+
+    fireEvent.click(screen.getByRole('switch'))
+
+    // Inactive rows stay preference-only — no model switch.
+    expect(onSetOptions).toHaveBeenCalledWith({ fast: true })
+    expect(onSelectModel).not.toHaveBeenCalled()
+  })
+
+  it('variant fast: active row swaps to the -fast sibling', () => {
+    const onSelectModel = vi.fn()
+    const onSetOptions = vi.fn()
+
+    renderSubmenu({
+      fastControl: { baseId: 'm1', fastId: 'm1-fast', kind: 'variant', on: false },
+      onSelectModel,
+      onSetOptions,
+      reasoning: false
+    })
+
+    fireEvent.click(screen.getByRole('switch'))
+
+    expect(onSelectModel).toHaveBeenCalledWith('m1-fast')
   })
 })

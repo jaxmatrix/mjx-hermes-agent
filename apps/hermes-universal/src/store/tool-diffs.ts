@@ -1,14 +1,12 @@
-import { atom } from '@/store/atom'
+import { atom, computed, type ReadableAtom } from 'nanostores'
 
-// Ported from apps/desktop/src/store/tool-diffs.ts.
-// Live side-channel diffs keyed by toolCallId. The tool renderer prefers a diff
-// recorded here over one parsed out of the tool result.
-//
-// Fed by the `tool.complete` handler in store/chat.ts: the gateway renders the
-// edit diff itself and ships it as `inline_diff` on that event
-// (tui_gateway/server.py `_on_tool_complete`), keyed by the same tool id the
-// part adopts in lib/chat-tool-parts.
 const $toolDiffs = atom<Record<string, string>>({})
+
+// Per-tool derived atoms, cached by toolCallId. A `ToolEntry` subscribes only
+// to its own id's diff, so recording a diff for one tool re-renders that one
+// row -- not every mounted tool row. computed() only notifies when the derived
+// string actually changes, so unrelated writes to the map are inert here.
+const inlineDiffCache = new Map<string, ReadableAtom<string>>()
 
 export function recordToolDiff(toolCallId: string, diff: string) {
   if (!toolCallId || !diff) {
@@ -28,4 +26,13 @@ export function getToolDiff(toolCallId: string): string {
   return toolCallId ? $toolDiffs.get()[toolCallId] || '' : ''
 }
 
-export const $toolInlineDiffs = $toolDiffs
+export function $toolInlineDiff(toolCallId: string): ReadableAtom<string> {
+  let cached = inlineDiffCache.get(toolCallId)
+
+  if (!cached) {
+    cached = computed($toolDiffs, diffs => (toolCallId ? diffs[toolCallId] || '' : ''))
+    inlineDiffCache.set(toolCallId, cached)
+  }
+
+  return cached
+}

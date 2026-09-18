@@ -1,0 +1,21 @@
+# Path renames applied to desktop's tree before it is compared with universal's.
+#
+# Universal named some features differently. Without a rename here the desktop
+# tree lands beside universal's as a duplicate implementation instead of
+# merging into it. Each line is `<desktop prefix> -> <universal prefix>`, both
+# relative to `src/`, matched longest-prefix-first.
+#
+# Only add a line when the two trees are the SAME feature. `app/pet-generate`
+# and `app/pet-overlay` are deliberately absent: universal's lean
+# `app/pet/pet-generate-sheet.tsx` is not desktop's multi-file generate flow,
+# and universal has no pet-overlay window at all, so both land as new trees and
+# are reconciled by hand.
+
+# Desktop declares its shared payload types in an ambient `global.d.ts` that
+# also carries the `window.hermesDesktop` bridge. Universal needs the same types
+# as a real module (`@/global` must resolve to it), and the bridge declaration is
+# what the Tauri shim implements, so the file lands under the module name.
+global.d.ts -> global.ts
+
+app/right-sidebar/ -> app/right-pane/
+components/pet/ -> app/pet/

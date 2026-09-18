@@ -26,7 +26,7 @@ import { DRAFT_TILE_KEY, isChatPaneId, sessionTilePaneId, WORKSPACE_PANE_ID } fr
 import { navigateTo } from '@/lib/route-nav'
 import { $currentCwd } from '@/store/chat'
 import { $projectScope, $projectTree, ALL_PROJECTS } from '@/store/projects'
-import { $activeStoredSessionId } from '@/store/session'
+import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import { $sessionTiles } from '@/store/session-states'
 
 import { startNewSession, startNewSessionTab } from './new-session'

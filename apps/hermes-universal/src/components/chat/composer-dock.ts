@@ -1,9 +1,10 @@
 import { cn } from '@/lib/utils'
 
-// Ported from apps/desktop/src/components/chat/composer-dock.ts. The composer
-// surface and the status/queue stack paint ONE shared `--composer-fill` var; the
-// state ladder (rest / scrolled) lives in styles.css on
-// `[data-slot='composer-root']`, so the layers can never disagree.
+/**
+ * The composer surface and the status/queue stack paint ONE shared
+ * `--composer-fill` var. The state ladder (rest / scrolled) lives in styles.css
+ * on `[data-slot='composer-root']`, so the layers can never disagree.
+ */
 export const composerFill = 'bg-(--composer-fill)'
 
 /** Backdrop treatment for the composer input surface. Harmless when the fill
@@ -18,26 +19,31 @@ const composerDockEdge = (edge: 'bottom' | 'top') =>
 
 /** Glassy docked card — the status stack / queue. Paints the SAME
  *  `--composer-fill` as the surface, so rest / scrolled / focused / drawer-open
- *  all match the composer by construction. */
+ *  all match the composer by construction.
+ *
+ * Keep the card non-shrinking inside capped flex scroll containers. Otherwise
+ * flexbox compresses the card to the cap and its own overflow-hidden clips
+ * later status rows before the outer status stack gets anything to scroll. */
 export const composerDockCard = (edge: 'bottom' | 'top' = 'top') =>
-  cn(composerDockEdge(edge), composerFill, composerSurfaceGlass)
+  cn('shrink-0', composerDockEdge(edge), composerFill, composerSurfaceGlass)
 
 /** Floating composer panel skin — the `/`·`@`·`?` completion drawer and the
  *  attach (`+`) menu. Glassy translucent card, hairline border, full radius,
- *  smallest type, soft shadow. Uses an explicit fill (not `--composer-fill`) so
- *  it renders identically whether mounted inside the composer or portaled out of
- *  it. Visual skin only — consumers add their own size/position/padding. */
+ *  smallest type, soft nous shadow. Uses an explicit fill (not `--composer-fill`)
+ *  so it renders identically whether mounted inside the composer or portaled out
+ *  of it. Visual skin only — consumers add their own size/position/padding. */
 export const composerPanelCard = cn(
-  'rounded-2xl border border-border/65 shadow-composer text-[length:var(--conversation-tool-font-size)]',
+  'rounded-2xl border border-border/65 shadow-nous text-[length:var(--conversation-tool-font-size)]',
   'bg-[color-mix(in_srgb,var(--dt-card)_72%,transparent)]',
   composerSurfaceGlass
 )
 
 /**
  * A quiet control floating over composer content — the micro-action pills above
- * the surface. Full radius, hairline border, the composer's own fill behind a
- * blur so the text underneath never shows through. Sized against the composer's
- * control height so a pill lines up with the chrome it floats above.
+ * the surface, the Open affordance on a hovered link inside it. Full radius,
+ * hairline border, the composer's own fill behind a blur so the text underneath
+ * never shows through. Sized against the composer's control height so a pill
+ * lines up with the chrome it floats above.
  *
  * Skin and size only; the call site owns position, width caps, and disabled
  * state.
@@ -52,7 +58,17 @@ export const composerFloatingPill = cn(
 /**
  * Shared grid for the chrome-free floating strips that bracket the composer —
  * the micro-action pills above the surface and the `composer.underside` slot
- * below it. One constant means the two share a left edge without anyone
- * matching numbers across files; vertical spacing stays at the call site.
+ * below it.
+ *
+ * Both are in-flow children of the composer DOCK, siblings of the composer
+ * itself rather than children of it. That's deliberate: the pop-out drag
+ * region is `absolute inset-0` inside the composer, so anything rendered in
+ * there is inside the grab area by construction. Living outside makes that
+ * impossible instead of something the gesture has to exclude.
+ *
+ * One parent and one constant means the two strips share a left edge without
+ * anyone matching numbers across files. Vertical spacing stays at the call
+ * site; the horizontal inset matches the composer's 5px grab margin so the
+ * strips line up with the surface rather than the margin's outer edge.
  */
 export const composerFloatingStrip = 'flex flex-wrap items-center gap-1.5'

@@ -1,6 +1,6 @@
 import { requestComposerInsert } from '@/app/chat/composer/focus'
 import { $startWorkSessionRequest } from '@/store/projects'
-import { startSessionInWorkspace } from '@/store/session'
+import { startSessionInWorkspace } from '@/store/session-lifecycle'
 
 // Composer "branch off into a new worktree" hand-off, ported from desktop's
 // contrib wiring effect. The composer owns the draft and creates the worktree

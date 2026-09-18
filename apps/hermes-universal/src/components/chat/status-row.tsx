@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { type KeyboardEvent, type MouseEvent, type ReactNode, type Ref } from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -15,6 +15,10 @@ interface StatusRowProps {
   /** Right-aligned actions. Revealed on row hover/focus unless `trailingVisible`. */
   trailing?: ReactNode
   trailingVisible?: boolean
+  /** Forwarded to the row's root — lets a wrapper (e.g. a context-menu trigger
+   *  using `asChild`) attach `ref` / `onContextMenu` to the real DOM node. */
+  ref?: Ref<HTMLDivElement>
+  onContextMenu?: (event: MouseEvent) => void
 }
 
 /**
@@ -29,6 +33,8 @@ export function StatusRow({
   className,
   leading,
   onActivate,
+  onContextMenu,
+  ref,
   trailing,
   trailingVisible = false
 }: StatusRowProps) {
@@ -41,6 +47,7 @@ export function StatusRow({
         className
       )}
       onClick={onActivate}
+      onContextMenu={onContextMenu}
       onKeyDown={
         onActivate
           ? event => {
@@ -51,6 +58,7 @@ export function StatusRow({
             }
           : undefined
       }
+      ref={ref}
       role={onActivate ? 'button' : undefined}
       tabIndex={onActivate ? 0 : undefined}
     >
@@ -60,8 +68,7 @@ export function StatusRow({
         <div
           className={cn(
             'flex shrink-0 items-center gap-0.5',
-            !trailingVisible &&
-              'opacity-0 group-hover/status-row:opacity-100 coarse:opacity-100 group-focus-within/status-row:opacity-100'
+            !trailingVisible && 'opacity-0 group-hover/status-row:opacity-100 group-focus-within/status-row:opacity-100'
           )}
         >
           {trailing}

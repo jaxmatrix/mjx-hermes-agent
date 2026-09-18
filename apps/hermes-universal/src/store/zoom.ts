@@ -1,50 +1,24 @@
-import { type Codec, persistentAtom } from '@/lib/persisted'
-import { IS_TAURI } from '@/lib/platform'
+/**
+ * Window text size (zoom).
+ *
+ * The main process owns the zoom level and persists it (see electron/zoom.ts
+ * for the scale). The renderer only mirrors the current percent for the
+ * settings UI: preset clicks go to the main process over IPC, and every
+ * change comes back through onChanged, including ones made with the
+ * Ctrl/Cmd +/-/0 shortcuts or the View menu, so the UI never drifts.
+ */
 
-// UI scale via the Tauri webview zoom factor. Mirrors the desktop `store/zoom.ts`
-// but applies zoom through Tauri (`webview.setZoom`) instead of Electron IPC.
-// Persisted per-device.
+import { atom } from 'nanostores'
 
-export const ZOOM_MIN = 50
-export const ZOOM_MAX = 200
-
-const numberCodec: Codec<number> = {
-  decode: raw => {
-    const n = Number(raw)
-
-    return Number.isFinite(n) ? n : 100
-  },
-  encode: value => String(value)
-}
-
-export const $zoomPercent = persistentAtom<number>('hermes.zoomPercent', 100, numberCodec)
-
-/** Apply a zoom percent to the live webview (no-op off Tauri / on failure). */
-export async function applyZoom(percent: number): Promise<void> {
-  if (!IS_TAURI) {
-    return
-  }
-
-  try {
-    const { getCurrentWebview } = await import('@tauri-apps/api/webview')
-    await getCurrentWebview().setZoom(percent / 100)
-  } catch {
-    // WebviewGTK/platform may not support it — cosmetic, never surface.
-  }
-}
+// Mirror DEFAULT_ZOOM_LEVEL (90%) so Appearance doesn't flash 100% before
+// the main-process zoom.get() resolves. Keep in sync with electron/zoom.ts.
+export const $zoomPercent = atom<number>(90)
 
 export function setZoomPercent(percent: number): void {
-  const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(percent)))
-  $zoomPercent.set(clamped)
-  void applyZoom(clamped)
+  window.hermesDesktop?.zoom?.setPercent(percent)
 }
 
-/** Nudge zoom by a step (Cmd/Ctrl +/-). */
-export function bumpZoom(deltaPercent: number): void {
-  setZoomPercent($zoomPercent.get() + deltaPercent)
-}
-
-/** Apply the persisted zoom once at startup. */
-export function initZoom(): void {
-  void applyZoom($zoomPercent.get())
+if (typeof window !== 'undefined' && window.hermesDesktop?.zoom) {
+  void window.hermesDesktop.zoom.get().then(({ percent }) => $zoomPercent.set(percent))
+  window.hermesDesktop.zoom.onChanged(({ percent }) => $zoomPercent.set(percent))
 }

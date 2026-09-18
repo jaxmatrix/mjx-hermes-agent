@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router'
 
 import { ChatTitle } from '@/app/chat/chat-title'
 import { TITLEBAR_AREAS } from '@/app/contrib/surfaces'

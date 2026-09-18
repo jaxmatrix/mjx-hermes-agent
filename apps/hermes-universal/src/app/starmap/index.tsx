@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 
 import { PageLoader } from '@/components/page-loader'
 import { useI18n } from '@/i18n'
-import { IS_MOBILE } from '@/lib/platform'
 import { $starmapError, $starmapGraph, $starmapLoading, loadStarmapGraph } from '@/store/starmap'
 import type { StarmapGraph } from '@/types/hermes'
 
@@ -39,11 +38,7 @@ export function StarmapView({ onClose }: { onClose: () => void }) {
   const shown = imported ?? graph
 
   return (
-    // Every other overlay a phone reaches goes full-bleed; the star map kept
-    // the desktop card, which on a handset spends ~34px of inset on all four
-    // sides plus border and rounding — on the one surface that wants every
-    // pixel it can get. The close button and Esc are unchanged.
-    <Panel closeLabel={t.starmap.close} onClose={onClose} variant={IS_MOBILE ? 'fullbleed' : 'overlay'}>
+    <Panel closeLabel={t.starmap.close} onClose={onClose}>
       {error ? (
         <PanelEmpty description={error} icon="warning" title={t.starmap.loadFailed} />
       ) : !shown && loading ? (

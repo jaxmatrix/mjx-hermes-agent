@@ -5,10 +5,8 @@ import type { BillingChargeResponse, BillingStateResponse } from './types'
 
 const requestGatewayMock = vi.hoisted(() => vi.fn())
 
-// Universal's gateway seam is a module-level function, not desktop's hook — this
-// is the first test in the app to mock it, so the shape is spelled out here.
-vi.mock('@/store/gateway', () => ({
-  requestGateway: requestGatewayMock
+vi.mock('@/app/gateway/hooks/use-gateway-request', () => ({
+  useGatewayRequest: () => ({ requestGateway: requestGatewayMock })
 }))
 
 import { createBillingApi, useBillingApi } from './api'

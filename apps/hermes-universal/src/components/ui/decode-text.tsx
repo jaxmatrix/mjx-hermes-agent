@@ -1,5 +1,6 @@
 import { type ComponentProps, useEffect, useState } from 'react'
 
+import { prefersReducedMotion } from '@/hooks/use-media-query'
 import { cn } from '@/lib/utils'
 
 /**
@@ -22,10 +23,6 @@ import { cn } from '@/lib/utils'
 export const DECODE_SCRAMBLE_CHARS = '/\\|-_=+<>~:*'
 const TICK_MS = 45
 const HOLD_TICKS = 16
-
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
-}
 
 function scrambled(tail: string, resolvedCount: number): string {
   return Array.from(tail, (ch, i) =>
@@ -117,7 +114,7 @@ export function DecodeText({
       {cursor && (
         <span
           aria-hidden="true"
-          className="dither ms-0.5 inline-block size-2 shrink-0 -translate-y-px rounded-[1px]"
+          className="dither ml-0.5 inline-block size-2 shrink-0 -translate-y-px rounded-[1px]"
           style={{ animation: 'decode-cursor 1s step-end infinite' }}
         />
       )}

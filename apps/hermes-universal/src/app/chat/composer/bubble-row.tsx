@@ -23,7 +23,7 @@ import {
   switchToBubble
 } from '@/store/chat-bubbles'
 import { $draftTitles, draftTitleIn } from '@/store/composer'
-import { $activeStoredSessionId, refreshSessions } from '@/store/session'
+import { $activeStoredSessionId, refreshSessions } from '@/store/session-lifecycle'
 import { chatTabTitle, useSessionRowLookup } from '@/store/session-lookup'
 
 import { SessionStatusDot } from '../session-status-dot'

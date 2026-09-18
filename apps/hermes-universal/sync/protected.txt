@@ -1,0 +1,128 @@
+# Paths where UNIVERSAL's version wins, even though desktop is the reference.
+#
+# Everything not listed here takes desktop's file verbatim. A path listed here
+# is never overwritten by the sync script:
+#
+#   - present in both, contents differ  -> MERGE  (a human folds desktop's
+#                                                  changes into universal's file)
+#   - present in both, identical        -> SKIP   (nothing to do)
+#   - desktop-only                      -> REVIEW (not copied; a desktop file
+#                                                  landing inside a protected
+#                                                  subsystem needs a decision)
+#
+# Globs are relative to `src/` and support `*` (no slash) and `**` (any).
+# Scope is `src/` only — package.json, tsconfig.json and vite.config.ts are
+# aligned by hand in phase 1, and vite.config.ts must survive verbatim because
+# it carries the observability transforms and the Tauri aliases.
+
+# ---------------------------------------------------------------------------
+# Universal-exclusive subsystems. Desktop has no counterpart at all; a desktop
+# file appearing under one of these is a naming collision, not a port.
+# ---------------------------------------------------------------------------
+observability/**
+voice/**
+transport/**
+gateway/**
+dev/**
+lib/billing/**
+lib/browser/**
+lib/browser-act/**
+components/layout/**
+components/pane-shell/tile/**
+plugins/accent/**
+app/browser/**
+assets/brand/**
+fonts/**
+
+# ---------------------------------------------------------------------------
+# The connection / tab / tunnel layer (MJXHRM-591, MJXHRM-592).
+#
+# Universal factored connection scoping into its own modules bound to Rust
+# `src-tauri/src/tunnels.rs`; desktop scopes connections inline in session.ts
+# and gateway.ts. The two designs are not compatible, and universal's is the
+# one the Rust side talks to.
+# ---------------------------------------------------------------------------
+store/active-connection.*
+store/connection.*
+store/connection-*.*
+store/connections.*
+store/tab-connection.*
+store/tab-ref.*
+# Desktop's registry atom is a different concern from universal's connection
+# scoping — it records the topology Electron publishes, which the Tauri shim
+# fills from the Rust roster instead. Eight imported files need it, and nothing
+# in universal's layer competes with it, so desktop owns this one.
+!store/connection-registry-state.ts
+store/event-router*.*
+store/gateway-secondaries.*
+store/gateway-soft-switch.*
+store/live-session-status.*
+store/session-replay.*
+store/session-request-router.*
+store/session-state-types.*
+store/session-states.*
+store/session-tile-delegate.*
+store/session-tiles-binding.*
+store/ssh-backend.*
+# Universal's session LIST/LIFECYCLE layer (list, paging, pins, tombstones,
+# branching, opening) is built on the connection scoping above and has no
+# desktop counterpart — desktop's `store/session.ts` is the session STATE store
+# and lands verbatim as an AUTO file, so only the lifecycle half is protected.
+store/session-lifecycle.*
+store/gateway.ts
+store/chat.ts
+store/transcript-paint.*
+store/artifacts.*
+store/windows.ts
+lib/connection-color.*
+components/chat/chat-connection-banner.*
+components/chat/connection-accent.*
+app/chat/use-tab-connection.*
+app/gateway/gateway-configurator.tsx
+hermes.ts
+
+# ---------------------------------------------------------------------------
+# The mobile shell. Desktop has no phone presentation; these are the files that
+# make universal work on a touch device at all.
+# ---------------------------------------------------------------------------
+app/mobile-controller.tsx
+app/shell/mobile-*.*
+app/right-pane/**/mobile-*.*
+app/chat/composer/bubble-row.tsx
+app/chat/composer/bubble-drag.*
+store/chat-bubbles.*
+hooks/use-keyboard-inset.*
+hooks/use-media-query.*
+lib/safe-area.*
+lib/touch.*
+lib/resize-gesture.*
+lib/trackpad-gestures.*
+# Universal asks the Tauri runtime which platform it is on and handles the iOS
+# webview boot race; desktop only sniffs navigator, and has no notion of mobile
+# at all. Desktop's three host-OS predicates are folded in at the bottom.
+lib/platform.ts
+
+# ---------------------------------------------------------------------------
+# Contracts. These encode the mobile and WebKit rules the imported code has to
+# satisfy; they are the phase-5 checklist and must not be replaced by desktop's
+# (Chromium, mouse-only) expectations.
+# ---------------------------------------------------------------------------
+styles.css
+styles.hud-contract.test.ts
+styles.mobile-viewport.test.ts
+styles.safe-area-vars.test.ts
+styles.connect-safe-area.test.ts
+entry-graph.test.ts
+components/ui/hover-affordance-touch.test.ts
+
+# ---------------------------------------------------------------------------
+# i18n. Universal's catalogues carry the connection-banner strings and are held
+# to a ratchet baseline that may only shrink, so desktop's differently-keyed
+# catalogues cannot land wholesale.
+# ---------------------------------------------------------------------------
+i18n/en.ts
+i18n/ar.ts
+i18n/ja.ts
+i18n/zh.ts
+i18n/zh-hant.ts
+i18n/types.ts

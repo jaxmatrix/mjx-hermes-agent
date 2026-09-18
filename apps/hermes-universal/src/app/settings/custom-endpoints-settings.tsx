@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
-import { Tip } from '@/components/ui/tooltip'
 import {
   activateCustomEndpoint,
   deleteCustomEndpoint,
@@ -12,6 +11,7 @@ import {
   validateCustomEndpoint
 } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { triggerHaptic } from '@/lib/haptics'
 import { Check, Globe, Loader2, Plus, Save, Trash2, Zap } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { confirm } from '@/store/confirm'
@@ -76,17 +76,13 @@ function toPayload(form: EndpointForm, models?: string[]): CustomEndpointUpdate 
   }
 }
 
-// OpenAI-compatible custom endpoint management: list saved endpoints, add/edit
-// one, test reachability (discovering models), and activate it as the main
-// model. Ported from desktop CustomEndpointsSettings.
 export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: CustomEndpointsSettingsProps) {
   const { t } = useI18n()
-  const copy = t.settings.customEndpoints
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
-  const [activating, setActivating] = useState<null | string>(null)
-  const [deleting, setDeleting] = useState<null | string>(null)
+  const [activating, setActivating] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
   const [endpoints, setEndpoints] = useState<CustomEndpoint[]>([])
   const [form, setForm] = useState<EndpointForm>(EMPTY_FORM)
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([])
@@ -115,7 +111,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
           setDiscoveredModels(current.models)
         }
       } catch (err) {
-        notifyError(err, copy.loadFailed)
+        notifyError(err, 'Could not load custom endpoints')
       } finally {
         if (!cancelled) {
           setLoading(false)
@@ -128,9 +124,6 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
     return () => {
       cancelled = true
     }
-    // Load once on mount; copy is stable per render and re-running on locale
-    // change would refetch needlessly.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function handleSave() {
@@ -149,10 +142,11 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
         onMainModelChanged?.(saved.id, saved.model)
       }
 
+      triggerHaptic('success')
       onConfigSaved?.()
-      notify({ kind: 'success', message: copy.saved })
+      notify({ kind: 'success', message: 'Custom endpoint saved.' })
     } catch (err) {
-      notifyError(err, copy.saveFailed)
+      notifyError(err, 'Save failed')
     } finally {
       setSaving(false)
     }
@@ -171,16 +165,18 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
 
         notify({
           kind: 'success',
-          message: response.models.length ? copy.reachableWithModels(response.models.length) : copy.reachable
+          message: response.models.length
+            ? `Endpoint is reachable. Found ${response.models.length} models.`
+            : 'Endpoint is reachable.'
         })
       } else {
         notify({
           kind: response.reachable ? 'warning' : 'error',
-          message: response.message || copy.validationFailed
+          message: response.message || 'Endpoint validation failed.'
         })
       }
     } catch (err) {
-      notifyError(err, copy.validationError)
+      notifyError(err, 'Validation failed')
     } finally {
       setTesting(false)
     }
@@ -193,15 +189,17 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
       await refresh()
       onConfigSaved?.()
       onMainModelChanged?.(response.provider, response.model)
+      triggerHaptic('success')
     } catch (err) {
-      notifyError(err, copy.activationFailed)
+      notifyError(err, 'Activation failed')
     } finally {
       setActivating(null)
     }
   }
 
   async function handleDelete(endpoint: CustomEndpoint) {
-    if (!(await confirm({ destructive: true, title: copy.deleteConfirm(endpoint.name) }))) {
+    // This panel is not internationalized at all — keep the literal it had.
+    if (!(await confirm({ destructive: true, title: `Delete ${endpoint.name}?` }))) {
       return
     }
 
@@ -216,8 +214,9 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
       }
 
       onConfigSaved?.()
+      triggerHaptic('success')
     } catch (err) {
-      notifyError(err, copy.deleteFailed)
+      notifyError(err, 'Delete failed')
     } finally {
       setDeleting(null)
     }
@@ -234,13 +233,13 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
     <SettingsContent>
       <div className="space-y-6">
         <section>
-          <SectionHeading icon={Globe} meta={`${endpoints.length}`} title={copy.title} />
+          <SectionHeading icon={Globe} meta={`${endpoints.length}`} title={t.settings.customEndpoints.title} />
           <div className="divide-y divide-border/40 rounded-md border border-border/50">
             {endpoints.length ? (
               endpoints.map(endpoint => (
                 <div className="grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" key={endpoint.id}>
                   <button
-                    className="min-w-0 text-start"
+                    className="min-w-0 text-left"
                     onClick={() => {
                       setForm(formFromEndpoint(endpoint))
                       setDiscoveredModels(endpoint.models)
@@ -252,17 +251,17 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                       {endpoint.is_current && (
                         <Pill tone="primary">
                           <Check className="size-3" />
-                          {copy.active}
+                          Active
                         </Pill>
                       )}
-                      {endpoint.source === 'direct-config' && <Pill>{copy.configSource}</Pill>}
+                      {endpoint.source === 'direct-config' && <Pill>config.yaml</Pill>}
                     </div>
                     <div className="mt-1 truncate font-mono text-[0.7rem] text-muted-foreground">
                       {endpoint.base_url}
                     </div>
                     <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
                       <span>{endpoint.model}</span>
-                      {endpoint.has_api_key && <span>{endpoint.api_key_preview ?? copy.apiKeySet}</span>}
+                      {endpoint.has_api_key && <span>{endpoint.api_key_preview ?? 'API key set'}</span>}
                     </div>
                   </button>
                   <div className="flex items-center gap-2 sm:justify-end">
@@ -273,67 +272,68 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                       variant="outline"
                     >
                       {activating === endpoint.id ? <Loader2 className="animate-spin" /> : <Zap />}
-                      {copy.use}
+                      Use
                     </Button>
                     {endpoint.source !== 'direct-config' && (
-                      <Tip label={copy.deleteTitle}>
-                        <Button
-                          aria-label={copy.deleteTitle}
-                          className="hover:text-destructive"
-                          disabled={deleting === endpoint.id}
-                          onClick={() => void handleDelete(endpoint)}
-                          size="icon-sm"
-                          variant="ghost"
-                        >
-                          {deleting === endpoint.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
-                        </Button>
-                      </Tip>
+                      <Button
+                        className="hover:text-destructive"
+                        disabled={deleting === endpoint.id}
+                        onClick={() => void handleDelete(endpoint)}
+                        size="icon-sm"
+                        title={t.settings.customEndpoints.deleteEndpoint}
+                        variant="ghost"
+                      >
+                        {deleting === endpoint.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                      </Button>
                     )}
                   </div>
                 </div>
               ))
             ) : (
-              <EmptyState description={copy.emptyDescription} title={copy.emptyTitle} />
+              <EmptyState
+                description={t.settings.customEndpoints.emptyDescription}
+                title={t.settings.customEndpoints.emptyTitle}
+              />
             )}
           </div>
         </section>
 
         <section>
-          <SectionHeading icon={Plus} title={form.id ? copy.editTitle : copy.addTitle} />
+          <SectionHeading icon={Plus} title={form.id ? 'Edit Endpoint' : 'Add Endpoint'} />
           <div className="grid gap-3 rounded-md border border-border/50 p-3">
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="grid gap-1.5 text-xs text-muted-foreground">
-                {copy.nameLabel}
+                Name
                 <Input
                   onChange={event => setForm(current => ({ ...current, name: event.target.value }))}
-                  placeholder={copy.namePlaceholder}
+                  placeholder={t.settings.customEndpoints.namePlaceholder}
                   value={form.name}
                 />
               </label>
               <label className="grid gap-1.5 text-xs text-muted-foreground">
-                {copy.providerIdLabel}
+                Provider ID
                 <Input
                   onChange={event => setForm(current => ({ ...current, id: event.target.value }))}
-                  placeholder={copy.providerIdPlaceholder}
+                  placeholder="axet-proxy"
                   value={form.id}
                 />
               </label>
             </div>
             <label className="grid gap-1.5 text-xs text-muted-foreground">
-              {copy.urlLabel}
+              Endpoint URL
               <Input
                 onChange={event => setForm(current => ({ ...current, baseUrl: event.target.value }))}
-                placeholder={copy.urlPlaceholder}
+                placeholder="http://127.0.0.1:8081/v1"
                 value={form.baseUrl}
               />
             </label>
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem]">
               <label className="grid gap-1.5 text-xs text-muted-foreground">
-                {copy.modelLabel}
+                Default Model
                 <Input
                   list="custom-endpoint-models"
                   onChange={event => setForm(current => ({ ...current, model: event.target.value }))}
-                  placeholder={copy.modelPlaceholder}
+                  placeholder="gpt-5.4"
                   value={form.model}
                 />
                 <datalist id="custom-endpoint-models">
@@ -343,40 +343,38 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                 </datalist>
               </label>
               <label className="grid gap-1.5 text-xs text-muted-foreground">
-                {copy.contextLabel}
+                Context
                 <Input
                   inputMode="numeric"
                   onChange={event => setForm(current => ({ ...current, contextLength: event.target.value }))}
-                  placeholder={copy.contextPlaceholder}
+                  placeholder={t.settings.customEndpoints.contextPlaceholder}
                   value={form.contextLength}
                 />
               </label>
             </div>
             <label className="grid gap-1.5 text-xs text-muted-foreground">
-              {copy.apiKeyLabel}
+              API Key
               <Input
                 onChange={event => setForm(current => ({ ...current, apiKey: event.target.value }))}
-                placeholder={form.id ? copy.apiKeyPlaceholderEdit : copy.apiKeyPlaceholderNew}
+                placeholder={form.id ? 'Leave blank to keep current key' : 'Optional'}
                 type="password"
                 value={form.apiKey}
               />
             </label>
             <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
               <label className="flex items-center gap-2">
-                <Switch
+                <Checkbox
                   checked={form.makeDefault}
-                  onCheckedChange={checked => setForm(current => ({ ...current, makeDefault: checked }))}
-                  size="xs"
+                  onCheckedChange={checked => setForm(current => ({ ...current, makeDefault: checked === true }))}
                 />
-                {copy.useForNewChats}
+                Use for new chats
               </label>
               <label className="flex items-center gap-2">
-                <Switch
+                <Checkbox
                   checked={form.discoverModels}
-                  onCheckedChange={checked => setForm(current => ({ ...current, discoverModels: checked }))}
-                  size="xs"
+                  onCheckedChange={checked => setForm(current => ({ ...current, discoverModels: checked === true }))}
                 />
-                {copy.discoverModels}
+                Discover models
               </label>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -386,11 +384,11 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                 variant="outline"
               >
                 {testing ? <Loader2 className="animate-spin" /> : <Zap />}
-                {copy.test}
+                Test
               </Button>
               <Button disabled={saving || !canSave} onClick={() => void handleSave()}>
                 {saving ? <Loader2 className="animate-spin" /> : <Save />}
-                {copy.save}
+                Save
               </Button>
               <Button
                 className={cn(!form.id && 'hidden')}
@@ -401,7 +399,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                 type="button"
                 variant="ghost"
               >
-                {copy.newEndpoint}
+                New endpoint
               </Button>
             </div>
           </div>

@@ -4,17 +4,21 @@ import type { ChatMessage } from '@/lib/chat-messages'
 import { RENDER_WEIGHT_CHARS } from '@/lib/render-weight'
 
 import {
+  advanceSessionTranscriptWindow,
   advanceTranscriptWindow,
+  alignToBranchGroup,
+  MAX_SESSION_WINDOWS,
   selectTranscriptWindow,
   TRANSCRIPT_WINDOW_BUDGET,
   TRANSCRIPT_WINDOW_MIN_MESSAGES,
   TRANSCRIPT_WINDOW_SLACK
 } from './transcript-window'
 
-const message = (id: string, chars: number): ChatMessage => ({
+const message = (id: string, chars: number, branchGroupId?: string): ChatMessage => ({
   id,
   parts: [{ type: 'text', text: 'x'.repeat(chars) }],
-  role: id.startsWith('u') ? 'user' : 'assistant'
+  role: id.startsWith('u') ? 'user' : 'assistant',
+  ...(branchGroupId ? { branchGroupId } : {})
 })
 
 /** Messages of `chars` each, newest last. */
@@ -92,6 +96,28 @@ describe('selectTranscriptWindow', () => {
     expect(window.messages).toHaveLength(messages.length)
   })
 
+  it('never cuts inside a branch group, so branches keep their fork point', () => {
+    const heavy = RENDER_WEIGHT_CHARS * 200
+
+    // A branch group sits right where a weight-only cut would land.
+    const messages: ChatMessage[] = [
+      ...transcript(20, heavy),
+      message('a-branch-1', heavy, 'group-1'),
+      message('a-branch-2', heavy, 'group-1'),
+      message('a-branch-3', heavy, 'group-1'),
+      ...transcript(20, heavy).map(m => ({ ...m, id: `tail-${m.id}` }))
+    ]
+
+    for (let pages = 1; pages <= 6; pages++) {
+      const kept = selectTranscriptWindow(messages, pages).messages
+      const groupMembers = kept.filter(m => m.branchGroupId === 'group-1')
+
+      // Either the whole group survives or none of it does — never a partial
+      // group, which would re-parent the surviving branches.
+      expect([0, 3]).toContain(groupMembers.length)
+    }
+  })
+
   it('handles an empty transcript', () => {
     const messages: ChatMessage[] = []
 
@@ -100,100 +126,190 @@ describe('selectTranscriptWindow', () => {
 })
 
 describe('advanceTranscriptWindow', () => {
-  /** One message ≈ 11 weight units, so a page is ~110 of them. */
-  const CHARS = RENDER_WEIGHT_CHARS * 10
+  const heavyChars = RENDER_WEIGHT_CHARS * 40
 
-  /** One weight unit shy of a full slack page's worth of streamed messages. */
-  const STREAMED_UNDER_SLACK = Math.floor(TRANSCRIPT_WINDOW_SLACK / (CHARS / RENDER_WEIGHT_CHARS + 1)) - 2
+  it('matches a fresh walk on first call', () => {
+    const messages = transcript(400, heavyChars)
 
-  it('holds the cut steady while a turn streams instead of sliding it per flush', () => {
-    const messages = transcript(200, CHARS)
+    const state = advanceTranscriptWindow(null, messages)
 
-    let state = advanceTranscriptWindow(null, messages, 1)
-    const firstCut = state.window.messages[0].id
+    expect(state.window).toEqual(selectTranscriptWindow(messages))
+    expect(state.anchorId).toBe(state.window.messages[0].id)
+  })
 
-    expect(state.window.windowed).toBe(true)
-    expect(state.anchorId).toBe(firstCut)
+  it('holds the cut while a streaming tail grows within slack', () => {
+    const messages = transcript(400, heavyChars)
+    const state = advanceTranscriptWindow(null, messages)
 
-    // Every flush of a streaming turn republishes a LONGER array. A fresh weight
-    // walk moves the cut one message per flush and re-indexes the whole window;
-    // the anchor has to survive until the tail is a real half-page heavier.
-    const streaming = [...messages]
+    // Stream: the tail message grows, no new messages. A fresh weight-walk
+    // would slide the cut forward; the sticky window must not.
+    const grown = [...messages.slice(0, -1), message('m-399', heavyChars * 2)]
+    const next = advanceTranscriptWindow(state, grown)
 
-    for (let i = 1; i <= STREAMED_UNDER_SLACK; i++) {
-      streaming.push(message(`live-${i}`, CHARS))
-      state = advanceTranscriptWindow(state, streaming, 1)
+    expect(next.anchorId).toBe(state.anchorId)
+    expect(next.window.messages[0].id).toBe(state.window.messages[0].id)
+    // Same message set from the anchor on — every existing row keeps its index.
+    expect(next.window.messages.length).toBe(state.window.messages.length)
+  })
+
+  it('re-cuts once the tail outgrows budget plus slack', () => {
+    const messages = transcript(400, heavyChars)
+    let state = advanceTranscriptWindow(null, messages)
+
+    // Keep appending. Each step either HOLDS the cut (identical anchor) or
+    // RE-CUTS to exactly what a fresh walk would pick — never something in
+    // between — and at least one re-cut must happen before the tail has grown
+    // by a full slack's worth of weight.
+    const appended = [...messages]
+    let recuts = 0
+
+    for (let i = 0; i < TRANSCRIPT_WINDOW_SLACK + 1; i++) {
+      appended.push(message(`a-new-${i}`, RENDER_WEIGHT_CHARS))
+      const prev = state
+      state = advanceTranscriptWindow(state, appended)
+
+      if (state.anchorId === prev.anchorId) {
+        expect(state.window.messages[0].id).toBe(prev.window.messages[0].id)
+      } else {
+        recuts++
+        expect(state.window).toEqual(selectTranscriptWindow(appended))
+      }
     }
 
-    expect(state.window.messages[0].id).toBe(firstCut)
-    expect(state.anchorId).toBe(firstCut)
-    // A fresh walk over the same transcript HAS moved on — which is the slide
-    // this exists to stop, so the two must disagree by now.
-    expect(selectTranscriptWindow(streaming, 1).messages[0].id).not.toBe(firstCut)
+    expect(recuts).toBeGreaterThanOrEqual(1)
+    // Streaming causes a re-cut per ~half page of content, not one per flush.
+    expect(recuts).toBeLessThan(5)
   })
 
-  it('re-cuts once the tail has outgrown the budget by a slack page', () => {
-    const messages = transcript(200, CHARS)
+  it('falls back to a fresh walk when the anchor disappears', () => {
+    const messages = transcript(400, heavyChars)
+    const state = advanceTranscriptWindow(null, messages)
 
-    const first = advanceTranscriptWindow(null, messages, 1)
-    const streaming = [...messages]
+    // Session swap / compression rewrite: disjoint ids.
+    const swapped = transcript(300, heavyChars).map(m => ({ ...m, id: `other-${m.id}` }))
+    const next = advanceTranscriptWindow(state, swapped)
 
-    // Twice the slack: comfortably past the point where the anchor must move.
-    for (let i = 1; i <= STREAMED_UNDER_SLACK * 2 + 8; i++) {
-      streaming.push(message(`live-${i}`, CHARS))
-    }
-
-    const next = advanceTranscriptWindow(first, streaming, 1)
-
-    expect(next.window.messages[0].id).not.toBe(first.window.messages[0].id)
-    expect(next.anchorId).toBe(next.window.messages[0].id)
-    // Still exactly the cut a fresh walk would make.
-    expect(next.window.messages.map(m => m.id)).toEqual(selectTranscriptWindow(streaming, 1).messages.map(m => m.id))
+    expect(next.window).toEqual(selectTranscriptWindow(swapped))
   })
 
-  it('re-walks when "Show earlier" changes the page count', () => {
-    const messages = transcript(200, CHARS)
+  it('re-walks when pages change so Show earlier still grows the window', () => {
+    const messages = transcript(400, heavyChars)
+    const one = advanceTranscriptWindow(null, messages, 1)
+    const two = advanceTranscriptWindow(one, messages, 2)
 
-    const first = advanceTranscriptWindow(null, messages, 1)
-    const second = advanceTranscriptWindow(first, messages, 2)
-
-    expect(second.pages).toBe(2)
-    expect(second.window.messages.length).toBeGreaterThan(first.window.messages.length)
+    expect(two.window.messages.length).toBeGreaterThan(one.window.messages.length)
   })
 
-  it('re-walks when the anchor is rewritten out from under it', () => {
-    const messages = transcript(200, CHARS)
+  it('stays pass-through (uncut) while the transcript fits the budget', () => {
+    const messages = transcript(50, 100)
+    const state = advanceTranscriptWindow(null, messages)
 
-    const first = advanceTranscriptWindow(null, messages, 1)
-    // A compaction replaces the transcript wholesale: the anchor id is gone.
-    const rewritten = transcript(200, CHARS).map(m => ({ ...m, id: `${m.id}-v2` }))
-    const next = advanceTranscriptWindow(first, rewritten, 1)
+    expect(state.anchorId).toBeNull()
+    expect(state.window.messages).toBe(messages)
 
-    expect(next.anchorId).toBe(next.window.messages[0].id)
-    expect(next.window.messages[0].id).toContain('-v2')
-  })
+    const grown = [...messages, message('m-next', 100)]
+    const next = advanceTranscriptWindow(state, grown)
 
-  it('reports nothing earlier once a compaction leaves the anchor at the head', () => {
-    const messages = transcript(200, CHARS)
-    const first = advanceTranscriptWindow(null, messages, 1)
-    const anchorIndex = messages.findIndex(m => m.id === first.anchorId)
-
-    // The history before the cut is dropped; the anchor is now the first row, so
-    // there is no earlier page and the button must not offer one.
-    const next = advanceTranscriptWindow(first, messages.slice(anchorIndex), 1)
-
+    // Still uncut: identity of the full array is preserved for the runtime.
+    expect(next.window.messages).toBe(grown)
     expect(next.window.windowed).toBe(false)
-    expect(next.window.messages[0].id).toBe(first.anchorId)
+  })
+})
+
+describe('advanceSessionTranscriptWindow', () => {
+  const heavyChars = RENDER_WEIGHT_CHARS * 40
+
+  it('matches a fresh walk on first visit', () => {
+    const memos = new Map()
+    const messages = transcript(400, heavyChars)
+
+    const state = advanceSessionTranscriptWindow(memos, 'session-a', messages)
+
+    expect(state.window).toEqual(selectTranscriptWindow(messages))
+    expect(state.anchorId).toBe(state.window.messages[0].id)
   })
 
-  it('leaves a transcript under the budget completely uncut', () => {
-    const messages = transcript(20, 20)
+  it('returns the SAME windowed slice by reference on a warm re-visit with an unchanged transcript', () => {
+    const memos = new Map()
+    const sessionA = transcript(400, heavyChars)
+    const sessionB = transcript(300, heavyChars).map(m => ({ ...m, id: `b-${m.id}` }))
 
-    const first = advanceTranscriptWindow(null, messages, 1)
-    const second = advanceTranscriptWindow(first, messages, 1)
+    // Visit B, then A, then B again — the exact warm-switch shape of #95595.
+    const firstB = advanceSessionTranscriptWindow(memos, 'session-b', sessionB)
+    advanceSessionTranscriptWindow(memos, 'session-a', sessionA)
+    const secondB = advanceSessionTranscriptWindow(memos, 'session-b', sessionB)
 
-    expect(first.anchorId).toBeNull()
-    expect(second.window.windowed).toBe(false)
-    expect(second.window.messages).toBe(messages)
+    expect(secondB.window.windowed).toBe(true)
+    // THE perf guard: same transcript array => same windowed slice reference,
+    // so the runtime repository and every row keep their identity.
+    expect(secondB.window.messages).toBe(firstB.window.messages)
+    expect(secondB.anchorId).toBe(firstB.anchorId)
+  })
+
+  it('holds the sticky cut when a re-visited session grew while away', () => {
+    const memos = new Map()
+    const messages = transcript(400, heavyChars)
+    const state = advanceSessionTranscriptWindow(memos, 'session-a', messages)
+
+    // While away, the session streamed a few light turns (within slack).
+    const grown = [...messages, ...transcript(10, 100)]
+    const next = advanceSessionTranscriptWindow(memos, 'session-a', grown)
+
+    // Sticky cut survived the switch-away: same anchor, no fresh re-walk.
+    expect(next.anchorId).toBe(state.anchorId)
+    expect(next.window.messages[0].id).toBe(state.window.messages[0].id)
+    // The anchored slice now simply includes the 10 new light turns.
+    expect(next.window.messages.length).toBe(state.window.messages.length + 10)
+  })
+
+  it('falls back to a fresh walk when the anchor vanished while away', () => {
+    const memos = new Map()
+    const messages = transcript(400, heavyChars)
+    advanceSessionTranscriptWindow(memos, 'session-a', messages)
+
+    // Compression rewrite: disjoint ids while the user was elsewhere.
+    const rewritten = transcript(300, heavyChars).map(m => ({ ...m, id: `compressed-${m.id}` }))
+    const next = advanceSessionTranscriptWindow(memos, 'session-a', rewritten)
+
+    expect(next.window).toEqual(selectTranscriptWindow(rewritten))
+  })
+
+  it('re-walks when pages change on re-entry', () => {
+    const memos = new Map()
+    const messages = transcript(400, heavyChars)
+
+    const one = advanceSessionTranscriptWindow(memos, 'session-a', messages, 1)
+    const two = advanceSessionTranscriptWindow(memos, 'session-a', messages, 2)
+
+    expect(two.window.messages.length).toBeGreaterThan(one.window.messages.length)
+  })
+
+  it('keeps sessions independent and evicts the oldest memo past the cap', () => {
+    const memos = new Map()
+
+    for (let i = 0; i < MAX_SESSION_WINDOWS + 5; i++) {
+      advanceSessionTranscriptWindow(memos, `session-${i}`, transcript(400, heavyChars))
+    }
+
+    expect(memos.size).toBeLessThanOrEqual(MAX_SESSION_WINDOWS)
+    expect(memos.has('session-0')).toBe(false)
+    expect(memos.has(`session-${MAX_SESSION_WINDOWS + 4}`)).toBe(true)
+  })
+})
+
+describe('alignToBranchGroup', () => {
+  const messages = [message('u-1', 10), message('a-1', 10, 'g'), message('a-2', 10, 'g'), message('u-2', 10)]
+
+  it('widens a cut that lands mid-group back to the group start', () => {
+    expect(alignToBranchGroup(messages, 2)).toBe(1)
+  })
+
+  it('leaves a cut on a non-branch message alone', () => {
+    expect(alignToBranchGroup(messages, 3)).toBe(3)
+  })
+
+  it('clamps out-of-range indices', () => {
+    expect(alignToBranchGroup(messages, -5)).toBe(0)
+    expect(alignToBranchGroup(messages, 99)).toBe(messages.length)
   })
 })

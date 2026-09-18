@@ -12,7 +12,8 @@ import {
 } from '@/components/pane-shell/tree/store'
 import { isChatPaneId, sessionTilePaneId, WORKSPACE_PANE_ID } from '@/lib/pane-ids'
 import { $compactingSessions, sessionCompacting, setSessionCompacting } from '@/store/compaction'
-import { $activeStoredSessionId, $sessions } from '@/store/session'
+import { $sessions } from '@/store/session'
+import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
   $sessionStates,

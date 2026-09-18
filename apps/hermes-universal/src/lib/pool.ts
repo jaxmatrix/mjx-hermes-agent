@@ -1,7 +1,7 @@
 /**
  * `Promise.all(items.map(fn))` with a concurrency cap: at most `limit` calls run
- * at once, results stay in input order. Keeps a many-repo probe from firing a
- * request per repo all at once.
+ * at once, results stay in input order. Keeps a many-repo probe from spawning a
+ * `git` process per repo all at once.
  */
 export async function mapPool<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length)

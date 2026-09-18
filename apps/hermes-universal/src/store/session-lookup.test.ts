@@ -18,8 +18,9 @@ import type { SessionInfo } from '@/types/hermes'
 
 import { $pinnedSessionIds } from './layout'
 import { $projectTree } from './projects'
-import { $activeStoredSessionId, $sessions } from './session'
+import { $sessions } from './session'
 import { $sessionColorOverrides, sessionColorFor, setSessionColorOverride } from './session-color'
+import { $activeStoredSessionId } from './session-lifecycle'
 import {
   chatTabTitle,
   liveSessionIdFor,

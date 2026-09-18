@@ -4,12 +4,12 @@ import { $connectionReady } from './connection-ready'
 import { $activeGatewayProfile, normalizeProfileKey, selectProfile } from './profile'
 import {
   adoptLiveSession,
-  knownSessionProfile,
+  knownSessionProfileFor,
   markPluginOwnedSession,
   openSession,
   rememberSessionProfile,
   resolveSessionProfile
-} from './session'
+} from './session-lifecycle'
 import { $sessionStates, runtimeKeyForStoredSession } from './session-state-types'
 import { focusOpenSession, openSessionTab } from './session-states'
 import { awaitSessionPainted, SessionWakeError } from './transcript-cache-sync'
@@ -180,7 +180,7 @@ export async function openPluginSession(
   }
 
   const owner =
-    options.profile ?? knownSessionProfile(storedSessionId) ?? (await resolveSessionProfile(storedSessionId))
+    options.profile ?? knownSessionProfileFor(storedSessionId) ?? (await resolveSessionProfile(storedSessionId))
 
   if (owner && normalizeProfileKey(owner) !== $activeGatewayProfile.get() && !(await warmProfile(owner))) {
     return { error: 'profile-unavailable', ok: false }

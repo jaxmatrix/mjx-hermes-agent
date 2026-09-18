@@ -3,7 +3,7 @@
 import '@/app/contrib/controller'
 
 import { useEffect, useRef } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router'
 
 import { ArtifactPreviewOverlay } from '@/app/artifact-preview-overlay'
 import { ChatScreen } from '@/app/chat/chat-screen'
@@ -22,7 +22,7 @@ import { $connectionPhase } from '@/store/connection'
 import { sessionMissingFromCurrentGateway } from '@/store/gateway-soft-switch'
 import { $gatewaySwitching } from '@/store/gateway-switch'
 import { notify } from '@/store/notifications'
-import { newSession, openSession, refreshSessions } from '@/store/session'
+import { newSession, openSession, refreshSessions } from '@/store/session-lifecycle'
 import { detachedTileId } from '@/store/windows'
 
 import { NEW_CHAT_ROUTE, routeSessionId } from './routes'

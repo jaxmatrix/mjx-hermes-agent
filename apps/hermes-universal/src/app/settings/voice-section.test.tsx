@@ -19,7 +19,7 @@ vi.mock('@/hermes', () => ({
   getElevenLabsVoices: vi.fn()
 }))
 
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 
 import { getElevenLabsVoices } from '@/hermes'
 import { I18nProvider } from '@/i18n'

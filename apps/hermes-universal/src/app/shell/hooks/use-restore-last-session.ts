@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router'
 
 import { sessionRoute } from '@/app/routes'
 import { resolveSessionLanding } from '@/app/session-landing'
 import { $connectionPhase } from '@/store/connection'
-import { $activeStoredSessionId, lastOpenedSessionId, openSession } from '@/store/session'
+import { $activeStoredSessionId, lastOpenedSessionId, openSession } from '@/store/session-lifecycle'
 
 // Land on the chat you were last in, not an empty one.
 //

@@ -13,7 +13,7 @@ import { $defaultProjectDir, setDefaultProjectDir } from '@/store/default-projec
 import { useDisplayPath } from '@/store/display-home'
 import { notify, notifyError } from '@/store/notifications'
 import { pickProjectFolder } from '@/store/projects'
-import { isSessionPinned, refreshSessions } from '@/store/session'
+import { isSessionPinned, refreshSessions } from '@/store/session-lifecycle'
 import type { SessionInfo } from '@/types/hermes'
 
 import { EmptyState, ListRow, SectionHeading, SettingsContent, SettingsSkeleton } from './primitives'

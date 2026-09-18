@@ -1,21 +1,14 @@
 /**
- * RUN TOUR — the tour verbs on universal's APP surface (MJXHRM-473).
+ * RUN TOUR — the tour verbs, on either surface.
  *
  * `runTour` is the generic entry (one normalized action in, a result out) and
- * the named verbs below are the ergonomic API — used by the agent's `tour` tool
- * through `store/tour-bridge.ts`, and by any curated in-app tour.
+ * the named verbs below are the ergonomic API — used by the agent tool through
+ * the gateway, and by any curated in-app tour. surface='app' drives driver.js
+ * against the Hermes DOM; surface='preview' runs the same engine source inside
+ * the preview pane's guest page.
  *
- * Ported from desktop `lib/tour/run-tour.ts`. Its preview branch was a refusal
- * until MJXHRM-447 gave universal a guest page to run in; it now routes
- * `surface: 'preview'` into `./preview-tour`, which drives the in-app browser's
- * own act engine. The refusal string survives for the case that still deserves
- * one — no guest host on this platform — because a tour that highlighted the
- * APP chrome while the agent believed it was pointing at a web page is a wrong
- * answer, and a wrong answer is worse than a refusal.
- *
- * Dynamic-imported by `store/tour-bridge.ts` and by the palette row, so
- * driver.js and its CSS stay off the boot path — asserted by
- * `src/entry-graph.test.ts`, not by this comment.
+ * Dynamic-imported by gateway-event.ts, so driver.js (and the preview's raw
+ * injection payload) stay off the boot path until a tour actually runs.
  */
 
 import 'driver.js/dist/driver.css'
@@ -23,8 +16,8 @@ import './app-tour.css'
 
 import { driver as driverFactory } from 'driver.js'
 
-import { navigateTo } from '@/lib/route-nav'
-import { revealBridgePane } from '@/store/pane-focus'
+import { runPreviewTour } from '@/app/chat/right-rail/preview-tour'
+import { revealDesktopPane } from '@/store/pane-focus'
 
 import { collectTourTargets } from './collect-targets'
 import {
@@ -41,28 +34,16 @@ import { type Stage, stopSpotlightBlur, syncSpotlightBlur } from './spotlight-bl
 /** Which document a tour runs against. */
 export type TourSurface = 'app' | 'preview'
 
-/** The refusal a `surface: 'preview'` action gets on a build with no guest
- *  host. An agent-facing wire string, not UI copy — deliberately not i18n'd,
- *  exactly like the unsupported strings in `store/agent-read-requests.ts`. */
-const PREVIEW_SURFACE_UNSUPPORTED =
-  'This Hermes client has no in-app browser pane, so there is no page to tour. ' +
-  "Nothing was highlighted. Use surface='app' to tour Hermes itself."
-
 /** The app around the tour, consumed straight from what the app already
- *  exposes: universal mounts a HashRouter (main.tsx), so a route IS
- *  `location.hash` and `navigateTo` is the same navigation a component's
- *  `useNavigate` performs; pane reveals are `revealBridgePane`, the same path
- *  the `focus_pane` tool drives (MJXHRM-472). Nothing is registered and nothing
- *  persists — a step reads these while it runs.
- *
- *  `navigateTo`, not `openAppRoute`: the latter promotes Settings / Command
- *  Center to their own native Android ACTIVITY, a separate WebView. The tour's
- *  overlay lives in this one, so a promoted route would leave the popover
- *  spotlighting an empty screen while the user looks at another window. */
+ *  exposes: HashRouter means a route IS `location.hash`, and pane reveals are
+ *  `revealDesktopPane` (the same path the focus_pane tool drives). Nothing is
+ *  registered and nothing persists — a step reads these while it runs. */
 const APP_HOST: TourHost = {
   currentRoute: () => window.location.hash.replace(/^#/, '') || '/',
-  navigate: to => navigateTo(to),
-  revealPane: pane => void revealBridgePane(pane)
+  navigate: to => {
+    window.location.hash = to
+  },
+  revealPane: pane => void revealDesktopPane(pane)
 }
 
 /** The app's own overlay treatment: a softly rounded cutout and a transition
@@ -89,17 +70,7 @@ const appHolder: TourHolder = {}
 export async function runTour(action: TourAction, surface: TourSurface = 'app'): Promise<TourResult> {
   try {
     if (surface === 'preview') {
-      // Lazily imported so the browser store stays out of this chunk for an
-      // ordinary app tour.
-      const { $browserSupported } = await import('@/store/browser')
-
-      if (!$browserSupported.get()) {
-        return { error: PREVIEW_SURFACE_UNSUPPORTED, success: false }
-      }
-
-      const { runPreviewTour } = await import('./preview-tour')
-
-      return runPreviewTour(action)
+      return await runPreviewTour(action)
     }
 
     const result = runTourEngine(driverFactory, appHolder, action, collectTourTargets, document, TOUR_STYLE, APP_HOST)

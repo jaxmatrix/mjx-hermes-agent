@@ -3,14 +3,12 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState
 } from 'react'
 
 import { clearTableWidths, markdownTableKey, readTableWidths, writeTableWidths } from '@/lib/markdown-table-widths'
-import { startPointerDrag } from '@/lib/pointer-drag'
 import { cn } from '@/lib/utils'
 
 /**
@@ -25,7 +23,9 @@ import { cn } from '@/lib/utils'
  * 2. A drag moves exactly one seam. The pair either side of the handle trade
  *    width and their sum is preserved, so the table box never changes size
  *    mid-drag: no reflow of the message around it, no scrollbar appearing under
- *    the pointer.
+ *    the pointer. jquery-resizable-columns settled on the same invariant, minus
+ *    the absolutely-positioned handle overlay it has to re-sync on every window
+ *    resize.
  *
  * Handles are plain markup inside each `<th>`; the table listens once and
  * resolves which seam was grabbed from the DOM at pointer-down. No context, no
@@ -38,10 +38,8 @@ import { cn } from '@/lib/utils'
  *
  * A drag sets state on this component alone, and `children` is an already-built
  * element tree whose reference does not change, so React reconciles the
- * colgroup and bails out of the whole table body. That is what makes this safe
- * under streaming: the transcript re-parses the markdown on every token, and
- * the identity effect below re-derives the same shape key from the same header
- * row, so a re-render lands on the widths the drag left behind.
+ * colgroup and bails out of the whole table body. Measured on a 43-row table: a
+ * 40-step drag mutates 78 `col[style]` attributes and touches no cell.
  */
 
 /** A column can't be dragged narrower than this — below it the header label
@@ -57,13 +55,7 @@ export function ResizableMarkdownTable({ children, className, ...props }: Compon
   // A drag owns the widths while it runs; the identity effect below must not
   // overwrite them from storage between two pointermove frames.
   const draggingRef = useRef(false)
-  // The unmount half of the drag teardown. A transcript can drop the message
-  // under the pointer mid-drag (session switch, a tile closing), and the drag
-  // itself never hears about it.
-  const cancelDragRef = useRef<null | (() => void)>(null)
   const [widths, setWidths] = useState<null | number[]>(null)
-
-  useEffect(() => () => cancelDragRef.current?.(), [])
 
   // A markdown table has no identity of its own — it is re-parsed from text on
   // every render. Its header row is the identity: the same table in the same
@@ -94,8 +86,6 @@ export function ResizableMarkdownTable({ children, className, ...props }: Compon
     const handle = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-md-col-handle]')
     const table = tableRef.current
 
-    // `button` is 0 for a primary mouse button AND for a touch contact, so this
-    // admits a finger while still rejecting a right-click.
     if (!handle || !table || event.button !== 0) {
       return
     }
@@ -110,19 +100,13 @@ export function ResizableMarkdownTable({ children, className, ...props }: Compon
       return
     }
 
-    // Claims the gesture: on touch this is what stops the transcript from
-    // treating the drag as a scroll, together with `touch-action: none` on the
-    // handle. WebKitGTK honours pointer capture on the element that got the
-    // pointerdown, which is why it is set on the handle and not the table.
     event.preventDefault()
     handle.setPointerCapture(event.pointerId)
     handle.dataset.mdColActive = 'true'
     draggingRef.current = true
 
     // Seed from what is on screen, so the first drag continues the auto layout
-    // the user was looking at instead of snapping to even columns. Measured
-    // once, at pointer-down: nothing is re-measured mid-drag, so the transcript
-    // cannot reflow under the pointer.
+    // the user was looking at instead of snapping to even columns.
     const start = cells.map(cell => (cell.getBoundingClientRect().width / tableWidth) * 100)
     const pair = start[index] + start[index + 1]
     const min = Math.min((MIN_COLUMN_PX / tableWidth) * 100, pair / 2)
@@ -130,27 +114,29 @@ export function ResizableMarkdownTable({ children, className, ...props }: Compon
     const startX = event.clientX
     let next = start
 
-    cancelDragRef.current = startPointerDrag(
-      move => {
-        const delta = ((rtl ? startX - move.clientX : move.clientX - startX) / tableWidth) * 100
-        const leading = Math.min(Math.max(start[index] + delta, min), pair - min)
+    const onMove = (move: PointerEvent) => {
+      const delta = ((rtl ? startX - move.clientX : move.clientX - startX) / tableWidth) * 100
+      const leading = Math.min(Math.max(start[index] + delta, min), pair - min)
 
-        next = start.map((value, at) => (at === index ? leading : at === index + 1 ? pair - leading : value))
-        setWidths(next)
-      },
-      () => {
-        cancelDragRef.current = null
-        delete handle.dataset.mdColActive
-        draggingRef.current = false
+      next = start.map((value, at) => (at === index ? leading : at === index + 1 ? pair - leading : value))
+      setWidths(next)
+    }
 
-        // A cancelled gesture (Android stealing the pointer) still keeps what
-        // the columns were showing when it was taken — the alternative is the
-        // table snapping back under the finger.
-        if (keyRef.current && next !== start) {
-          writeTableWidths(keyRef.current, next)
-        }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      delete handle.dataset.mdColActive
+      draggingRef.current = false
+
+      if (keyRef.current && next !== start) {
+        writeTableWidths(keyRef.current, next)
       }
-    )
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
   }, [])
 
   // Double-click a seam to hand the columns back to auto layout — the same
@@ -197,7 +183,7 @@ export function ResizableMarkdownTh({ children, className, ...props }: Component
   return (
     <th
       className={cn(
-        'relative px-2.5 py-1.5 text-start align-middle text-[0.75rem] font-medium text-muted-foreground',
+        'relative px-2.5 py-1.5 text-left align-middle text-[0.75rem] font-medium text-muted-foreground',
         // The trailing column has no seam: its right edge is the table's edge,
         // and there is nothing on the far side to trade width with.
         '[&:last-child_[data-md-col-handle]]:hidden',
@@ -209,15 +195,15 @@ export function ResizableMarkdownTh({ children, className, ...props }: Component
           the cell's edge, so a clipping `<th>` would cut half of it off. */}
       <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{children}</span>
       {/* Invisible grab band straddling the seam, with the hairline revealed on
-          hover. `touch-action: none` is scoped to this band alone so a finger
-          on the seam resizes while a finger anywhere else in the table still
-          scrolls the transcript. */}
+          hover — the pane sash treatment (`tree-split.tsx`) scaled to a header
+          row. The table carries no vertical rules otherwise, so the line only
+          exists while you are reaching for it. */}
       <span
         aria-hidden
-        className="group/mdcol absolute inset-y-0 -end-1 z-10 w-2 cursor-col-resize touch-none select-none"
+        className="group/mdcol absolute inset-y-0 -end-1 z-10 w-2 cursor-col-resize select-none"
         data-md-col-handle
       >
-        <span className="absolute inset-0 mx-auto w-px bg-(--ui-stroke-secondary) opacity-0 transition-opacity duration-100 group-hover/mdcol:opacity-100 [[data-md-col-active]_&]:opacity-100" />
+        <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-(--ui-stroke-secondary) opacity-0 transition-opacity duration-100 group-hover/mdcol:opacity-100 [[data-md-col-active]_&]:opacity-100" />
       </span>
     </th>
   )

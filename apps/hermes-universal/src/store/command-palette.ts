@@ -1,32 +1,29 @@
-import { releaseTypingFocus } from '@/components/ui/keyboard-first'
-import { atom } from '@/store/atom'
+import { atom } from 'nanostores'
 
-// The global command palette (⌘K). Every view the 4-item sidebar rail doesn't
-// carry — Agents, Starmap, Command Center, Settings… — is reached through here,
-// opened by the keybind, the titlebar search button (desktop), or the in-drawer
-// button (phones, where there is no titlebar).
+import { releaseTypingFocus } from '@/components/ui/keyboard-first'
 
 /** Whether the global command palette (Cmd/Ctrl+K) is currently open. */
 export const $commandPaletteOpen = atom(false)
 
-/** Optional nested page to open when the palette next opens (e.g. `theme`). */
-export const $commandPalettePage = atom<null | string>(null)
+/** Optional nested page to open when the palette next opens (e.g. `pets`). */
+export const $commandPalettePage = atom<string | null>(null)
 
-/** Text to pre-fill the palette's filter with on the next open (type-to-search). */
-export const $commandPaletteSeed = atom<null | string>(null)
+/** Optional search text to prefill when the palette next opens (type-to-search
+ *  from a surface: the keystroke that opened the palette must not be lost). */
+export const $commandPaletteSeed = atom<string | null>(null)
 
 export function openCommandPalette(): void {
   $commandPaletteOpen.set(true)
 }
 
-/**
- * Open the palette directly on a nested page (`theme`, `color-mode`, `settings`),
- * optionally with the filter already carrying `seed` — which is what lets a
- * surface hand off the character that opened it (typing on the Settings card).
- */
+/** Open the palette directly on a nested page (`theme`, `pets`, …). */
 export function openCommandPalettePage(page: string, seed?: string): void {
   $commandPalettePage.set(page)
-  $commandPaletteSeed.set(seed ?? null)
+
+  if (seed) {
+    $commandPaletteSeed.set(seed)
+  }
+
   $commandPaletteOpen.set(true)
 }
 

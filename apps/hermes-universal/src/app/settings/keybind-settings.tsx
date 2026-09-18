@@ -173,11 +173,13 @@ export function KeybindSettings() {
 function CategoryHeader({ label, onToggle, open }: { label: string; onToggle: () => void; open: boolean }) {
   return (
     <button
-      className="group/kbd-cat flex w-fit items-center gap-1 px-2.5 pb-1 pt-3 text-start leading-none"
+      className="group/kbd-cat flex w-fit min-w-0 items-center gap-1 px-2.5 pb-1 pt-3 text-left leading-none"
       onClick={onToggle}
       type="button"
     >
-      <span className="text-[0.64rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">{label}</span>
+      <span className="min-w-0 truncate text-[0.64rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+        {label}
+      </span>
       <DisclosureCaret
         className="text-(--ui-text-tertiary) opacity-0 transition group-hover/kbd-cat:opacity-100"
         open={open}
@@ -209,21 +211,8 @@ function KeybindRow({ action }: { action: KeybindActionMeta }) {
     <div className="group flex items-center gap-2.5 rounded-lg px-2.5 py-1 transition-colors hover:bg-(--chrome-action-hover)">
       <span className="min-w-0 flex-1 truncate text-[0.82rem] text-foreground/90">{label}</span>
 
-      {/* The one property of a shortcut that reaches outside this app: the OS is
-          asked to reserve it machine-wide at startup, so no other application
-          can use it. The first-run notice says it once
-          (`lib/keybinds/global-shortcut.ts`); this is where a user who dismissed
-          it — or arrived months later — can still find out which rows do it. */}
-      {action.global && (
-        <Tip label={k.globalTagHint}>
-          <span className="shrink-0 rounded border border-(--ui-stroke-tertiary) px-1 py-px text-[0.6rem] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-            {k.globalTag}
-          </span>
-        </Tip>
-      )}
-
       {conflict && (
-        <span className="flex size-4 items-center justify-center text-(--ui-yellow)/90" title={k.conflictWith(conflict)}>
+        <span className="flex size-4 items-center justify-center text-amber-500/90" title={k.conflictWith(conflict)}>
           <Codicon name="warning" size="0.8125rem" />
         </span>
       )}
@@ -254,7 +243,7 @@ function KeybindRow({ action }: { action: KeybindActionMeta }) {
         <Tip label={k.reset}>
           <button
             aria-label={k.reset}
-            className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground/70 opacity-0 transition-all hover:bg-(--ui-control-active-background) hover:text-foreground group-hover:opacity-100 coarse:opacity-100"
+            className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground/70 opacity-0 transition-all hover:bg-(--ui-control-active-background) hover:text-foreground group-hover:opacity-100"
             onClick={() => resetBinding(action.id)}
             type="button"
           >

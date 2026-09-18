@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // Isolate the bubble list logic from the runtime: a controllable active-id atom
 // stands in for the real session store, and the tile delegate / slice eviction
 // are inert spies. This keeps the store platform-agnostic and directly testable.
-vi.mock('@/store/session', async () => {
+vi.mock('@/store/session-lifecycle', async () => {
   const { atom } = await import('nanostores')
   const $activeStoredSessionId = atom<null | string>(null)
   // The loaded recents page. `sameStoredSession` is the only thing that reads it
@@ -63,7 +63,8 @@ vi.mock('@/store/session-states', () => ({
   })
 }))
 
-import { $activeStoredSessionId, $sessions } from '@/store/session'
+import { $sessions } from '@/store/session'
+import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import { $activeSessionKey } from '@/store/session-state-types'
 import { dropSessionState, sessionTileDelegate } from '@/store/session-states'
 

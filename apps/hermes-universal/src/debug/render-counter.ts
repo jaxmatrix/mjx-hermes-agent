@@ -1,8 +1,4 @@
 // Dev-only render counter — answers "what actually re-rendered, and why?".
-// Ported verbatim from apps/desktop/src/debug/render-counter.ts. Universal had
-// no instrumented way to reproduce a render-count measurement at all: `bench/`
-// holds a node-side markdown microbench and a WebKitGTK DOM-cost harness, and
-// neither can say which component re-rendered.
 //
 // Loaded from `main.tsx` BEFORE `react-dom` (see the import-order note there).
 // That ordering is load-bearing: react-dom decides at module-init whether a

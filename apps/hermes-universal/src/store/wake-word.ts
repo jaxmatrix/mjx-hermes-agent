@@ -1,515 +1,408 @@
-import {
-  feedWakeAudio,
-  isMissingRpcMethod,
-  pauseWakeWord,
-  resumeWakeWord,
-  startWakeWord,
-  stopWakeWord,
-  type WakeCapture,
-  type WakeStatusResult,
-  wakeWordStatus
-} from '@/lib/gateway-rpc'
-import { playWakeSound } from '@/lib/wake-sound'
-import { atom } from '@/store/atom'
-import { addGatewayEventListener } from '@/store/gateway'
-import { grantClientCaptureConsent, hasClientCaptureConsent } from '@/store/wake-capture-consent'
-import { activateWakeIndicator } from '@/store/wake-indicator'
-import { voiceEngine } from '@/voice/engine'
-import type { VoiceLease } from '@/voice/types'
+import { atom } from 'nanostores'
 
-/**
- * "Hey Hermes" — the hands-free wake word.
- *
- * The detector is NOT ours. openWakeWord/sherpa run on the gateway
- * (`tools/wake_word.py`), which owns the phrase, the model and the profile
- * routing; this module only arms it, keeps the toggle in step, and — when the
- * gateway answers `capture: "client"` because its host has no microphone —
- * supplies the audio.
- *
- * Two rules, both upstream's:
- *
- *  * **The toggle IS the config.** There is no separate client preference:
- *    `wake_word.enabled` in the gateway config is the only state, and only a
- *    deliberate click (`persist: true`) writes it. Every passive re-arm — app
- *    start, the end of a voice conversation — must leave it alone, or a mic
- *    becomes permanently enabled because a window opened.
- *  * **A detection starts a conversation, it does not transcribe.** The wake
- *    phrase itself is never sent anywhere: `wake.detected` frees the mic, plays
- *    the chime, and asks the composer to open a real voice turn.
- *
- * And one of ours (MJXHRM-228): **client capture needs its own press.** Where
- * the backend answers `capture: "client"` this device streams its microphone
- * continuously, which the wake toggle alone never asked for — see
- * `store/wake-capture-consent.ts`. A passive re-arm stops instead of opening the
- * device, and says so; only a deliberate click starts the upload.
- */
+import { type ClientWakeCaptureHandle, startClientWakeCapture } from '@/lib/wake-client-capture'
+import { $gateway } from '@/store/gateway'
 
-/**
- * `reason` when the config says the wake word is on, the backend wants THIS
- * device's microphone, and nobody has agreed to that on this device.
- *
- * Exported because the composer's ear button branches on it, and a string only
- * this module can produce is what keeps that branch honest — matching on a
- * substring shared with another refusal would make the check untestable.
- */
-export const WAKE_CLIENT_CAPTURE_UNCONFIRMED = 'client_capture_unconfirmed'
+// "Hey Hermes" wake-word listener state for the composer toggle. The gateway is
+// the single source of truth (the listener lives in the backend and is shared
+// with the TUI under a single-owner mic lease); this atom is the renderer's
+// cache of that truth, refreshed from every wake.* RPC response we see.
 
 export interface WakeWordState {
-  /** The backend can run a detector at all (model present, deps installed). */
+  /** Wake word can run at all (deps + mic + key). With `enabled` false too, hides the toggle. */
   available: boolean
-  /** `wake_word.enabled` as the backend reports it — the toggle's truth. */
+  /** Config truth (wake_word.enabled) — keeps the ear mounted through transient refusals. */
   enabled: boolean
-  /** A detector is armed right now (by us or by another surface). */
+  /** The listener is armed and owned by this surface. */
   listening: boolean
-  /** Armed by THIS client, so our stop/pause calls will be honoured. */
-  owned: boolean
-  /** Where the mic is. `client` means we are streaming frames up. */
-  capture: WakeCapture
-  /** The phrase to show ("hey hermes"), never used for matching here. */
+  /** Last failure reason/hint (start refused, unavailable, …) for the tooltip. */
+  notice: string
+  /** A toggle RPC is in flight — guards double-clicks. */
+  pending: boolean
+  /** Human-facing wake phrase, e.g. "hey hermes". */
   phrase: string
-  /** Why the last attempt refused, for the tooltip. */
-  reason: null | string
-  hint: null | string
-  /** Paused because a voice conversation holds the mic. */
-  pausedForVoice: boolean
-  /** We are actively pushing PCM at `wake.feed`. */
-  streaming: boolean
-  /** A start/stop round trip is in flight — the toggle shows it and refuses re-entry. */
-  busy: boolean
 }
 
-const INITIAL: WakeWordState = {
+const INITIAL_WAKE_WORD_STATE: WakeWordState = {
   available: false,
   enabled: false,
   listening: false,
-  owned: false,
-  capture: 'local',
-  phrase: 'hey hermes',
-  reason: null,
-  hint: null,
-  pausedForVoice: false,
-  streaming: false,
-  busy: false
+  notice: '',
+  pending: false,
+  phrase: ''
 }
 
-export const $wakeWord = atom<WakeWordState>(INITIAL)
+export const $wakeWord = atom<WakeWordState>(INITIAL_WAKE_WORD_STATE)
 
-function patch(next: Partial<WakeWordState>): void {
-  $wakeWord.set({ ...$wakeWord.get(), ...next })
+/** Active client mic stream for remote wake (capture: client). */
+let clientCapture: ClientWakeCaptureHandle | null = null
+
+/** Stop client-side PCM capture (also called on wake.detected before voice). */
+export function stopClientCapture(): void {
+  clientCapture?.stop()
+  clientCapture = null
 }
 
-function applyStatus(status: WakeStatusResult): void {
-  patch({
-    available: Boolean(status.available),
-    enabled: Boolean(status.enabled),
-    listening: Boolean(status.listening),
-    owned: Boolean(status.owned_by_caller),
-    capture: status.capture === 'client' ? 'client' : 'local',
-    phrase: status.phrase || $wakeWord.get().phrase,
-    hint: status.hint ?? null
-  })
-}
+async function maybeStartClientCapture(result: WakeStartResponse | null | undefined): Promise<void> {
+  stopClientCapture()
 
-// --- client capture --------------------------------------------------------
-
-/** The mic lease held while we stream wake audio, or null when the backend's own
- *  microphone is doing the listening. */
-let captureLease: VoiceLease | null = null
-let captureOff: (() => void) | null = null
-
-/**
- * How long a `fed: false` keeps us from reconciling again.
- *
- * The reconcile releases the mic and re-reads the backend, and `armWakeWord`
- * may legitimately re-arm from there — so without a floor a backend that arms
- * successfully and then refuses every frame would spin at frame rate. One
- * attempt per half-minute recovers a detector that genuinely died without ever
- * becoming a loop.
- */
-const FEED_REFUSAL_COOLDOWN_MS = 30_000
-
-/** When the last `fed: false` was acted on. Module-level, not per-lease: the
- *  reconcile itself opens a new lease, so a per-lease latch would reset each
- *  time round and defeat the cooldown. */
-let feedRefusedAt = 0
-
-/**
- * `wake.feed` answered `fed: false` — the gateway is DISCARDING our audio.
- *
- * A refusal is a 200, not a rejection, so nothing throws and the promise the
- * frame handler fires resolves cleanly. `feed_audio` (tools/wake_word.py) returns
- * False in three real situations, all of which look identical from here: the
- * detector was disarmed, another transport owns it, or it went back to capturing
- * locally. In every one of them this client is holding the user's microphone open
- * and streaming PCM several times a second into a function that drops it.
- *
- * So treat it as authoritative: let the device go, then re-read `wake.status`
- * rather than inventing state. Recovery is the existing `armWakeWord` path — app
- * start, the end of a voice conversation, or the composer's ear button.
- */
-async function handleFeedRefusal(reason: null | string): Promise<void> {
-  const now = Date.now()
-
-  if (now - feedRefusedAt < FEED_REFUSAL_COOLDOWN_MS) {
+  if (!result?.started) {
     return
   }
 
-  feedRefusedAt = now
+  const mode = (result.capture || '').toLowerCase()
 
-  await stopClientCapture()
-  patch({ reason: reason ?? 'feed_refused', hint: null })
-
-  try {
-    applyStatus(await wakeWordStatus())
-  } catch {
-    // The socket went with it. `stopClientCapture` already told the truth about
-    // the half we control; the next arm reconciles the rest.
-  }
-}
-
-/**
- * Open the mic and stream 16 kHz int16 batches at `wake.feed`.
- *
- * The capture is Rust's (`voice_wake_listen`), not `getUserMedia`'s: on Tauri the
- * native engine is the only path that reaches the device on every target, and it
- * already owns the resample-to-16 kHz pipeline. The web fallback engine rejects
- * `wakeListen`, which lands here as a refusal the toggle can explain instead of a
- * detector nobody feeds.
- */
-async function startClientCapture(): Promise<boolean> {
-  if (captureLease) {
-    return true
+  if (mode !== 'client' && mode !== 'remote' && mode !== 'external') {
+    return
   }
 
   try {
-    const lease = await voiceEngine.open('wake', { target: { baseUrl: '', headers: {} } })
-
-    captureOff = lease.on(event => {
-      if (event.type === 'wakeFrame' && event.pcm) {
-        // Not awaited: a dropped frame is a millisecond of missed audio, and
-        // blocking here would let a slow socket stall the emitter behind it. The
-        // ANSWER still has to be read — `fed: false` is the gateway telling us it
-        // is throwing this audio away, and it arrives as a resolved value, never
-        // as a rejection.
-        void feedWakeAudio(event.pcm)
-          .then(result => (result.fed ? undefined : handleFeedRefusal(result.reason)))
-          .catch(() => undefined)
-      }
+    clientCapture = await startClientWakeCapture({
+      frameLength: result.frame_length,
+      request: gatewayRequester
     })
-
-    await lease.wakeListen()
-    captureLease = lease
-    patch({ streaming: true })
-
-    return true
   } catch (error) {
-    await stopClientCapture()
-    patch({
-      streaming: false,
-      reason: 'capture_failed',
-      hint: error instanceof Error ? error.message : String(error)
-    })
-
-    return false
-  }
-}
-
-async function stopClientCapture(): Promise<void> {
-  const lease = captureLease
-  captureOff?.()
-  captureOff = null
-  captureLease = null
-
-  if (lease) {
-    await lease.close().catch(() => undefined)
-  }
-
-  patch({ streaming: false })
-}
-
-// --- arm / disarm ----------------------------------------------------------
-
-async function applyStart(persist: boolean): Promise<void> {
-  const answer = await startWakeWord({ persist })
-
-  if (!answer.started) {
-    await stopClientCapture()
-    patch({
+    const current = $wakeWord.get()
+    $wakeWord.set({
+      ...current,
       listening: false,
-      owned: false,
-      streaming: false,
-      reason: answer.reason ?? 'refused',
-      hint: answer.hint ?? null,
-      // `unavailable` is the only refusal that says the backend CAN'T; the rest
-      // ("disabled", "owned by another surface") leave the capability intact.
-      available: answer.reason !== 'unavailable',
-      ...(persist ? {} : {})
+      notice: error instanceof Error ? error.message : 'Failed to open the client microphone for wake word',
+      pending: false
     })
 
-    return
-  }
-
-  const capture: WakeCapture = answer.capture === 'client' ? 'client' : 'local'
-
-  // The click IS the consent, and this is where it is recorded: `persist` marks
-  // a deliberate press of the ear, and the backend has just said the press means
-  // "stream this device's microphone" (the button said so before it was pressed).
-  if (capture === 'client' && persist) {
-    grantClientCaptureConsent()
-  }
-
-  patch({
-    listening: true,
-    owned: true,
-    available: true,
-    capture,
-    enabled: persist ? true : $wakeWord.get().enabled,
-    phrase: answer.phrase || $wakeWord.get().phrase,
-    reason: null,
-    hint: null,
-    pausedForVoice: false
-  })
-
-  if (capture === 'client' && !hasClientCaptureConsent()) {
-    // The detector is armed on a backend that has no microphone of its own, and
-    // we are not going to feed it — so disarm rather than leave a listener
-    // nobody supplies audio to. Without `persist`: the user's preference is not
-    // what is in question, only this device's part in it.
-    await stopWakeWord({}).catch(() => undefined)
-    patch({ listening: false, owned: false, streaming: false, reason: WAKE_CLIENT_CAPTURE_UNCONFIRMED, hint: null })
-
-    return
-  }
-
-  if (capture === 'client') {
-    await startClientCapture()
-  } else {
-    // The gateway host is holding its own microphone; ours must not also be open.
-    await stopClientCapture()
+    // Best-effort: release server lease if client mic failed.
+    try {
+      await gatewayRequester('wake.stop', {})
+    } catch {
+      // ignore
+    }
   }
 }
 
+export interface WakeStatusResponse {
+  /** Armed but the selected backend input delivers only silence. */
+  audio_silent?: boolean
+  available?: boolean
+  /** local | client | auto — where PCM is captured. */
+  capture?: string
+  configured_surface?: string
+  /** Config truth (wake_word.enabled) — drives post-voice re-arm. */
+  enabled?: boolean
+  frame_length?: number
+  hint?: string
+  input_device?: WakeInputDeviceStatus
+  listening?: boolean
+  local_input_available?: boolean
+  owned_by_caller?: boolean
+  owner_surface?: string | null
+  phrase?: string
+  provider?: string
+  sample_rate?: number
+}
+
+export interface WakeStartResponse {
+  capture?: string
+  enabled_persisted?: boolean
+  frame_length?: number
+  hint?: string
+  owner_surface?: string | null
+  phrase?: string
+  provider?: string
+  reason?: string
+  sample_rate?: number
+  started?: boolean
+}
+
+export interface WakeStopResponse {
+  disabled_persisted?: boolean
+  reason?: string | null
+  stopped?: boolean
+}
+
+export interface WakeInputDeviceStatus {
+  default_samplerate?: number
+  error?: string
+  hostapi?: string
+  hostapi_index?: number
+  max_input_channels?: number
+  name?: string
+  selector?: number | string | null
+}
+
+/** Minimal requester shape — satisfied by both `useGatewayRequest`'s
+ *  `requestGateway` and the `$gateway` instance wrapper below. */
+export type WakeRequester = <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+
+// First-use wake.start lazy-installs the detection engine (onnxruntime is a
+// large wheel) — that legitimately takes minutes. The default 30s WS timeout
+// fired mid-install, leaving a dead button that went blue on its own later.
+const WAKE_START_TIMEOUT_MS = 180_000
+
+const gatewayRequester: WakeRequester = async <T>(method: string, params: Record<string, unknown> = {}) => {
+  const gateway = $gateway.get()
+
+  if (!gateway) {
+    throw new Error('Hermes gateway unavailable')
+  }
+
+  return method === 'wake.start'
+    ? gateway.request<T>(method, params, WAKE_START_TIMEOUT_MS)
+    : gateway.request<T>(method, params)
+}
+
+// Friendly text for the gateway's wake refusal codes (mirrors the TUI's
+// START_REASON_TEXT). Unknown codes fall through raw so new server-side
+// codes stay visible instead of silently disappearing.
+const REASON_TEXT: Record<string, string> = {
+  disabled: 'click to enable',
+  disabled_for_surface: 'scoped to another surface (config wake_word.surface)',
+  not_owner: 'another surface owns the listener',
+  owned: 'another surface owns the listener',
+  unavailable: 'unavailable'
+}
+
+const noticeFrom = (result: { hint?: string; reason?: string | null } | null | undefined): string => {
+  const hint = result?.hint?.trim()
+
+  if (hint) {
+    return hint
+  }
+
+  const reason = result?.reason?.trim()
+
+  return reason ? (REASON_TEXT[reason] ?? reason) : ''
+}
+
+/** Sync the atom from a `wake.status` payload (mount / gateway-ready). */
+export function applyWakeStatus(status: WakeStatusResponse | null | undefined): void {
+  const current = $wakeWord.get()
+  const listening = Boolean(status?.listening)
+  // "Armed but deaf" keeps its input-device hint visible in the tooltip even
+  // though the toggle shows listening.
+  const silent = Boolean(status?.audio_silent)
+
+  $wakeWord.set({
+    ...current,
+    available: Boolean(status?.available),
+    enabled: Boolean(status?.enabled),
+    listening,
+    notice: listening && !silent ? '' : noticeFrom(status),
+    phrase: status?.phrase?.trim() || current.phrase
+  })
+}
+
+/** Sync the atom from a `wake.start` response. A `{started:false, reason}`
+ *  refusal keeps the toggle off and surfaces the reason as the tooltip. */
+export function applyWakeStartResult(result: WakeStartResponse | null | undefined): void {
+  const current = $wakeWord.get()
+
+  if (result?.started) {
+    $wakeWord.set({
+      ...current,
+      available: true,
+      enabled: true,
+      listening: true,
+      notice: '',
+      pending: false,
+      phrase: result.phrase?.trim() || current.phrase
+    })
+    void maybeStartClientCapture(result)
+
+    return
+  }
+
+  stopClientCapture()
+
+  $wakeWord.set({
+    ...current,
+    // The backend probes requirements on start; an explicit "unavailable"
+    // refusal means the feature can't run here right now. Keep `enabled`
+    // (config truth) as-is so the button stays mounted through transient
+    // refusals instead of vanishing mid-session.
+    available: result?.reason === 'unavailable' ? false : current.available,
+    listening: false,
+    notice: noticeFrom(result),
+    pending: false
+  })
+}
+
+/** Sync the atom from a `wake.stop` response. `{stopped:false, reason:'not_owner'}`
+ *  still means WE are not listening, so the toggle lands on off either way. */
+export function applyWakeStopResult(result: WakeStopResponse | null | undefined): void {
+  const current = $wakeWord.get()
+
+  stopClientCapture()
+  $wakeWord.set({
+    ...current,
+    enabled: result?.disabled_persisted ? false : current.enabled,
+    listening: false,
+    notice: result?.stopped ? '' : noticeFrom(result),
+    pending: false
+  })
+}
+
 /**
- * Reconcile with the backend without changing the user's preference: read
- * `wake.status`, and arm only when the config already says enabled. This is the
- * app-start and post-conversation path.
+ * Gateway-ready sync + auto-arm (wiring.tsx). Queries `wake.status` first so
+ * the button knows availability/phrase even when arming is refused, then arms
+ * the listener for this surface exactly like the historical auto-arm did.
+ * Best-effort: a gateway without the wake.* methods leaves the atom at its
+ * hidden default.
  */
-export async function armWakeWord(): Promise<void> {
+export async function armWakeWord(request: WakeRequester = gatewayRequester): Promise<void> {
   try {
-    const status = await wakeWordStatus()
-    applyStatus(status)
+    const status = await request<WakeStatusResponse>('wake.status', {
+      client_capture: true,
+      surface: 'gui'
+    })
 
-    if (!status.enabled || !status.available) {
-      return
-    }
+    applyWakeStatus(status)
 
-    // A backend with no microphone wants ours, and nothing on this device has
-    // agreed to that. Stop here rather than opening it: the config saying "the
-    // wake word is on" was written when the mechanism may have been the gateway's
-    // own microphone, and a re-arm at app start is not a moment the user is in.
-    // The ear button explains it and one click starts the upload.
-    if (status.capture === 'client' && !hasClientCaptureConsent()) {
-      patch({ listening: false, owned: false, streaming: false, reason: WAKE_CLIENT_CAPTURE_UNCONFIRMED, hint: null })
+    if (!status?.available || status.listening) {
+      // Armed already (e.g. another surface/restart) — reattach feeder if client.
+      if (status?.listening) {
+        const mode = (status.capture || '').toLowerCase()
 
-      return
-    }
-
-    if (status.listening && status.owned_by_caller) {
-      // Already ours. Client capture can still be missing after a resume raced
-      // the mic release, so re-assert it.
-      if (status.capture === 'client') {
-        await startClientCapture()
+        if (mode === 'client' || mode === 'remote' || mode === 'external') {
+          void maybeStartClientCapture({
+            started: true,
+            capture: 'client',
+            frame_length: status.frame_length ?? 1280
+          })
+        }
       }
 
       return
     }
 
-    await applyStart(false)
-  } catch (error) {
-    if (isMissingRpcMethod(error)) {
-      patch({ available: false, reason: 'unsupported_backend' })
+    const result = await request<WakeStartResponse>('wake.start', {
+      surface: 'gui',
+      client_capture: true
+    })
 
-      return
-    }
-
-    patch({ reason: 'status_failed', hint: error instanceof Error ? error.message : String(error) })
+    applyWakeStartResult(result)
+  } catch {
+    // Older backends / transient failures — keep whatever we last knew.
   }
 }
 
-/**
- * The composer's ear button. This is the ONLY path that writes
- * `wake_word.enabled`, in both directions.
- */
-export async function toggleWakeWord(): Promise<void> {
-  if ($wakeWord.get().busy) {
+/** The composer button's click handler: stop when listening, start otherwise. */
+export async function toggleWakeWord(request: WakeRequester = gatewayRequester): Promise<void> {
+  const state = $wakeWord.get()
+
+  if (state.pending) {
     return
   }
 
-  // A deliberate click clears the refusal cooldown: the user is asking for the
-  // mic right now, so the next `fed: false` must be acted on immediately rather
-  // than sitting inside a window opened by the previous attempt.
-  feedRefusedAt = 0
-  patch({ busy: true })
+  $wakeWord.set({
+    ...state,
+    // First arm may lazy-install the detection engine — say so instead of
+    // freezing a silent disabled button for the duration.
+    notice: state.listening ? '' : 'arming — first use may take a minute while the engine installs',
+    pending: true
+  })
 
   try {
-    // "Enabled but waiting for this device's consent" reads as ON in the config
-    // and OFF on screen, and the press means START. Without this the one control
-    // offered to allow client capture would disable the wake word instead.
-    const awaitingConsent = $wakeWord.get().reason === WAKE_CLIENT_CAPTURE_UNCONFIRMED
+    if (state.listening) {
+      applyWakeStopResult(await request<WakeStopResponse>('wake.stop', { persist: true }))
+    } else {
+      // persist: true — a deliberate click is consent, so the backend flips
+      // wake_word.enabled in config.yaml (on/off) and the choice sticks for
+      // future sessions. Auto-arm (armWakeWord) never passes it.
+      applyWakeStartResult(
+        await request<WakeStartResponse>('wake.start', {
+          persist: true,
+          surface: 'gui',
+          client_capture: true
+        })
+      )
+    }
+  } catch (error) {
+    const current = $wakeWord.get()
 
-    if ($wakeWord.get().enabled && !awaitingConsent) {
-      await stopClientCapture()
-      const answer = await stopWakeWord({ persist: true })
-      patch({
-        listening: false,
-        owned: false,
-        pausedForVoice: false,
-        enabled: answer.disabled_persisted === false ? $wakeWord.get().enabled : false,
-        reason: answer.stopped ? null : (answer.reason ?? null)
+    $wakeWord.set({
+      ...current,
+      notice: error instanceof Error ? error.message : String(error),
+      pending: false
+    })
+  }
+}
+
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+/**
+ * Post-voice-turn reconcile: the wake word is a persistent setting, so ending a
+ * voice conversation must land the listener back where config says it belongs.
+ * `wake.resume` alone isn't enough — the mic can still be held by the just-torn
+ * -down WebRTC capture, and a fire-and-forget resume that loses that race left
+ * the ear silently off until the user re-toggled. Resume, then verify against
+ * `wake.status` (config `enabled` is the authority) and re-arm, with a couple
+ * of spaced retries to ride out mic-release latency. Never passes `persist` —
+ * this is a passive path and must not flip config.
+ */
+export async function resumeWakeAfterVoice(request: WakeRequester = gatewayRequester): Promise<void> {
+  try {
+    await request('wake.resume', {})
+  } catch {
+    // Older backend without wake.* — nothing to reconcile.
+    return
+  }
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const status = await request<WakeStatusResponse>('wake.status', {
+        client_capture: true,
+        surface: 'gui'
       })
 
-      return
-    }
+      applyWakeStatus(status)
 
-    await applyStart(true)
-  } catch (error) {
-    patch({
-      reason: isMissingRpcMethod(error) ? 'unsupported_backend' : 'toggle_failed',
-      hint: error instanceof Error ? error.message : String(error)
-    })
-  } finally {
-    patch({ busy: false })
-  }
-}
-
-// --- voice-conversation handover -------------------------------------------
-
-/**
- * Release the device before a voice conversation opens its own mic.
- *
- * Resolves only once the detector has actually let go — the conversation awaits
- * this. Opening capture while the wake listener still holds the device is the
- * "clicked voice, nothing happened" bug, and on a client-capture backend BOTH
- * ends have to release: the local lease here and the detector there.
- */
-export async function pauseWakeForVoice(): Promise<void> {
-  if (!$wakeWord.get().listening && !captureLease) {
-    return
-  }
-
-  patch({ pausedForVoice: true })
-  await stopClientCapture()
-
-  try {
-    await pauseWakeWord()
-  } catch {
-    // No detector / older backend — nothing was holding the mic.
-  }
-}
-
-/**
- * Re-arm after a conversation ends. RECONCILE, don't just resume: the wake word
- * is a persistent setting, so a raw `wake.resume` that loses the mic-release race
- * would leave the ear off until the next restart. `armWakeWord` re-reads the
- * truth and starts from scratch when the resume didn't take.
- */
-export async function resumeWakeAfterVoice(): Promise<void> {
-  if (!$wakeWord.get().pausedForVoice) {
-    return
-  }
-
-  patch({ pausedForVoice: false })
-
-  try {
-    const answer = await resumeWakeWord()
-
-    if (answer.resumed) {
-      const status = await wakeWordStatus()
-      applyStatus(status)
-
-      if (status.capture === 'client' && status.owned_by_caller) {
-        await startClientCapture()
+      // Config says off (or the feature can't run) — off is the correct rest
+      // state. A user /wake off during the voice turn stays respected.
+      if (!status?.enabled || !status.available) {
+        return
       }
 
-      return
+      if (status.listening) {
+        // Server lease is still armed (e.g. wake.resume after voice).
+        // Client PCM was stopped on wake.detected — reattach if needed.
+        const mode = (status.capture || '').toLowerCase()
+
+        if (mode === 'client' || mode === 'remote' || mode === 'external') {
+          void maybeStartClientCapture({
+            started: true,
+            capture: 'client',
+            frame_length: status.frame_length ?? 1280
+          })
+        }
+
+        return
+      }
+
+      const started = await request<WakeStartResponse>('wake.start', {
+        surface: 'gui',
+        client_capture: true
+      })
+
+      applyWakeStartResult(started)
+
+      if (started?.started) {
+        return
+      }
+
+      // Another surface holds the mic lease — theirs to keep.
+      if (started?.reason === 'owned') {
+        return
+      }
+    } catch {
+      // Transient (mic still releasing) — fall through to the next attempt.
     }
-  } catch {
-    // fall through to the full reconcile
-  }
 
-  await armWakeWord()
+    await sleep(1500)
+  }
 }
 
-// --- detection --------------------------------------------------------------
-
-/**
- * What the gateway tells us about a detection (`wake.detected`, emitted by
- * `tui_gateway/server.py`).
- *
- * All three fields are decisions the BACKEND already made and the client used to
- * throw away:
- *
- *  * `phrase`  — which of the enrolled phrases fired.
- *  * `profile` — whose phrase it was. Sherpa builds a phrase→profile map from
- *    every wake-enabled profile's config (`tools/wake_word.py`), so "hey scout"
- *    and "hey hermes" can wake the same detector into different profiles. Null
- *    on a single-phrase engine.
- *  * `startNewSession` — `wake_word.start_new_session`, default true: whether the
- *    phrase opens a FRESH chat or continues the one on screen.
- */
-export interface WakeDetection {
-  phrase: string
-  profile: null | string
-  startNewSession: boolean
+/** Test-only reset. */
+export function resetWakeWordState(): void {
+  stopClientCapture()
+  $wakeWord.set(INITIAL_WAKE_WORD_STATE)
 }
-
-type StartConversation = (detection: WakeDetection) => void
-
-let onDetected: StartConversation | null = null
-
-/** Register what a detection should open. The composer owns that decision, so it
- *  hands its starter in rather than this module reaching into the chat. */
-export function setWakeConversationStarter(starter: null | StartConversation): void {
-  onDetected = starter
-}
-
-/**
- * `wake.detected` — the phrase fired.
- *
- * Order matters: free the mic FIRST so the conversation's own capture can open
- * the device, then chime, then start. The phrase audio itself is dropped by the
- * Rust machine when it arms, so the agent is never asked "hey hermes".
- */
-addGatewayEventListener(event => {
-  if (event.type !== 'wake.detected') {
-    return
-  }
-
-  const payload = (event.payload ?? {}) as {
-    phrase?: string
-    profile?: null | string
-    start_new_session?: boolean
-  }
-
-  const phrase = payload.phrase || $wakeWord.get().phrase
-
-  patch({ phrase })
-
-  const detection: WakeDetection = {
-    phrase,
-    profile: payload.profile?.trim() || null,
-    // Absent means the backend default (true) — only an explicit `false` keeps
-    // the conversation in the chat already on screen.
-    startNewSession: payload.start_new_session !== false
-  }
-
-  void (async () => {
-    await stopClientCapture()
-    playWakeSound()
-    // Chime AND light: on a machine with sounds muted the chime is the only
-    // acknowledgement, and it is silent. Lit before the starter runs so the
-    // indicator covers the whole gap while the conversation opens.
-    activateWakeIndicator()
-    onDetected?.(detection)
-  })()
-})

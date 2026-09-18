@@ -1,7 +1,7 @@
 import '@/app/shell/nav-contrib' // side-effect: registers the app's own rail rows
 
 import { useEffect, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 
 import { ConnectionSwitcher } from '@/app/chat/sidebar/connection-switcher'
 import { ProfileRail } from '@/app/chat/sidebar/profile-switcher'

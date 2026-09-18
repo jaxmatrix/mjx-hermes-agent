@@ -18,6 +18,7 @@ describe('desktop i18n runtime translator', () => {
   it('translates string paths for the active runtime locale', () => {
     setRuntimeI18nLocale('zh')
 
+    expect(translateNow('boot.ready')).toBe('Hermes 桌面版已就绪')
     expect(translateNow('notifications.voice.noSpeechDetected')).toBe('没有检测到语音')
     expect(translateNow('composer.lookupNoMatches')).toBe('没有匹配项。')
     expect(translateNow('assistant.tool.statusRecovered')).toBe('已恢复')
@@ -43,6 +44,12 @@ describe('desktop i18n runtime translator', () => {
     setRuntimeI18nLocale('zh-hant')
     expect(translateNow('settings.appearance.title')).toBe('外觀')
     expect(translateNow('settings.nav.providerApiKeys')).toBe('API 金鑰')
+
+    setRuntimeI18nLocale('ar')
+    expect(translateNow('settings.appearance.reasoningCollapsedTitle')).toBe('طي التفكير افتراضيًا')
+    expect(translateNow('settings.appearance.reasoningCollapsedDesc')).toBe(
+      'أبقِ التفكير المتدفق متاحًا دون توسيعه حتى تفتحه.'
+    )
   })
 
   it('keeps translated settings field copy addressable from schema keys', () => {
@@ -53,19 +60,16 @@ describe('desktop i18n runtime translator', () => {
   })
 
   it('falls back to English when the active locale cannot resolve a key', () => {
-    // A key ja DOES translate, and to something different from English — mutate
-    // one that already reads the same in both and the fallback is unfalsifiable.
-    const appearance = TRANSLATIONS.ja.settings.appearance as { title?: string }
-    const originalTitle = appearance.title
+    const boot = TRANSLATIONS.ja.boot as { ready?: string }
+    const originalReady = boot.ready
 
     try {
-      expect(originalTitle).toBe('外観')
-      appearance.title = undefined
+      boot.ready = undefined
       setRuntimeI18nLocale('ja')
 
-      expect(translateNow('settings.appearance.title')).toBe('Appearance')
+      expect(translateNow('boot.ready')).toBe('Hermes Desktop is ready')
     } finally {
-      appearance.title = originalTitle
+      boot.ready = originalReady
     }
   })
 

@@ -30,7 +30,7 @@ import { newChatBubble } from '@/store/chat-bubbles'
 import { NEW_SESSION_FLASH_EVENT } from '@/store/layout'
 import { normalizeProfileKey } from '@/store/profile'
 import { setActiveProfile } from '@/store/profiles'
-import { newSession, startSessionInWorkspace } from '@/store/session'
+import { newSession, startSessionInWorkspace } from '@/store/session-lifecycle'
 import { focusWorkspaceSession, newSessionTab } from '@/store/session-states'
 
 /**
