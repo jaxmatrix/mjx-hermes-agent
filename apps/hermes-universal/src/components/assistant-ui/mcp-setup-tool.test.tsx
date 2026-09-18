@@ -30,7 +30,7 @@ vi.mock('@/lib/gateway-rpc', async importActual => {
   return { ...actual, respondMcpSetup: vi.fn().mockResolvedValue({ status: 'ok' }) }
 })
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -83,7 +83,7 @@ import {
 } from '@/hermes'
 import { respondMcpSetup } from '@/lib/gateway-rpc'
 import { removeMcpServerEntry, writeMcpServerEntry } from '@/lib/mcp-servers'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { notifyError } from '@/store/notifications'
 import { sessionMcpSetupRequest, setSessionMcpSetup } from '@/store/prompts'
 import { seedActiveSession } from '@/test-sessions'

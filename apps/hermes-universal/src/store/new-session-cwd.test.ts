@@ -20,7 +20,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -33,7 +33,7 @@ vi.mock('@/store/gateway', async () => {
 import { $currentCwd, ensureSession, resetChat } from '@/store/chat'
 import { $chatBubbles, newChatBubble } from '@/store/chat-bubbles'
 import { $defaultProjectDir } from '@/store/default-project-dir'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { NO_PROJECT_ID } from '@/store/project-scope'
 import { $projectScope, $projectTree, ALL_PROJECTS, resolveNewSessionCwd } from '@/store/projects'
 import { $activeStoredSessionId, newSession } from '@/store/session-lifecycle'

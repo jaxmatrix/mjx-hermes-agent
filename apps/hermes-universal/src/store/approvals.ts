@@ -20,7 +20,7 @@
  *    client's transport was detached.
  */
 
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { type ApprovalRequest, setSessionApproval } from '@/store/prompts'
 import type { PendingApprovalPayload, SessionResumeResponse } from '@/types/hermes'
 

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -18,7 +18,7 @@ vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undef
 
 import { applyResumedApproval, readApprovalPayload, replayPendingApproval } from '@/store/approvals'
 import { routeGatewayEvent } from '@/store/event-router'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { clearAllPrompts, sessionApprovalRequest } from '@/store/prompts'
 import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
 

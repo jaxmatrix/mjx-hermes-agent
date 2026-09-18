@@ -14,7 +14,7 @@ vi.mock('@/store/connection', async () => {
 
   return { $connection: atom<unknown>({ baseUrl: 'http://127.0.0.1:1', mode: 'local' }), connectLocal }
 })
-vi.mock('@/store/gateway', () => ({ requestGateway }))
+vi.mock('@/store/gateway-client', () => ({ requestGateway }))
 vi.mock('@/store/local-backend', () => ({ restartLocalBackend }))
 vi.mock('@/store/notifications', () => ({ notify }))
 

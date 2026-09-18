@@ -30,7 +30,7 @@ import type { ReadableAtom } from 'nanostores'
 
 import { backendScopeKey, LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import { atom, computed } from '@/store/atom'
-import { $gatewayState, requestGateway } from '@/store/gateway'
+import { $gatewayState, requestGateway } from '@/store/gateway-client'
 import { $gatewaySwitching } from '@/store/gateway-switch'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 

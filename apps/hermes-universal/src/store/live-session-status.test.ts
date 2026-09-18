@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as HermesApi from '@/hermes'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -28,7 +28,7 @@ vi.mock('@/hermes', async importOriginal => ({
 }))
 
 import { listAllProfileSessions } from '@/hermes'
-import { $gatewayState, requestGateway } from '@/store/gateway'
+import { $gatewayState, requestGateway } from '@/store/gateway-client'
 import {
   type LiveSessionStatusItem,
   type LiveSessionStatusResponse,

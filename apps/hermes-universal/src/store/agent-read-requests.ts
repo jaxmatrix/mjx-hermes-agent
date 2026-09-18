@@ -46,7 +46,7 @@ import {
   respondTour,
   respondWindowRead
 } from '@/lib/gateway-rpc'
-import { addGatewayEventListener } from '@/store/gateway'
+import { addGatewayEventListener } from '@/store/gateway-client'
 
 /** Windowing the read_preview tool asks for. Both are optional — the tool omits
  *  them entirely when it wants the whole page. */
@@ -99,10 +99,7 @@ export interface AgentRequestContext {
   sessionId: null | string
 }
 
-export type PreviewActor = (
-  request: PreviewActRequest,
-  ctx: AgentRequestContext
-) => Promise<unknown> | unknown
+export type PreviewActor = (request: PreviewActRequest, ctx: AgentRequestContext) => Promise<unknown> | unknown
 
 /** One `tour` tool call. `action` is `targets`/`show`/`start`/`next`/`prev`/
  *  `stop`; `surface` picks the app chrome or the preview pane. The answer names

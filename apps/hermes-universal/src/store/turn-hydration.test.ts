@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // `store/turn-hydration` pulls in `store/turn-lifecycle`, which imports the
 // gateway client. Neither the socket nor the RPC is under test here.
-vi.mock('@/store/gateway', () => ({
+vi.mock('@/store/gateway-client', () => ({
   $gatewayState: atom('open'),
   requestGateway: vi.fn()
 }))

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as DesktopFsModule from '@/lib/desktop-fs'
-import type * as GatewayModule from '@/store/gateway'
+import type * as GatewayModule from '@/store/gateway-client'
 import type * as NotificationsModule from '@/store/notifications'
 
 const { notify, notifyError, readDesktopDir, readDesktopFileText, requestGateway, writeDesktopFileText } = vi.hoisted(
@@ -18,7 +18,7 @@ const { notify, notifyError, readDesktopDir, readDesktopFileText, requestGateway
 // Partial mocks throughout: store/connection subscribes to `$gatewayState` at
 // import time, and store/projects pulls several other helpers out of each of
 // these modules — the real ones have to stay underneath.
-vi.mock('@/store/gateway', async importOriginal => ({
+vi.mock('@/store/gateway-client', async importOriginal => ({
   ...(await importOriginal<typeof GatewayModule>()),
   requestGateway
 }))

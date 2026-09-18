@@ -49,7 +49,7 @@ import { noteMissedSteer } from '@/store/chat'
 import { normalizeQuestions, readChoices, readLockedAnswers } from '@/store/clarify'
 import { routeCompactionEvent } from '@/store/compaction'
 import { setConnectionEventSink, setConnectionStreamReset } from '@/store/connection-clients'
-import { addGatewayEventListener, requestGateway } from '@/store/gateway'
+import { addGatewayEventListener, requestGateway } from '@/store/gateway-client'
 import {
   notifyCronChanged,
   notifyPairingChanged,

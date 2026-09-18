@@ -19,7 +19,7 @@ vi.mock('@/store/gateway-config', () => ({ resolveWsUrl: vi.fn(async () => 'ws:/
 vi.mock('@/transport/tauri-websocket', () => ({ TauriWebSocket: class {} }))
 vi.mock('@/contrib/events', () => ({ emitGatewayEvent: vi.fn() }))
 
-import { closeGateway, connectGateway, getGatewayClient, setGatewayRequestProfile } from './gateway'
+import { closeGateway, connectGateway, getGatewayClient, setGatewayRequestProfile } from './gateway-client'
 
 afterEach(() => {
   closeGateway()

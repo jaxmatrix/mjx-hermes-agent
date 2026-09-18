@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -19,7 +19,7 @@ vi.mock('@/store/pet', async importActual => {
 })
 
 import type { ToolCallPart } from '@/lib/chat-messages'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import {
   applyResumedMcpSetup,
   hasMcpSetupRequest,

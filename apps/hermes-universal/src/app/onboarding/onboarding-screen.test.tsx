@@ -24,7 +24,7 @@ vi.mock('@/hermes', () => ({
   startOAuthLogin: vi.fn(),
   updateEnvVars: vi.fn(async () => ({ ok: true }))
 }))
-vi.mock('@/store/gateway', () => ({ requestGateway: vi.fn(async () => ({})) }))
+vi.mock('@/store/gateway-client', () => ({ requestGateway: vi.fn(async () => ({})) }))
 // The clipboard goes through the OS seam, not `navigator.clipboard` — on
 // WebKitGTK the web API is refused in cases Chromium allows, and this command IS
 // the sign-in flow (MJXHRM-415). Asserting on the seam is also what makes the

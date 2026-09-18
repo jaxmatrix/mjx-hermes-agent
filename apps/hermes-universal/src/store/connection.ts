@@ -41,7 +41,7 @@ import {
   type StatusInfo
 } from '@/store/connection-atoms'
 import { isLatched, latchBackendFailure, releaseLatch } from '@/store/connection-latches'
-import { $gatewayState, closeGateway, connectGateway, lastGatewayCloseCode } from '@/store/gateway'
+import { $gatewayState, closeGateway, connectGateway, lastGatewayCloseCode } from '@/store/gateway-client'
 import { chooseGatedAuth, type Connection } from '@/store/gateway-config'
 import {
   clearGatewayTarget,

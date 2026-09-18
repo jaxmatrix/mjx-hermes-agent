@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { selectRemotePaths } from '@/lib/desktop-fs'
 import { ensureSession } from '@/store/chat'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { notifyError } from '@/store/notifications'
 import { requestForSession } from '@/store/session-request-router'
 
@@ -26,7 +26,7 @@ vi.mock('@/store/data-url-read-max', () => ({
   readCappedFileBase64: readCapped
 }))
 vi.mock('@/store/chat', () => ({ ensureSession: vi.fn() }))
-vi.mock('@/store/gateway', () => ({ requestGateway: vi.fn() }))
+vi.mock('@/store/gateway-client', () => ({ requestGateway: vi.fn() }))
 // A session with a STORED id dispatches through MJXHRM-480's router, so an
 // attachment reaches the gateway that owns the session rather than whichever one
 // the window happens to be pointed at (MJXHRM-446 made those two different

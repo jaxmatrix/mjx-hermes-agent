@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type * as GatewayModule from '@/store/gateway'
+import type * as GatewayModule from '@/store/gateway-client'
 
 const { getHermesConfig, localRepoScanSupported, requestGateway, scanRepos, setApiRequestProfile } = vi.hoisted(() => ({
   getHermesConfig: vi.fn(async () => ({}) as unknown),
@@ -25,7 +25,7 @@ vi.mock('@/lib/desktop-git', () => ({ desktopGit: vi.fn(() => ({ scanRepos })) }
 vi.mock('@/store/repo-scan', () => ({ localRepoScanSupported, scanLocalGitRepos: vi.fn() }))
 vi.mock('@/hermes', () => ({ getHermesConfig, setApiRequestProfile }))
 // Partial mock: store/connection subscribes to `$gatewayState` at import time.
-vi.mock('@/store/gateway', async importOriginal => ({
+vi.mock('@/store/gateway-client', async importOriginal => ({
   ...(await importOriginal<typeof GatewayModule>()),
   requestGateway
 }))

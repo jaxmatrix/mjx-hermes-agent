@@ -28,7 +28,7 @@ vi.mock('@/transport/tauri-websocket', () => ({ TauriWebSocket: class {} }))
 import { onGatewayEvent } from '@/contrib/events'
 import type { Connection } from '@/store/gateway-config'
 
-import { addGatewayEventListener, closeGateway, connectGateway } from './gateway'
+import { addGatewayEventListener, closeGateway, connectGateway } from './gateway-client'
 
 afterEach(() => {
   closeGateway()

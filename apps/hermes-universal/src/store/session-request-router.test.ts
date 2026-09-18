@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const requestGateway = vi.fn(async (..._args: unknown[]) => ({ ok: true }))
 const $gatewayState = atom<string>('open')
 
-vi.mock('@/store/gateway', () => ({
+vi.mock('@/store/gateway-client', () => ({
   $gatewayState,
   requestGateway: (...args: unknown[]) => requestGateway(...args)
 }))
@@ -121,9 +121,9 @@ describe('requestForSession', () => {
     $activeProfile.set('work')
     $gatewayState.set('closed')
 
-    const error = (await requestForSession('s1', 'session.resume').catch(
-      (e: unknown) => e
-    )) as InstanceType<typeof SessionRouteError>
+    const error = (await requestForSession('s1', 'session.resume').catch((e: unknown) => e)) as InstanceType<
+      typeof SessionRouteError
+    >
 
     expect(error.scopeKey).toBe('work')
     expect(`${error.message} ${error.scopeKey}`).not.toMatch(/https?:|127\.0\.0\.1|ws:/)

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
 
-vi.mock('@/store/gateway', async () => {
+vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
 
   return {
@@ -19,7 +19,7 @@ vi.mock('@/lib/completion-sound', () => ({ playCompletionSound: vi.fn() }))
 
 import { $approvalModes, approvalModeForProfile } from '@/store/approval-mode'
 import { routeGatewayEvent } from '@/store/event-router'
-import { requestGateway } from '@/store/gateway'
+import { requestGateway } from '@/store/gateway-client'
 import { $activeProfile } from '@/store/profiles'
 import { $activeSessionKey, $sessionStates, ensureSessionSlice } from '@/store/session-state-types'
 

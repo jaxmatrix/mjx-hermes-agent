@@ -54,6 +54,11 @@ store/tab-ref.*
 # in universal's layer competes with it, so desktop owns this one.
 !store/connection-registry-state.ts
 store/event-router*.*
+# Universal's JSON-RPC wire client (connect/close, request, the event tap, the
+# active-profile stamp) over the Rust-backed TauriWebSocket. Desktop's
+# `store/gateway.ts` is a registry that multiplexes clients, not a client, so it
+# lands verbatim as an AUTO file and only the wire half is protected.
+store/gateway-client.*
 store/gateway-secondaries.*
 store/gateway-soft-switch.*
 store/live-session-status.*
@@ -69,7 +74,6 @@ store/ssh-backend.*
 # desktop counterpart — desktop's `store/session.ts` is the session STATE store
 # and lands verbatim as an AUTO file, so only the lifecycle half is protected.
 store/session-lifecycle.*
-store/gateway.ts
 store/chat.ts
 store/transcript-paint.*
 store/artifacts.*

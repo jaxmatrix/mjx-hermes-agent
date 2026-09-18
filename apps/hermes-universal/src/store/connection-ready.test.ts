@@ -5,7 +5,7 @@ vi.mock('@/hermes', () => ({ getStatus: vi.fn(), setApiRequestProfile: vi.fn() }
 import { $activeConnection, describeConnection } from './active-connection'
 import { $connection, $connectionPhase, $hasConnected } from './connection'
 import { $connectionReady } from './connection-ready'
-import { $gatewayState } from './gateway'
+import { $gatewayState } from './gateway-client'
 import { $restoring } from './gateway-restore'
 import { $gatewaySwitching } from './gateway-switch'
 

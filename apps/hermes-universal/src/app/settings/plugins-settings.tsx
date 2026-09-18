@@ -28,7 +28,7 @@ import {
 } from '@/store/agent-plugins'
 import { useStore } from '@/store/atom'
 import { $connection } from '@/store/connection'
-import { $gatewayState, requestGateway } from '@/store/gateway'
+import { $gatewayState, requestGateway } from '@/store/gateway-client'
 import { modeIsRemoteLike } from '@/store/gateway-config'
 import { $changeEventsAvailable, $pluginsChangeTick } from '@/store/live-sync'
 import { notify, notifyError } from '@/store/notifications'
