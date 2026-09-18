@@ -43,7 +43,7 @@ import { MobileShell } from './shell/mobile-shell'
 import { MobileSurfaceShell } from './shell/mobile-surface-shell'
 import { AppShell, SidebarProvider } from './shell/sidebar'
 import { Statusbar } from './shell/statusbar'
-import { Titlebar } from './shell/titlebar'
+import { Titlebar } from './shell/titlebar-view'
 
 // Connected-guard + routing. Until a gateway connection is ready we show the
 // full-screen ConnectScreen (no nav). Once ready, the first-run onboarding
