@@ -222,8 +222,12 @@ fs.writeFileSync(
   ].join('\n') + '\n'
 )
 
+// Both worklists are only meaningful during a real resync, when the
+// classification above still saw universal's pre-copy files. A dry run AFTER one
+// compares desktop against itself and finds nothing — writing that would erase a
+// worklist still being worked through, which is exactly what happened to both.
 const patched = rows.filter((r) => r.patch)
-fs.writeFileSync(
+if (apply || patched.length) fs.writeFileSync(
   path.join(SYNC_DIR, 'patch-worklist.txt'),
   '# Phase 3 worklist: AUTO files whose universal version carried platform work\n' +
     "# (Tauri, observability, mobile, WebKit) that desktop's version overwrites.\n" +
@@ -233,10 +237,6 @@ fs.writeFileSync(
 )
 
 const losing = rows.filter((r) => r.dropped?.length)
-// Only meaningful during a real resync, when the classification above still saw
-// universal's pre-copy files. A dry run AFTER one compares desktop against
-// itself and finds nothing — writing that would erase a worklist still being
-// worked through, which is exactly what happened once.
 if (apply || losing.length) fs.writeFileSync(
   path.join(SYNC_DIR, 'dropped-exports.txt'),
   '# Symbols universal exported that desktop\'s version of the same file does not.\n' +
@@ -247,6 +247,21 @@ if (apply || losing.length) fs.writeFileSync(
     losing.map((r) => `\n${r.dest}\n` + r.dropped.map((n) => `    ${n}`).join('\n')).join('') +
     '\n'
 )
+
+// Two blind spots of a path-by-path comparison, reported rather than thrown
+// because resolving them takes judgement: `x.ts` beside `x.tsx` (desktop changed
+// the extension, so both now exist), and `x.ts(x)` beside `x/index.ts(x)` (module
+// resolution picks the file and the directory goes dead).
+const tree = new Set([...universalFiles, ...targets.keys()])
+const collisions = []
+for (const p of [...tree].sort()) {
+  if (!/\.tsx?$/.test(p)) continue
+  if (p.endsWith('.ts') && tree.has(`${p}x`)) collisions.push(`extension  ${p}  <->  ${p}x`)
+  const stem = p.replace(/\.tsx?$/, '')
+  for (const index of [`${stem}/index.ts`, `${stem}/index.tsx`]) {
+    if (tree.has(index)) collisions.push(`shadow     ${p}  <->  ${index}`)
+  }
+}
 
 const added = rows.filter((r) => r.bucket === 'AUTO' && !r.exists).length
 const churn = rows.filter((r) => r.bucket === 'AUTO' && r.exists && !r.identical).length
@@ -266,6 +281,9 @@ console.log(`PATCH       ${patched.length}\tof the overwritten carry platform wo
 console.log(
   `DROPPED     ${losing.length}\tof the overwritten lose ${losing.reduce((n, r) => n + r.dropped.length, 0)} exported symbols`
 )
+console.log('')
+console.log(`collisions  ${collisions.length}\tsame module under two paths — resolve by hand`)
+for (const c of collisions) console.log(`  ${c}`)
 console.log('')
 console.log(`report      sync/report.tsv`)
 console.log(`worklist    sync/patch-worklist.txt`)
