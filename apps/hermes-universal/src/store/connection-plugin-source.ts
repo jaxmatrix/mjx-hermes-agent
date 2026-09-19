@@ -1,6 +1,6 @@
 import { backendScopeKey } from '@/lib/backend-scope'
 import { $activeConnection } from '@/store/active-connection'
-import { $connectionsRegistry, connectionsRoster } from '@/store/connections'
+import { $registryView, connectionsRoster } from '@/store/connections'
 import { leaseSecondary, releaseSecondary } from '@/store/gateway-secondaries'
 import {
   AGENT_ROUTING_UNAVAILABLE,
@@ -36,7 +36,7 @@ const PREWARM_MIN_INTERVAL_MS = 60_000
 const lastWarm = new Map<string, number>()
 
 function describe(): PluginConnection[] {
-  const registry = $connectionsRegistry.get()
+  const registry = $registryView.get()
   const active = $activeConnection.get()
 
   return registry.connections.map(row => ({
@@ -52,7 +52,7 @@ function describe(): PluginConnection[] {
 export const registryConnectionSource: PluginConnectionSource = {
   agents: async (): Promise<PluginAgentRoster> => {
     const roster = await connectionsRoster()
-    const labels = new Map($connectionsRegistry.get().connections.map(row => [row.id, row.label]))
+    const labels = new Map($registryView.get().connections.map(row => [row.id, row.label]))
 
     return {
       agents: roster.agents.map(agent => ({
@@ -72,7 +72,7 @@ export const registryConnectionSource: PluginConnectionSource = {
   connections: async (): Promise<PluginConnection[]> => describe(),
 
   ensureAgent: async (connectionId: string, profile: string): Promise<PluginAgentHandle> => {
-    const known = $connectionsRegistry.get().connections.some(row => row.id === connectionId)
+    const known = $registryView.get().connections.some(row => row.id === connectionId)
 
     if (!known) {
       return { error: AGENT_ROUTING_UNAVAILABLE, ok: false }

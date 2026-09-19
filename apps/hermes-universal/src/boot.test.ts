@@ -20,6 +20,12 @@ const { calls, platform, state } = vi.hoisted(() => ({
 
 const lever = (name: string) => vi.fn(() => void calls.push(name))
 
+// Loaded by a dynamic import, so it lands after the synchronous levers: counted
+// on its own rather than in `calls`, whose order is asserted.
+const registerUniversalPages = vi.hoisted(() => vi.fn())
+
+vi.mock('./app/universal/pages', () => ({ registerUniversalPages }))
+
 vi.mock('./lib/platform', () => ({
   get IS_MOBILE() {
     return platform.mobile
@@ -86,6 +92,7 @@ async function boot(): Promise<void> {
 
 beforeEach(() => {
   calls.length = 0
+  registerUniversalPages.mockClear()
   platform.mobile = false
   platform.tauri = true
   state.background = null
@@ -136,6 +143,20 @@ describe('bootUniversal', () => {
     await boot()
 
     expect(calls).not.toContain('installNativeContextMenuGuard')
+  })
+
+  // Desktop's Settings cannot take a section, so universal's Gateways page joins
+  // desktop's workspace as a contribution — where desktop's workspace is.
+  it('contributes universal’s pages only in a window that renders desktop’s root', async () => {
+    await boot()
+    await vi.waitFor(() => expect(registerUniversalPages).toHaveBeenCalledTimes(1))
+
+    registerUniversalPages.mockClear()
+    state.desktopRoot = false
+    await boot()
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    expect(registerUniversalPages).not.toHaveBeenCalled()
   })
 
   // The launch identity comes from Rust, so it cannot land before the first

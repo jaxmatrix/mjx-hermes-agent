@@ -116,7 +116,8 @@ export function bootUniversal(): void {
 
   // A notification outlives the process that sent it, so a tap can arrive cold:
   // the listener has to exist before any surface mounts. A no-op where the
-  // platform has no activation (desktop — desktop's tree has its own door there).
+  // platform has no activation (a desktop OS: the plugin has no click hook, so
+  // the bridge leaves desktop's `onNotificationActivate` door absent too).
   lever('notification taps', () => installNotificationActivation())
 
   // Desktop's context menu never cancels the gesture (Electron shows no menu by
@@ -124,6 +125,16 @@ export function bootUniversal(): void {
   // listener on the window, which is what lets a dev build keep Inspect Element.
   if (hostsWindowChrome()) {
     lever('native context menu', () => void installNativeContextMenuGuard())
+
+    // Universal's own pages (the Gateways page: SSH keys, tunnels, sign-in) join
+    // desktop's workspace as contributions, since desktop's Settings cannot take
+    // a section. Its own chunk, and late is fine: the route table, the palette
+    // and the status bar all re-read the registry when it changes.
+    lever('universal pages', () => {
+      void import('./app/universal/pages')
+        .then(pages => pages.registerUniversalPages())
+        .catch(() => console.error('[boot] universal pages failed to load'))
+    })
   }
 
   // Background mode (MJXHRM-436), in the window that owns the app's state only:

@@ -1253,7 +1253,16 @@ export const en: Translations = {
       },
       restartLocalConfirm: 'Restart',
       profileRestartMessage: name => `Now using ${name}. Restart the backend to reload it?`,
-      profileRestartAction: 'Restart backend'
+      profileRestartAction: 'Restart backend',
+      localNotRunning: 'The backend on this device is not running.',
+      updateNeedsConnection: 'Connect to this gateway to update it.',
+      profileGatewayUnsupported:
+        'A profile cannot have a gateway of its own here. Add the gateway under Settings → Gateway and switch to it.',
+      secretsAlwaysStored:
+        'Hermes always keeps saved secrets in the credential store of this device, so this cannot be turned off.',
+      sshRestartUnsupported:
+        'A backend on an SSH host cannot be restarted from here. Reconnect to it, or restart it on the host.',
+      managePage: 'Gateways: keys, tunnels and sign-in'
     },
     managedUpdates: {
       title: 'Managed updates',

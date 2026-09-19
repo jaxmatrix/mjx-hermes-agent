@@ -6,18 +6,14 @@ import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
-import {
-  CONNECTION_SEARCH_THRESHOLD,
-  connectionEndpointLabel,
-  connectionSearchMatches,
-  sortConnectionsForDisplay
-} from '@/lib/connection-display'
+import { CONNECTION_SEARCH_THRESHOLD, sortConnectionsForDisplay } from '@/lib/connection-display'
+import { connectionEndpointLabel, connectionSearchMatches } from '@/lib/connection-endpoint'
 import { cn } from '@/lib/utils'
 import { $activeConnection } from '@/store/active-connection'
 import { useStore } from '@/store/atom'
 import { $latchedConnections, releaseLatch } from '@/store/connection-latches'
 import { hasMultipleUpdateTargets, updateAllTargets } from '@/store/connection-updates'
-import { $connectionsRegistry, refreshConnections, setLaunchMode } from '@/store/connections'
+import { $registryView, refreshConnections, setLaunchMode } from '@/store/connections'
 import { notify, notifyError } from '@/store/notifications'
 
 import { SettingsContent } from '../primitives'
@@ -43,7 +39,7 @@ import { type ConnectionDraft, ConnectionEditor } from './connection-editor'
 export function ConnectionsSection() {
   const { t } = useI18n()
   const c = t.settings.connections
-  const registry = useStore($connectionsRegistry)
+  const registry = useStore($registryView)
   const active = useStore($activeConnection)
   const latched = useStore($latchedConnections)
   const [selected, setSelected] = useState<null | string>(null)

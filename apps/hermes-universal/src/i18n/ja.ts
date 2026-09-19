@@ -1661,7 +1661,16 @@ export const ja = defineLocale({
       },
       restartLocalConfirm: '再起動',
       profileRestartMessage: name => `${name} を使用中です。バックエンドを再起動して再読み込みしますか？`,
-      profileRestartAction: 'バックエンドを再起動'
+      profileRestartAction: 'バックエンドを再起動',
+      localNotRunning: 'このデバイスのバックエンドは実行されていません。',
+      updateNeedsConnection: '更新するにはこのゲートウェイに接続してください。',
+      profileGatewayUnsupported:
+        'ここではプロファイルごとに専用のゲートウェイを設定できません。設定 → ゲートウェイでゲートウェイを追加し、切り替えてください。',
+      secretsAlwaysStored:
+        'Hermes は保存したシークレットを常にこのデバイスの資格情報ストアに保管するため、オフにはできません。',
+      sshRestartUnsupported:
+        'SSH ホスト上のバックエンドはここから再起動できません。再接続するか、ホスト側で再起動してください。',
+      managePage: 'ゲートウェイ: 鍵・トンネル・サインイン'
     },
     voiceLevels: {
       title: 'レベル',

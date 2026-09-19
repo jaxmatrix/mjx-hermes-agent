@@ -1,7 +1,7 @@
 import { api } from '@/lib/api'
 import type { PaginatedSessions, SessionInfo } from '@/types/hermes'
 
-import { $connectionsRegistry, type ConnectionView } from './connections'
+import { $registryView, type ConnectionView } from './connections'
 import { refreshTileTitles } from './session-key-states'
 
 /**
@@ -126,7 +126,7 @@ export async function fetchRegistrySessionRows(
   params: SourceSessionParams = {},
   excludeConnectionId?: null | string
 ): Promise<SourceSessionRow[]> {
-  const sources = $connectionsRegistry
+  const sources = $registryView
     .get()
     .connections.filter(source => source.id !== excludeConnectionId && Boolean(source.url))
 

@@ -3,7 +3,7 @@ import { useMemo } from 'react'
 import { readTranscriptTail } from '@/lib/transcript-tail-cache'
 import { useStore } from '@/store/atom'
 import { $connectionClients, isAmbientConnection, retryConnectionClient } from '@/store/connection-clients'
-import { $connectionsRegistry } from '@/store/connections'
+import { $registryView } from '@/store/connections'
 import { $sessionKeyTabs, closeSessionTile, tileKeyFor } from '@/store/session-key-states'
 import { $sessionKeyStates, scopedStoredKey } from '@/store/session-state-types'
 import { type TabConnection, tabConnectionFor } from '@/store/tab-connection'
@@ -29,7 +29,7 @@ export function useTabConnection(sessionKey: string): {
   const clients = useStore($connectionClients)
   const tiles = useStore($sessionKeyTabs)
   const states = useStore($sessionKeyStates)
-  const registry = useStore($connectionsRegistry)
+  const registry = useStore($registryView)
 
   return useMemo(() => {
     const slice = states[sessionKey]

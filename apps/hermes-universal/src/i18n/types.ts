@@ -1071,6 +1071,12 @@ export interface Translations {
       restartLocalConfirm: string
       profileRestartMessage: (name: string) => string
       profileRestartAction: string
+      localNotRunning: string
+      updateNeedsConnection: string
+      profileGatewayUnsupported: string
+      secretsAlwaysStored: string
+      sshRestartUnsupported: string
+      managePage: string
     }
     managedUpdates: {
       title: string

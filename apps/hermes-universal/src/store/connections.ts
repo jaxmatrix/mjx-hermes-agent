@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
 import { tunnelErrorMessage } from '@/app/gateway/ssh-copy'
+import type { DesktopConnectionsRegistry } from '@/global'
 import { translateNow } from '@/i18n'
 import { TRANSLATIONS } from '@/i18n/catalog'
 import { getRuntimeI18nLocale } from '@/i18n/runtime'
@@ -10,6 +11,7 @@ import { oauthStatus, oauthStatusIsUnknown, portalAgentSignIn } from '@/lib/auth
 import { LOCAL_CONNECTION_ID, setConnectionIdResolver } from '@/lib/backend-scope'
 import { errorText, ownWords } from '@/lib/error-text'
 import { emitConnectionApplied } from '@/lib/hermes-desktop/connection-applied'
+import { toDesktopRegistry } from '@/lib/hermes-desktop/registry-shape'
 import { statusSupportsNativeFlow } from '@/lib/native-auth-decisions'
 import { loadString, saveString } from '@/lib/persist'
 import { IS_TAURI } from '@/lib/platform'
@@ -23,6 +25,7 @@ import {
 import { atom, computed } from '@/store/atom'
 import { authenticate, keepSession } from '@/store/connection'
 import { isLatched, releaseLatch } from '@/store/connection-latches'
+import { $connectionsRegistry } from '@/store/connection-registry-state'
 import {
   acquireTunnel,
   connectionBase,
@@ -153,8 +156,9 @@ export interface ConnectionSaveInput {
   authMode?: 'none' | 'oauth' | 'token'
   /** WRITE-ONLY. `''` deletes the stored token; omitted leaves it alone. */
   token?: string
-  /** WRITE-ONLY, same rules, filtered through Rust's allowlist. */
-  headers?: Record<string, string>
+  /** WRITE-ONLY, filtered through Rust's allowlist. Authoritative when present:
+   *  a string is the new secret, `''` deletes it, `null` keeps the stored one. */
+  headers?: Record<string, null | string>
   org?: string
   host?: string
   user?: string
@@ -200,7 +204,24 @@ const EMPTY: RegistryView = {
   version: 2
 }
 
-export const $connectionsRegistry = atom<RegistryView>(EMPTY)
+/** Rust's view of the registry: what universal's own code reads. */
+export const $registryView = atom<RegistryView>(EMPTY)
+
+/**
+ * Desktop's atom of the same registry, in desktop's shape — the one its
+ * switcher, profile rail, settings and sidebar groups read, re-exported here as
+ * desktop's `store/connections` does. A PROJECTION of `$registryView`
+ * (`lib/hermes-desktop/registry-shape`): every write of the view lands here, so
+ * the two cannot disagree. Null until the first view arrives, which is
+ * desktop's "not loaded yet".
+ */
+export { $connectionsRegistry }
+
+// A listener must not throw into the write that woke it — a switch publishes
+// inside the same batch — so a view that is not one projects as "not loaded".
+$registryView.listen(view =>
+  $connectionsRegistry.set(Array.isArray(view?.connections) ? toDesktopRegistry(view) : null)
+)
 
 /**
  * The one gate for every piece of source chrome.
@@ -209,7 +230,7 @@ export const $connectionsRegistry = atom<RegistryView>(EMPTY)
  * everything" are ABSENT — not disabled, not collapsed. Acceptance criterion 1
  * is that such an install looks exactly like today's.
  */
-export const $hasMultipleConnections = computed($connectionsRegistry, registry => registry.connections.length > 1)
+export const $hasMultipleConnections = computed($registryView, registry => registry.connections.length > 1)
 
 /**
  * Desktop's: the source the FOLD is on — the identity of the descriptor the boot
@@ -302,7 +323,7 @@ function heldProfileFor(connectionId: string): null | string {
 }
 
 export function connectionById(id: null | string): ConnectionView | undefined {
-  return id ? $connectionsRegistry.get().connections.find(row => row.id === id) : undefined
+  return id ? $registryView.get().connections.find(row => row.id === id) : undefined
 }
 
 // --------------------------------------------------------------------------
@@ -316,7 +337,7 @@ async function call<T>(command: string, args: Record<string, unknown> = {}): Pro
 export async function refreshConnections(): Promise<RegistryView> {
   const registry = await call<RegistryView>('connections_list')
 
-  $connectionsRegistry.set(registry)
+  $registryView.set(registry)
 
   return registry
 }
@@ -324,7 +345,7 @@ export async function refreshConnections(): Promise<RegistryView> {
 export async function saveConnection(input: ConnectionSaveInput): Promise<SaveOutcome> {
   const outcome = await call<SaveOutcome>('connections_save', { input })
 
-  $connectionsRegistry.set(outcome.registry)
+  $registryView.set(outcome.registry)
 
   // The row this window is on was re-pointed. Applied from the return value,
   // like a commit of its own: whatever the caller does next — a preflight, say
@@ -368,7 +389,7 @@ export async function correctAuthMode(
   const input = { authMode, id: row.id, kind: row.kind, label: row.label, url: row.url }
 
   if (options.apply === false) {
-    $connectionsRegistry.set((await call<SaveOutcome>('connections_save', { input })).registry)
+    $registryView.set((await call<SaveOutcome>('connections_save', { input })).registry)
   } else {
     await saveConnection(input)
   }
@@ -379,7 +400,7 @@ export async function correctAuthMode(
 export async function removeConnection(connectionId: string): Promise<RegistryView> {
   const registry = await call<RegistryView>('connections_remove', { connectionId })
 
-  $connectionsRegistry.set(registry)
+  $registryView.set(registry)
 
   return registry
 }
@@ -387,7 +408,7 @@ export async function removeConnection(connectionId: string): Promise<RegistryVi
 export async function setPrimaryConnection(connectionId: string): Promise<RegistryView> {
   const registry = await call<RegistryView>('connections_set_primary', { connectionId })
 
-  $connectionsRegistry.set(registry)
+  $registryView.set(registry)
 
   return registry
 }
@@ -395,7 +416,19 @@ export async function setPrimaryConnection(connectionId: string): Promise<Regist
 export async function setLaunchMode(launchMode: 'last-used' | 'primary'): Promise<RegistryView> {
   const registry = await call<RegistryView>('connections_set_launch_mode', { launchMode })
 
-  $connectionsRegistry.set(registry)
+  $registryView.set(registry)
+
+  return registry
+}
+
+/**
+ * Remember where the next `last-used` launch lands. A caller that just switched
+ * swallows a failure: a full disk must not turn a good switch into a failed one.
+ */
+export async function setLastUsedConnection(connectionId: string): Promise<RegistryView> {
+  const registry = await call<RegistryView>('connections_set_last_used', { connectionId })
+
+  $registryView.set(registry)
 
   return registry
 }
@@ -448,7 +481,7 @@ setConnectionIdResolver(connection => {
     return active.connectionId
   }
 
-  const registry = $connectionsRegistry.get()
+  const registry = $registryView.get()
 
   if (connection.mode === 'local') {
     return registry.connections.some(row => row.id === LOCAL_CONNECTION_ID) ? LOCAL_CONNECTION_ID : null
@@ -513,7 +546,7 @@ export async function loadConnectionsRegistry(): Promise<RegistryView> {
   // non-secret value it already holds. Idempotent once the document exists.
   const registry = await call<RegistryView>('connections_migrate', { legacyTarget: loadGatewayTarget() })
 
-  $connectionsRegistry.set(registry)
+  $registryView.set(registry)
 
   if (registry.degraded && !degradedNoticed) {
     degradedNoticed = true
@@ -529,10 +562,18 @@ export async function loadConnectionsRegistry(): Promise<RegistryView> {
   return registry
 }
 
-/** Desktop's names for the same two things. */
-export const refreshConnectionsRegistry = refreshConnections
+/** Desktop's name, shape and signature (its `null` is an Electron with no
+ *  registry): what its switcher and settings refresh. */
+export async function refreshConnectionsRegistry(): Promise<DesktopConnectionsRegistry | null> {
+  return toDesktopRegistry(await refreshConnections())
+}
 
-export function setConnectionsRegistry(registry: RegistryView): void {
+/**
+ * Desktop's: its registry page publishes what a bridge call answered. Every
+ * bridge write already went through this store — the view is current, and this
+ * registry is its projection — so only desktop's atom takes it.
+ */
+export function setConnectionsRegistry(registry: DesktopConnectionsRegistry): void {
   $connectionsRegistry.set(registry)
 }
 
@@ -542,8 +583,8 @@ export function setConnectionsRegistry(registry: RegistryView): void {
  * fold's first dial, so by the time a switcher exists there is nothing left to
  * restore — and a second restore would re-home a window the user already moved.
  */
-export async function initializeConnectionsRegistry(): Promise<RegistryView | null> {
-  return IS_TAURI ? refreshConnections() : null
+export async function initializeConnectionsRegistry(): Promise<DesktopConnectionsRegistry | null> {
+  return IS_TAURI ? refreshConnectionsRegistry() : null
 }
 
 function hintFor(resolved: ResolvedDial): ConnectionDescriptorHint {
@@ -1194,7 +1235,7 @@ function sshParts(target: ConnectionTarget): { host: string; port: number; user:
 }
 
 /** The row that already points where `target` does (Rust's `dial_identity`). */
-function rowFor(target: ConnectionTarget, registry: RegistryView): ConnectionView | undefined {
+export function connectionRowFor(target: ConnectionTarget, registry: RegistryView): ConnectionView | undefined {
   if (target.kind === 'local') {
     return registry.connections.find(row => row.kind === 'local')
   }
@@ -1246,7 +1287,7 @@ function labelFor(target: ConnectionTarget, registry: RegistryView): string {
  */
 export async function saveConnectionTarget(target: ConnectionTarget): Promise<string> {
   const registry = await refreshConnections()
-  const row = rowFor(target, registry)
+  const row = connectionRowFor(target, registry)
 
   // This device's own backend has nothing to save.
   if (row?.kind === 'local') {
@@ -1261,7 +1302,7 @@ export async function saveConnectionTarget(target: ConnectionTarget): Promise<st
 export async function saveLaunchTarget(target: ConnectionTarget): Promise<void> {
   const connectionId = await saveConnectionTarget(target)
 
-  $connectionsRegistry.set(await call<RegistryView>('connections_set_last_used', { connectionId }))
+  await setLastUsedConnection(connectionId)
 }
 
 /**
@@ -1351,7 +1392,8 @@ export const __testing = {
     applies.clear()
     commits.clear()
     watching = null
-    $connectionsRegistry.set(EMPTY)
+    $registryView.set(EMPTY)
+    $connectionsRegistry.set(null)
     $lastProfileByConnection.set({})
     $pendingConnectionId.set(null)
   }

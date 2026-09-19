@@ -2,10 +2,9 @@ import { invoke } from '@tauri-apps/api/core'
 
 import { updateHermes } from '@/hermes'
 import { IS_TAURI } from '@/lib/platform'
-import { openAppDownload } from '@/lib/updates'
+import { checkAppUpdate, openAppDownload } from '@/lib/updates'
 import { $activeConnection } from '@/store/active-connection'
-import { $connectionsRegistry } from '@/store/connections'
-import { runUpdateCheck } from '@/store/updates'
+import { $registryView } from '@/store/connections'
 
 /**
  * "UPDATE EVERYTHING" — active backend, then the other sources, then the client.
@@ -46,7 +45,7 @@ export interface UpdateAllOptions {
  * the button beside it.
  */
 export function hasMultipleUpdateTargets(): boolean {
-  return $connectionsRegistry.get().connections.length > 1
+  return $registryView.get().connections.length > 1
 }
 
 async function updateActive(): Promise<UpdateTargetResult> {
@@ -86,7 +85,8 @@ async function updateClient(): Promise<UpdateTargetResult> {
     return { ...row, reason: 'checks-disabled' }
   }
 
-  const status = await runUpdateCheck(true)
+  // Asked directly: desktop's `store/updates` owns the client's update state.
+  const status = await checkAppUpdate(true)
 
   if (!status) {
     // The `update-checks` feature is off, or the command is unavailable. A ROW,
@@ -114,17 +114,22 @@ async function updateClient(): Promise<UpdateTargetResult> {
   }
 }
 
+/**
+ * Rust's fan-out alone: every registered source outside `excludeIds`, each its
+ * own row. A failed invoke is no rows, not a rejection — the steps around it
+ * still run.
+ */
+export function updateSources(excludeIds: string[]): Promise<UpdateTargetResult[]> {
+  return IS_TAURI
+    ? invoke<UpdateTargetResult[]>('connections_update_all', { excludeIds }).catch(() => [] as UpdateTargetResult[])
+    : Promise.resolve([])
+}
+
 export async function updateAllTargets(options: UpdateAllOptions = {}): Promise<UpdateTargetResult[]> {
   const active = $activeConnection.get()
   const excludeIds = [...(options.excludeIds ?? []), ...(active ? [active.connectionId] : [])]
 
   const first = await updateActive()
 
-  const others = IS_TAURI
-    ? await invoke<UpdateTargetResult[]>('connections_update_all', { excludeIds }).catch(
-        () => [] as UpdateTargetResult[]
-      )
-    : []
-
-  return [first, ...others, await updateClient()]
+  return [first, ...(await updateSources(excludeIds)), await updateClient()]
 }
