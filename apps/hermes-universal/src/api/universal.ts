@@ -1,11 +1,11 @@
 /**
  * The API surface universal has and desktop does not.
  *
- * `src/hermes.ts` is desktop's compatibility barrel over `./api/*`, kept
- * byte-identical to `apps/desktop/src/hermes.ts` apart from one appended
- * `export * from './api/universal'`. Everything universal needs beyond
- * desktop's surface lives here, so that one line is the whole divergence and a
- * resync never has to merge the barrel.
+ * `src/hermes.ts` is desktop's compatibility barrel over `./api/*`, kept line
+ * for line with `apps/desktop/src/hermes.ts` apart from an appended
+ * `export * from './api/universal'` and its own `HermesGateway`. Everything
+ * else universal needs beyond desktop's surface lives here, so a resync of the
+ * barrel stays a two-hunk merge.
  *
  * Only four things qualify. Universal's old monolith exported 19 symbols
  * desktop's `api/*` did not, but 15 of those were duplicates under another
