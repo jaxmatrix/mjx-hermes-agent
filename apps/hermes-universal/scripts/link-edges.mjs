@@ -979,6 +979,8 @@ async function main() {
     mode: serve ? 'serve' : 'build',
     without: without.map(rel),
     modules: result.fullGraph.size,
+    // Every module the walk reached, for before/after reachability diffs.
+    moduleList: [...result.fullGraph.keys()].map(rel).sort(byString),
     summary: summarise(edges),
     occurrences,
     nonLegacy: summarise(live),

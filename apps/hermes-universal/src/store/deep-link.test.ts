@@ -3,7 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn().mockResolvedValue(() => {}) }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue({ delivered: 0, dropped: 0 }) }))
 vi.mock('./notifications', () => ({ notify: vi.fn(), notifyError: vi.fn() }))
-vi.mock('./windows', () => ({ openAppRoute: vi.fn(), ownsPersistedAppState: () => true }))
+// Spread the real module: desktop's `app/routes` reaches `pane-shell/tree/store`,
+// which reads `isSecondaryWindow()` at module scope.
+vi.mock('./windows', async importOriginal => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  openAppRoute: vi.fn(),
+  ownsPersistedAppState: () => true
+}))
 vi.mock('@/app/chat/composer/focus', () => ({
   requestComposerFocus: vi.fn(),
   requestComposerInsert: vi.fn()

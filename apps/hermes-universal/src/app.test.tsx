@@ -12,11 +12,16 @@
  * The folder-pick prompt (`ExplorerPathDialog`) joins them for the same reason:
  * it is asked from a tree row's context menu and a search hit's menu, both
  * transient, so the window has to own it, in every root.
+ *
+ * The DESKTOP MAIN WINDOW is the one root that is not universal's: it renders
+ * desktop's own root, whose wiring mounts desktop's twins of these surfaces, so
+ * `App` adds only what desktop has no counterpart for.
  */
 
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/app/index', () => ({ default: () => <div>desktop</div> }))
 vi.mock('@/app/activity-screen', () => ({ ActivityScreenRoot: () => <div>activity</div> }))
 vi.mock('@/app/hud/hud-window', () => ({ HudWindowRoot: () => <div>hud</div> }))
 vi.mock('@/app/mobile-controller', () => ({ MobileController: () => <div>shell</div> }))
@@ -54,7 +59,16 @@ vi.mock('@/store/mcp-health', () => ({ startMcpHealthChecker: vi.fn() }))
 // module scope, so a plain `let` is a temporal-dead-zone crash the moment this
 // file's graph reaches the layout tree — which MJXHRM-455 and then MJXHRM-478
 // each widened it into.
-const root = vi.hoisted(() => ({ activity: false, surface: null as null | string, tile: false }))
+const root = vi.hoisted(() => ({ activity: false, mobile: false, surface: null as null | string, tile: false }))
+
+// `IS_MOBILE` is a boot-time constant; a getter lets one file render both the
+// phone's main window and the desktop's.
+vi.mock('@/lib/platform', async importOriginal => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  get IS_MOBILE() {
+    return root.mobile
+  }
+}))
 
 // Spread the REAL module and override only the four window-identity answers.
 // The previous shape listed the exports this file happened to reach, and its own
@@ -87,12 +101,13 @@ import { App } from './app'
 
 beforeEach(() => {
   root.activity = false
+  root.mobile = false
   root.tile = false
   root.surface = null
 })
 
 const ROOTS: [name: string, arrange: () => void, marker: string][] = [
-  ['the main shell', () => undefined, 'shell'],
+  ['the phone shell', () => void (root.mobile = true), 'shell'],
   ['a detached tile window', () => void (root.tile = true), 'tile'],
   ['the HUD', () => void (root.surface = HUD_SURFACE), 'hud'],
   ['Quick Entry', () => void (root.surface = QUICK_ENTRY_SURFACE), 'quick'],
@@ -101,6 +116,43 @@ const ROOTS: [name: string, arrange: () => void, marker: string][] = [
 ]
 
 describe('App', () => {
+  it('renders desktop’s own root in the desktop main window, without doubling what its wiring mounts', () => {
+    render(<App />)
+
+    expect(screen.getByText('desktop')).toBeInTheDocument()
+    expect(screen.queryByText('shell')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('find-bar')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('remote-picker')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('close-confirm')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('explorer-path-dialog')).not.toBeInTheDocument()
+  })
+
+  it('still asks a pending SSH question in the desktop main window', () => {
+    $sshPrompt.set({
+      attemptId: 'a1',
+      kind: 'passphrase',
+      label: 'Passphrase for id_ed25519',
+      promptId: 'p1',
+      secret: true
+    })
+
+    try {
+      render(<App />)
+
+      expect(screen.getByText('Passphrase for id_ed25519')).toBeInTheDocument()
+    } finally {
+      $sshPrompt.set(null)
+    }
+  })
+
+  it('keeps a tile window universal’s even on a desktop', () => {
+    root.tile = true
+    render(<App />)
+
+    expect(screen.getByText('tile')).toBeInTheDocument()
+    expect(screen.queryByText('desktop')).not.toBeInTheDocument()
+  })
+
   it.each(ROOTS)('mounts the find bar, the folder picker and the two gates in %s', (_name, arrange, marker) => {
     arrange()
 

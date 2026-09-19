@@ -6,6 +6,7 @@ import { ExplorerPathDialog } from '@/app/explorer-path-dialog'
 import { SshPromptDialog } from '@/app/gateway/ssh-prompt-dialog'
 import { HUD_SURFACE } from '@/app/hud/hud'
 import { HudWindowRoot } from '@/app/hud/hud-window'
+import DesktopRoot from '@/app/index'
 import { McpInstallDeepLinkDialog } from '@/app/mcp-install-deeplink-dialog'
 import { MobileController } from '@/app/mobile-controller'
 import { QUICK_ENTRY_SURFACE } from '@/app/quick-entry/quick-entry'
@@ -17,9 +18,16 @@ import { WakeIndicatorOverlay } from '@/app/wake-indicator-overlay'
 import { WakeIndicatorWindowRoot } from '@/app/wake-indicator/wake-indicator-window'
 import { ConfirmHost } from '@/components/confirm-host'
 import { FindBar } from '@/components/find-bar'
+import { IS_MOBILE } from '@/lib/platform'
 import { startDeepLinkRouter } from '@/store/deep-link'
 import { startMcpHealthChecker } from '@/store/mcp-health'
-import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFACE } from '@/store/windows'
+import {
+  isActivityWindow,
+  isSatelliteWindow,
+  isTileWindow,
+  satelliteSurface,
+  WAKE_INDICATOR_SURFACE
+} from '@/store/windows'
 
 /**
  * Every window root, plus the surfaces that must exist in ALL of them.
@@ -90,9 +98,18 @@ import { isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFAC
  *
  * Mounted HERE rather than once per root so the next root cannot forget them —
  * the failure mode is silence, which is the kind that ships.
+ *
+ * THE DESKTOP MAIN WINDOW IS THE EXCEPTION, because its root is desktop's own
+ * (`DesktopMainWindow` below), and desktop's `ContribWiring` already mounts its
+ * twin of most of this list. Mounting both would draw the same question twice.
  */
 export function App() {
   startDeepLinkRouter()
+
+  if (isDesktopMainWindow()) {
+    return <DesktopMainWindow />
+  }
+
   // Both are idempotent and refuse to arm twice; the health checker also
   // refuses in a satellite window, so the fleet gets ONE sweeper.
   startMcpHealthChecker()
@@ -116,6 +133,42 @@ export function App() {
       <AppContextMenu />
       <McpInstallDeepLinkDialog />
       <PluginInstallModal />
+      <WakeIndicatorOverlay />
+    </>
+  )
+}
+
+/** The window a desktop user works in: not a phone, and not a tile, satellite
+ *  or activity screen. Constant for the window's life — the platform is decided
+ *  at boot and the window kind is in the URL. */
+function isDesktopMainWindow(): boolean {
+  return !IS_MOBILE && !isActivityWindow() && !isTileWindow() && !isSatelliteWindow()
+}
+
+/**
+ * Desktop's root, exactly as desktop mounts it (`app/index.tsx` →
+ * `ContribController`), plus the hosts desktop has no counterpart for.
+ *
+ * `ContribController` / `ContribWiring` already mount `AppContextMenu`,
+ * `ConfirmHost`, `FindBar`, `RemoteFolderPicker`, `PluginInstallModal`, the MCP
+ * deep-link dialog, `SessionTileCloseConfirm` (the close gate), the toasts and
+ * the palette, and `use-desktop-integrations` arms the MCP health checker — so
+ * none of those is repeated here. What is left is universal-only:
+ *
+ *  - `SshPromptDialog`: an SSH dial (a switch, a tunnel's Connect, an install)
+ *    can ask for a credential or a host key from anywhere. Desktop runs `ssh`
+ *    in batch mode and never asks.
+ *  - `BackgroundCloseDialog`: the window close guard (`store/windows`) parks the
+ *    first close until this answers it. Desktop has no tray/background mode.
+ *  - `WakeIndicatorOverlay`: the in-window fallback light, and the driver of the
+ *    native one. On desktop that is Electron main's job.
+ */
+function DesktopMainWindow() {
+  return (
+    <>
+      <DesktopRoot />
+      <SshPromptDialog />
+      <BackgroundCloseDialog />
       <WakeIndicatorOverlay />
     </>
   )
@@ -159,13 +212,14 @@ function AppRoot() {
   // A tile window (`?win=tile`, or the legacy `?win=secondary`) hosts exactly
   // ONE tile — a detached pane, or the single-chat pop-out — bypassing the full
   // shell/overlays entirely (MJX-104, generalized in MJXHRM-173).
+  //
+  // What is left is the phone: the desktop main window never gets here.
   return isTileWindow() ? <TileWindowRoot /> : <MobileController />
 }
 
 // Desktop's main.tsx does `import App from './app'`, where `./app` resolves to
-// its src/app/index.tsx. Universal has a real src/app.tsx — this shell, with the
-// mobile controller and the satellite surfaces — and a file wins over a sibling
-// directory, so the same specifier lands here. Exporting App as the default too
-// is what lets main.tsx stay byte-identical to desktop's rather than becoming a
-// merge target over one import line.
+// its src/app/index.tsx. Universal has a real src/app.tsx — this file, which
+// picks the root per window — and a file wins over a sibling directory, so the
+// same specifier lands here. The shadow is deliberate: it keeps main.tsx's import
+// line desktop's, and desktop's root is named explicitly above as `@/app/index`.
 export default App
