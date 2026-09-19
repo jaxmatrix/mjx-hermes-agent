@@ -23,7 +23,7 @@ import { atom } from '@/store/atom'
 import { setDefaultProjectDir } from '@/store/default-project-dir'
 import { explorerPathFailure, planExplorerPath } from '@/store/explorer-path-decision'
 import { notify } from '@/store/notifications'
-import { $focusedSessionState } from '@/store/session-states'
+import { $focusedRuntimeId, $focusedSessionState } from '@/store/session-states'
 import { setWorkspaceCwd } from '@/store/workspace-events'
 
 /**
@@ -68,7 +68,14 @@ export interface SetExplorerPathOptions {
  */
 export function setExplorerPath(path: string, options: SetExplorerPathOptions = {}): void {
   const adoptProject = options.adoptProject === true
-  const plan = planExplorerPath(path, $focusedSessionState.get())
+  const state = $focusedSessionState.get()
+
+  const plan = planExplorerPath(path, {
+    awaitingResponse: state?.awaitingResponse ?? false,
+    busy: state?.busy ?? false,
+    needsInput: state?.needsInput ?? false,
+    runtimeSessionId: $focusedRuntimeId.get()
+  })
 
   if (plan.kind === 'ignore') {
     return

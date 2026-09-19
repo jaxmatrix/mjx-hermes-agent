@@ -31,7 +31,6 @@ import {
   $layoutTree,
   moveTreePane,
   noteActiveTreeGroup,
-  renameTreePane,
   revealTreePane
 } from '@/components/pane-shell/tree/store'
 import {
@@ -163,7 +162,7 @@ function handleTransition(previous: SessionKeyState | null, next: SessionKeyStat
   // A DRAFT taking its issued id — the guard above misses it, because a draft
   // has no previous stored id to differ from. This is the one moment the app's
   // one unsaved chat becomes a real one, so both surfaces that gave it a
-  // placeholder identity trade it in here: the desktop tile is renamed in place,
+  // placeholder identity trade it in here: the desktop tab record takes the id,
   // and the mobile bubble folds the id in (chat-bubbles.ts, via its own
   // `$activeStoredSessionId` watcher).
   if (!previous?.storedSessionId && next.storedSessionId) {
@@ -1049,10 +1048,10 @@ function activeChatPaneId(): string {
 /**
  * The draft tile taking its real session id, on first submit.
  *
- * A rename, not a close-and-reopen: re-registering would send the pane back
- * through adoption and dock it wherever its hint points, so the chat would jump
- * zones at the exact moment the user hit send. `renameTreePane` carries the slot,
- * the width and the active flag; this carries the tile record.
+ * Carries the tile RECORD only. It used to rename the draft's tree pane in place
+ * too, but these tabs own no tree panes any more — `app/chat/session-tile`
+ * registers panes from desktop's `$sessionTiles`, whose tiles are created with
+ * their stored id — and desktop's tree store has no rename to call.
  */
 function adoptDraftTile(ref: SessionRef): void {
   const tiles = $sessionKeyTabs.get()
@@ -1076,7 +1075,6 @@ function adoptDraftTile(ref: SessionRef): void {
   // from `$activeConnection`, which a switch during the round trip would have
   // moved. From here the tab is an ordinary bound tab: irreversible, and
   // Close-only if its backend ever changes.
-  renameTreePane(DRAFT_TILE_PANE_ID, `${TILE_PANE_PREFIX}${tileKey}`)
   saveSessionTiles(tiles.map(t => (t.tileKey === DRAFT_TILE_KEY ? { ...t, ...ref, tileKey } : t)))
 }
 

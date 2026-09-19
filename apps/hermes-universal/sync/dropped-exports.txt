@@ -5,7 +5,7 @@
 #
 #   git show 9ce16c77f9:apps/hermes-universal/src/<path>
 #
-# 146 files, 566 symbols.
+# 146 files, 564 symbols.
 
 lib/gateway-rpc.ts
     MessageReactTarget
@@ -233,7 +233,6 @@ components/pane-shell/tree/store.ts
     tabIsCloseable
     focusedTabTarget
     closeFocusedTabInZone
-    renameTreePane
     $enforcedDocksThisBoot
     __resetEnforcedDocks
     enforceDockedPanes
@@ -400,7 +399,6 @@ app/chat/composer/rich-editor.ts
     insertComposerLineBreak
     insertPlainTextAtCaret
 components/pane-shell/tree/model.ts
-    renamePane
     adjacentGroup
     setGroupHeaderHidden
     splitGroupZone
