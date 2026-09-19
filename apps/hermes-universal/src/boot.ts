@@ -116,7 +116,8 @@ export function bootUniversal(): void {
 
   // A notification outlives the process that sent it, so a tap can arrive cold:
   // the listener has to exist before any surface mounts. A no-op where the
-  // platform has no activation (desktop — desktop's tree has its own door there).
+  // platform has no activation (a desktop OS: the plugin has no click hook, so
+  // the bridge leaves desktop's `onNotificationActivate` door absent too).
   lever('notification taps', () => installNotificationActivation())
 
   // Desktop's context menu never cancels the gesture (Electron shows no menu by

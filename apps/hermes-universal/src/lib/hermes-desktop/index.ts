@@ -9,7 +9,7 @@
  * `src/hermes.ts` and `src/store/gateway.ts` byte-identical to desktop, so a
  * resync never has to merge them.
  *
- * Three parts are wired in full. The REST door: every request desktop's API layer makes
+ * Three parts came first. The REST door: every request desktop's API layer makes
  * funnels through `hermesApi` (`api/client.ts:117`) or calls
  * `window.hermesDesktop.api` directly, so that one binding turns on the whole
  * `@/hermes` surface. The connection half (`./connections.ts`): what
@@ -18,8 +18,17 @@
  * Two smaller ones ride along: the wake light (`./wake-indicator.ts`) and
  * `readWindowBelow`, the one bridge member desktop's server-request fold calls.
  *
+ * Then the everyday members, one file per concern, each a thin delegation onto
+ * a Rust command or a universal lib that already existed: what leaves for the
+ * OS (`./external.ts`), the OS pickers (`./dialogs.ts`), local files as data
+ * URLs (`./files.ts`), Save image (`./images.ts`), OS notifications
+ * (`./notifications.ts`), text size (`./zoom.ts`), keep-awake (`./power.ts`)
+ * and window glass (`./translucency.ts`).
+ *
  * The remaining namespaces (windows, git, terminal, updates, themes,
- * `connections`, …) are added as their units land. A member that is not
+ * `connections`, …) are added as their units land. `./preload-drift.test.ts`
+ * holds the list: every member of Electron's preload is either implemented
+ * here or named there with the reason it is not. A member that is not
  * implemented stays ABSENT, never a silent fake: optional ones are
  * feature-detected by their callers, and the rest throw a TypeError naming
  * themselves.
@@ -31,8 +40,16 @@ import { IS_DESKTOP, IS_TAURI } from '@/lib/platform'
 import { readWindowBelow } from '@/lib/surface'
 
 import { connectionBridge, restScope } from './connections'
+import { dialogsBridge } from './dialogs'
+import { externalBridge, revealBridge } from './external'
+import { filesBridge } from './files'
+import { imagesBridge } from './images'
+import { notificationsBridge } from './notifications'
+import { powerBridge } from './power'
+import { translucencyBridge } from './translucency'
 import { wakeIndicatorBridge } from './wake-indicator'
-import { installWindowControlsOverlay } from './window-chrome'
+import { hostsWindowChrome, installWindowControlsOverlay } from './window-chrome'
+import { restoreZoom, zoomBridge } from './zoom'
 
 /**
  * Desktop's `HermesApiRequest` and universal's `ApiRequest` agree field for
@@ -74,6 +91,12 @@ export function installHermesDesktopBridge(): void {
   // tells the renderer about the OS buttons, before any connection exists.
   installWindowControlsOverlay()
 
+  // Electron restores a window's text size before its renderer runs. Desktop's
+  // root only: a HUD or a wake light is not a page of text.
+  if (hostsWindowChrome()) {
+    restoreZoom()
+  }
+
   // Deliberately a partial object cast to the full bridge type. The alternative
   // is stubbing 18 namespaces of methods nothing calls yet, which would hide
   // which parts are actually wired — a missing method throws a TypeError naming
@@ -93,6 +116,21 @@ export function installHermesDesktopBridge(): void {
     ...(IS_DESKTOP && { readWindowBelow }),
     // The wake light. A whole namespace or none — see `./wake-indicator`.
     ...(IS_TAURI && { wakeIndicator: wakeIndicatorBridge }),
+    // Everything below is a Rust command or a Tauri plugin, so without a runtime
+    // (plain-browser dev) it is absent rather than a member that always rejects.
+    ...(IS_TAURI && {
+      ...dialogsBridge,
+      ...externalBridge,
+      ...filesBridge,
+      ...imagesBridge,
+      ...notificationsBridge,
+      // The mobile pre-flight; desktop webviews ask on `getUserMedia` themselves.
+      requestMicrophoneAccess: async () => (await import('@/lib/mic-permission')).ensureMicPermission(),
+      zoom: zoomBridge
+    }),
+    // No file manager, sleep inhibitor or window manager on a phone.
+    ...(IS_DESKTOP && { ...revealBridge, ...powerBridge }),
+    ...translucencyBridge(),
     // Optional-chained by its only caller; an Electron backend-pool keepalive
     // with no Tauri analogue.
     touchBackend: async () => undefined
