@@ -16,7 +16,8 @@
  *
  * The socket itself has no profile, so a URL minted for any other profile says
  * so (`withSocketProfile`) and `HermesGateway` names it per RPC: a secondary on
- * another connection, or a window opened on a profile of its own.
+ * another connection, a window opened on a profile of its own, or a primary
+ * whose connection was last used on another profile (`primaryProfile`).
  *
  * No descriptor carries a token. A URL a gateway may dial is recorded with
  * `recordGatewayMint`, and Rust attaches the credential on `ws_open`.
@@ -25,7 +26,7 @@
 import type { GatewayWsUrlResult } from '@hermes/shared'
 import { invoke } from '@tauri-apps/api/core'
 
-import { tunnelErrorMessage } from '@/app/gateway/ssh-copy'
+import { sshStepLabel, tunnelErrorMessage } from '@/app/gateway/ssh-copy'
 import { isGatewayReauthRequired } from '@/gateway'
 import type { DesktopBootProgress, HermesConnection } from '@/global'
 import { TRANSLATIONS } from '@/i18n/catalog'
@@ -34,9 +35,12 @@ import { errorText } from '@/lib/error-text'
 import { IS_MOBILE } from '@/lib/platform'
 import { sessionCookiesRestored } from '@/lib/session-persist'
 import { onForeground } from '@/store/app-lifecycle'
+import type { TunnelStatus } from '@/store/connection-tunnels'
 import { type Connection, type GatewayMode, resolveWsUrl, ticketMintDeps } from '@/store/gateway-config'
 import { withSocketProfile } from '@/transport/gateway-profile'
 import { type GatewayMint, recordGatewayMint } from '@/transport/gateway-socket'
+
+import { onConnectionApplied } from './connection-applied'
 
 type Bridge = NonNullable<typeof window.hermesDesktop>
 
@@ -259,20 +263,69 @@ function descriptor(dial: Dial, profile: string, scope: Partial<HermesConnection
   }
 }
 
-function bootProgress(update: Pick<DesktopBootProgress, 'message' | 'phase' | 'progress' | 'running'>, error?: Error) {
+function bootProgress(
+  update: Pick<DesktopBootProgress, 'message' | 'phase' | 'progress' | 'running'>,
+  failure?: { message: string; retryable: boolean }
+): DesktopBootProgress {
   return {
     ...update,
-    error: error?.message ?? null,
+    error: failure?.message ?? null,
     fakeMode: false,
-    retryable: error instanceof RetryableDialError,
+    retryable: failure?.retryable === true,
     timestamp: Date.now()
   }
 }
 
+const BACKEND_READY = { message: 'Hermes backend is ready', phase: 'backend.ready', progress: 94, running: true }
+
+/** Where a tunnel dial's steps sit on the overlay: above the hook's own 6, below `backend.ready`. */
+const DIAL_FLOOR = 4
+const DIAL_SPAN = 90
+
 /**
- * Nothing is spawned on the boot hook's behalf — `store/connection.ts` brings
- * the backend up — so there is no progress to push. The snapshot is what the
- * last primary dial found, which is where the hook reads `retryable`.
+ * A tunnel status as Electron's boot progress: the one backend bring-up this
+ * app has is the dial of a local or SSH connection. `terminal` is Rust's word
+ * for "retrying cannot fix this", so a tunnel that needs a person — or one the
+ * book refuses to dial in the background until someone acts — is a boot error
+ * the hook must NOT retry; its sign-in or host-key notification is the way
+ * out. Rust's own message can name the host, so the error is copy.
+ */
+export function tunnelBootProgress(status: TunnelStatus): DesktopBootProgress | null {
+  const copy = TRANSLATIONS[getRuntimeI18nLocale()]
+
+  if (status.phase === 'ready') {
+    return bootProgress(BACKEND_READY)
+  }
+
+  if (status.phase === 'failed') {
+    const message = tunnelErrorMessage({ kind: status.errorKind }, copy.settings.gateway)
+
+    return bootProgress(
+      { message, phase: 'backend.error', progress: 0, running: false },
+      { message, retryable: !status.terminal }
+    )
+  }
+
+  // A slot that left: whatever ended it has already been said.
+  if (status.phase === 'closed') {
+    return null
+  }
+
+  return bootProgress({
+    message: status.step
+      ? sshStepLabel(status.step, copy.settings.gateway)
+      : status.phase === 'retrying'
+        ? copy.boot.steps.retryingRemoteBackend
+        : copy.boot.steps.startingDesktopConnection,
+    phase: 'backend.resolve',
+    progress: DIAL_FLOOR + Math.round((status.fraction ?? 0) * DIAL_SPAN),
+    running: true
+  })
+}
+
+/**
+ * What the last primary dial found, or where the primary's tunnel is: the hook
+ * reads `retryable` here after a failed boot, and paints the rest.
  */
 let boot: DesktopBootProgress = bootProgress({
   message: 'Waiting for a Hermes backend',
@@ -280,6 +333,46 @@ let boot: DesktopBootProgress = bootProgress({
   progress: 0,
   running: false
 })
+
+const bootListeners = new Set<(payload: DesktopBootProgress) => void>()
+
+function publishBoot(next: DesktopBootProgress): void {
+  boot = next
+
+  for (const listener of [...bootListeners]) {
+    listener(next)
+  }
+}
+
+/** Follow the ACTIVE connection's tunnel for as long as someone listens. */
+async function watchPrimaryTunnel(): Promise<() => void> {
+  // Dynamic: both stores reach `@/hermes`.
+  const [{ $tunnelStatus }, { $activeConnection }] = await Promise.all([
+    import('@/store/connection-tunnels'),
+    import('@/store/active-connection')
+  ])
+
+  let seen: TunnelStatus | undefined
+
+  return $tunnelStatus.listen(all => {
+    const connectionId = $activeConnection.get()?.connectionId
+    const status = connectionId ? all[connectionId] : undefined
+
+    if (!status || status === seen) {
+      return
+    }
+
+    seen = status
+
+    const next = tunnelBootProgress(status)
+
+    if (next) {
+      publishBoot(next)
+    }
+  })
+}
+
+let primaryTunnelWatch: null | Promise<() => void> = null
 
 async function activeConnection() {
   // Dynamic: `store/active-connection.ts` imports `@/hermes`.
@@ -305,16 +398,52 @@ async function primaryDial(): Promise<Dial> {
 
     const dial = await resolveDial(active.connectionId, active.connection)
 
-    boot = bootProgress({ message: 'Hermes backend is ready', phase: 'backend.ready', progress: 94, running: true })
+    publishBoot(bootProgress(BACKEND_READY))
 
     return dial
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(errorText(error))
 
-    boot = bootProgress({ message: failure.message, phase: 'backend.error', progress: 0, running: false }, failure)
+    publishBoot(
+      bootProgress(
+        { message: failure.message, phase: 'backend.error', progress: 0, running: false },
+        { message: failure.message, retryable: failure instanceof RetryableDialError }
+      )
+    )
 
     throw failure
   }
+}
+
+/**
+ * The profile the primary socket serves, held for the primary's life — what
+ * Electron's `primaryProfilePin` holds. The registry files the primary under the
+ * profile the hook adopted (`profile.get`) and sends that profile's RPCs with no
+ * `profile`, so the socket has to be the one that names it: the primary's URL
+ * carries the same profile the hook adopts. A profile remembered mid-life must
+ * not re-scope a socket the registry still files under the old one, so only a
+ * re-home reads the preference again.
+ */
+let primaryPin: null | { connectionId: string; profile: string } = null
+
+onConnectionApplied(() => void (primaryPin = null))
+
+/** The window's own profile, else the one this connection was last used on. */
+async function primaryProfile(): Promise<string> {
+  const connectionId = (await activeConnection())?.connectionId
+
+  if (!connectionId) {
+    return LAUNCH_PROFILE
+  }
+
+  if (primaryPin?.connectionId !== connectionId) {
+    // Dynamic: the registry store imports `@/hermes`.
+    const [override, { lastProfileFor }] = await Promise.all([windowProfile(), import('@/store/connections')])
+
+    primaryPin = { connectionId, profile: profileKey(override ?? lastProfileFor(connectionId)) }
+  }
+
+  return primaryPin.profile
 }
 
 /** An empty id, or the primary's own, is the primary (Electron's `|| registry.primary`). */
@@ -366,16 +495,26 @@ export const connectionBridge: Pick<
   Bridge,
   'getBootProgress' | 'getConnection' | 'getGatewayWsUrl' | 'onBackendExit' | 'onBootProgress' | 'onPowerResume'
 > &
-  Required<Pick<Bridge, 'getConnectionFor' | 'getGatewayWsUrlFor'>> & { profile: Pick<Bridge['profile'], 'get'> } = {
+  Required<Pick<Bridge, 'getConnectionFor' | 'getGatewayWsUrlFor' | 'onConnectionApplied'>> & {
+    profile: Pick<Bridge['profile'], 'get' | 'remember'>
+  } = {
   getBootProgress: async () => boot,
 
   getConnection: async profile => {
     const dial = await primaryDial()
-    // Naming none asks for this window's own primary (the boot hook's wake
-    // reconnect): the profile it was opened on, when it was opened on one.
-    const key = profileKey(profile?.trim() || (await windowProfile()))
+    const own = await primaryProfile()
+    // Naming none asks for this window's own primary (the boot hook's boot,
+    // soft switch and wake reconnect).
+    const key = profile?.trim() ? profileKey(profile) : own
 
-    return descriptor(dial, key, key === LAUNCH_PROFILE ? {} : { profile: key, sharedPrimary: true })
+    // Unscoped only where an unscoped RPC is right: the launch profile, on a
+    // primary that serves it. On a primary that serves another, `default` is a
+    // request scope like any other.
+    return descriptor(
+      dial,
+      key,
+      key === LAUNCH_PROFILE && own === LAUNCH_PROFILE ? {} : { profile: key, sharedPrimary: true }
+    )
   },
 
   getConnectionFor: async ({ connectionId, profile }) => {
@@ -384,20 +523,57 @@ export const connectionBridge: Pick<
     return descriptor(await dialFor(connectionId), key, { profile: key, registryScoped: true, sharedRemote: true })
   },
 
-  getGatewayWsUrl: profile => wsUrlResult(primaryDial(), profileKey(profile)),
+  getGatewayWsUrl: async profile => {
+    const key = profile?.trim() ? profileKey(profile) : await primaryProfile()
+
+    return wsUrlResult(primaryDial(), key)
+  },
 
   getGatewayWsUrlFor: ({ connectionId, profile }) => wsUrlResult(dialFor(connectionId), profileKey(profile)),
 
-  // No exit signal exists: a local child that dies is a closed socket and a
-  // tunnel status, both already handled where they land.
+  // No exit signal exists: Rust emits nothing of its own when the local child
+  // dies. It is a closed socket and a tunnel status, both already handled where
+  // they land, so this subscribes and never fires.
   onBackendExit: () => () => {},
 
-  onBootProgress: () => () => {},
+  onBootProgress: callback => {
+    bootListeners.add(callback)
+    primaryTunnelWatch ??= watchPrimaryTunnel()
+
+    return () => {
+      bootListeners.delete(callback)
+
+      if (!bootListeners.size && primaryTunnelWatch) {
+        void primaryTunnelWatch.then(stop => stop()).catch(() => {})
+        primaryTunnelWatch = null
+      }
+    }
+  },
+
+  onConnectionApplied,
 
   // A phone's socket always dies while the app is away (`store/app-lifecycle.ts`),
   // so coming back IS a resume. A desktop window merely becoming visible is not,
   // and a resume force-closes every open secondary.
   ...(IS_MOBILE && { onPowerResume: (callback: () => void) => onForeground(callback) }),
 
-  profile: { get: async () => ({ profile: LAUNCH_PROFILE }) }
+  profile: {
+    get: async () => ({ profile: await primaryProfile() }),
+
+    // Electron's one preference file is, here, the registry store's per-source
+    // memory: the primary is whichever connection the window is on.
+    remember: async name => {
+      const connectionId = (await activeConnection())?.connectionId
+      const profile = profileKey(name)
+
+      if (connectionId) {
+        // Dynamic: the registry store imports `@/hermes`.
+        const { rememberProfile } = await import('@/store/connections')
+
+        rememberProfile(connectionId, profile)
+      }
+
+      return { profile }
+    }
+  }
 }

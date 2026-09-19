@@ -48,6 +48,9 @@ const { acquireMock, active, apiMock, invokeMock, leases, mintTicketMock, rows, 
   }
 })
 
+// The registry store's per-connection profile memory.
+const lastProfiles = vi.hoisted(() => new Map<string, string>())
+
 // The boot cookie restore, as the bridge waits on it.
 const cookies = vi.hoisted(() => ({ restored: Promise.resolve() }))
 
@@ -57,23 +60,36 @@ vi.mock('@/lib/api', () => ({ api: apiMock }))
 vi.mock('@/lib/auth', () => ({ mintWsTicket: mintTicketMock }))
 vi.mock('@/lib/session-persist', () => ({ sessionCookiesRestored: () => cookies.restored }))
 vi.mock('@/store/active-connection', () => ({ $activeConnection: { get: () => active.current } }))
-vi.mock('@/store/connection-tunnels', () => ({ acquireTunnel: acquireMock }))
-// The registry store's rows are `connections_resolve`'s, with the id and a `url`.
+vi.mock('@/store/connection-tunnels', async () => ({
+  $tunnelStatus: (await import('nanostores')).map({}),
+  acquireTunnel: acquireMock
+}))
+// The registry store's rows are `connections_resolve`'s, with the id and a `url`,
+// and its per-source profile memory, where `default` is not remembered.
 vi.mock('@/store/connections', () => ({
   connectionById: (id: string) => {
     const row = rows.get(id)
 
     return row && { ...row, id, url: row.baseUrl }
-  }
+  },
+  lastProfileFor: (id: string) => {
+    const held = lastProfiles.get(id)
+
+    return held && held !== 'default' ? held : null
+  },
+  rememberProfile: (id: string, profile: string) => void lastProfiles.set(id, profile)
 }))
 vi.mock('@/store/windows', () => ({ windowProfileOverride: () => windowProfile.current }))
 vi.mock('@/transport/gateway-socket', () => ({ recordGatewayMint: vi.fn() }))
 
 import { GatewayReauthRequiredError } from '@/gateway'
 import { TRANSLATIONS } from '@/i18n/catalog'
+import { $tunnelStatus, type TunnelStatus } from '@/store/connection-tunnels'
+import { profileScoped, socketProfile } from '@/transport/gateway-profile'
 import { recordGatewayMint } from '@/transport/gateway-socket'
 
-import { connectionBridge as bridge } from './connections'
+import { emitConnectionApplied } from './connection-applied'
+import { connectionBridge as bridge, tunnelBootProgress } from './connections'
 
 import { installHermesDesktopBridge } from '.'
 
@@ -96,6 +112,10 @@ beforeEach(() => {
   active.current = null
   cookies.restored = Promise.resolve()
   windowProfile.current = null
+  lastProfiles.clear()
+  $tunnelStatus.set({})
+  // A re-home: the primary's profile is read again.
+  emitConnectionApplied()
 
   rows.set('home', { authMode: 'token', baseUrl: 'https://home.test', kind: 'remote', label: 'Home' })
   rows.set('cloud', { authMode: 'oauth', baseUrl: 'https://cloud.test', kind: 'cloud', label: 'Cloud' })
@@ -143,6 +163,10 @@ describe('the primary', () => {
 
   it("launches as 'default', so an RPC naming no profile is already correct", async () => {
     expect(await bridge.profile.get()).toEqual({ profile: 'default' })
+
+    activate('home')
+
+    expect(await bridge.profile.get()).toEqual({ profile: 'default' })
   })
 
   it('rejects when the window is on no connection', async () => {
@@ -164,6 +188,213 @@ describe('the primary', () => {
     await bridge.getConnection()
 
     expect(await bridge.getBootProgress()).toMatchObject({ error: null, phase: 'backend.ready', running: true })
+  })
+})
+
+describe("the primary's profile", () => {
+  // `session.create` declares `profile` in the wire contract.
+  const stamped = (wsUrl: string) => profileScoped('session.create', {}, socketProfile(wsUrl))
+
+  it('is the one its connection was last used on, remembered per connection', async () => {
+    activate('home')
+
+    expect(await bridge.profile.remember('work')).toEqual({ profile: 'work' })
+    expect(lastProfiles.get('home')).toBe('work')
+
+    emitConnectionApplied()
+
+    expect(await bridge.profile.get()).toEqual({ profile: 'work' })
+
+    activate('cloud')
+
+    expect(await bridge.profile.get()).toEqual({ profile: 'default' })
+  })
+
+  // The registry files the primary under the adopted profile and sends that
+  // profile's RPCs bare (`gatewayForProfile` → `scopeProfile: false`), so the
+  // socket the hook dials has to name it, or they would run as `default`.
+  it('is what the socket the boot hook dials stamps on a bare RPC', async () => {
+    lastProfiles.set('home', 'work')
+    activate('home')
+
+    const { profile } = await bridge.profile.get()
+    const conn = await bridge.getConnection()
+    const wsUrl = await resolveGatewayWsUrl(bridge, conn)
+
+    expect(profile).toBe('work')
+    expect(conn).toMatchObject({ profile: 'work', sharedPrimary: true, wsUrl: 'wss://home.test/api/ws?profile=work' })
+    expect(wsUrl).toBe(conn.wsUrl)
+    expect(stamped(wsUrl)).toEqual({ profile })
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl })
+    expect(mintedFor(wsUrl)).toEqual({ connectionId: 'home' })
+  })
+
+  it("serves 'default' as a request scope on a primary that serves another", async () => {
+    lastProfiles.set('home', 'work')
+    activate('home')
+
+    expect(await bridge.getConnection('default')).toMatchObject({ profile: 'default', sharedPrimary: true })
+  })
+
+  it('holds for the life of the primary, and is read again on a re-home', async () => {
+    lastProfiles.set('home', 'work')
+    activate('home')
+    await bridge.getConnection()
+
+    // The rail moved on mid-life: the wake reconnect still dials what the
+    // registry filed the primary under.
+    await bridge.profile.remember('play')
+
+    expect(socketProfile((await bridge.getConnection()).wsUrl)).toBe('work')
+
+    emitConnectionApplied()
+
+    expect(socketProfile((await bridge.getConnection()).wsUrl)).toBe('play')
+  })
+
+  it('gives way to the profile a window was opened on', async () => {
+    lastProfiles.set('home', 'work')
+    windowProfile.current = 'pinned'
+    activate('home')
+
+    expect(await bridge.profile.get()).toEqual({ profile: 'pinned' })
+    expect(stamped((await bridge.getConnection()).wsUrl)).toEqual({ profile: 'pinned' })
+  })
+})
+
+describe('a connection apply', () => {
+  it('reaches its subscribers with no payload, until they leave', () => {
+    const callback = vi.fn()
+    const off = bridge.onConnectionApplied(callback)
+
+    emitConnectionApplied()
+
+    expect(callback.mock.calls).toEqual([[]])
+
+    off()
+    emitConnectionApplied()
+
+    expect(callback).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('boot progress', () => {
+  const status = (partial: Partial<TunnelStatus>): TunnelStatus => ({
+    connectionId: 'box',
+    generation: 0,
+    phase: 'connecting',
+    terminal: false,
+    ...partial
+  })
+
+  const gateway = TRANSLATIONS.en.settings.gateway
+  const steps = TRANSLATIONS.en.boot.steps
+
+  it.each([
+    [
+      'a dial that has not said where it is',
+      status({}),
+      { error: null, message: steps.startingDesktopConnection, phase: 'backend.resolve', progress: 4, running: true }
+    ],
+    [
+      'an SSH step',
+      status({ fraction: 0.15, step: 'authenticating' }),
+      { error: null, message: gateway.sshStepAuthenticating, phase: 'backend.resolve', progress: 18, running: true }
+    ],
+    [
+      'the last SSH step, still short of ready',
+      status({ fraction: 0.95, step: 'verifying' }),
+      { error: null, message: gateway.sshStepVerifying, phase: 'backend.resolve', progress: 90, running: true }
+    ],
+    [
+      'a redial',
+      status({ phase: 'retrying' }),
+      { error: null, message: steps.retryingRemoteBackend, phase: 'backend.resolve', progress: 4, running: true }
+    ],
+    [
+      'a tunnel that is up',
+      status({ phase: 'ready' }),
+      { error: null, phase: 'backend.ready', progress: 94, running: true }
+    ],
+    [
+      'a failure retrying can fix',
+      status({ errorKind: 'transient', message: 'box:22 unreachable', phase: 'failed' }),
+      { error: gateway.sshErrUnknown, phase: 'backend.error', retryable: true, running: false }
+    ],
+    [
+      'a changed host key',
+      status({ errorKind: 'host-key-changed', message: 'ssh-keygen -R box', phase: 'failed', terminal: true }),
+      { error: gateway.sshErrHostKey, phase: 'backend.error', retryable: false, running: false }
+    ],
+    [
+      'a credential only a person has',
+      status({ errorKind: 'credentials-needed', phase: 'failed', terminal: true }),
+      { error: gateway.sshErrAuth, phase: 'backend.error', retryable: false, running: false }
+    ],
+    [
+      'a locked device',
+      status({ errorKind: 'locked', phase: 'failed', terminal: true }),
+      { error: gateway.sshErrLocked, phase: 'backend.error', retryable: false, running: false }
+    ]
+  ])('maps %s', (_name, from, to) => {
+    expect(tunnelBootProgress(from)).toMatchObject({ fakeMode: false, ...to })
+  })
+
+  it('has nothing to say about a slot that left', () => {
+    expect(tunnelBootProgress(status({ phase: 'closed' }))).toBeNull()
+  })
+
+  it("pushes the active connection's tunnel, and nobody else's, until the hook leaves", async () => {
+    const callback = vi.fn()
+
+    activate('box')
+
+    const off = bridge.onBootProgress(callback)
+
+    // The watch attaches behind two dynamic imports.
+    await vi.waitFor(() => expect($tunnelStatus.lc).toBe(1))
+
+    $tunnelStatus.setKey('local', status({ connectionId: 'local' }))
+
+    expect(callback).not.toHaveBeenCalled()
+
+    $tunnelStatus.setKey('box', status({ fraction: 0.05, step: 'connecting' }))
+
+    expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'backend.resolve', progress: 9 }))
+    expect(await bridge.getBootProgress()).toBe(callback.mock.lastCall?.[0])
+
+    off()
+    await vi.waitFor(() => expect($tunnelStatus.lc).toBe(0))
+  })
+
+  // Rust refuses the background dial of a tunnel that needs a person with the
+  // error and the status of the dial that failed. Either way the hook reads a
+  // boot error it must not retry.
+  it('never lets the boot hook retry a tunnel that needs a person', async () => {
+    const callback = vi.fn()
+    const refused = { kind: 'host-key-changed', message: 'ssh-keygen -R box', terminal: true }
+
+    activate('box')
+    bridge.onBootProgress(callback)
+    await vi.waitFor(() => expect($tunnelStatus.lc).toBe(1))
+
+    acquireMock.mockImplementation(async () => {
+      $tunnelStatus.setKey(
+        'box',
+        status({ errorKind: refused.kind, message: refused.message, phase: 'failed', terminal: true })
+      )
+
+      throw refused
+    })
+
+    await expect(bridge.getConnection()).rejects.toThrow(gateway.sshErrHostKey)
+
+    for (const [pushed] of callback.mock.calls) {
+      expect(pushed).toMatchObject({ error: gateway.sshErrHostKey, retryable: false, running: false })
+    }
+
+    expect(callback).toHaveBeenCalledTimes(2)
+    expect(await bridge.getBootProgress()).toMatchObject({ retryable: false })
   })
 })
 
@@ -432,7 +663,6 @@ describe('signals with no universal source', () => {
   it('subscribe and never fire', () => {
     const callback = vi.fn()
 
-    bridge.onBootProgress(callback)()
     bridge.onBackendExit(callback)()
 
     expect(callback).not.toHaveBeenCalled()
@@ -449,12 +679,21 @@ describe('the installed bridge', () => {
 
     const installed = window.hermesDesktop as unknown as Record<string, unknown>
 
-    for (const member of ['getConnection', 'getConnectionFor', 'getGatewayWsUrl', 'getGatewayWsUrlFor', 'getBootProgress']) {
+    for (const member of [
+      'getBootProgress',
+      'getConnection',
+      'getConnectionFor',
+      'getGatewayWsUrl',
+      'getGatewayWsUrlFor',
+      'onBootProgress',
+      'onConnectionApplied',
+      'profile'
+    ]) {
       expect(installed[member]).toBe((bridge as Record<string, unknown>)[member])
     }
 
     // Feature-detected by the boot hook and the registry; a fake would be believed.
-    for (const member of ['connections', 'onConnectionApplied', 'revalidateConnection', 'setActiveConnectionRoute']) {
+    for (const member of ['connections', 'revalidateConnection', 'setActiveConnectionRoute']) {
       expect(installed[member]).toBeUndefined()
     }
   })

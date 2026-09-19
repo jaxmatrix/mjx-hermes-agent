@@ -200,7 +200,7 @@ function loadLastProfiles(): Record<string, string> {
  *  truth: a missing entry is `default`, and a full quota is swallowed. */
 export const $lastProfileByConnection = atom<Record<string, string>>(loadLastProfiles())
 
-function rememberProfile(connectionId: string, profile: string): void {
+export function rememberProfile(connectionId: string, profile: string): void {
   const next = { ...$lastProfileByConnection.get(), [connectionId]: profile }
   const keys = Object.keys(next)
 

@@ -7,7 +7,7 @@ const { answerListeners, attachSshPrompts, handlers, httpRequest, invoke, platfo
   httpRequest: vi.fn(),
   invoke: vi.fn(),
   platform: { mobile: false, tauri: true },
-  windowKind: { activity: false, satellite: false }
+  windowKind: { activity: false, satellite: null as null | string }
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
@@ -39,7 +39,8 @@ vi.mock('@/store/ssh-backend', () => ({
 }))
 vi.mock('@/store/windows', () => ({
   isActivityWindow: () => windowKind.activity,
-  isSatelliteWindow: () => windowKind.satellite
+  isHudWindow: () => windowKind.satellite === 'hud',
+  isSatelliteWindow: () => windowKind.satellite !== null
 }))
 vi.mock('@/transport/http', () => ({ httpRequest }))
 
@@ -84,7 +85,7 @@ beforeEach(() => {
   platform.mobile = false
   platform.tauri = true
   windowKind.activity = false
-  windowKind.satellite = false
+  windowKind.satellite = null
   $notifications.set([])
   answerListeners.clear()
   invoke.mockImplementation(async (command: string) =>
@@ -256,16 +257,35 @@ describe('acquireTunnel', () => {
   })
 
   it('never opens a page in a window that holds no tunnels', () => {
-    windowKind.satellite = true
+    windowKind.satellite = 'quick'
     openTunnelPage()
-    windowKind.satellite = false
-    windowKind.activity = true
+    windowKind.satellite = 'wake'
     openTunnelPage()
-    windowKind.activity = false
+    windowKind.satellite = null
     platform.tauri = false
     openTunnelPage()
 
     expect(invoke).not.toHaveBeenCalled()
+  })
+
+  // Every dial is a lease, the primary's included: a window with a gateway of
+  // its own has to be able to hold one. Rust reaps by window label either way.
+  it.each([
+    ['the HUD', { activity: false, satellite: 'hud' }, true],
+    ['a mobile activity screen', { activity: true, satellite: null }, true],
+    ['Quick Entry', { activity: false, satellite: 'quick' }, false],
+    ['the wake indicator', { activity: false, satellite: 'wake' }, false]
+  ] as const)('%s holds tunnels: %j → %s', async (_name, kind, holds) => {
+    Object.assign(windowKind, kind)
+    openTunnelPage()
+
+    if (holds) {
+      await expect(acquireTunnel('ssh1')).resolves.toMatchObject({ connectionId: 'ssh1' })
+      expect(calls('tunnel_page_open')).toHaveLength(1)
+    } else {
+      await expect(acquireTunnel('ssh1')).rejects.toMatchObject({ kind: 'unavailable' })
+      expect(invoke).not.toHaveBeenCalled()
+    }
   })
 
   it('forgets the page open on a test reset', async () => {
@@ -384,7 +404,7 @@ describe('acquireTunnel', () => {
   })
 
   // A changed host key is refused under every policy: there is nothing to Connect.
-  it('warns about a changed host key once, with no Connect', async () => {
+  it('warns about a changed host key once, with a Retry and no Connect', async () => {
     withPageOpen(async (command: string) => {
       if (command === 'tunnel_acquire') {
         throw { kind: 'host-key-changed', message: 'remove the old key with ssh-keygen -R box', terminal: true }
@@ -403,9 +423,38 @@ describe('acquireTunnel', () => {
       kind: 'error',
       title: 'Box'
     })
-    expect(shown[0]?.action).toBeUndefined()
+    expect(shown[0]?.action?.label).toBe(TRANSLATIONS.en.common.retry)
     // Not a sign-in either, so the session router never reports it as one.
     expect(isTunnelSignInError({ kind: 'host-key-changed', message: '', terminal: true })).toBe(false)
+  })
+
+  // Rust dials a connection that needs a person in the background no more, so
+  // once `known_hosts` is fixed out of band only an interactive dial gets through.
+  it("retries a changed host key through the person's own dial, once, and clears the warning", async () => {
+    let fixed = false
+
+    withPageOpen(async (command: string) => {
+      if (command === 'tunnel_acquire') {
+        if (!fixed) {
+          throw { kind: 'host-key-changed', message: 'ssh-keygen -R box', terminal: true }
+        }
+
+        return descriptor
+      }
+    })
+
+    await expect(acquireTunnel('ssh1', { label: 'Box' })).rejects.toMatchObject({ kind: 'host-key-changed' })
+
+    fixed = true
+    $notifications.get()[0]?.action?.onClick()
+
+    await vi.waitFor(() => expect($notifications.get()).toHaveLength(0))
+
+    expect(calls('tunnel_acquire')).toHaveLength(2)
+    expect(calls('tunnel_acquire')[1]?.[1]).toMatchObject({ attemptId: 'attempt-7', interactive: true })
+    // Connect only: its lease is let go like the failed hold before it, and
+    // whatever failed is not replayed.
+    expect(calls('tunnel_release')).toHaveLength(2)
   })
 
   it('raises nothing for a failure that retrying can fix', async () => {
