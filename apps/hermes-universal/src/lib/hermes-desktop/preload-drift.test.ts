@@ -46,6 +46,17 @@ const NOT_YET: Record<string, string> = {
   onNotificationAction:
     'cannot fire: no notification buttons on a desktop OS, and no phone root listens for an approval’s',
   onFocusSession: 'cannot fire: no notification click on a desktop OS',
+  openSessionWindow:
+    'owned elsewhere: store/windows.ts opens every window kind through Rust itself — it flushes the composer drafts first and records the pop-out so its close hands the stream back; no caller reaches for the bridge',
+  openWindow: 'owned elsewhere: store/windows.ts (open_instance_window); no caller reaches for the bridge',
+  onWindowStateChanged:
+    'no correct mapping: isFullscreen must stay false (universal’s drawn window buttons stay in fullscreen, so desktop must keep its inset), and Tauri raises no minimize or visibility event — the DOM’s visibilitychange, which desktop’s pause controller also reads, is the signal',
+  setTitleBarTheme: 'no mapping: every window is frameless, and universal’s own window buttons take the theme from CSS',
+  setDisableF12: 'no mapping: a release build has no devtools (no `devtools` cargo feature), so F12 opens nothing',
+  setActiveConnectionRoute:
+    'no mapping: Electron holds a route per window to reach previews through; browser_reach_url takes the scope on every call, so Rust has nothing to hold',
+  getPoolLimits: 'no mapping: no backend pool — one unified server per connection serves every profile',
+  setPoolLimits: 'no mapping: no backend pool — one unified server per connection serves every profile',
 
   // -- needs Rust ---------------------------------------------------------------
   readFileDataUrlForAttach:
@@ -82,45 +93,17 @@ const NOT_YET: Record<string, string> = {
   contextMenuSpellcheck: 'needs Rust: no spellcheck API on a Tauri webview',
   contextMenuGuestAddWord: 'needs Rust: no spellcheck API on a Tauri webview',
   onContextMenuSpellcheck: 'needs Rust: no spellcheck API on a Tauri webview',
-
-  // -- batch 2: connections, config, sign-in ------------------------------------
-  connections: 'batch 2: the registry namespace over connections_*',
-  cloud: 'batch 2: portal_* sign-in and discovery',
-  'profile.set':
-    'batch 2: relaunch-under-profile has no analogue on the unified server; decide with the connection settings',
-  getConnectionConfig: 'batch 2: connection settings',
-  saveConnectionConfig: 'batch 2: connection settings',
-  applyConnectionConfig: 'batch 2: connection settings',
-  testConnectionConfig: 'batch 2: connection settings',
-  probeConnectionConfig: 'batch 2: connection settings',
-  oauthLoginConnectionConfig: 'batch 2: oauth_login',
-  oauthLogoutConnectionConfig: 'batch 2: oauth_logout',
-  getSecretStorageEncryption: 'batch 2: secrets_status',
-  setSecretStorageEncryption: 'batch 2: secrets_*',
-  sshConfigHosts: 'batch 2: ssh_list_config_hosts',
-  sshResolveHost: 'batch 2: ssh_resolve_host',
-  revalidateConnection: 'batch 2: connection lifecycle',
-  setActiveConnectionRoute: 'batch 2: connection lifecycle',
-  getProfileRoutes: 'batch 2: plugin profile routes',
-  getAgentRoster: 'batch 2: connections_roster',
-  getPoolLimits: 'batch 2: no backend pool on the unified server — decide absent-for-good or an "unsupported" shape',
-  setPoolLimits: 'batch 2: no backend pool on the unified server',
-  recycleBackend: 'batch 2: local_backend_restart',
+  'connections.updateManaged':
+    'needs Rust: a transactional update of an SSH install it manages (drain, update, prove, restore); desktop’s section feature-detects it',
   saveGatewayFile:
-    'batch 2: a connection-scoped download over store/downloads.ts (download_file is scoped by media_set_target today)',
-  mcpOauth: 'batch 2: a loopback listener for MCP OAuth',
-  settings: 'batch 2: default project directory',
+    'needs Rust: a download scoped by connection, profile and session — download_file follows media_set_target, the active source only',
+  mcpOauth: 'needs Rust: a one-shot loopback listener (listen / wait / cancel) for MCP OAuth redirects',
+  openSessionInTerminal:
+    'needs Rust: a launcher that resumes the session in the TUI (`hermes --tui --resume`); open_in_terminal only opens a shell at a directory',
 
-  // -- batch 2–3: windows, updates, themes, git, terminal, satellites -----------
-  openSessionWindow: 'batch 2: open_session_window',
-  openSessionInTerminal: 'batch 2: open_in_terminal',
-  openWindow: 'batch 2: open_instance_window',
+  // -- batch 3: windows, updates, themes, git, terminal, satellites -------------
   openBrowserWindow: 'batch 3: the in-app browser’s pop-out',
   onBrowserPopoutClosed: 'batch 3: the in-app browser’s pop-out',
-  onWindowStateChanged: 'batch 2: fullscreen / maximize state',
-  setTitleBarTheme: 'batch 2: no OS titlebar on a frameless window — decide absent-for-good',
-  setNativeTheme: 'batch 2: native theme hint',
-  setDisableF12: 'batch 2: devtools policy',
   setPreviewShortcutActive: 'batch 3: preview pane shortcuts',
   openPreviewInBrowser: 'batch 3: preview pane',
   reachPreviewUrl: 'batch 3: browser_reach_url',
@@ -163,7 +146,7 @@ const NOT_YET: Record<string, string> = {
 }
 
 /** Lower it when an entry leaves. It does not go up without a decision. */
-const NOT_YET_SIZE = 110
+const NOT_YET_SIZE = 91
 
 /** Every member the preload exposes: `notify`, `zoom.get`, `git.review.list`. */
 function preloadSurface(): string[] {
@@ -291,8 +274,37 @@ describe('the bridge against Electron’s preload', () => {
 })
 
 describe('what each platform gets', () => {
-  const EVERYWHERE = ['openExternal', 'fetchLinkTitle', 'readFileDataUrl', 'dataUrlReadMax.get', 'notify', 'zoom.get']
-  const DESKTOP_ONLY = ['setKeepAwake', 'revealPath', 'setTranslucency', 'glassSupported', 'translucencySupported']
+  const EVERYWHERE = [
+    'openExternal',
+    'fetchLinkTitle',
+    'readFileDataUrl',
+    'dataUrlReadMax.get',
+    'notify',
+    'zoom.get',
+    // The connection model: a phone has sources, sign-in and a roster too.
+    'connections.list',
+    'connections.onChanged',
+    'getConnectionConfig',
+    'applyConnectionConfig',
+    'oauthLoginConnectionConfig',
+    'cloud.login',
+    'sshConfigHosts',
+    'getAgentRoster',
+    'getProfileRoutes',
+    'revalidateConnection',
+    'recycleBackend'
+  ]
+
+  const DESKTOP_ONLY = [
+    'setKeepAwake',
+    'revealPath',
+    'setTranslucency',
+    'glassSupported',
+    'translucencySupported',
+    // No folder picker, local backend or window theme on a phone.
+    'settings.getDefaultProjectDir',
+    'setNativeTheme'
+  ]
 
   it('a desktop OS gets the everyday members and the desktop levers', async () => {
     const members = await bridgeSurface('linux')
@@ -311,6 +323,21 @@ describe('what each platform gets', () => {
     const members = await bridgeSurface('none')
 
     expect(members.filter(member => [...EVERYWHERE, ...DESKTOP_ONLY].includes(member))).toEqual([])
+  })
+})
+
+describe('the profile namespace', () => {
+  // Desktop feature-detects the namespace and then calls `set` unguarded
+  // (`store/profile.ts`, `switchProfile`): a partial namespace is a TypeError.
+  it('is whole on every platform, with or without a runtime', async () => {
+    for (const platform of ['linux', 'android', 'none']) {
+      const members = await bridgeSurface(platform)
+
+      expect([platform, members.filter(member => member.startsWith('profile.')).sort()]).toEqual([
+        platform,
+        ['profile.get', 'profile.remember', 'profile.set']
+      ])
+    }
   })
 })
 

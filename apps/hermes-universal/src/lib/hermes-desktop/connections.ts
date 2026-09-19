@@ -737,7 +737,7 @@ export const connectionBridge: Pick<
   'getBootProgress' | 'getConnection' | 'getGatewayWsUrl' | 'onBackendExit' | 'onBootProgress' | 'onPowerResume'
 > &
   Required<Pick<Bridge, 'getConnectionFor' | 'getGatewayWsUrlFor' | 'onConnectionApplied'>> & {
-    profile: Pick<Bridge['profile'], 'get' | 'remember'>
+    profile: Bridge['profile']
   } = {
   getBootProgress: async () => boot,
 
@@ -827,6 +827,25 @@ export const connectionBridge: Pick<
         const { rememberProfile } = await import('@/store/connections')
 
         rememberProfile(connectionId, profile)
+      }
+
+      return { profile }
+    },
+
+    // Electron persists the choice, relaunches its local backend under the new
+    // HERMES_HOME and reloads the window. Every backend here already serves
+    // every profile, so nothing restarts: the window's primary is re-homed onto
+    // the profile — the switch desktop's profile rail makes, which remembers it
+    // for the next launch too. A person picked it, so the switch may ask.
+    set: async name => {
+      const connectionId = (await activeConnection())?.connectionId
+      const profile = profileKey(name)
+
+      if (connectionId) {
+        // Dynamic: the registry store imports `@/hermes`.
+        const { selectConnection } = await import('@/store/connections')
+
+        await selectConnection(connectionId, { profile })
       }
 
       return { profile }

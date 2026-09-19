@@ -25,8 +25,15 @@
  * (`./notifications.ts`), text size (`./zoom.ts`), keep-awake (`./power.ts`)
  * and window glass (`./translucency.ts`).
  *
- * The remaining namespaces (windows, git, terminal, updates, themes,
- * `connections`, …) are added as their units land. `./preload-drift.test.ts`
+ * Then the connection model (`./registry-shape` is the mapping): the registry
+ * namespace (`./registry.ts`), Electron's v1 connection config over it
+ * (`./connection-config.ts`), Hermes Cloud (`./cloud.ts`), the SSH config reader
+ * (`./ssh-config.ts`), the union roster and plugin routes (`./roster.ts`), the
+ * backend levers (`./backend.ts`), the default project folder (`./settings.ts`)
+ * and the native theme (`./native-theme.ts`).
+ *
+ * The remaining namespaces (windows, git, terminal, updates, themes, …) are
+ * added as their units land. `./preload-drift.test.ts`
  * holds the list: every member of Electron's preload is either implemented
  * here or named there with the reason it is not. A member that is not
  * implemented stays ABSENT, never a silent fake: optional ones are
@@ -39,13 +46,21 @@ import { createClipboardBridge } from '@/lib/clipboard-tauri'
 import { IS_DESKTOP, IS_TAURI } from '@/lib/platform'
 import { readWindowBelow } from '@/lib/surface'
 
+import { backendBridge } from './backend'
+import { cloudBridge } from './cloud'
+import { connectionConfigBridge } from './connection-config'
 import { connectionBridge, restScope } from './connections'
 import { dialogsBridge } from './dialogs'
 import { externalBridge, revealBridge } from './external'
 import { filesBridge } from './files'
 import { imagesBridge } from './images'
+import { nativeThemeBridge } from './native-theme'
 import { notificationsBridge } from './notifications'
 import { powerBridge } from './power'
+import { registryBridge } from './registry'
+import { rosterBridge } from './roster'
+import { settingsBridge } from './settings'
+import { sshConfigBridge } from './ssh-config'
 import { translucencyBridge } from './translucency'
 import { wakeIndicatorBridge } from './wake-indicator'
 import { hostsWindowChrome, installWindowControlsOverlay } from './window-chrome'
@@ -126,10 +141,19 @@ export function installHermesDesktopBridge(): void {
       ...notificationsBridge,
       // The mobile pre-flight; desktop webviews ask on `getUserMedia` themselves.
       requestMicrophoneAccess: async () => (await import('@/lib/mic-permission')).ensureMicPermission(),
-      zoom: zoomBridge
+      zoom: zoomBridge,
+      // The registry, the v1 connection config over it, Hermes Cloud, the SSH
+      // config reader, the union roster and the two backend levers: Rust's
+      // connection model in desktop's terms (`./registry-shape`).
+      ...registryBridge,
+      ...connectionConfigBridge,
+      ...cloudBridge,
+      ...sshConfigBridge,
+      ...rosterBridge,
+      ...backendBridge
     }),
-    // No file manager, sleep inhibitor or window manager on a phone.
-    ...(IS_DESKTOP && { ...revealBridge, ...powerBridge }),
+    // No file manager, sleep inhibitor, folder picker or window theme on a phone.
+    ...(IS_DESKTOP && { ...revealBridge, ...powerBridge, ...settingsBridge, ...nativeThemeBridge }),
     ...translucencyBridge(),
     // Optional-chained by its only caller; an Electron backend-pool keepalive
     // with no Tauri analogue.

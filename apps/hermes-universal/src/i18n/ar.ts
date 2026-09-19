@@ -1330,7 +1330,15 @@ export const ar = defineLocale({
       },
       restartLocalConfirm: 'إعادة التشغيل',
       profileRestartMessage: name => `يتم الآن استخدام ${name}. هل تريد إعادة تشغيل الخادم الخلفي لإعادة تحميله؟`,
-      profileRestartAction: 'إعادة تشغيل الخادم الخلفي'
+      profileRestartAction: 'إعادة تشغيل الخادم الخلفي',
+      localNotRunning: 'الخادم الخلفي على هذا الجهاز لا يعمل.',
+      updateNeedsConnection: 'اتصل بهذه البوابة لتحديثها.',
+      profileGatewayUnsupported:
+        'لا يمكن أن يكون للملف الشخصي بوابة خاصة به هنا. أضف البوابة من الإعدادات ← البوابة ثم انتقل إليها.',
+      secretsAlwaysStored: 'يحتفظ Hermes دائمًا بالأسرار المحفوظة في مخزن بيانات الاعتماد لهذا الجهاز، لذا لا يمكن إيقاف ذلك.',
+      sshRestartUnsupported:
+        'لا يمكن إعادة تشغيل خادم خلفي على مضيف SSH من هنا. أعد الاتصال به أو أعد تشغيله على المضيف.',
+      managePage: 'البوابات: المفاتيح والأنفاق وتسجيل الدخول'
     },
     voiceLevels: {
       title: 'المستويات',

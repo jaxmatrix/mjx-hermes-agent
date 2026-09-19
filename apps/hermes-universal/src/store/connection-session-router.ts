@@ -3,7 +3,7 @@ import { $activeConnection } from '@/store/active-connection'
 import { migrateLegacyBubbles } from '@/store/chat-bubbles'
 import { connectionScopeKey } from '@/store/connection-clients'
 import { isTunnelSignInError } from '@/store/connection-tunnels'
-import { $connectionsRegistry } from '@/store/connections'
+import { $registryView } from '@/store/connections'
 import { $gatewayState, requestGateway, setGatewayRequestProfile } from '@/store/gateway-client'
 import { leaseSecondary, releaseSecondary } from '@/store/gateway-secondaries'
 import { $gatewaySwitching } from '@/store/gateway-switch'
@@ -203,7 +203,7 @@ setSessionRefResolver(storedSessionId => {
 // soon as the registry names it, and once.
 let bubblesMigrated = false
 
-$connectionsRegistry.listen(registry => {
+$registryView.listen(registry => {
   if (!bubblesMigrated && registry.connections.length > 0) {
     bubblesMigrated = true
     migrateLegacyBubbles(registry.primary)

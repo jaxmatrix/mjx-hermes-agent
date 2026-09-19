@@ -1693,7 +1693,13 @@ export const zhHant = defineLocale({
       },
       restartLocalConfirm: '重新啟動',
       profileRestartMessage: name => `正在使用 ${name}。要重新啟動後端以重新載入嗎？`,
-      profileRestartAction: '重新啟動後端'
+      profileRestartAction: '重新啟動後端',
+      localNotRunning: '此裝置上的後端未在執行。',
+      updateNeedsConnection: '連線到此閘道後才能更新它。',
+      profileGatewayUnsupported: '此處無法為單一設定檔指定專屬閘道。請在「設定 → 閘道」中新增該閘道並切換過去。',
+      secretsAlwaysStored: 'Hermes 一律將已儲存的機密存放在此裝置的憑證儲存區，因此無法關閉。',
+      sshRestartUnsupported: '無法從此處重新啟動 SSH 主機上的後端。請重新連線，或在主機上重新啟動它。',
+      managePage: '閘道：金鑰、通道與登入'
     },
     voiceLevels: {
       title: '電平',

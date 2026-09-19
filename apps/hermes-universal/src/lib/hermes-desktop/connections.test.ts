@@ -60,6 +60,9 @@ const { acquireMock, active, apiMock, invokeMock, leases, mintTicketMock, rows, 
 // The registry store's per-connection profile memory.
 const lastProfiles = vi.hoisted(() => new Map<string, string>())
 
+// The store's two-phase switch, as `profile.set` drives it.
+const selectMock = vi.hoisted(() => vi.fn(async (_connectionId: string, _options?: { profile?: string }) => {}))
+
 // The boot cookie restore, as the bridge waits on it.
 const cookies = vi.hoisted(() => ({ restored: Promise.resolve() }))
 
@@ -106,7 +109,8 @@ vi.mock('@/store/connections', () => ({
     return row && { ...row, hasToken: row.tokenAttached === true, id, url: row.baseUrl }
   },
   correctAuthMode: gate.correct,
-  rememberProfile: (id: string, profile: string) => void lastProfiles.set(id, profile)
+  rememberProfile: (id: string, profile: string) => void lastProfiles.set(id, profile),
+  selectConnection: selectMock
 }))
 vi.mock('@/store/windows', () => ({ windowProfileOverride: () => windowProfile.current }))
 vi.mock('@/transport/gateway-socket', () => ({
@@ -266,6 +270,29 @@ describe("the primary's profile", () => {
 
     expect(await bridge.profile.remember('work')).toEqual({ profile: 'work' })
     expect(lastProfiles.get('home')).toBe('work')
+  })
+
+  // Electron relaunches its backend under the profile and reloads. Here the
+  // backend already serves every profile, so `set` is the rail's switch.
+  it('sets a profile by re-homing the window onto it, as a person’s click, once', async () => {
+    activate('home')
+
+    expect(await bridge.profile.set('work')).toEqual({ profile: 'work' })
+    expect(selectMock).toHaveBeenCalledExactlyOnceWith('home', { profile: 'work' })
+
+    // `null` is Electron's "no preference": the launch profile.
+    expect(await bridge.profile.set(null)).toEqual({ profile: 'default' })
+    expect(selectMock).toHaveBeenLastCalledWith('home', { profile: 'default' })
+  })
+
+  it('sets nothing with no connection to re-home, and reports a refused switch', async () => {
+    expect(await bridge.profile.set('work')).toEqual({ profile: 'work' })
+    expect(selectMock).not.toHaveBeenCalled()
+
+    activate('home')
+    selectMock.mockRejectedValueOnce(new Error('Could not switch gateway'))
+
+    await expect(bridge.profile.set('work')).rejects.toThrow('Could not switch gateway')
   })
 
   // The registry files the primary under the adopted profile and sends that
@@ -1122,9 +1149,11 @@ describe('the installed bridge', () => {
       expect(installed[member]).toBe((bridge as Record<string, unknown>)[member])
     }
 
-    // Feature-detected by the boot hook and the registry; a fake would be believed.
-    for (const member of ['connections', 'revalidateConnection', 'setActiveConnectionRoute']) {
-      expect(installed[member]).toBeUndefined()
-    }
+    // The registry and the revalidation lever came with the connection model
+    // (`./registry`, `./backend`); the preview route has no mapping and a fake
+    // would be believed.
+    expect(installed.connections).toBeDefined()
+    expect(installed.revalidateConnection).toBeDefined()
+    expect(installed.setActiveConnectionRoute).toBeUndefined()
   })
 })

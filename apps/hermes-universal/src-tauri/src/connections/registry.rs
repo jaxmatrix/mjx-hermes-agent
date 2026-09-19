@@ -197,8 +197,12 @@ pub struct ConnectionInput {
     /// `Some("")` deletes the stored token; `None` leaves it alone.
     #[serde(default)]
     pub token: Option<String>,
+    /// Authoritative when present: the row keeps exactly these NAMES. A value
+    /// is the new secret, `""` deletes it, and `null` keeps the one already
+    /// stored under that name — desktop's editor sends `null` for a header it
+    /// loaded by name and did not retype, since no value ever reaches it.
     #[serde(default)]
-    pub headers: Option<BTreeMap<String, String>>,
+    pub headers: Option<BTreeMap<String, Option<String>>>,
     #[serde(default)]
     pub org: Option<String>,
     #[serde(default)]
@@ -615,7 +619,10 @@ pub fn normalize_connection_input(
             let names = match &input.headers {
                 Some(headers) => {
                     for (name, value) in headers {
-                        if value.len() > MAX_HEADER_VALUE_BYTES {
+                        if value
+                            .as_ref()
+                            .is_some_and(|v| v.len() > MAX_HEADER_VALUE_BYTES)
+                        {
                             return Err(ConnectionsError::invalid(format!(
                                 "the value for header \"{name}\" is too long"
                             )));
@@ -1731,6 +1738,50 @@ mod tests {
         .expect("saved");
 
         assert!(!merge_connection_input(&mut registry, saved).expect("merged"));
+    }
+
+    #[test]
+    fn a_null_header_value_keeps_its_name_and_is_not_a_new_secret() {
+        // Desktop's editor: one header loaded by name and left alone, one retyped.
+        let input: ConnectionInput = serde_json::from_value(serde_json::json!({
+            "kind": "remote",
+            "label": "Edge",
+            "url": "https://edge.test",
+            "headers": { "cf-access-client-id": null, "cf-access-client-secret": "fresh" },
+        }))
+        .expect("a null header value deserializes");
+
+        let headers = input.headers.as_ref().expect("headers");
+
+        assert_eq!(headers["cf-access-client-id"], None);
+        assert_eq!(headers["cf-access-client-secret"].as_deref(), Some("fresh"));
+
+        let (stored, dropped) =
+            normalize_connection_input(&input, None, 0, &BTreeSet::new(), &BTreeSet::new())
+                .expect("stored");
+
+        assert!(dropped.is_empty());
+        assert_eq!(
+            stored.header_names,
+            vec![
+                "cf-access-client-id".to_string(),
+                "cf-access-client-secret".to_string()
+            ]
+        );
+
+        // The pre-existing wire shape — every value a string — still reads.
+        let plain: ConnectionInput = serde_json::from_value(serde_json::json!({
+            "kind": "remote",
+            "label": "Edge",
+            "url": "https://edge.test",
+            "headers": { "cf-access-client-id": "abc" },
+        }))
+        .expect("string values still deserialize");
+
+        assert_eq!(
+            plain.headers.expect("headers")["cf-access-client-id"].as_deref(),
+            Some("abc")
+        );
     }
 
     #[test]

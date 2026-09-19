@@ -1468,7 +1468,13 @@ export const zh = defineLocale({
       },
       restartLocalConfirm: '重启',
       profileRestartMessage: name => `正在使用 ${name}。要重启后端以重新加载吗？`,
-      profileRestartAction: '重启后端'
+      profileRestartAction: '重启后端',
+      localNotRunning: '此设备上的后端未在运行。',
+      updateNeedsConnection: '连接到此网关后才能更新它。',
+      profileGatewayUnsupported: '此处无法为单个配置文件指定专属网关。请在“设置 → 网关”中添加该网关并切换过去。',
+      secretsAlwaysStored: 'Hermes 始终将已保存的机密存放在此设备的凭据存储中，因此无法关闭。',
+      sshRestartUnsupported: '无法从此处重启 SSH 主机上的后端。请重新连接，或在主机上重启它。',
+      managePage: '网关：密钥、隧道与登录'
     },
     managedUpdates: {
       title: '托管更新',

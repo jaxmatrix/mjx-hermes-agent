@@ -543,11 +543,22 @@ fn find<'a>(registry: &'a Registry, id: &str) -> Result<&'a Connection, Connecti
         .ok_or_else(|| ConnectionsError::not_found(id))
 }
 
+/// The registry event's payload. `dialFieldsChanged` is additive: a listener
+/// that predates it reads `reason` and `connectionId` exactly as before.
+fn changed_payload(
+    reason: &str,
+    connection_id: Option<&str>,
+    dial_fields_changed: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "reason": reason,
+        "connectionId": connection_id,
+        "dialFieldsChanged": dial_fields_changed,
+    })
+}
+
 fn notify_changed(app: &AppHandle, reason: &str, connection_id: Option<&str>) {
-    let _ = app.emit(
-        CHANGED_EVENT,
-        serde_json::json!({ "reason": reason, "connectionId": connection_id }),
-    );
+    let _ = app.emit(CHANGED_EVENT, changed_payload(reason, connection_id, false));
 }
 
 /// The ONE cross-window signal for the source the app is on. It rides the
@@ -784,7 +795,7 @@ pub async fn connections_save(
         || input
             .headers
             .as_ref()
-            .is_some_and(|headers| headers.values().any(|value| !value.is_empty()));
+            .is_some_and(|headers| headers.values().flatten().any(|value| !value.is_empty()));
 
     // Refused BEFORE anything is written, and never with a plaintext fallback:
     // universal has no plaintext credential store and must not grow one.
@@ -795,7 +806,7 @@ pub async fn connections_save(
         ));
     }
 
-    let (connection, changed, dropped) = state.mutate(&app, |registry| {
+    let (connection, changed, dropped, existed) = state.mutate(&app, |registry| {
         let existing = input
             .id
             .as_deref()
@@ -832,7 +843,7 @@ pub async fn connections_save(
 
         let changed = merge_connection_input(registry, connection.clone())?;
 
-        Ok((connection, changed, dropped))
+        Ok((connection, changed, dropped, existing.is_some()))
     })?;
 
     // The keyring writes happen AFTER the document is committed, so a rejected
@@ -856,7 +867,8 @@ pub async fn connections_save(
         for (name, value) in headers {
             let lower = name.trim().to_ascii_lowercase();
 
-            if connection.header_names.contains(&lower) {
+            // `None` keeps the secret already stored under that name.
+            if let (true, Some(value)) = (connection.header_names.contains(&lower), value) {
                 let _ = secrets::write_header(&connection.id, &lower, value);
             }
         }
@@ -880,7 +892,13 @@ pub async fn connections_save(
         .then(|| state.redial_source(&app, &connection.id))
         .flatten();
 
-    notify_changed(&app, "saved", Some(&connection.id));
+    // `dialFieldsChanged` is desktop's `updated`: an EXISTING row now points
+    // somewhere else, so sockets scoped to it are stale. A new row, or a rename,
+    // moved nothing.
+    let _ = app.emit(
+        CHANGED_EVENT,
+        changed_payload("saved", Some(&connection.id), existed && changed),
+    );
 
     Ok(SaveOutcome {
         connection_id: connection.id.clone(),
@@ -1386,6 +1404,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         dir.join(FILE_NAME)
+    }
+
+    #[test]
+    fn the_changed_event_adds_dial_fields_changed_beside_the_fields_it_always_had() {
+        let moved = changed_payload("saved", Some("box-2"), true);
+
+        assert_eq!(moved["reason"], "saved");
+        assert_eq!(moved["connectionId"], "box-2");
+        assert_eq!(moved["dialFieldsChanged"], true);
+
+        let launch = changed_payload("launch-mode", None, false);
+
+        assert!(launch["connectionId"].is_null());
+        assert_eq!(launch["dialFieldsChanged"], false);
     }
 
     #[test]

@@ -125,6 +125,16 @@ export function bootUniversal(): void {
   // listener on the window, which is what lets a dev build keep Inspect Element.
   if (hostsWindowChrome()) {
     lever('native context menu', () => void installNativeContextMenuGuard())
+
+    // Universal's own pages (the Gateways page: SSH keys, tunnels, sign-in) join
+    // desktop's workspace as contributions, since desktop's Settings cannot take
+    // a section. Its own chunk, and late is fine: the route table, the palette
+    // and the status bar all re-read the registry when it changes.
+    lever('universal pages', () => {
+      void import('./app/universal/pages')
+        .then(pages => pages.registerUniversalPages())
+        .catch(() => console.error('[boot] universal pages failed to load'))
+    })
   }
 
   // Background mode (MJXHRM-436), in the window that owns the app's state only:

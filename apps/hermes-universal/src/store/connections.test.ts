@@ -122,15 +122,18 @@ import {
   $hasMultipleConnections,
   $lastProfileByConnection,
   $pendingConnectionId,
+  $registryView,
   __testing,
   applyConnection,
   applySource,
   initializeConnectionsRegistry,
   lastProfileFor,
   loadConnectionsRegistry,
+  refreshConnectionsRegistry,
   restoreLaunchConnection,
   saveTunnelAnswer,
   selectConnection,
+  setConnectionsRegistry,
   startConnectionsWatcher
 } from './connections'
 import { $restoring } from './gateway-restore'
@@ -150,7 +153,7 @@ const RESOLVED = {
 const SSH = { ...RESOLVED, baseUrl: undefined, kind: 'ssh', mode: 'ssh', remoteHost: 'deploy@box' }
 
 function seedRegistry(ids: string[], overrides: Record<string, unknown> = {}): void {
-  $connectionsRegistry.set({
+  $registryView.set({
     connections: ids.map((id, order) => ({
       hasSshKey: false,
       hasSshPassphrase: false,
@@ -204,7 +207,7 @@ function rust(resolved: Record<string, unknown> = RESOLVED): void {
 
     return (
       rustSourceCommand(command, args.connectionId) ??
-      (command.startsWith('connections_') ? $connectionsRegistry.get() : undefined)
+      (command.startsWith('connections_') ? $registryView.get() : undefined)
     )
   })
 }
@@ -284,11 +287,77 @@ describe('$hasMultipleConnections', () => {
   })
 })
 
+// Desktop's switcher, profile rail, settings and sidebar groups read ITS atom
+// (`store/connection-registry-state`), in its shape. It is a projection of
+// Rust's view: one registry, two shapes, never two truths.
+describe("desktop's registry atom", () => {
+  it('is null until a view arrives, then follows every write of it, in desktop’s shape', () => {
+    expect($connectionsRegistry.get()).toBeNull()
+
+    seedRegistry(['home', 'studio'])
+
+    expect($connectionsRegistry.get()).toEqual({
+      connections: [
+        {
+          headerNames: [],
+          id: 'home',
+          kind: 'remote',
+          label: 'home',
+          tokenPreview: null,
+          tokenSet: false,
+          url: 'https://home.test'
+        },
+        {
+          headerNames: [],
+          id: 'studio',
+          kind: 'remote',
+          label: 'studio',
+          tokenPreview: null,
+          tokenSet: false,
+          url: 'https://studio.test'
+        }
+      ],
+      lastUsed: 'home',
+      launchMode: 'last-used',
+      primary: 'home',
+      secureTokenStorage: true,
+      version: 2
+    })
+
+    seedRegistry(['home'])
+
+    expect($connectionsRegistry.get()?.connections.map(row => row.id)).toEqual(['home'])
+  })
+
+  it('answers desktop’s refresh in desktop’s shape, and goes back to null on a reset', async () => {
+    seedRegistry(['home'])
+    rust()
+
+    expect(await refreshConnectionsRegistry()).toEqual($connectionsRegistry.get())
+    expect((await initializeConnectionsRegistry())?.primary).toBe('home')
+
+    __testing.reset()
+
+    expect($connectionsRegistry.get()).toBeNull()
+  })
+
+  it('takes what desktop’s registry page publishes without touching Rust’s view', () => {
+    seedRegistry(['home'])
+
+    const view = $registryView.get()
+
+    setConnectionsRegistry({ connections: [], lastUsed: 'x', primary: 'x', secureTokenStorage: true, version: 2 })
+
+    expect($connectionsRegistry.get()?.primary).toBe('x')
+    expect($registryView.get()).toBe(view)
+  })
+})
+
 describe('loadConnectionsRegistry', () => {
   it('seeds and publishes the roster without dialling, and reports a degraded one once', async () => {
     seedRegistry(['home', 'studio'])
 
-    const registry = { ...$connectionsRegistry.get(), degraded: true }
+    const registry = { ...$registryView.get(), degraded: true }
 
     __testing.reset()
     invoke.mockImplementation(async () => registry)
@@ -297,7 +366,7 @@ describe('loadConnectionsRegistry', () => {
     await loadConnectionsRegistry()
 
     expect(invoke).toHaveBeenCalledWith('connections_migrate', { legacyTarget: null })
-    expect($connectionsRegistry.get()).toBe(registry)
+    expect($registryView.get()).toBe(registry)
     expect(notify).toHaveBeenCalledTimes(1)
     expect($activeConnection.get()).toBeNull()
   })
@@ -468,7 +537,7 @@ describe('restoreLaunchConnection', () => {
             dialConnectionId: args.connectionId,
             profile: args.profile ?? 'work'
           }
-        : (rustSourceCommand(command, args.connectionId) ?? $connectionsRegistry.get())
+        : (rustSourceCommand(command, args.connectionId) ?? $registryView.get())
     )
 
     await restoreLaunchConnection(true)
@@ -1040,14 +1109,14 @@ describe('applyConnection', () => {
     invoke.mockImplementation(
       async (command: string, args: { connectionId?: string; input?: { id?: string } } = {}) => {
         if (command === 'connections_save') {
-          return { connectionId: args.input?.id ?? 'minted', registry: $connectionsRegistry.get() }
+          return { connectionId: args.input?.id ?? 'minted', registry: $registryView.get() }
         }
 
         if (command === 'connections_resolve') {
           return { ...RESOLVED, connectionId: args.connectionId }
         }
 
-        return rustSourceCommand(command, args.connectionId) ?? $connectionsRegistry.get()
+        return rustSourceCommand(command, args.connectionId) ?? $registryView.get()
       }
     )
   })
@@ -1140,8 +1209,8 @@ describe('the last-profile writer', () => {
 // dials read it.
 describe('saveTunnelAnswer', () => {
   function seedSsh(legacy: boolean): void {
-    $connectionsRegistry.set({
-      ...$connectionsRegistry.get(),
+    $registryView.set({
+      ...$registryView.get(),
       connections: [
         {
           hasSshKey: true,
@@ -1168,7 +1237,7 @@ describe('saveTunnelAnswer', () => {
   it('saves a registered row through the editor save, secrets only', async () => {
     seedSsh(false)
     invoke.mockImplementation(async (command: string) =>
-      command === 'connections_save' ? { registry: $connectionsRegistry.get() } : undefined
+      command === 'connections_save' ? { registry: $registryView.get() } : undefined
     )
 
     await saveTunnelAnswer('box', { passphrase: 'open sesame' })

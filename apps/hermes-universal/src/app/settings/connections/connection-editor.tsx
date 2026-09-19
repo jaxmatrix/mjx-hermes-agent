@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
-import { connectionEndpointLabel } from '@/lib/connection-display'
+import { connectionEndpointLabel } from '@/lib/connection-endpoint'
 import {
   type ConnectionSaveInput,
   type ConnectionView,
