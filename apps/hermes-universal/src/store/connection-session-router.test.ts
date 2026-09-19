@@ -31,7 +31,7 @@ import { registrySessionRouter } from './connection-session-router'
 import { $gatewayState, withGatewayProfile } from './gateway-client'
 import { $gatewaySwitching } from './gateway-switch'
 import { $activeProfile } from './profiles'
-import { $activeSessionRoute, requestForSession, SessionRouteError } from './session-request-router'
+import { $activeSessionRoute, requestForSession, SessionRouteError } from './session-route-dispatch'
 import { forgetSessionSources, spliceRegistrySessionRows } from './session-sources'
 
 const REMOTE: Connection = { authMode: 'none', baseUrl: 'https://gw.test', mode: 'remote' }

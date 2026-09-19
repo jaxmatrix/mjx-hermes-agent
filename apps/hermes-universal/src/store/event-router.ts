@@ -47,7 +47,6 @@ import { ackApprovalReceived, readApprovalPayload } from '@/store/approvals'
 import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block'
 import { noteMissedSteer } from '@/store/chat'
 import { normalizeQuestions, readChoices, readLockedAnswers } from '@/store/clarify'
-import { routeCompactionEvent } from '@/store/compaction'
 import { setConnectionEventSink, setConnectionStreamReset } from '@/store/connection-clients'
 import { addGatewayEventListener, requestGateway } from '@/store/gateway-client'
 import {
@@ -87,7 +86,7 @@ import { EMPTY_USAGE, reduceSessionState } from '@/store/session-reducer'
 import { connectionEpoch, noteConnectionEpoch, noteReplaySeq } from '@/store/session-replay'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   ensureSessionSlice,
   runtimeKeyFor,
   runtimeKeyForStoredSession,
@@ -208,7 +207,7 @@ setStreamBatchSink((key, channel, text) => {
  * label. Best-effort — keep the prior value on failure.
  */
 async function refreshSessionUsage(key: string): Promise<void> {
-  const sessionId = $sessionStates.get()[key]?.runtimeSessionId
+  const sessionId = $sessionKeyStates.get()[key]?.runtimeSessionId
 
   if (!sessionId) {
     return
@@ -282,7 +281,7 @@ export function routeGatewayEvent(event: GatewayEvent): void {
   // connection's own owning client, through `addConnectionEventListener`.
   //
   // It used to be dropped here — rule 7, "another machine's session id must not
-  // reach `$sessionStates`, where ids can collide across backends". The ids no
+  // reach `$sessionKeyStates`, where ids can collide across backends". The ids no
   // longer collide: a session key carries its connection (MJXHRM-591), so the
   // frame can be routed instead of discarded, which is the whole point of a tab
   // bound to a background connection.
@@ -410,7 +409,7 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
   const isBlockingPrompt = BLOCKING_PROMPT_TYPES.has(event.type)
 
-  if (!(key in $sessionStates.get())) {
+  if (!(key in $sessionKeyStates.get())) {
     // Fail closed — except for a blocking prompt, whose agent is parked in
     // `_block` and would hang until timeout if we ignored it.
     if (!isBlockingPrompt) {
@@ -434,11 +433,6 @@ export function routeGatewayEvent(event: GatewayEvent): void {
   // reacting to, not the one from the frame before. Cheap: the fold returns the
   // same record unless something actually changed (store/turn-lifecycle.ts).
   routeTurnEvent(key, event)
-  // Compaction is silent on the wire — no `message.start`, no visible output —
-  // so its start/end is inferred from `status.update` kinds plus the first real
-  // output that follows (store/compaction.ts). Folded here, before the delta
-  // short-circuit, because that first output is usually a delta.
-  routeCompactionEvent(key, event.type, payload)
 
   // Streaming text is BATCHED (lib/stream-batch) — one React commit per flush
   // window instead of one per token, which matters most when several sessions

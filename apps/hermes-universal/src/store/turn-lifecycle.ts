@@ -39,9 +39,9 @@ import { applyResumedApproval } from '@/store/approvals'
 import { applyResumedClarify } from '@/store/clarify'
 import { $gatewayState } from '@/store/gateway-client'
 import { applyResumedMcpSetup } from '@/store/mcp-setup'
-import { requestForSession } from '@/store/session-request-router'
+import { requestForSession } from '@/store/session-route-dispatch'
 import {
-  $sessionStates,
+  $sessionKeyStates,
   addSessionKeyHooks,
   isPlaceholderKey,
   rekeySession,
@@ -765,7 +765,7 @@ function applyReconciledBusy(key: string, plan: TurnReconciliation): void {
  * back, and `reconcileSessionTail` folds it into that slice.
  */
 export async function reconcileSessionTurn(key: string): Promise<TurnReconciliation | null> {
-  const state = $sessionStates.get()[key]
+  const state = $sessionKeyStates.get()[key]
   const storedId = state?.storedSessionId ?? state?.runtimeSessionId
 
   if (!storedId || reconciling.has(key)) {

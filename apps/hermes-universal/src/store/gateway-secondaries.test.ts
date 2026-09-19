@@ -20,7 +20,7 @@ const {
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('@/store/connection-tunnels', () => ({ acquireTunnel }))
-vi.mock('@/store/session-request-router', () => ({
+vi.mock('@/store/session-route-dispatch', () => ({
   SessionRouteError: class extends Error {
     constructor(
       readonly kind: string,

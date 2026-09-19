@@ -19,7 +19,7 @@ vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undef
 import type { ToolCallPart } from '@/lib/chat-messages'
 import { routeGatewayEvent } from '@/store/event-router'
 import { clearAllPrompts, sessionClarifyRequest } from '@/store/prompts'
-import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
 
 const event = (type: string, payload: Record<string, unknown>): GatewayEvent =>
   ({ type, session_id: 's1', payload }) as GatewayEvent
@@ -36,7 +36,7 @@ const event = (type: string, payload: Record<string, unknown>): GatewayEvent =>
 describe('event-router → clarify lifecycle', () => {
   beforeEach(() => {
     clearAllPrompts()
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
   })
 
@@ -69,7 +69,7 @@ describe('event-router → clarify lifecycle', () => {
 })
 
 const toolParts = (key: string): ToolCallPart[] =>
-  ($sessionStates.get()[key]?.messages ?? []).flatMap(message =>
+  ($sessionKeyStates.get()[key]?.messages ?? []).flatMap(message =>
     message.parts.filter((part): part is ToolCallPart => part.type === 'tool-call')
   )
 
@@ -84,7 +84,7 @@ const toolParts = (key: string): ToolCallPart[] =>
 describe('event-router → batch clarify', () => {
   beforeEach(() => {
     clearAllPrompts()
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
   })
 
@@ -136,7 +136,7 @@ describe('event-router → batch clarify', () => {
         }
       })
     ])
-    expect($sessionStates.get().s1?.needsInput).toBe(true)
+    expect($sessionKeyStates.get().s1?.needsInput).toBe(true)
   })
 
   it('replays the answers the gateway already locked', () => {

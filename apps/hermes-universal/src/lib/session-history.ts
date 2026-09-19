@@ -110,7 +110,7 @@ function displayContentForMessage(role: SessionMessage['role'], content: unknown
   const refs = [...new Set(Array.from(attachedContext.matchAll(CONTEXT_REF_RE)).map(match => match[0]))]
 
   // The prose keeps the `@file:` token the user typed, so it already chips in
-  // place (`components/assistant-ui/directive-content.tsx` renders them). Only
+  // place (`components/assistant-ui/directive-text.tsx` renders them). Only
   // hoist a ref the prose is missing — a turn persisted by an older backend that
   // stripped the tokens. Re-listing an inline ref would chip twice.
   const missing = refs.filter(ref => !visibleText.includes(ref))

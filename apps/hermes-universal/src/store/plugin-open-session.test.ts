@@ -32,12 +32,12 @@ vi.mock('./session-lifecycle', () => ({
   resolveSessionProfile: () => resolveSessionProfile()
 }))
 
-vi.mock('./session-states', () => ({
+vi.mock('./session-key-states', () => ({
   focusOpenSession: (id: string) => focusOpenSession(id),
   openSessionTab: (id: string, focus?: boolean) => openSessionTab(id, focus)
 }))
 
-// PARTIAL, deliberately: `transcript-cache-sync` subscribes to `$sessionStates`
+// PARTIAL, deliberately: `transcript-cache-sync` subscribes to `$sessionKeyStates`
 // at module scope and other modules read `$activeSessionKey` from here, so a
 // wholesale mock would silently remove them (recipe 6.4's trap).
 vi.mock('./session-state-types', async importOriginal => ({

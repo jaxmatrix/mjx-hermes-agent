@@ -1,11 +1,11 @@
 /**
  * The per-session state record + its shared atom — a LEAF module so every layer
  * (`store/chat.ts`, `store/session.ts`, `store/session-states.ts`,
- * `store/session-reducer.ts`) can read `$sessionStates` without an import cycle.
+ * `store/session-reducer.ts`) can read `$sessionKeyStates` without an import cycle.
  * The type imports are erased at build, so this file has no runtime deps beyond
  * nanostores.
  *
- * `$sessionStates` is THE source of truth for EVERY session — the one on screen,
+ * `$sessionKeyStates` is THE source of truth for EVERY session — the one on screen,
  * the ones in tiles, and the ones behind mobile bubbles. There is no separate
  * "primary" storage: the active chat is simply the slice `$activeSessionKey`
  * points at, and `store/chat.ts`'s `$messages`/`$busy`/… are computed
@@ -13,7 +13,7 @@
  * its own slice structurally, rather than by a guard that can fail open.
  *
  * (This inverts the earlier universal design, where the primary chat lived in
- * global atoms and `$sessionStates` held tiles only — see MJX-132.)
+ * global atoms and `$sessionKeyStates` held tiles only — see MJX-132.)
  */
 
 import { atom } from 'nanostores'
@@ -24,7 +24,7 @@ import type { UsageStats } from '@/types/hermes'
 
 /** The full client-side state of ONE session — the unit a chat surface renders
  *  from and the reducer writes per session key. Ported from desktop `app/types.ts`. */
-export interface ClientSessionState {
+export interface SessionKeyState {
   /** The gateway's LIVE session id, or null for a draft that has never been
    *  created. This is the only value safe to send as `session_id` on the wire. */
   runtimeSessionId: null | string
@@ -228,7 +228,7 @@ export const hydratingKeyFor = (ref: SessionRef): string =>
  * already on disk keeps resolving.
  */
 export function scopedStoredKey(sliceKey: string, storedSessionId: string): string {
-  const slice = $sessionStates.get()[sliceKey]
+  const slice = $sessionKeyStates.get()[sliceKey]
 
   return storedKeyFor(slice?.connectionId ?? connectionOfSessionKey(sliceKey), slice?.profile, storedSessionId)
 }
@@ -243,7 +243,7 @@ export const isPlaceholderKey = (key: string): boolean =>
   key.startsWith(DRAFT_KEY_PREFIX) || key.startsWith(HYDRATING_KEY_PREFIX)
 
 /** An empty state for a freshly-opened session before its resume binds. */
-export function emptySessionState(storedSessionId: string | null = null): ClientSessionState {
+export function emptySessionState(storedSessionId: string | null = null): SessionKeyState {
   return {
     runtimeSessionId: null,
     storedSessionId,
@@ -278,7 +278,7 @@ export function emptySessionState(storedSessionId: string | null = null): Client
 
 /** Session key → state, for EVERY session. Republished on every message delta;
  *  derived sets guard with `stableArray` to avoid re-render storms. */
-export const $sessionStates = atom<Record<string, ClientSessionState>>({})
+export const $sessionKeyStates = atom<Record<string, SessionKeyState>>({})
 
 /**
  * The key of the session the user is looking at — the map key, NEVER null.
@@ -302,16 +302,16 @@ export const $activeSessionKey = atom<string>(newDraftKey())
 // `setSessionDisposeHook`.
 // ---------------------------------------------------------------------------
 
-type TransitionHook = (previous: ClientSessionState | null, next: ClientSessionState, key: string) => void
+type TransitionHook = (previous: SessionKeyState | null, next: SessionKeyState, key: string) => void
 
 let transitionHook: TransitionHook | null = null
-let disposeHook: null | ((key: string, state: ClientSessionState) => void) = null
+let disposeHook: null | ((key: string, state: SessionKeyState) => void) = null
 
 export function setSessionTransitionHook(hook: TransitionHook): void {
   transitionHook = hook
 }
 
-export function setSessionDisposeHook(hook: (key: string, state: ClientSessionState) => void): void {
+export function setSessionDisposeHook(hook: (key: string, state: SessionKeyState) => void): void {
   disposeHook = hook
 }
 
@@ -333,7 +333,7 @@ interface SessionKeyHooks {
   /** `previous` is the slice AS IT WAS before the move — the only copy of the
    *  turn the outgoing key was mid-way through, which a hydrating rekey
    *  overwrites with the backend's answer. */
-  rekey: (fromKey: string, toKey: string, previous: ClientSessionState) => void
+  rekey: (fromKey: string, toKey: string, previous: SessionKeyState) => void
 }
 
 const sessionKeyHooks = new Set<SessionKeyHooks>()
@@ -371,10 +371,10 @@ const keyByStoredId = new Map<string, string>()
 /** The index key for a stored id belonging to the session under `key`: the
  *  slice's own connection scopes it, so connection A's `abc12345` and
  *  connection B's are two entries and never one (MJXHRM-591). */
-const indexKeyFor = (key: string, state: ClientSessionState, storedSessionId: string): string =>
+const indexKeyFor = (key: string, state: SessionKeyState, storedSessionId: string): string =>
   storedKeyFor(state.connectionId ?? connectionOfSessionKey(key), state.profile, storedSessionId)
 
-function indexStoredId(prev: ClientSessionState | null, next: ClientSessionState, key: string) {
+function indexStoredId(prev: SessionKeyState | null, next: SessionKeyState, key: string) {
   if (prev?.storedSessionId && prev.storedSessionId !== next.storedSessionId) {
     // Keep the old id pointing here — it is the same conversation, and the
     // callers holding it have no way to learn about the rotation.
@@ -425,7 +425,7 @@ export function runtimeKeyForStoredSession(
     return null
   }
 
-  if (!(key in $sessionStates.get())) {
+  if (!(key in $sessionKeyStates.get())) {
     keyByStoredId.delete(indexKey)
 
     return null
@@ -470,7 +470,7 @@ export function clearStoredIdIndex(): void {
  * door that stays open. The first answer wins, silently, because a caller that
  * passed the wrong scope has already sent its RPC somewhere.
  */
-function keepScope(prev: ClientSessionState | null, next: ClientSessionState): ClientSessionState {
+function keepScope(prev: SessionKeyState | null, next: SessionKeyState): SessionKeyState {
   if (!prev || (prev.connectionId === null && prev.profile === null)) {
     return next
   }
@@ -511,7 +511,7 @@ export function siteOfKey(key: string): SessionSliceSite {
  * key's scope — that is the mint; a DISAGREEING one keeps the key's and says so,
  * because the write is the thing that is wrong, not the address it arrived at.
  */
-function scopeToKey(key: string, state: ClientSessionState): ClientSessionState {
+function scopeToKey(key: string, state: SessionKeyState): SessionKeyState {
   if (isPlaceholderKey(key)) {
     return state
   }
@@ -535,10 +535,10 @@ function scopeToKey(key: string, state: ClientSessionState): ClientSessionState 
 
 /** Publish one session's state, firing the transition side-effects by diffing
  *  previous vs next. */
-export function publishSessionState(key: string, state: ClientSessionState): ClientSessionState {
-  const prev = $sessionStates.get()[key] ?? null
+export function publishSessionState(key: string, state: SessionKeyState): SessionKeyState {
+  const prev = $sessionKeyStates.get()[key] ?? null
   const next = scopeToKey(key, keepScope(prev, { ...state, lastTouchedAt: Date.now() }))
-  $sessionStates.set({ ...$sessionStates.get(), [key]: next })
+  $sessionKeyStates.set({ ...$sessionKeyStates.get(), [key]: next })
   indexStoredId(prev, next, key)
   transitionHook?.(prev, next, key)
 
@@ -568,9 +568,9 @@ export function sliceKeyFor(site: SessionSliceSite): string {
 
 /** Create a session's slice if absent, and return it either way. Every write
  *  path goes through here, so no caller can land on a missing slice. */
-export function ensureSessionSlice(site: SessionSliceSite, seed?: Partial<ClientSessionState>): ClientSessionState {
+export function ensureSessionSlice(site: SessionSliceSite, seed?: Partial<SessionKeyState>): SessionKeyState {
   const key = sliceKeyFor(site)
-  const current = $sessionStates.get()[key]
+  const current = $sessionKeyStates.get()[key]
 
   if (current) {
     return current
@@ -591,19 +591,19 @@ export function ensureSessionSlice(site: SessionSliceSite, seed?: Partial<Client
  *  started reading from the map. Mirrors desktop's `updateSession`. */
 export function updateSession(
   key: string,
-  updater: (state: ClientSessionState) => ClientSessionState
-): ClientSessionState {
+  updater: (state: SessionKeyState) => SessionKeyState
+): SessionKeyState {
   // A slice created here inherits the KEY's scope, which `publishSessionState`
   // would enforce anyway — this is the one path that reaches a key without a
   // site, because it is a write to a session that should already exist.
-  const current = $sessionStates.get()[key] ?? ensureSessionSlice(siteOfKey(key))
+  const current = $sessionKeyStates.get()[key] ?? ensureSessionSlice(siteOfKey(key))
   const next = updater(current)
 
   return next === current ? current : publishSessionState(key, next)
 }
 
 /**
- * Move a slice from one key to another in ONE `$sessionStates.set`, so no
+ * Move a slice from one key to another in ONE `$sessionKeyStates.set`, so no
  * subscriber ever observes a frame where the session exists under neither key.
  * If the moving slice is the active one, `$activeSessionKey` follows in the same
  * tick.
@@ -613,14 +613,14 @@ export function updateSession(
  * anything else: the event router drops events for unknown keys, so the slice
  * has to exist under its real id before the first streamed event for it arrives.
  */
-export function rekeySession(fromKey: string, toKey: string, patch?: Partial<ClientSessionState>): ClientSessionState {
+export function rekeySession(fromKey: string, toKey: string, patch?: Partial<SessionKeyState>): SessionKeyState {
   // THE ONE SEAM the seven rekey sites inherit their scope through (invariant
   // 45). A rekey moves a session onto a fresh runtime id — a not-found
   // recovery, a resume rotation — and the session does not change connection by
   // being re-keyed, so the outgoing slice's scope comes with it. Where the
   // target key names a scope of its own, `publishSessionState` has the last
   // word: the key is the address.
-  const outgoing = $sessionStates.get()[fromKey]
+  const outgoing = $sessionKeyStates.get()[fromKey]
 
   // The seven rekey sites hand over the RUNTIME ID the wire gave them — a
   // not-found recovery, a resume rotation, a draft taking its issued id — and
@@ -645,7 +645,7 @@ export function rekeySession(fromKey: string, toKey: string, patch?: Partial<Cli
     })
   }
 
-  const inherited: Partial<ClientSessionState> =
+  const inherited: Partial<SessionKeyState> =
     outgoing?.connectionId && !patch?.connectionId
       ? { connectionId: target?.connectionId ?? outgoing.connectionId, profile: patch?.profile ?? outgoing.profile }
       : {}
@@ -656,7 +656,7 @@ export function rekeySession(fromKey: string, toKey: string, patch?: Partial<Cli
   // before the move rather than letting the teardown below discard it.
   flushDeltas(fromKey)
 
-  const states = $sessionStates.get()
+  const states = $sessionKeyStates.get()
   const moving = states[fromKey] ?? emptySessionState()
 
   if (fromKey === toKey) {
@@ -669,7 +669,7 @@ export function rekeySession(fromKey: string, toKey: string, patch?: Partial<Cli
 
   // BEFORE the publish, not after. The reverse index is not an atom — it is a
   // plain map that subscribers CONSULT while they react to the publish, and
-  // `$sessionStates.set` notifies synchronously. Remapping afterwards meant
+  // `$sessionKeyStates.set` notifies synchronously. Remapping afterwards meant
   // every `runtimeKeyForStoredSession` call made from inside that notification
   // resolved the stored id to the OLD key, found it missing from the map it had
   // just been handed, and took the self-healing branch — which DELETES the index
@@ -688,7 +688,7 @@ export function rekeySession(fromKey: string, toKey: string, patch?: Partial<Cli
   remapStoredIdIndex(fromKey, toKey)
   indexStoredId(prevAtTarget, next, toKey)
 
-  $sessionStates.set({ ...rest, [toKey]: next })
+  $sessionKeyStates.set({ ...rest, [toKey]: next })
 
   fireSessionKeyHook(hooks => hooks.rekey(fromKey, toKey, moving))
 
@@ -704,7 +704,7 @@ export function rekeySession(fromKey: string, toKey: string, patch?: Partial<Cli
 
 /** Evict a session's slice entirely. */
 export function dropSessionState(key: string): void {
-  const current = $sessionStates.get()
+  const current = $sessionKeyStates.get()
 
   if (!(key in current)) {
     return
@@ -714,7 +714,7 @@ export function dropSessionState(key: string): void {
   dropStoredIdIndexFor(key)
 
   const { [key]: _dropped, ...rest } = current
-  $sessionStates.set(rest)
+  $sessionKeyStates.set(rest)
   fireSessionKeyHook(hooks => hooks.drop(key))
   disposeHook?.(key, state)
 }

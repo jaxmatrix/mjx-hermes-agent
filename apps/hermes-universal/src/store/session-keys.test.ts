@@ -12,7 +12,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  $sessionStates,
+  $sessionKeyStates,
   clearStoredIdIndex,
   connectionOfSessionKey,
   emptySessionState,
@@ -28,7 +28,7 @@ import {
 import { $inflightTurns, beginTurn, settleTurn } from '@/store/turn-lifecycle'
 
 beforeEach(() => {
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   clearStoredIdIndex()
 })
 
@@ -136,7 +136,7 @@ describe('invariant 31 — keys are opaque downstream', () => {
     // The bare id — what a downstream split on the separator would have used —
     // never addresses anything.
     expect($inflightTurns.get()['abc12345']).toBeUndefined()
-    expect($sessionStates.get()[key]?.storedSessionId).toBe('abc12345')
+    expect($sessionKeyStates.get()[key]?.storedSessionId).toBe('abc12345')
   })
 })
 
@@ -154,13 +154,13 @@ describe('a slice\u2019s scope is written once', () => {
     // A later write that names a different backend is the repoint the tab type
     // makes impossible to compile, arriving through the one door left open.
     publishSessionState(key, {
-      ...$sessionStates.get()[key],
+      ...$sessionKeyStates.get()[key],
       connectionId: 'conn-b',
       profile: 'default',
       statusLine: 'still fine'
     })
 
-    expect($sessionStates.get()[key]).toMatchObject({
+    expect($sessionKeyStates.get()[key]).toMatchObject({
       connectionId: 'conn-a',
       profile: 'work',
       // …and everything else in that write still lands.
@@ -172,7 +172,7 @@ describe('a slice\u2019s scope is written once', () => {
     publishSessionState('draft:9', emptySessionState())
     publishSessionState('draft:9', { ...emptySessionState(), connectionId: 'conn-a', profile: 'work' })
 
-    expect($sessionStates.get()['draft:9']).toMatchObject({ connectionId: 'conn-a', profile: 'work' })
+    expect($sessionKeyStates.get()['draft:9']).toMatchObject({ connectionId: 'conn-a', profile: 'work' })
   })
 })
 
@@ -182,7 +182,7 @@ describe('invariant 45 — a runtime key\u2019s slice carries its key\u2019s sco
 
     publishSessionState(key, { ...emptySessionState('abc12345'), runtimeSessionId: 'run-1' })
 
-    expect($sessionStates.get()[key]).toMatchObject({ connectionId: 'conn-a', profile: 'default' })
+    expect($sessionKeyStates.get()[key]).toMatchObject({ connectionId: 'conn-a', profile: 'default' })
   })
 
   it('refuses one that claims another connection, and keeps the key\u2019s', () => {
@@ -196,13 +196,13 @@ describe('invariant 45 — a runtime key\u2019s slice carries its key\u2019s sco
       runtimeSessionId: 'run-1'
     })
 
-    expect($sessionStates.get()[key]?.connectionId).toBe('conn-a')
+    expect($sessionKeyStates.get()[key]?.connectionId).toBe('conn-a')
   })
 
   it('leaves a placeholder alone — a draft has no scope yet, by design', () => {
     publishSessionState('draft:77', emptySessionState())
 
-    expect($sessionStates.get()['draft:77']?.connectionId).toBeNull()
+    expect($sessionKeyStates.get()['draft:77']?.connectionId).toBeNull()
   })
 
   it('refuses a rekey that would hand a session to another connection', () => {
@@ -217,7 +217,7 @@ describe('invariant 45 — a runtime key\u2019s slice carries its key\u2019s sco
       // The key is the address, so it wins — but silently would leave a slice
       // nobody could explain.
       expect(warn).toHaveBeenCalledWith('[sessions] refusing a rekey across connections', expect.anything())
-      expect($sessionStates.get()[runtimeKeyFor('conn-b', 'run-1')]?.connectionId).toBe('conn-b')
+      expect($sessionKeyStates.get()[runtimeKeyFor('conn-b', 'run-1')]?.connectionId).toBe('conn-b')
     } finally {
       warn.mockRestore()
     }
@@ -230,11 +230,11 @@ describe('invariant 45 — a runtime key\u2019s slice carries its key\u2019s sco
     // What every recovery path hands over: the id the wire gave it.
     rekeySession(from, 'run-1', { runtimeSessionId: 'run-1' })
 
-    expect($sessionStates.get()[runtimeKeyFor('conn-a', 'run-1')]).toMatchObject({
+    expect($sessionKeyStates.get()[runtimeKeyFor('conn-a', 'run-1')]).toMatchObject({
       connectionId: 'conn-a',
       profile: 'work'
     })
-    expect($sessionStates.get()['run-1']).toBeUndefined()
+    expect($sessionKeyStates.get()['run-1']).toBeUndefined()
   })
 
   it('carries the outgoing scope through a rekey', () => {
@@ -249,6 +249,6 @@ describe('invariant 45 — a runtime key\u2019s slice carries its key\u2019s sco
     rekeySession(from, to, { runtimeSessionId: 'run-1' })
 
     // The seven rekey sites inherit through this one seam.
-    expect($sessionStates.get()[to]).toMatchObject({ connectionId: 'conn-a', profile: 'work' })
+    expect($sessionKeyStates.get()[to]).toMatchObject({ connectionId: 'conn-a', profile: 'work' })
   })
 })

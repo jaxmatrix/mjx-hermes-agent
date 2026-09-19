@@ -25,8 +25,8 @@ import { $compactingSessions, sessionCompacting } from '@/store/compaction'
 import { requestGateway } from '@/store/gateway-client'
 import { $modelPickerOpen } from '@/store/model'
 import { $sessions } from '@/store/session'
-import { $sessionStates, emptySessionState, publishSessionState, updateSession } from '@/store/session-state-types'
-import { type SessionTileDelegate, setSessionTileDelegate } from '@/store/session-states'
+import { type SessionTileDelegate, setSessionTileDelegate } from '@/store/session-key-states'
+import { $sessionKeyStates, emptySessionState, publishSessionState, updateSession } from '@/store/session-state-types'
 import { resetSessionStates, seedActiveSession } from '@/test-sessions'
 import { ThemeProvider } from '@/themes/context'
 
@@ -332,7 +332,7 @@ describe('useSlashCommand', () => {
       // the two differ for anything resumed, and this is what it resumes FROM.
       expect(vi.mocked(requestGateway).mock.calls[1][1]).toMatchObject({ session_id: 'stored-compress' })
 
-      const states = $sessionStates.get()
+      const states = $sessionKeyStates.get()
 
       // No ghost slice resurrected under the dead key, and the POST-compress
       // history landed on the live one (this command's own system line follows).
@@ -419,11 +419,11 @@ describe('a slash command typed in a tile', () => {
     kind: 'tile',
     $runtimeId: atom<string | null>(key),
     $storedId: atom<string | null>(null),
-    $messages: computed($sessionStates, states => states[key]?.messages ?? []),
-    $busy: computed($sessionStates, states => Boolean(states[key]?.busy)),
+    $messages: computed($sessionKeyStates, states => states[key]?.messages ?? []),
+    $busy: computed($sessionKeyStates, states => Boolean(states[key]?.busy)),
     $awaitingResponse: atom(false),
     $messagesEmpty: atom(false),
-    $paintedMessages: computed($sessionStates, states => states[key]?.messages ?? []),
+    $paintedMessages: computed($sessionKeyStates, states => states[key]?.messages ?? []),
     $paintedMessagesEmpty: atom(false),
     $lastVisibleIsUser: atom(false),
     $statusLine: atom(''),
@@ -451,7 +451,7 @@ describe('a slash command typed in a tile', () => {
   /** The TILE's system lines. `systemLines()` reads `$messages`, which is the
    *  foreground chat — a tile's slash output must never appear there. */
   const tileSystemLines = () =>
-    ($sessionStates.get()['tile-1']?.messages ?? [])
+    ($sessionKeyStates.get()['tile-1']?.messages ?? [])
       .filter(m => m.role === 'system')
       .map(m => m.parts.map(p => ('text' in p ? p.text : '')).join(''))
 
@@ -496,7 +496,7 @@ describe('a slash command typed in a tile', () => {
     expect(vi.mocked(requestGateway).mock.calls[0][0]).toBe('session.compress')
     expect(vi.mocked(requestGateway).mock.calls[0][1]).toMatchObject({ session_id: 'tile-1' })
 
-    const states = $sessionStates.get()
+    const states = $sessionKeyStates.get()
 
     // The summarized transcript AND the command's own system line land on the
     // tile; the foreground chat is untouched.
@@ -522,7 +522,7 @@ describe('a slash command typed in a tile', () => {
       messages: [{ content: 'tile answer', role: 'assistant' }]
     })
     // ...and the foreground transcript is still its own.
-    expect($sessionStates.get()['sess-1'].messages).toEqual(said('foreground answer'))
+    expect($sessionKeyStates.get()['sess-1'].messages).toEqual(said('foreground answer'))
   })
 
   // MJXHRM-419, the ticket's own shape. A `send` directive went out through the

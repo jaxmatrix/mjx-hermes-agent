@@ -4,11 +4,15 @@
 // client is the one module with internals: profileScoped / connectionScoped /
 // capabilityScoped are shared across api/ but must not reach call sites, or
 // request scoping stops having a single owner.
+import { JsonRpcGatewayClient } from '@hermes/shared'
+
+import { profileScoped, socketProfile } from './transport/gateway-profile'
+import { openGatewaySocket } from './transport/gateway-socket'
+
 export {
   getApiRequestConnection,
   getApiRequestProfile,
   hermesApi,
-  HermesGateway,
   profileScopeKey,
   PROMPT_SUBMIT_REQUEST_TIMEOUT_MS,
   setApiRequestConnection,
@@ -131,8 +135,60 @@ export type {
   WebhooksResponse
 } from '@/types/hermes'
 
-// The one deliberate divergence from desktop's barrel: universal's own API
-// surface. Keeping it to a single appended line is what lets the rest of this
-// file stay byte-identical to apps/desktop/src/hermes.ts, so a resync never has
-// to merge it. See src/api/universal.ts for what qualifies and what does not.
+// Universal's own API surface, appended so the block above stays desktop's line
+// for line. See src/api/universal.ts for what qualifies and what does not.
+// eslint-disable-next-line perfectionist/sort-exports -- appended on purpose
 export * from './api/universal'
+
+/**
+ * The other divergence: `HermesGateway` is defined here, not re-exported from
+ * `./api/client`. Desktop's opens a browser `WebSocket`; the webview cannot, so
+ * this one is the same client — desktop's options, value for value — over the
+ * Rust transport (`transport/gateway-socket.ts`). Desktop's registry and boot
+ * hook construct it from `@/hermes` unchanged.
+ *
+ * And it names its profile. Desktop's socket is its profile's own backend; here
+ * one backend serves every profile and an RPC says which, so the client learns
+ * its profile from the URL it dials and scopes each request by the wire
+ * contract (`transport/gateway-profile.ts`).
+ */
+export class HermesGateway extends JsonRpcGatewayClient {
+  /**
+   * The close code of the last socket this client lost, when the server sent
+   * one: 4401/4403 is a refused credential, none is a dropped connection. Read
+   * after the close, so it outlives the socket.
+   */
+  lastCloseCode: number | undefined
+
+  /** The profile this socket was minted for; none is the launch profile. */
+  private profile: string | undefined
+
+  constructor() {
+    super({
+      closedErrorMessage: 'Hermes gateway connection closed',
+      connectErrorMessage: 'Could not connect to Hermes gateway',
+      createRequestId: nextId => nextId,
+      notConnectedErrorMessage: 'Hermes gateway is not connected',
+      onSocketClose: event => {
+        this.lastCloseCode = event.code
+      },
+      requestTimeoutMs: 30_000,
+      socketFactory: openGatewaySocket
+    })
+  }
+
+  override connect(wsUrl: string): Promise<void> {
+    this.profile = socketProfile(wsUrl)
+
+    return super.connect(wsUrl)
+  }
+
+  override request<T>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs?: number,
+    signal?: AbortSignal
+  ): Promise<T> {
+    return super.request<T>(method, profileScoped(method, params, this.profile), timeoutMs, signal)
+  }
+}

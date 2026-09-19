@@ -20,8 +20,8 @@ import { appendBrowserConsole } from '@/store/browser-console'
 import { $chatBubbles } from '@/store/chat-bubbles'
 import { addGatewayEventListener } from '@/store/gateway-client'
 import { previewFile } from '@/store/preview-open'
+import { $focusedStoredSessionId } from '@/store/session-key-states'
 import { $activeStoredSessionId } from '@/store/session-lifecycle'
-import { $focusedStoredSessionId } from '@/store/session-states'
 import { ownsPersistedAppState } from '@/store/windows'
 
 /**

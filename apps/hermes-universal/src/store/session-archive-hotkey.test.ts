@@ -35,15 +35,15 @@ import { declareDefaultTree, noteActiveTreeGroup } from '@/components/pane-shell
 import { registry } from '@/contrib/registry'
 import { KEYBIND_ACTIONS } from '@/lib/keybinds/actions'
 
+import { $sessionKeyTabs, type SessionTile } from './session-key-states'
 import { $activeStoredSessionId } from './session-lifecycle'
 import { archiveActiveSession } from './session-lookup'
-import { $sessionTiles, type SessionTile } from './session-states'
 
 const tile = (storedSessionId: string): SessionTile => ({ storedSessionId }) as SessionTile
 
 beforeEach(() => {
   archiveSessionLocal.mockClear()
-  $sessionTiles.set([])
+  $sessionKeyTabs.set([])
   $activeStoredSessionId.set(null)
 
   for (const id of ['workspace', 'session-tile:tiled']) {
@@ -87,7 +87,7 @@ describe('session.archive', () => {
     // user's focus is in the tile showing `tiled`. Reading the selection here
     // archives a conversation the user is not even looking at.
     $activeStoredSessionId.set('selected')
-    $sessionTiles.set([tile('tiled')])
+    $sessionKeyTabs.set([tile('tiled')])
     noteActiveTreeGroup('grp-tile')
 
     await archiveActiveSession()
@@ -98,7 +98,7 @@ describe('session.archive', () => {
   it('does nothing on a fresh draft, which has no stored row', async () => {
     // Seeded to disagree with "just call it": a tile exists, so a handler that
     // reached for any session at all would still fire.
-    $sessionTiles.set([tile('some-tile')])
+    $sessionKeyTabs.set([tile('some-tile')])
 
     await archiveActiveSession()
 

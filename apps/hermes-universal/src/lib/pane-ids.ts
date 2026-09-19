@@ -22,9 +22,8 @@ export const WORKSPACE_PANE_ID = 'workspace'
  * exactly the special-casing being removed. The gateway issues real ids, and
  * they are uuid-like, so `draft` cannot collide with one.
  *
- * It is a real pane id for as long as the chat is unsaved, then RENAMED in place
- * to the issued id (`renameTreePane`) so the tile keeps its slot, its width and
- * its active state across the first message.
+ * LEGACY (`store/session-key-states`): desktop's tiles are created with their
+ * stored id, so its tree never holds this pane and has no rename for it.
  */
 export const DRAFT_TILE_KEY = 'draft'
 

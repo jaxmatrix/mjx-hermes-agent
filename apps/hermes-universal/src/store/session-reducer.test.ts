@@ -3,14 +3,14 @@ import { describe, expect, it } from 'vitest'
 import type { GatewayEvent } from '@/gateway'
 import type { ToolCallPart } from '@/lib/chat-messages'
 import { reduceSessionState } from '@/store/session-reducer'
-import { type ClientSessionState, emptySessionState } from '@/store/session-state-types'
+import { emptySessionState, type SessionKeyState } from '@/store/session-state-types'
 
 const event = (type: string): GatewayEvent => ({ type }) as GatewayEvent
 
-const reduce = (state: ClientSessionState, type: string, payload: Record<string, unknown> = {}): ClientSessionState =>
+const reduce = (state: SessionKeyState, type: string, payload: Record<string, unknown> = {}): SessionKeyState =>
   reduceSessionState(state, event(type), payload)
 
-const toolParts = (state: ClientSessionState): ToolCallPart[] =>
+const toolParts = (state: SessionKeyState): ToolCallPart[] =>
   state.messages.flatMap(message => message.parts.filter((part): part is ToolCallPart => part.type === 'tool-call'))
 
 // MJXHRM-362. A clarify parks the agent in the backend's `_block` until
@@ -71,7 +71,7 @@ describe('clarify.request', () => {
   // could never merge with it: two live cards for one question, in two
   // different messages, plus a pending bubble nothing settles.
   it('lands in the message the tool events land in when the turn no longer looks live', () => {
-    const settled: ClientSessionState = {
+    const settled: SessionKeyState = {
       ...emptySessionState('stored-1'),
       busy: false,
       messages: [{ id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'working on it' }] }]
@@ -240,7 +240,7 @@ describe('session.info', () => {
   })
 
   // `session.info` rides every turn boundary and every config write. Returning a
-  // fresh object for one that carries no news republishes $sessionStates and
+  // fresh object for one that carries no news republishes $sessionKeyStates and
   // re-renders every chat surface for nothing.
   it('returns the same state object when nothing changed', () => {
     const state = { ...base(), cwd: '/w', fast: false, reasoningEffort: '', serviceTier: '' }

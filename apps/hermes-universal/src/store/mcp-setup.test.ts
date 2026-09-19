@@ -31,7 +31,7 @@ import { notifyError } from '@/store/notifications'
 import type * as Pet from '@/store/pet'
 import { setPetActivity } from '@/store/pet'
 import { clearAllPrompts, sessionMcpSetupRequest, setSessionMcpSetup } from '@/store/prompts'
-import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
 import type { SessionResumeResponse } from '@/types/hermes'
 
 const rpc = vi.mocked(requestGateway)
@@ -39,13 +39,13 @@ const rpc = vi.mocked(requestGateway)
 const REQUEST = { action: 'install' as const, reason: 'To read the ticket', requestId: 'req-1', server: 'linear' }
 
 const toolParts = (key: string): ToolCallPart[] =>
-  ($sessionStates.get()[key]?.messages ?? []).flatMap(message =>
+  ($sessionKeyStates.get()[key]?.messages ?? []).flatMap(message =>
     message.parts.filter((part): part is ToolCallPart => part.type === 'tool-call')
   )
 
 beforeEach(() => {
   clearAllPrompts()
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   $activeSessionKey.set('s1')
   rpc.mockReset()
   rpc.mockResolvedValue({ status: 'ok' })

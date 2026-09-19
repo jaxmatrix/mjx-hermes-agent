@@ -20,7 +20,7 @@ import { applyResumedApproval, readApprovalPayload, replayPendingApproval } from
 import { routeGatewayEvent } from '@/store/event-router'
 import { requestGateway } from '@/store/gateway-client'
 import { clearAllPrompts, sessionApprovalRequest } from '@/store/prompts'
-import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
 
 /**
  * MJXHRM-458. An approval is not a `_block()` prompt — it queues in
@@ -31,7 +31,7 @@ import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
 describe('approval queue correlation', () => {
   beforeEach(() => {
     clearAllPrompts()
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
     vi.mocked(requestGateway).mockReset()
     vi.mocked(requestGateway).mockResolvedValue({})

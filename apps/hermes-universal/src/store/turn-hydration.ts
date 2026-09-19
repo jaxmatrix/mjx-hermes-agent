@@ -12,7 +12,7 @@
  *     flat pair of strings that cannot express them.
  *  2. RECOVER the crash journal (`lib/inflight-turn-journal.ts`) for the turn
  *     that never got an authoritative anything, because the app died mid-run.
- *  3. Keep JOURNALING, which every republish of `$sessionStates` feeds.
+ *  3. Keep JOURNALING, which every republish of `$sessionKeyStates` feeds.
  *
  * All three hang off store-layer seams rather than any one screen, and the
  * ordering is why they live in one module: reconciling after recovering would
@@ -26,10 +26,10 @@ import {
 } from '@/lib/inflight-turn-journal'
 import { reconcileLiveTail } from '@/lib/live-tail'
 import {
-  $sessionStates,
+  $sessionKeyStates,
   addSessionKeyHooks,
-  type ClientSessionState,
   isPlaceholderKey,
+  type SessionKeyState,
   updateSession
 } from '@/store/session-state-types'
 import { observeTurnLifecycle } from '@/store/turn-lifecycle'
@@ -39,15 +39,15 @@ import { observeTurnLifecycle } from '@/store/turn-lifecycle'
 // a tail the first recovery already merged.
 const recovered = new Set<string>()
 
-// The slice each session was last journaled from. `$sessionStates` republishes
+// The slice each session was last journaled from. `$sessionKeyStates` republishes
 // the WHOLE map on every delta, so without this every idle session pays the
 // journal's bookkeeping on every token of every other session's turn.
-const journaledFrom = new Map<string, ClientSessionState>()
+const journaledFrom = new Map<string, SessionKeyState>()
 
 let journalPassQueued = false
 
 function runJournalPass(): void {
-  const states = $sessionStates.get()
+  const states = $sessionKeyStates.get()
 
   for (const [key, state] of Object.entries(states)) {
     if (!state.storedSessionId || journaledFrom.get(key) === state) {
@@ -88,7 +88,7 @@ function runJournalPass(): void {
  * reads a journal that is still there and the settle-clear happens after, on
  * an entry recovery has already consumed.
  */
-$sessionStates.subscribe(() => {
+$sessionKeyStates.subscribe(() => {
   if (journalPassQueued) {
     return
   }
@@ -114,7 +114,7 @@ addSessionKeyHooks({
       return
     }
 
-    const state = $sessionStates.get()[toKey]
+    const state = $sessionKeyStates.get()[toKey]
     const storedSessionId = state?.storedSessionId
 
     if (!state) {
@@ -181,7 +181,7 @@ observeTurnLifecycle(({ key, turn }) => {
     return
   }
 
-  const storedSessionId = $sessionStates.get()[key]?.storedSessionId
+  const storedSessionId = $sessionKeyStates.get()[key]?.storedSessionId
 
   if (storedSessionId) {
     releaseInFlightTurnJournal(storedSessionId)

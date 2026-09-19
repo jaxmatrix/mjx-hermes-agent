@@ -50,7 +50,7 @@ import {
   refreshSessions
 } from '@/store/session-lifecycle'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
-import { $activeSessionKey, $sessionStates, updateSession } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates, updateSession } from '@/store/session-state-types'
 import { openAppRoute } from '@/store/windows'
 import { useSkinCommand } from '@/themes'
 import type { UsageStats } from '@/types/hermes'
@@ -115,7 +115,7 @@ export function useSlashCommand() {
       const targetKey = (): string => view.$runtimeId.get() || $activeSessionKey.get()
 
       /** Its WIRE id, or null for a draft that has never been created. */
-      const targetSessionId = (): null | string => $sessionStates.get()[targetKey()]?.runtimeSessionId ?? null
+      const targetSessionId = (): null | string => $sessionKeyStates.get()[targetKey()]?.runtimeSessionId ?? null
 
       const appendTargetSystemMessage = (text: string) => appendSessionSystemMessage(targetKey(), text)
 
@@ -246,7 +246,7 @@ export function useSlashCommand() {
           const projected = 'display' in dispatch ? dispatch.display?.trim() : ''
           const displayText = projected || (dispatch.type === 'skill' ? `/${dispatch.name}` : undefined)
 
-          if ($sessionStates.get()[targetKey()]?.busy) {
+          if ($sessionKeyStates.get()[targetKey()]?.busy) {
             renderSlashOutput('session busy — /interrupt the current turn before sending this command')
 
             return
@@ -272,7 +272,7 @@ export function useSlashCommand() {
           // a function, so it already follows the slice a recovery moves.
           const { result } = await withSessionNotFoundResume(
             sessionId,
-            $sessionStates.get()[targetKey()]?.storedSessionId ?? $activeStoredSessionId.get(),
+            $sessionKeyStates.get()[targetKey()]?.storedSessionId ?? $activeStoredSessionId.get(),
             live =>
               requestGateway<unknown>('slash.exec', {
                 session_id: live,
@@ -415,7 +415,7 @@ export function useSlashCommand() {
               sessionId: recoveredId
             } = await withSessionNotFoundResume(
               sessionId,
-              $sessionStates.get()[key]?.storedSessionId ?? $activeStoredSessionId.get(),
+              $sessionKeyStates.get()[key]?.storedSessionId ?? $activeStoredSessionId.get(),
               live =>
                 requestGateway<SessionCompressResponse>(
                   'session.compress',

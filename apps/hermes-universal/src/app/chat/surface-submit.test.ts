@@ -5,7 +5,7 @@ import type * as ChatStoreModule from '@/store/chat'
 import { sendPrompt } from '@/store/chat'
 import type * as NotificationsModule from '@/store/notifications'
 import { notify } from '@/store/notifications'
-import { type SessionTileDelegate, sessionTileDelegate, setSessionTileDelegate } from '@/store/session-states'
+import { type SessionTileDelegate, sessionTileDelegate, setSessionTileDelegate } from '@/store/session-key-states'
 
 import type { SessionView } from './session-view'
 import { submitPromptToSurface } from './surface-submit'

@@ -64,19 +64,19 @@ import { $changeEventsAvailable, $sessionsChangeTick } from '@/store/live-sync'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import { $unreadFinishedSessionIds } from '@/store/session'
 import {
+  $focusedStoredSessionId,
+  $sessionKeyStates,
+  publishSessionState,
+  runtimeKeyForStoredSession,
+  SESSION_WATCHDOG_TIMEOUT_MS,
+  setSessionStalled
+} from '@/store/session-key-states'
+import {
   refreshMessagingSessions,
   refreshSessions,
   sameStoredSession,
   unreadPersistenceHooks
 } from '@/store/session-lifecycle'
-import {
-  $focusedStoredSessionId,
-  $sessionStates,
-  publishSessionState,
-  runtimeKeyForStoredSession,
-  SESSION_WATCHDOG_TIMEOUT_MS,
-  setSessionStalled
-} from '@/store/session-states'
 
 /**
  * Backstop cadence for the snapshot when the gateway broadcasts: the tick
@@ -160,7 +160,7 @@ export function resetLiveRuntimeTracking(leavingConnectionId?: null | string): v
 }
 
 /**
- * Apply one `session.active_list` snapshot to `$sessionStates`.
+ * Apply one `session.active_list` snapshot to `$sessionKeyStates`.
  *
  * Exported for the tests and for the puller below; never call it with a
  * response from a DIFFERENT profile than `profileKey`, or the reap set will
@@ -194,7 +194,7 @@ export function rehydrateLiveSessionStatuses(
     // id — a blocking prompt for a session nothing had opened — and stamps the
     // conversation onto it.
     const key = runtimeKeyForStoredSession(storedSessionId) ?? runtimeSessionId
-    const existing = $sessionStates.get()[key]
+    const existing = $sessionKeyStates.get()[key]
 
     // A turn we just submitted is not yet running as far as the backend is
     // concerned, so the snapshot honestly reports it idle — but the local
@@ -298,7 +298,7 @@ function reapVanishedRuntimes(seen: Map<string, string>, connectionId: null | st
       profile: profileKey
     })
 
-    const existing = key ? $sessionStates.get()[key] : undefined
+    const existing = key ? $sessionKeyStates.get()[key] : undefined
 
     // `awaitingResponse` too: a turn whose submit was acknowledged but whose
     // stream never started sits `awaitingResponse: true, busy: false`, and a

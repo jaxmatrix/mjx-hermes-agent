@@ -56,7 +56,7 @@ import {
   readEventsSince,
   type SessionEventsSince
 } from '@/store/session-replay'
-import { $sessionStates, DEFAULT_SESSION_PROFILE } from '@/store/session-state-types'
+import { $sessionKeyStates, DEFAULT_SESSION_PROFILE } from '@/store/session-state-types'
 
 /** What a tab's work goes through. */
 export type ConnectionClient =
@@ -383,7 +383,7 @@ export function retryConnectionClient(connectionId: string): void {
 async function catchUp(hold: Hold): Promise<void> {
   const epoch = connectionEpoch(hold.connectionId)
 
-  for (const [key, slice] of Object.entries($sessionStates.get())) {
+  for (const [key, slice] of Object.entries($sessionKeyStates.get())) {
     if (slice.connectionId !== hold.connectionId || !slice.runtimeSessionId) {
       continue
     }

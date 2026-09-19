@@ -4,8 +4,8 @@ import { readTranscriptTail } from '@/lib/transcript-tail-cache'
 import { useStore } from '@/store/atom'
 import { $connectionClients, isAmbientConnection, retryConnectionClient } from '@/store/connection-clients'
 import { $connectionsRegistry } from '@/store/connections'
-import { $sessionStates, scopedStoredKey } from '@/store/session-state-types'
-import { $sessionTiles, closeSessionTile, tileKeyFor } from '@/store/session-states'
+import { $sessionKeyTabs, closeSessionTile, tileKeyFor } from '@/store/session-key-states'
+import { $sessionKeyStates, scopedStoredKey } from '@/store/session-state-types'
 import { type TabConnection, tabConnectionFor } from '@/store/tab-connection'
 
 /**
@@ -27,8 +27,8 @@ export function useTabConnection(sessionKey: string): {
   transcriptEmpty: boolean
 } {
   const clients = useStore($connectionClients)
-  const tiles = useStore($sessionTiles)
-  const states = useStore($sessionStates)
+  const tiles = useStore($sessionKeyTabs)
+  const states = useStore($sessionKeyStates)
   const registry = useStore($connectionsRegistry)
 
   return useMemo(() => {

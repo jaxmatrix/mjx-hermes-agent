@@ -19,13 +19,13 @@ vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undef
 import type { ToolCallPart } from '@/lib/chat-messages'
 import { routeGatewayEvent } from '@/store/event-router'
 import { clearAllPrompts, sessionAwaitingInput, sessionMcpSetupRequest } from '@/store/prompts'
-import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
 
 const event = (type: string, payload: Record<string, unknown>, sessionId = 's1'): GatewayEvent =>
   ({ type, session_id: sessionId, payload }) as GatewayEvent
 
 const toolParts = (key: string): ToolCallPart[] =>
-  ($sessionStates.get()[key]?.messages ?? []).flatMap(message =>
+  ($sessionKeyStates.get()[key]?.messages ?? []).flatMap(message =>
     message.parts.filter((part): part is ToolCallPart => part.type === 'tool-call')
   )
 
@@ -39,7 +39,7 @@ const toolParts = (key: string): ToolCallPart[] =>
 describe('event-router → mcp.setup lifecycle', () => {
   beforeEach(() => {
     clearAllPrompts()
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
   })
 
@@ -73,7 +73,7 @@ describe('event-router → mcp.setup lifecycle', () => {
         args: { action: 'install', reason: 'To read the ticket', server: 'linear' }
       })
     ])
-    expect($sessionStates.get().s1?.needsInput).toBe(true)
+    expect($sessionKeyStates.get().s1?.needsInput).toBe(true)
   })
 
   // The tool's own default. A payload whose action the schema never allowed
@@ -146,7 +146,7 @@ describe('event-router → mcp.setup lifecycle', () => {
     routeGatewayEvent(event('tool.complete', { name: 'setup_mcp', tool_id: 'call_abc123', result: '' }))
 
     expect(sessionMcpSetupRequest('s1').get()).toBeNull()
-    expect($sessionStates.get().s1?.needsInput).toBe(false)
+    expect($sessionKeyStates.get().s1?.needsInput).toBe(false)
   })
 
   it('leaves it parked while some other tool finishes', () => {

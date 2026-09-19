@@ -30,8 +30,8 @@ import { $connection } from '@/store/connection'
 import { $gatewayState, getGatewayClient, requestGateway } from '@/store/gateway-client'
 import { refreshCurrentModel, selectModel } from '@/store/model'
 import { notify, notifyError } from '@/store/notifications'
+import { sessionTileDelegate } from '@/store/session-key-states'
 import { $activeSessionKey } from '@/store/session-state-types'
-import { sessionTileDelegate } from '@/store/session-states'
 
 // Read a recorded audio blob into a base64 data URL for the gateway audio.* RPC.
 function blobToDataUrl(blob: Blob): Promise<string> {

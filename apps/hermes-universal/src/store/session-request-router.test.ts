@@ -1,204 +1,586 @@
-/**
- * The routing half of MJXHRM-480: a session RPC's route is a value read
- * immediately before the send, never one captured before an await.
- */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { atom } from 'nanostores'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { isSessionGone, latchSessionGone, resetBackgroundPollingGuard } from './session-gone-latch'
 
-const requestGateway = vi.fn(async (..._args: unknown[]) => ({ ok: true }))
-const $gatewayState = atom<string>('open')
+// Regression coverage for the #89206 wake-failure class: session-scoped RPCs
+// routed to a backend that does not own the session's profile. Three layers:
+//   1. The registry publishes the ACTIVE route's profile ($activeGatewayRoute)
+//      from applyActive itself, so eviction fallbacks move it in lockstep.
+//   2. store/profile.ts mirrors that atom into $activeGatewayProfile, so the
+//      "already active" fast path can never trust a stale profile.
+//   3. session-request-router pins session-scoped RPCs to the owning
+//      profile's socket at REQUEST time when the active route diverges.
 
-vi.mock('@/store/gateway-client', () => ({
-  $gatewayState,
-  requestGateway: (...args: unknown[]) => requestGateway(...args)
-}))
+const secondaryGateways: Array<{
+  close: ReturnType<typeof vi.fn>
+  connect: ReturnType<typeof vi.fn>
+  connectionState: string
+  emit: (event: { payload?: Record<string, unknown>; session_id?: string; type: string }) => void
+  emitState: (state: string) => void
+  request: ReturnType<typeof vi.fn>
+}> = []
+
+let promptAckStatus: null | string = null
 
 vi.mock('@/hermes', () => ({
-  // `store/profiles.ts` calls this at module scope; the ambient route reads
-  // `store/profile` → `store/profiles`.
-  setApiRequestProfile: vi.fn()
-}))
-
-const { $gatewaySwitching } = await import('@/store/gateway-switch')
-const { $activeProfile } = await import('@/store/profiles')
-
-const {
-  $activeSessionRoute,
-  __resetSessionRequestRouter,
-  requestForSession,
-  SessionRouteError,
-  sessionRpcNeedsProfileRoute,
-  setSessionOwnerResolver,
-  setSessionRequestRouter
-} = await import('./session-request-router')
-
-let owner: (id: string) => Promise<string | undefined> | string | undefined = () => undefined
-
-setSessionOwnerResolver(id => owner(id))
-
-const sentParams = () => requestGateway.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined
-
-beforeEach(() => {
-  requestGateway.mockClear()
-  $gatewayState.set('open')
-  $gatewaySwitching.set(false)
-  $activeProfile.set(null)
-  owner = () => undefined
-  __resetSessionRequestRouter()
-})
-
-describe('sessionRpcNeedsProfileRoute', () => {
-  it('routes ambient for a blank owner and for the live profile, pins anything else', () => {
-    expect(sessionRpcNeedsProfileRoute(undefined, 'default')).toBe(false)
-    expect(sessionRpcNeedsProfileRoute('  ', 'default')).toBe(false)
-    expect(sessionRpcNeedsProfileRoute('default', 'default')).toBe(false)
-    expect(sessionRpcNeedsProfileRoute('work', 'default')).toBe(true)
-  })
-})
-
-describe('requestForSession', () => {
-  // T20
-  it('sends unscoped when the owner is unknown or is already the live route', async () => {
-    await requestForSession('s1', 'session.resume', { session_id: 's1' })
-    expect(sentParams()).toEqual({ session_id: 's1' })
-
-    owner = () => 'default'
-    await requestForSession('s1', 'session.resume', { session_id: 's1' })
-    expect(sentParams()).toEqual({ session_id: 's1' })
-  })
-
-  // T21
-  it('pins the owning profile when the live route diverges', async () => {
-    owner = () => 'work'
-
-    await requestForSession('s1', 'session.resume', { session_id: 's1' })
-
-    expect(sentParams()).toEqual({ profile: 'work', session_id: 's1' })
-  })
-
-  // T22 — the whole point. `hydrateColdSession` can await a by-id probe across
-  // every backend; a soft switch landing in that window changes which route is
-  // live. Deciding before the await sends the resume to the wrong one.
-  it('honours a route change that happens between resolving the owner and dispatching', async () => {
-    $activeProfile.set('work')
-
-    let release: (value: string) => void = () => {}
-
-    owner = () =>
-      new Promise<string>(resolve => {
-        release = resolve
-      })
-
-    const inflight = requestForSession('s1', 'session.resume', { session_id: 's1' })
-
-    // The user switches profile while the probe is still out. The owner is
-    // 'work', which WAS the ambient route when the call started.
-    $activeProfile.set(null)
-    release('work')
-    await inflight
-
-    expect(sentParams()).toEqual({ profile: 'work', session_id: 's1' })
-  })
-
-  // T23
-  it('throws a typed SessionRouteError while a switch is in flight, and while the socket is down', async () => {
-    $gatewaySwitching.set(true)
-    await expect(requestForSession('s1', 'session.resume')).rejects.toMatchObject({
-      kind: 'switching',
-      name: 'SessionRouteError'
+  HermesGateway: class {
+    connectionState = 'closed'
+    eventHandler: ((event: { payload?: Record<string, unknown>; session_id?: string; type: string }) => void) | null =
+      null
+    stateHandler: ((state: string) => void) | null = null
+    connect = vi.fn(async () => {
+      this.connectionState = 'open'
     })
+    request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (this.connectionState !== 'open') {
+        throw new Error('gateway is not connected')
+      }
 
-    $gatewaySwitching.set(false)
-    $gatewayState.set('closed')
-    await expect(requestForSession('s1', 'session.resume')).rejects.toBeInstanceOf(SessionRouteError)
-    expect(requestGateway).not.toHaveBeenCalled()
-  })
-
-  // Rule 34: this error reaches toasts and spans, so it must carry a profile
-  // scope key and never a gateway URL.
-  it('carries the scope key and no URL', async () => {
-    $activeProfile.set('work')
-    $gatewayState.set('closed')
-
-    const error = (await requestForSession('s1', 'session.resume').catch((e: unknown) => e)) as InstanceType<
-      typeof SessionRouteError
-    >
-
-    expect(error.scopeKey).toBe('work')
-    expect(`${error.message} ${error.scopeKey}`).not.toMatch(/https?:|127\.0\.0\.1|ws:/)
-  })
-
-  // T24 — universal's `requestGateway` takes (method, params, timeoutMs?) and
-  // has NO `signal` parameter; call-site assertions read the observed shape.
-  it('forwards timeoutMs only when supplied', async () => {
-    await requestForSession('s1', 'session.usage')
-    expect(requestGateway.mock.calls.at(-1)).toHaveLength(2)
-
-    await requestForSession('s1', 'session.usage', {}, 5_000)
-    expect(requestGateway.mock.calls.at(-1)).toEqual(['session.usage', {}, 5_000])
-  })
-
-  // The sync fast path is load-bearing (MJXHRM-81): a resume deferred by a
-  // microtask is long enough for a second open to overtake it.
-  it('does not defer the dispatch when the owner is known synchronously', () => {
-    owner = () => 'work'
-
-    void requestForSession('s1', 'session.resume', { session_id: 's1' })
-
-    expect(requestGateway).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe('$activeSessionRoute', () => {
-  // T25
-  it('tracks profile activation, with the registration as its only writer', () => {
-    expect($activeSessionRoute.get()).toEqual({
-      connectionId: 'local',
-      profile: 'default',
-      scopeKey: 'default',
-      scopeProfile: false
+      return method === 'prompt.submit' && promptAckStatus ? { status: promptAckStatus } : { method, params }
     })
+    close = vi.fn()
+    emit = (event: { payload?: Record<string, unknown>; session_id?: string; type: string }) =>
+      this.eventHandler?.(event)
+    emitState = (state: string) => this.stateHandler?.(state)
+    onEvent = vi.fn(
+      (handler: (event: { payload?: Record<string, unknown>; session_id?: string; type: string }) => void) => {
+        this.eventHandler = handler
 
-    $activeProfile.set('work')
-    expect($activeSessionRoute.get().profile).toBe('work')
-    // T26's other half: the primary connection's scope key IS the bare profile.
-    expect($activeSessionRoute.get().scopeKey).toBe('work')
-  })
+        return () => {
+          this.eventHandler = null
+        }
+      }
+    )
+    onState = vi.fn((handler: (state: string) => void) => {
+      this.stateHandler = handler
 
-  it('follows a swapped router — including one with its own inputs — and restores idempotently', async () => {
-    const $connection = atom('box-2')
-    const dispatch = vi.fn(async (..._args: unknown[]) => ({ ok: true }) as never)
-
-    const restore = setSessionRequestRouter({
-      active: () => ({
-        connectionId: $connection.get(),
-        profile: 'default',
-        scopeKey: `conn:${$connection.get()}::default`,
-        scopeProfile: false
-      }),
-      activeInputs: [$connection],
-      dispatch,
-      resolve() {
-        return this.active()
+      return () => {
+        this.stateHandler = null
       }
     })
 
-    expect($activeSessionRoute.get().connectionId).toBe('box-2')
+    constructor() {
+      secondaryGateways.push(this)
+    }
+  },
+  setApiRequestConnection: vi.fn()
+}))
+vi.mock('@/store/session', () => ({ setConnection: vi.fn(), setGatewayState: vi.fn() }))
+vi.mock('@/store/notify-baseline', () => ({ markNativeNotifyBaseline: vi.fn() }))
 
-    // The replacement's OWN input moves the published route — no setter, and no
-    // second writer.
-    $connection.set('box-3')
-    expect($activeSessionRoute.get().scopeKey).toBe('conn:box-3::default')
+const {
+  $activeGatewayRoute,
+  activeGatewayProfileKey,
+  closeSecondaryGateways,
+  configureGatewayRegistry,
+  ensureGatewayForProfile,
+  pruneSecondaryGateways,
+  retireLocalProfileGateways,
+  setPrimaryGateway
+} = await import('./gateway')
 
-    await requestForSession('s1', 'session.resume')
-    expect(dispatch).toHaveBeenCalledTimes(1)
-    expect(requestGateway).not.toHaveBeenCalled()
+const { requestForSessionProfile, sessionRpcNeedsProfileRoute } = await import('./session-request-router')
+const { $connectionsRegistry } = await import('./connection-registry-state')
 
-    restore()
-    expect($activeSessionRoute.get().connectionId).toBe('local')
-    // Stale restore: a second call must not re-install anything.
-    restore()
-    expect($activeSessionRoute.get().connectionId).toBe('local')
+function installDesktop(): void {
+  ;(window as unknown as { hermesDesktop: unknown }).hermesDesktop = {
+    getConnection: vi.fn(async (profile: null | string) =>
+      profile ? { port: 5151, profile, token: 'secondary-token' } : { port: 4242, token: 'primary-token' }
+    ),
+    getConnectionFor: vi.fn(async ({ connectionId, profile }: { connectionId: string; profile: string }) => ({
+      port: connectionId === 'source-a' ? 6161 : 6262,
+      profile,
+      token: `${connectionId}-token`
+    })),
+    touchBackend: vi.fn(async () => undefined)
+  }
+}
+
+function makePrimary() {
+  return {
+    connectionState: 'open',
+    request: vi.fn(async (method: string, params: Record<string, unknown>) => ({ method, params }))
+  }
+}
+
+beforeEach(() => {
+  secondaryGateways.length = 0
+  promptAckStatus = null
+  $connectionsRegistry.set(null)
+  resetBackgroundPollingGuard()
+  configureGatewayRegistry({ onEvent: vi.fn() })
+  closeSecondaryGateways()
+})
+
+afterEach(() => {
+  closeSecondaryGateways()
+  vi.clearAllMocks()
+  resetBackgroundPollingGuard()
+  delete (window as unknown as { hermesDesktop?: unknown }).hermesDesktop
+})
+
+describe('$activeGatewayRoute (registry-owned active profile)', () => {
+  it('tracks profile activation and eviction fallback in lockstep with the socket', async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+
+    await ensureGatewayForProfile('default')
+    expect(activeGatewayProfileKey()).toBe('default')
+
+    await ensureGatewayForProfile('loki')
+    expect(activeGatewayProfileKey()).toBe('loki')
+    expect($activeGatewayRoute.get()).toBe('loki')
+
+    // Idle-reap style eviction of everything but... nothing keeps loki alive.
+    // The registry must move BOTH the socket and the published profile back
+    // to the primary — before the fix only the socket moved, and the stale
+    // profile atom made ensureGatewayProfile skip the re-swap forever.
+    retireLocalProfileGateways('loki')
+    expect(activeGatewayProfileKey()).toBe('default')
+    expect($activeGatewayRoute.get()).toBe('default')
+  })
+
+  it('falls back to primary when pruning evicts the active secondary', async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+
+    await ensureGatewayForProfile('hulk')
+    expect(activeGatewayProfileKey()).toBe('hulk')
+
+    // Force-evict the active entry (retention flags off) — the keep-set is
+    // empty and the active guard is bypassed by retiring first.
+    retireLocalProfileGateways('hulk')
+    pruneSecondaryGateways(new Set())
+
+    expect(activeGatewayProfileKey()).toBe('default')
+  })
+})
+
+describe('sessionRpcNeedsProfileRoute', () => {
+  it('routes ambient ONLY when the owner is unknown (no session / global chrome)', () => {
+    expect(sessionRpcNeedsProfileRoute(null)).toBe(false)
+    expect(sessionRpcNeedsProfileRoute(undefined)).toBe(false)
+    expect(sessionRpcNeedsProfileRoute('')).toBe(false)
+    expect(sessionRpcNeedsProfileRoute('   ')).toBe(false)
+  })
+
+  it('pins a KNOWN owner to its own profile regardless of what is active', () => {
+    // No active-profile comparison exists anymore: "active" is presentation
+    // state, never a routing authority. A known owner ALWAYS routes to its own
+    // profile — even when it happens to equal whatever is currently active,
+    // gatewayForProfile collapses that back to the primary socket (no cost).
+    expect(sessionRpcNeedsProfileRoute('loki')).toBe(true)
+    expect(sessionRpcNeedsProfileRoute('default')).toBe(true)
+    expect(sessionRpcNeedsProfileRoute('hulk')).toBe(true)
+  })
+
+  it('pins a route owner with a connectionId', () => {
+    expect(sessionRpcNeedsProfileRoute({ connectionId: 'local', profile: 'developer' })).toBe(true)
+    expect(sessionRpcNeedsProfileRoute({ connectionId: '', profile: 'developer' })).toBe(false)
+  })
+})
+
+describe('requestForSessionProfile', () => {
+  it('clears a dead-runtime latch only after a successful resume or activate', async () => {
+    const ambient = vi.fn(async () => ({ session_id: 'rt-rebound' }))
+
+    latchSessionGone('rt-rebound')
+    expect(isSessionGone('rt-rebound')).toBe(true)
+
+    await requestForSessionProfile(null, ambient as never, 'session.activate', { session_id: 'rt-rebound' })
+    expect(isSessionGone('rt-rebound')).toBe(false)
+
+    latchSessionGone('rt-rebound')
+    await expect(
+      requestForSessionProfile(
+        null,
+        vi.fn(async () => {
+          throw new Error('resume failed')
+        }) as never,
+        'session.resume',
+        { session_id: 'rt-rebound' }
+      )
+    ).rejects.toThrow('resume failed')
+    expect(isSessionGone('rt-rebound')).toBe(true)
+  })
+
+  it('clears a dead-runtime latch through the bare profile owner route', async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+    const ambient = vi.fn(async () => ({ ambient: true }))
+
+    latchSessionGone('profile-rebound')
+
+    await requestForSessionProfile('loki', ambient as never, 'session.resume', {
+      session_id: 'profile-rebound'
+    })
+
+    expect(isSessionGone('profile-rebound')).toBe(false)
+  })
+
+  it('clears a dead-runtime latch through an explicit connection owner route', async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+    const ambient = vi.fn(async () => ({ ambient: true }))
+
+    latchSessionGone('connection-rebound')
+
+    await requestForSessionProfile(
+      { connectionId: 'source-a', profile: 'default' },
+      ambient as never,
+      'session.activate',
+      { session_id: 'connection-rebound' }
+    )
+
+    expect(isSessionGone('connection-rebound')).toBe(false)
+  })
+
+  it('keeps routing a bare profile owner through its legacy profile pool when a connection registry exists', async () => {
+    // A profile pick on the primary or the explicit `local` source takes the
+    // legacy profile-only door (store/profile activateOnCurrentSource), so a
+    // session minted there is owned by that profile's pool socket in every
+    // topology — a registry does not turn the bare profile into a guess.
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+    $connectionsRegistry.set({ connections: [{ id: 'local' }] } as never)
+    const ambient = vi.fn(async () => ({ ambient: true }))
+
+    await expect(
+      requestForSessionProfile('loki', ambient as never, 'session.resume', { session_id: 'stored-a' })
+    ).resolves.toEqual({ method: 'session.resume', params: { session_id: 'stored-a' } })
+    expect(window.hermesDesktop!.getConnection).toHaveBeenCalledWith('loki')
+    expect(secondaryGateways).toHaveLength(1)
+    expect(primary.request).not.toHaveBeenCalled()
+    expect(ambient).not.toHaveBeenCalled()
+  })
+
+  it('keeps concurrent same-name requests pinned while foreground activation changes', async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+    await ensureGatewayForProfile('other')
+
+    const desktop = (
+      window as unknown as {
+        hermesDesktop: { getConnectionFor: ReturnType<typeof vi.fn> }
+      }
+    ).hermesDesktop
+
+    const ambient = vi.fn(async () => ({ ambient: true }))
+
+    const routeA = {
+      connectionId: 'source-a',
+      profile: 'default',
+      targetProfile: 'backend-a'
+    }
+
+    const routeB = {
+      connectionId: 'source-b',
+      profile: 'default',
+      targetProfile: 'backend-b'
+    }
+
+    const fromA = requestForSessionProfile(routeA, ambient as never, 'session.resume', {
+      profile: 'default',
+      session_id: 'stored-a'
+    })
+
+    routeA.connectionId = 'source-b'
+    routeA.targetProfile = 'mutated-after-dispatch'
+    await ensureGatewayForProfile('default')
+
+    const fromB = requestForSessionProfile(routeB, ambient as never, 'session.resume', {
+      profile: 'default',
+      session_id: 'stored-b'
+    })
+
+    await Promise.all([fromA, fromB])
+
+    expect(desktop.getConnectionFor).toHaveBeenCalledWith({ connectionId: 'source-a', profile: 'default' })
+    expect(desktop.getConnectionFor).toHaveBeenCalledWith({ connectionId: 'source-b', profile: 'default' })
+    expect(secondaryGateways).toHaveLength(3)
+    expect(secondaryGateways[1].request).toHaveBeenCalledWith('session.resume', {
+      profile: 'backend-a',
+      session_id: 'stored-a'
+    })
+    expect(secondaryGateways[2].request).toHaveBeenCalledWith('session.resume', {
+      profile: 'backend-b',
+      session_id: 'stored-b'
+    })
+    expect(ambient).not.toHaveBeenCalled()
+  })
+
+  it('rejects an explicit route without a connection instead of using ambient state', async () => {
+    const ambient = vi.fn(async () => ({ ambient: true }))
+
+    await expect(
+      requestForSessionProfile(
+        { connectionId: '', profile: 'default', targetProfile: 'backend-default' },
+        ambient as never,
+        'session.resume',
+        { session_id: 'stored-a' }
+      )
+    ).rejects.toThrow(/missing connectionId/i)
+    expect(ambient).not.toHaveBeenCalled()
+  })
+
+  it("dispatches on the owning profile's own socket when the active route moved off it (#89206)", async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+    await ensureGatewayForProfile('default')
+
+    const ambient = vi.fn(async (method: string, params?: Record<string, unknown>) => ({
+      ambient: true,
+      method,
+      params
+    }))
+
+    // Active route is 'default'; the session belongs to 'loki'. The failing
+    // path sent session.resume on the ambient (default) socket — the default
+    // backend has never heard of the session and the bot never woke.
+    const result = await requestForSessionProfile<{ method: string; params: Record<string, unknown> }>(
+      'loki',
+      ambient as never,
+      'session.resume',
+      { session_id: 'stored-loki-chat' }
+    )
+
+    expect(ambient).not.toHaveBeenCalled()
+    expect(result).toEqual({ method: 'session.resume', params: { session_id: 'stored-loki-chat' } })
+    expect(secondaryGateways).toHaveLength(1)
+    expect(secondaryGateways[0].request).toHaveBeenCalledWith('session.resume', { session_id: 'stored-loki-chat' })
+  })
+
+  it('forwards timeout and abort signal onto the owning profile socket', async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+    await ensureGatewayForProfile('default')
+
+    const ambient = vi.fn(async (method: string, params?: Record<string, unknown>) => ({
+      ambient: true,
+      method,
+      params
+    }))
+
+    const controller = new AbortController()
+
+    await requestForSessionProfile(
+      'loki',
+      ambient as never,
+      'prompt.submit',
+      { session_id: 'stored-loki-chat', text: 'hi' },
+      1_800_000,
+      controller.signal
+    )
+
+    expect(ambient).not.toHaveBeenCalled()
+    expect(secondaryGateways[0].request).toHaveBeenCalledWith(
+      'prompt.submit',
+      { session_id: 'stored-loki-chat', text: 'hi' },
+      1_800_000,
+      controller.signal
+    )
+  })
+
+  it('forwards timeout and abort signal onto the owning connection socket', async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+    const ambient = vi.fn(async () => ({ ambient: true }))
+    const controller = new AbortController()
+
+    await requestForSessionProfile(
+      {
+        connectionId: 'source-a',
+        profile: 'default',
+        targetProfile: 'backend-default'
+      },
+      ambient as never,
+      'prompt.submit',
+      { profile: 'default', session_id: 'stored-remote-chat', text: 'hi' },
+      1_800_000,
+      controller.signal
+    )
+
+    expect(ambient).not.toHaveBeenCalled()
+    expect(secondaryGateways[0].request).toHaveBeenCalledWith(
+      'prompt.submit',
+      { profile: 'backend-default', session_id: 'stored-remote-chat', text: 'hi' },
+      1_800_000,
+      controller.signal
+    )
+  })
+
+  it('keeps a routed prompt socket alive until the turn terminal event (#client-gone)', async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+    const ambient = vi.fn(async () => ({ ambient: true }))
+
+    await requestForSessionProfile({ connectionId: 'local', profile: 'default' }, ambient as never, 'prompt.submit', {
+      session_id: 'rt-bot-chat',
+      text: 'research this'
+    })
+
+    // prompt.submit ACKs immediately while the model keeps running. Releasing
+    // the request-scoped socket here detaches the runtime session; the backend
+    // then interrupts it on the 20-second client-gone timer.
+    expect(secondaryGateways[0].close).not.toHaveBeenCalled()
+
+    vi.useFakeTimers()
+
+    secondaryGateways[0].emit({
+      payload: { running: false },
+      session_id: 'rt-bot-chat',
+      type: 'session.info'
+    })
+
+    // A chained goal/queue turn starts immediately after the settled frame;
+    // it must cancel the pending release and inherit the live socket.
+    secondaryGateways[0].emit({ session_id: 'rt-bot-chat', type: 'message.start' })
+    await vi.advanceTimersByTimeAsync(500)
+    expect(secondaryGateways[0].close).not.toHaveBeenCalled()
+
+    secondaryGateways[0].emit({
+      payload: { running: false },
+      session_id: 'rt-bot-chat',
+      type: 'session.info'
+    })
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(secondaryGateways[0].close).toHaveBeenCalledOnce()
+    vi.useRealTimers()
+  })
+
+  it.each(['queued', 'redirected', 'future-nonterminal'])(
+    'retains a routed socket for non-terminal ACK status %s',
+    async status => {
+      const primary = makePrimary()
+      setPrimaryGateway(primary as never, 'default')
+      installDesktop()
+      const ambient = vi.fn(async () => ({ ambient: true }))
+
+      promptAckStatus = status
+
+      await requestForSessionProfile('loki', ambient as never, 'prompt.submit', {
+        session_id: `rt-${status}`,
+        text: 'continue'
+      })
+
+      expect(secondaryGateways[0].close).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['complete', 'completed', 'error'])('releases a routed socket for terminal ACK status %s', async status => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+    const ambient = vi.fn(async () => ({ ambient: true }))
+
+    promptAckStatus = status
+
+    await requestForSessionProfile('loki', ambient as never, 'prompt.submit', {
+      session_id: `rt-${status}`,
+      text: 'finish'
+    })
+
+    expect(secondaryGateways[0].close).toHaveBeenCalledOnce()
+  })
+
+  it('releases turn leases when their route is pruned and creates a fresh route next time', async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+    const ambient = vi.fn(async () => ({ ambient: true }))
+    const route = { connectionId: 'source-a', profile: 'worker' }
+
+    await requestForSessionProfile(route, ambient as never, 'prompt.submit', {
+      session_id: 'rt-pruned',
+      text: 'work'
+    })
+    expect(secondaryGateways[0].close).not.toHaveBeenCalled()
+
+    pruneSecondaryGateways(new Set())
+    expect(secondaryGateways[0].close).toHaveBeenCalledOnce()
+
+    await requestForSessionProfile(route, ambient as never, 'session.resume', { session_id: 'rt-pruned' })
+    expect(secondaryGateways).toHaveLength(2)
+  })
+
+  it('releases a retained turn when its owning socket closes without a terminal event', async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+    const ambient = vi.fn(async () => ({ ambient: true }))
+
+    await requestForSessionProfile('loki', ambient as never, 'prompt.submit', {
+      session_id: 'rt-socket-closed',
+      text: 'work'
+    })
+    expect(secondaryGateways[0].close).not.toHaveBeenCalled()
+
+    secondaryGateways[0].emitState('closed')
+    expect(secondaryGateways[0].close).toHaveBeenCalledOnce()
+  })
+
+  it('routes an owner that IS the primary profile onto the primary socket (no active comparison)', async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'loki')
+    installDesktop()
+
+    const ambient = vi.fn(async (method: string, params?: Record<string, unknown>) => ({
+      ambient: true,
+      method,
+      params
+    }))
+
+    // Owner 'loki' equals the PRIMARY profile. There is no active-profile
+    // comparison anymore, but gatewayForProfile collapses a primary-profile
+    // owner back to the primary socket — so no secondary is spun up. The
+    // ambient fn isn't used (routing goes through requestGatewayForProfile),
+    // but the request still lands on the one primary gateway.
+    const result = await requestForSessionProfile<{ method: string; params: Record<string, unknown> }>(
+      'loki',
+      ambient as never,
+      'session.activate',
+      { session_id: 'rt-1' }
+    )
+
+    expect(secondaryGateways).toHaveLength(0)
+    expect(primary.request).toHaveBeenCalledWith('session.activate', { session_id: 'rt-1' })
+    expect(result).toEqual({ method: 'session.activate', params: { session_id: 'rt-1' } })
+  })
+
+  it('keeps the ambient dispatcher for sessions with no owning profile', async () => {
+    const primary = makePrimary()
+    setPrimaryGateway(primary as never, 'default')
+    installDesktop()
+    await ensureGatewayForProfile('default')
+
+    const ambient = vi.fn(async () => ({ ambient: true }))
+    await requestForSessionProfile(null, ambient as never, 'session.usage', { session_id: 'rt-2' })
+
+    expect(ambient).toHaveBeenCalledOnce()
+  })
+
+  it('preserves ambient request arity as optional controls are supplied', async () => {
+    const ambient = vi.fn(async () => ({ ambient: true }))
+    const params = { session_id: 'rt-3' }
+    const controller = new AbortController()
+
+    await requestForSessionProfile(null, ambient as never, 'session.usage', params)
+    await requestForSessionProfile(null, ambient as never, 'session.usage', params, 1_800_000)
+    await requestForSessionProfile(null, ambient as never, 'session.usage', params, undefined, controller.signal)
+
+    expect(ambient.mock.calls.map(args => args.length)).toEqual([2, 3, 4])
+    expect(ambient).toHaveBeenNthCalledWith(2, 'session.usage', params, 1_800_000)
+    expect(ambient).toHaveBeenNthCalledWith(3, 'session.usage', params, undefined, controller.signal)
   })
 })

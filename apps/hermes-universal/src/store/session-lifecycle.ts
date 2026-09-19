@@ -3,7 +3,7 @@
  * tombstones, branching, archiving, opening, messaging sources and profile
  * resolution — built natively on universal's connection scoping
  * (`store/active-connection`, `store/event-router`, `store/live-session-registry`,
- * `store/session-request-router`, `lib/backend-scope`).
+ * `store/session-route-dispatch`, `lib/backend-scope`).
  *
  * Separate from `store/session.ts` on purpose. That file is DESKTOP's session
  * STATE store (`$activeSessionId`, `$messages`, `$currentModel`, `$busy`, their
@@ -79,12 +79,11 @@ import {
   tombstoneSessions,
   untombstoneSessions
 } from '@/store/session-removal'
-import { requestForSession, SessionRouteError, setSessionOwnerResolver } from '@/store/session-request-router'
+import { requestForSession, SessionRouteError, setSessionOwnerResolver } from '@/store/session-route-dispatch'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   ambientSessionScope,
-  type ClientSessionState,
   dropSessionState,
   ensureSessionSlice,
   hydratingKey,
@@ -92,6 +91,7 @@ import {
   isPlaceholderKey,
   rekeySession,
   runtimeKeyForStoredSession,
+  type SessionKeyState,
   type SessionRef,
   setAmbientSessionScope,
   updateSession
@@ -397,7 +397,7 @@ export async function resolveSessionProfile(storedSessionId: null | string): Pro
 }
 
 // The router asks THIS module which profile owns a session — a hook, because
-// `session-request-router.ts` is imported from here and the edge has to point
+// `session-route-dispatch.ts` is imported from here and the edge has to point
 // one way (recipe 6.4). Registered at module init, so every `requestForSession`
 // in the app routes even when the caller never touched `store/session`: that is
 // what makes `reconcileSessionTurn`'s resume — the one site that used to send no
@@ -633,20 +633,20 @@ export function applyActiveSessionStoredIdRotation(rotation: {
 // Sidebar row state — the UNION of the primary (single active chat), every open
 // TILE, and every session the gateway says is live that this client holds no
 // slice for. "working" = a session streaming a turn; "needs input" = a session
-// with a clarify prompt pending. The tile slices come from `$sessionStates`
+// with a clarify prompt pending. The tile slices come from `$sessionKeyStates`
 // (tiles only); the primary comes from the global `$busy`/`$clarify`; the rest
 // come from `$liveSessionStatuses` — a cron tick, an inbound messaging turn, the
-// TUI. That third source used to be a `$sessionStates` slice minted from the
+// TUI. That third source used to be a `$sessionKeyStates` slice minted from the
 // liveness snapshot, which made every warm short-circuit treat an unopened
 // session as already hydrated (MJXHRM-356). Guarded with `stableArray` so the
-// per-token republish of `$sessionStates` doesn't re-render the sidebar unless
+// per-token republish of `$sessionKeyStates` doesn't re-render the sidebar unless
 // membership actually changed.
 //
 // A session THIS client holds a slice for answers for itself, even when the
 // snapshot also lists it: the slice settles on the terminal frame, where the
 // snapshot trails by a poll interval, so preferring it is what keeps a finished
 // turn's spinner from lingering for up to 30 seconds.
-const storedIdsWithSlices = (states: Record<string, ClientSessionState>): Set<string> => {
+const storedIdsWithSlices = (states: Record<string, SessionKeyState>): Set<string> => {
   const owned = new Set<string>()
 
   for (const state of Object.values(states)) {
@@ -661,7 +661,7 @@ const storedIdsWithSlices = (states: Record<string, ClientSessionState>): Set<st
 let workingArr: readonly string[] = []
 let workingSet = new Set<string>()
 export const $workingSessionIds = computed(
-  [$busy, $activeStoredSessionId, $sessionStates, $liveSessionStatuses],
+  [$busy, $activeStoredSessionId, $sessionKeyStates, $liveSessionStatuses],
   (busy, activeId, states, live) => {
     const next: string[] = []
 
@@ -696,7 +696,7 @@ export const $workingSessionIds = computed(
 
 let attentionArr: readonly string[] = []
 export const $attentionSessionIds = computed(
-  [$clarify, $activeStoredSessionId, $sessionStates, $liveSessionStatuses],
+  [$clarify, $activeStoredSessionId, $sessionKeyStates, $liveSessionStatuses],
   (clarify, activeId, states, live) => {
     const next: string[] = []
 
@@ -868,7 +868,7 @@ export function isSessionPinned(session: SessionInfo): boolean {
  * sidebar row beside it renders under the live tip. Compared on identity,
  * "Open in tile" from that row did not see the tile that was already open and
  * added a SECOND tab for the same live conversation — both tabs resolving to one
- * `$sessionStates` slice through the stored-id index (MJXHRM-423).
+ * `$sessionKeyStates` slice through the stored-id index (MJXHRM-423).
  *
  * Answered from `$sessions` alone, deliberately: this is called from synchronous
  * layout code, and the surface that can produce the mismatch (a sidebar row, a
@@ -1196,7 +1196,7 @@ export interface OpenSessionOptions {
 export function openSession(storedId: string, options?: OpenSessionOptions): Promise<void> | void {
   const warm = runtimeKeyForStoredSession(storedId)
 
-  if (warm && $sessionStates.get()[warm]) {
+  if (warm && $sessionKeyStates.get()[warm]) {
     // A HYDRATE STILL IN FLIGHT is not a warm session — it is this same open,
     // still running, and its slice is a placeholder with no runtime binding.
     // Re-arm it rather than bumping past it: the generation counter is the
@@ -1221,7 +1221,7 @@ export function openSession(storedId: string, options?: OpenSessionOptions): Pro
     // caller waiting on its binding runs out the clock. Hydrate again instead —
     // the only way to get a bound session — after dropping the husk, so the
     // stored id is indexed to exactly one slice.
-    if (!$sessionStates.get()[warm]?.runtimeSessionId) {
+    if (!$sessionKeyStates.get()[warm]?.runtimeSessionId) {
       dropSessionState(warm)
 
       return hydrateColdSession(storedId)
@@ -1364,7 +1364,7 @@ async function reclaimWarmSession(
     // The slice can be gone by now — deleted, evicted, or re-keyed by a hydrate
     // that raced us. `rekeySession` would happily move an EMPTY state onto the
     // new runtime id and leave a ghost session behind, so check first.
-    if (!$sessionStates.get()[warmKey]) {
+    if (!$sessionKeyStates.get()[warmKey]) {
       return
     }
 
@@ -1407,7 +1407,7 @@ async function reclaimWarmSession(
  * - no slice at all — nothing on screen is deaf, and the next `openSession` will
  *   hydrate it cold, which resumes and binds properly. That is the whole check:
  *   `runtimeKeyForStoredSession` answers null for a stale index entry too, so
- *   re-testing `$sessionStates` here would be a branch nothing could reach;
+ *   re-testing `$sessionKeyStates` here would be a branch nothing could reach;
  * - a PLACEHOLDER key — a hydrate is already in flight and will issue its own
  *   resume; forcing a second one would race its re-key and strand the slice.
  */
@@ -1491,7 +1491,7 @@ async function hydrateColdSession(storedId: string): Promise<void> {
   // screen through `$paintedMessages` while the REST transcript and the resume
   // are still in flight, and is replaced the moment either lands. It is pixels,
   // never knowledge: `store/transcript-paint.ts` holds it outside
-  // `$sessionStates` so nothing can reconcile, journal or narrate it.
+  // `$sessionKeyStates` so nothing can reconcile, journal or narrate it.
   paintCachedTail(paintKey, storedId)
 
   // A session resumed MID-TURN stays busy: the committed transcript ends before

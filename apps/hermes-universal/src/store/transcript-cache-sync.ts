@@ -26,7 +26,7 @@
 
 import { aliasTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
 import {
-  $sessionStates,
+  $sessionKeyStates,
   addSessionKeyHooks,
   isPlaceholderKey,
   runtimeKeyForStoredSession
@@ -67,7 +67,7 @@ function deferred(fn: () => void): void {
 }
 
 function flushSave(key: string): void {
-  const state = $sessionStates.get()[key]
+  const state = $sessionKeyStates.get()[key]
   const storedSessionId = state?.storedSessionId
 
   if (!storedSessionId || !state.messages.length) {
@@ -168,7 +168,7 @@ export interface AwaitSessionPaintedOptions {
  * The slice key serving this stored session.
  *
  * THE SCAN COMES FIRST, and that is not a style choice: `publishSessionState`
- * calls `$sessionStates.set(...)` — which notifies synchronously — and only THEN
+ * calls `$sessionKeyStates.set(...)` — which notifies synchronously — and only THEN
  * updates the stored-id reverse index. A subscriber that resolved through the
  * index would therefore see the OLD index on the very publish that created the
  * slice, and a waiter armed before it would never wake, because no second
@@ -179,7 +179,7 @@ export interface AwaitSessionPaintedOptions {
  * (MJX-133).
  */
 function sessionKeyFor(storedSessionId: string): null | string {
-  const states = $sessionStates.get()
+  const states = $sessionKeyStates.get()
 
   for (const [key, state] of Object.entries(states)) {
     if (state.storedSessionId === storedSessionId) {
@@ -195,7 +195,7 @@ function sessionKeyFor(storedSessionId: string): null | string {
 /** Does this session have a surface with something real on it? */
 function paintedNow(storedSessionId: string, expectHistory: boolean): boolean {
   const key = sessionKeyFor(storedSessionId)
-  const state = key ? $sessionStates.get()[key] : undefined
+  const state = key ? $sessionKeyStates.get()[key] : undefined
 
   if (!key || !state) {
     return false
@@ -245,7 +245,7 @@ function waitFor(
 
     const onAbort = () => finish(new SessionWakeError('superseded', phase))
     const timer = setTimeout(() => finish(new SessionWakeError('timeout', phase)), timeoutMs)
-    const unsubscribeStates = $sessionStates.subscribe(check)
+    const unsubscribeStates = $sessionKeyStates.subscribe(check)
     const unsubscribePaint = $transcriptPaint.subscribe(check)
 
     signal?.addEventListener('abort', onAbort)

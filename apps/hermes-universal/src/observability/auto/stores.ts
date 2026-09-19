@@ -46,7 +46,7 @@ import { isRecording, recordSpan } from '../span'
  * The point of store spans is to catch a write whose synchronous fan-out is
  * expensive — nanostores notifies listeners inline, so an `atom.set` that
  * triggers a cascade shows its cost right here. A write that costs nothing is
- * not evidence of anything, and there are a lot of them: `$sessionStates` at
+ * not evidence of anything, and there are a lot of them: `$sessionKeyStates` at
  * ~30Hz while streaming, `$layoutTree` and `$dropHint` once per frame while
  * dragging, `$petActivity` per reasoning token, `$voiceConversation` per audio
  * frame. Recording those would exhaust the span buffer before the interesting

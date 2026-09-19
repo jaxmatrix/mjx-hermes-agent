@@ -59,8 +59,7 @@ import {
 } from '@/store/prompts'
 import {
   $activeSessionKey,
-  $sessionStates,
-  type ClientSessionState,
+  $sessionKeyStates,
   dropSessionState,
   emptySessionState,
   ensureSessionSlice,
@@ -70,6 +69,7 @@ import {
   rekeySession,
   runtimeKeyFor,
   runtimeKeyForStoredSession,
+  type SessionKeyState,
   updateSession
 } from '@/store/session-state-types'
 import { clearSessionSubagents } from '@/store/subagents'
@@ -128,7 +128,7 @@ const sessionRecovery = () => import('@/store/session-recovery')
 //
 // None of these hold state. Every session — the one on screen, the ones in
 // tiles, the ones behind mobile bubbles — stores its transcript and turn state
-// in `$sessionStates`, and these are computed projections of whichever slice
+// in `$sessionKeyStates`, and these are computed projections of whichever slice
 // `$activeSessionKey` currently names. That is the whole point: a background
 // session's tokens cannot reach the visible chat, because the visible chat has
 // no storage of its own to reach (MJX-132).
@@ -137,7 +137,7 @@ const sessionRecovery = () => import('@/store/session-recovery')
 // ---------------------------------------------------------------------------
 
 /** The slice the user is looking at. */
-const $active = computed([$activeSessionKey, $sessionStates], (key, states) => states[key] ?? EMPTY_STATE)
+const $active = computed([$activeSessionKey, $sessionKeyStates], (key, states) => states[key] ?? EMPTY_STATE)
 
 const EMPTY_STATE = emptySessionState()
 const EMPTY_MESSAGES: ChatMessage[] = []
@@ -154,7 +154,7 @@ export const $messagesEmpty = computed($messages, messages => messages.length ==
  * `$messages` is knowledge and `$paintedMessages` is pixels. Only
  * `app/chat/runtime.tsx` reads this one; everything that reconciles, journals,
  * narrates, branches or submits reads `$messages`, and cannot see a cached row
- * because the lane is not in `$sessionStates` at all.
+ * because the lane is not in `$sessionKeyStates` at all.
  *
  * Returns the IDENTICAL array reference as `$messages` whenever the lane is
  * empty — which is the ordinary case for every session in the app. A fresh `[]`
@@ -236,7 +236,7 @@ export const $sessionStartedAt = computed($active, state => state.sessionStarted
 export const $currentUsage = computed($active, state => state.usage ?? EMPTY_USAGE)
 
 /** Apply an updater to the ACTIVE session's slice. */
-function updateActive(updater: (state: ClientSessionState) => ClientSessionState): void {
+function updateActive(updater: (state: SessionKeyState) => SessionKeyState): void {
   updateSession($activeSessionKey.get(), updater)
 }
 
@@ -666,7 +666,7 @@ export function noteMissedSteer(key: string, rawText: string): void {
  */
 export async function redirectPrompt(rawText: string, key = $activeSessionKey.get()): Promise<boolean> {
   const text = rawText.trim()
-  const slice = $sessionStates.get()[key]
+  const slice = $sessionKeyStates.get()[key]
   const sessionId = slice?.runtimeSessionId
 
   if (!text || !sessionId) {
@@ -753,7 +753,7 @@ export async function redirectPrompt(rawText: string, key = $activeSessionKey.ge
  * toast. Resolves true when the gateway took the interrupt.
  */
 export async function interruptSession(key = $activeSessionKey.get()): Promise<boolean> {
-  const slice = $sessionStates.get()[key]
+  const slice = $sessionKeyStates.get()[key]
   const sessionId = slice?.runtimeSessionId
 
   if (!sessionId) {
@@ -854,7 +854,7 @@ const pendingUnboundStops = new Map<string, Promise<boolean>>()
  * through the door iteration 31 reported on `invalidateRuntimeBindings`, which
  * MJXHRM-358 has since closed.
  */
-async function interruptUnboundSession(key: string, slice: ClientSessionState | undefined): Promise<boolean> {
+async function interruptUnboundSession(key: string, slice: SessionKeyState | undefined): Promise<boolean> {
   const turn = getInflightTurn(key)
 
   if (turn && turn.phase !== 'settled') {
@@ -905,7 +905,7 @@ function waitForRuntimeBinding(storedId: string, timeoutMs = STOP_BINDING_TIMEOU
   const bound = (): null | string => {
     const key = runtimeKeyForStoredSession(storedId)
 
-    return key && $sessionStates.get()[key]?.runtimeSessionId ? key : null
+    return key && $sessionKeyStates.get()[key]?.runtimeSessionId ? key : null
   }
 
   const immediate = bound()
@@ -930,7 +930,7 @@ function waitForRuntimeBinding(storedId: string, timeoutMs = STOP_BINDING_TIMEOU
 
     const timer = setTimeout(() => finish(null), timeoutMs)
 
-    const unsubscribe = $sessionStates.listen(() => {
+    const unsubscribe = $sessionKeyStates.listen(() => {
       const key = bound()
 
       if (key) {
@@ -1387,7 +1387,7 @@ export async function submitEditedPrompt(
   rawText: string,
   editKey = $activeSessionKey.get()
 ): Promise<void> {
-  const slice = $sessionStates.get()[editKey]
+  const slice = $sessionKeyStates.get()[editKey]
   const sessionId = slice?.runtimeSessionId
   const messages = slice?.messages ?? EMPTY_MESSAGES
   const plan = sessionId ? planEdit(messages, sourceId, rawText) : null
@@ -1588,7 +1588,7 @@ export async function restoreToMessage(
   // Addressed by KEY, not by the active-chat projections: a tile's transcript
   // renders the same user bubble, and a rewind is destructive enough that
   // "whichever chat is on screen" is the wrong session to resolve it against.
-  const slice = $sessionStates.get()[restoreKey]
+  const slice = $sessionKeyStates.get()[restoreKey]
   const sessionId = slice?.runtimeSessionId
 
   if (!sessionId) {
@@ -1709,7 +1709,7 @@ export async function respondApproval(
   choice: ApprovalChoice,
   key = $activeSessionKey.get()
 ): Promise<PromptRespondOutcome> {
-  const slice = $sessionStates.get()[key]
+  const slice = $sessionKeyStates.get()[key]
   // A slice with no runtime id has nothing the gateway can resolve — `_sess()`
   // answers an empty `session_id` with the same "session not found" it gives a
   // dead one, which is exactly what the old swallow was hiding.

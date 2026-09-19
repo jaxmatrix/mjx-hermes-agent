@@ -44,16 +44,20 @@ vi.mock('@/app/chat/chat-screen', () => ({
   }
 }))
 
+// BRIDGE (MJXHRM-602): the pane under test is desktop's and reads desktop's
+// `$sessionTiles`; the rekey it is asserted against belongs to the legacy
+// session-key fold. The one file that names both keyspaces — it retires with
+// the old fold.
 const { $sessionTiles, patchSessionTile } = await import('@/store/session-states')
 
-const { $sessionStates, emptySessionState, publishSessionState, rekeySession } =
+const { $sessionKeyStates, emptySessionState, publishSessionState, rekeySession } =
   await import('@/store/session-state-types')
 
 const { setSessionClarify } = await import('@/store/prompts')
 const { SessionTilePane } = await import('./session-tile')
 
 beforeEach(() => {
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   $sessionTiles.set([])
 })
 

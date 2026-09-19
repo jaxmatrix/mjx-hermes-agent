@@ -14,7 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GatewayRpcError } from '@/gateway/rpc-error'
 import { atom } from '@/store/atom'
-import type { ClientSessionState } from '@/store/session-state-types'
+import type { FocusedSessionFacts } from '@/store/explorer-path-decision'
 
 const setSessionCwd = vi.fn(async (params: { cwd: string; sessionId: string }): Promise<unknown> => params)
 const notify = vi.fn((input: unknown): string => String(input && 'note'))
@@ -24,7 +24,7 @@ vi.mock('@/lib/gateway-rpc', () => ({ setSessionCwd: (params: never) => setSessi
 vi.mock('@/store/notifications', () => ({ notify: (input: unknown) => notify(input) }))
 vi.mock('@/store/projects', () => ({ openFolderAsProject: (dir: string) => openFolderAsProject(dir) }))
 
-const $focusedSessionState = atom<Partial<ClientSessionState>>({})
+const $focusedSessionState = atom<Partial<FocusedSessionFacts>>({})
 
 // `$focusedCwd` belongs to the same module and `store/workspace-events`
 // subscribes to it at module scope for `$effectiveCwd` — a partial mock without
@@ -44,7 +44,7 @@ const {
 } = await import('@/store/explorer-path')
 
 /** The focused slice, as `planExplorerPath` reads it. */
-function focus(patch: Partial<ClientSessionState>): void {
+function focus(patch: Partial<FocusedSessionFacts>): void {
   $focusedSessionState.set({
     awaitingResponse: false,
     busy: false,

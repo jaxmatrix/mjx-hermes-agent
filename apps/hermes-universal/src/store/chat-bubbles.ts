@@ -6,7 +6,7 @@
  * no pane graph on a phone, just an ordered list of sessions.
  *
  * Runtime model: every bubble — foreground or background, saved or draft — is
- * just a session in `$sessionStates`. Switching moves `$activeSessionKey`; it
+ * just a session in `$sessionKeyStates`. Switching moves `$activeSessionKey`; it
  * does not move state anywhere.
  *
  * This used to be a hybrid: the active bubble lived in the global chat atoms and
@@ -31,6 +31,12 @@ import {
   isAmbientConnection,
   releaseConnectionClient
 } from '@/store/connection-clients'
+import {
+  dropSessionState,
+  runtimeKeyForStoredSession,
+  sessionKeyNeedsCloseConfirm,
+  sessionTileDelegate
+} from '@/store/session-key-states'
 import { $activeStoredSessionId, newSession, openSession, sameStoredSession } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
@@ -38,12 +44,6 @@ import {
   isDraftKey,
   LOCAL_SESSION_SCOPE
 } from '@/store/session-state-types'
-import {
-  dropSessionState,
-  runtimeKeyForStoredSession,
-  sessionKeyNeedsCloseConfirm,
-  sessionTileDelegate
-} from '@/store/session-states'
 import { tabKeyFor, type TabRef, tabRefFor, takeProfileKeyedTabs } from '@/store/tab-ref'
 import { isSecondaryWindow, ownsPersistedAppState } from '@/store/windows'
 
@@ -357,7 +357,7 @@ function promote(storedId: null | string) {
  *  was opened with while auto-compression rotates the session's live one, so the
  *  sidebar row for a compacted chat names it differently from the bubble already
  *  showing it. On identity, "Open in bubble" added a second bubble onto the same
- *  `$sessionStates` slice (MJXHRM-423 — the mobile half of `openSessionTile`). */
+ *  `$sessionKeyStates` slice (MJXHRM-423 — the mobile half of `openSessionTile`). */
 export function addBubble(storedSessionId: string) {
   if (sameStoredSession(storedSessionId, $activeStoredSessionId.get())) {
     return

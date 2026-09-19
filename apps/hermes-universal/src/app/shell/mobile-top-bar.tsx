@@ -9,7 +9,7 @@ import { Slot } from '@/contrib/react/slot'
 import { useI18n } from '@/i18n'
 import { useStoreSelector } from '@/lib/use-session-slice'
 import { useStore } from '@/store/atom'
-import { $activeSessionKey, $sessionStates } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
 
 import { DownloadsTray } from './downloads-tray'
 import { MobileChromeBar } from './mobile-chrome-bar'
@@ -37,7 +37,7 @@ export function MobileTopBar() {
   // which carries its scope from its first write — never from the active
   // connection, which a background chat does not belong to.
   const sessionKey = useStore($activeSessionKey)
-  const chatConnectionId = useStoreSelector($sessionStates, states => states[sessionKey]?.connectionId ?? null)
+  const chatConnectionId = useStoreSelector($sessionKeyStates, states => states[sessionKey]?.connectionId ?? null)
 
   return (
     <MobileChromeBar

@@ -24,8 +24,8 @@
 
 import { IS_MOBILE } from '@/lib/platform'
 import type { ConnectionClientState } from '@/store/connection-clients'
+import type { SessionTile } from '@/store/session-key-states'
 import { LOCAL_SESSION_SCOPE } from '@/store/session-state-types'
-import type { SessionTile } from '@/store/session-states'
 
 export type TabConnection =
   | { kind: 'ok' }

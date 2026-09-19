@@ -2,7 +2,7 @@ import { api } from '@/lib/api'
 import type { PaginatedSessions, SessionInfo } from '@/types/hermes'
 
 import { $connectionsRegistry, type ConnectionView } from './connections'
-import { refreshTileTitles } from './session-states'
+import { refreshTileTitles } from './session-key-states'
 
 /**
  * THE CROSS-GATEWAY SESSION LIST.

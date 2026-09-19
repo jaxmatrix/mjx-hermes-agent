@@ -34,7 +34,7 @@ vi.mock('@/store/connection-tunnels', () => ({
   isTunnelSignInError: (error: unknown) => (error as { kind?: string })?.kind === 'credentials-needed',
   needsInteraction: () => false
 }))
-vi.mock('@/store/session-request-router', async importActual => ({
+vi.mock('@/store/session-route-dispatch', async importActual => ({
   ...(await importActual<Record<string, unknown>>()),
   SessionRouteError: class extends Error {
     constructor(
@@ -286,12 +286,12 @@ describe('the reconnect ladder', () => {
 
 describe('the catch-up a reconnect runs', () => {
   const seedBound = async () => {
-    const { $sessionStates, emptySessionState, publishSessionState, runtimeKeyFor } =
+    const { $sessionKeyStates, emptySessionState, publishSessionState, runtimeKeyFor } =
       await import('@/store/session-state-types')
 
     const key = runtimeKeyFor('conn-b', 'run-b')
 
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     publishSessionState(key, {
       ...emptySessionState('abc12345'),
       connectionId: 'conn-b',
@@ -477,9 +477,9 @@ describe('invariant 47 — the tab records own the holds', () => {
   })
 
   it('takes one hold per held record, and gives it back when the record goes', async () => {
-    const { $sessionTiles, saveSessionTiles } = await import('@/store/session-states')
+    const { $sessionKeyTabs, saveSessionTiles } = await import('@/store/session-key-states')
 
-    $sessionTiles.set([])
+    $sessionKeyTabs.set([])
     saveSessionTiles([tab('conn-b', 'one'), tab('conn-b', 'two')] as never)
     await vi.advanceTimersByTimeAsync(0)
 
@@ -500,9 +500,9 @@ describe('invariant 47 — the tab records own the holds', () => {
   })
 
   it('gives the hold back when a tab goes unavailable, without closing it', async () => {
-    const { $sessionTiles, saveSessionTiles } = await import('@/store/session-states')
+    const { $sessionKeyTabs, saveSessionTiles } = await import('@/store/session-key-states')
 
-    $sessionTiles.set([])
+    $sessionKeyTabs.set([])
     saveSessionTiles([tab('conn-b', 'one')] as never)
     await vi.advanceTimersByTimeAsync(0)
 

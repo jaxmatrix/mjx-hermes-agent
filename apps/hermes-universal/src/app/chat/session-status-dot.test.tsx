@@ -19,7 +19,7 @@ import type { SessionInfo } from '@/types/hermes'
 const { $attentionSessionIds, $sessions, $unreadFinishedSessionIds } = await import('@/store/session')
 const { $projects } = await import('@/store/projects')
 const { $sessionColorOverrides } = await import('@/store/session-color')
-const { $sessionStates } = await import('@/store/session-state-types')
+const { $sessionKeyStates } = await import('@/store/session-state-types')
 const { SessionStatusDot } = await import('./session-status-dot')
 
 /** The row shape the backend surfaces AFTER a compression: the row's own id is
@@ -31,7 +31,7 @@ const compressedRow = (tip: string, root: string): SessionInfo =>
 /** A slice whose turn is live, keyed (as the real thing is) by runtime id and
  *  carrying the POST-rotation stored id. */
 const busySlice = (runtimeId: string, storedSessionId: string) => {
-  $sessionStates.set({
+  $sessionKeyStates.set({
     [runtimeId]: {
       awaitingResponse: false,
       branch: '',
@@ -66,7 +66,7 @@ const busySlice = (runtimeId: string, storedSessionId: string) => {
 }
 
 beforeEach(() => {
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   $sessions.set([])
   $attentionSessionIds.get()
   $unreadFinishedSessionIds.set([])

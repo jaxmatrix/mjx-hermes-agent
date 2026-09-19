@@ -7,15 +7,9 @@
  * per-profile values, and everything that reads them — the file tree, the
  * statusbar cwd segment, the terminal's initial directory, the review base —
  * is describing the wrong machine until they are reloaded.
- *
- * `store/session-states` is mocked to a bare `$focusedCwd`: `$effectiveCwd` is
- * the only thing this file needs from it, and importing the real one drags the
- * whole session graph in for a two-atom computed.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-
-import { atom } from '@/store/atom'
 
 const getDefaultCwd = vi.fn(async () => ({ branch: 'main', cwd: '/srv/default', home: '/home/gw' }))
 
@@ -23,7 +17,6 @@ vi.mock('@/hermes', async importOriginal => ({
   ...((await importOriginal()) as Record<string, unknown>),
   getDefaultCwd: () => getDefaultCwd()
 }))
-vi.mock('@/store/session-states', () => ({ $focusedCwd: atom('') }))
 
 const { $activeProfile } = await import('@/store/profiles')
 

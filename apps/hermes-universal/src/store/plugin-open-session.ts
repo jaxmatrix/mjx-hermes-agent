@@ -2,6 +2,7 @@ import { atom } from '@/store/atom'
 
 import { $connectionReady } from './connection-ready'
 import { $activeGatewayProfile, normalizeProfileKey, selectProfile } from './profile'
+import { focusOpenSession, openSessionTab } from './session-key-states'
 import {
   adoptLiveSession,
   knownSessionProfileFor,
@@ -10,8 +11,7 @@ import {
   rememberSessionProfile,
   resolveSessionProfile
 } from './session-lifecycle'
-import { $sessionStates, runtimeKeyForStoredSession } from './session-state-types'
-import { focusOpenSession, openSessionTab } from './session-states'
+import { $sessionKeyStates, runtimeKeyForStoredSession } from './session-state-types'
 import { awaitSessionPainted, SessionWakeError } from './transcript-cache-sync'
 
 /**
@@ -148,7 +148,7 @@ export async function warmProfile(profile: null | string, timeoutMs = PROFILE_SW
 function canonicalStoredId(storedSessionId: string): string {
   const key = runtimeKeyForStoredSession(storedSessionId)
 
-  return (key ? $sessionStates.get()[key]?.storedSessionId : null) ?? storedSessionId
+  return (key ? $sessionKeyStates.get()[key]?.storedSessionId : null) ?? storedSessionId
 }
 
 export async function openPluginSession(

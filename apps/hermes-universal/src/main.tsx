@@ -1,3 +1,6 @@
+// MUST stay first: `store/session-states` (pulled in by `./store/active-work`)
+// reads its persisted tabs at module evaluation, and this moves them there.
+import './store/persisted-tiles-migration'
 import './styles.css'
 // Side-effect: reports in-flight turns to the main process for the quit guard.
 import './store/active-work'

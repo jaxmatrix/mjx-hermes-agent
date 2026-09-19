@@ -26,12 +26,21 @@ import { notifyError } from '@/store/notifications'
 // popout persistence to the primary window (see its consumers in
 // `pane-shell/tree/store.ts`, `session-states.ts`, `chat-bubbles.ts`, and the
 // composer popout/metrics hooks).
+//
+// INIT ORDER. The window-kind predicates are called while OTHER modules are
+// still initialising — `$layoutTree` in `pane-shell/tree/store.ts`, `$hudActive`
+// in `store/hud.ts`, the unread wiring in `store/session-unread.ts` — and this
+// module sits in an import cycle with them (`@/app/routes` below imports the
+// pane tree, which imports this). Entered through that cycle, a predicate runs
+// BEFORE this module's body has: function declarations are hoisted and
+// callable, every module-level `let`/`const` is still in its temporal dead zone.
+// So nothing on a predicate's path may read a module-level binding — no flag
+// constants, no memo cells. Each `?win=` value is spelled in exactly one
+// function declaration, and the URL is re-read per call (it is a few dozen
+// bytes and constant for the window's life).
 
-const SECONDARY_WINDOW_FLAG = 'secondary'
-const TILE_WINDOW_FLAG = 'tile'
-
-/** Read `?win=` once. Everything below is derived from it, so a bad/absent
- *  search string degrades to "primary window" in one place. */
+/** Read `?win=`. Everything below is derived from it, so a bad/absent search
+ *  string degrades to "primary window" in one place. */
 function winFlag(): null | string {
   try {
     return new URLSearchParams(window.location.search).get('win')
@@ -40,7 +49,15 @@ function winFlag(): null | string {
   }
 }
 
-let tileWindowCache: boolean | null = null
+/** `?win=tile`, or the chat-only pop-out's older `?win=secondary`. */
+function isTileFlag(flag: null | string): boolean {
+  return flag === 'tile' || flag === 'secondary'
+}
+
+/** `?win=activity` — the native screen activity (see below). */
+function isActivityFlag(flag: null | string): boolean {
+  return flag === 'activity'
+}
 
 /**
  * True in a SATELLITE window that hosts exactly one tile — the
@@ -51,15 +68,7 @@ let tileWindowCache: boolean | null = null
  * stored link keep working. Only the code path behind them was unified.
  */
 export function isTileWindow(): boolean {
-  if (tileWindowCache !== null) {
-    return tileWindowCache
-  }
-
-  const flag = winFlag()
-
-  tileWindowCache = flag === TILE_WINDOW_FLAG || flag === SECONDARY_WINDOW_FLAG
-
-  return tileWindowCache
+  return isTileFlag(winFlag())
 }
 
 /** The tile this window hosts, or null when the URL doesn't name one (a legacy
@@ -144,8 +153,6 @@ export function isGlassBackedWindow(): boolean {
 // overlay — no behaviour change there.
 // --------------------------------------------------------------------------
 
-const ACTIVITY_WINDOW_FLAG = 'activity'
-
 export type ActivitySurface = 'agents' | 'command-center' | 'cron' | 'profiles' | 'settings' | 'webhooks'
 
 // The windowable surfaces, as one table: `activitySurfaceForPath` reads it to
@@ -166,26 +173,10 @@ function matchesRoute(path: string, route: string): boolean {
   return path === route || path.startsWith(`${route}/`) || path.startsWith(`${route}?`)
 }
 
-let activityWindowCache: boolean | null = null
-
 // True when this WebView is the native screen activity (`?win=activity`). `app.tsx`
 // mounts `ActivityScreenRoot` for it instead of the chat shell.
 export function isActivityWindow(): boolean {
-  if (activityWindowCache !== null) {
-    return activityWindowCache
-  }
-
-  let result = false
-
-  try {
-    result = new URLSearchParams(window.location.search).get('win') === ACTIVITY_WINDOW_FLAG
-  } catch {
-    result = false
-  }
-
-  activityWindowCache = result
-
-  return result
+  return isActivityFlag(winFlag())
 }
 
 // Which surface the screen activity renders, from the current route (default
@@ -283,24 +274,12 @@ export function openAppRoute(route: string): void {
   navigateTo(route)
 }
 
-let watchWindowCache: boolean | null = null
-
 export function isWatchWindow(): boolean {
-  if (watchWindowCache !== null) {
-    return watchWindowCache
-  }
-
-  let result = false
-
   try {
-    result = new URLSearchParams(window.location.search).get('watch') === '1'
+    return new URLSearchParams(window.location.search).get('watch') === '1'
   } catch {
-    result = false
+    return false
   }
-
-  watchWindowCache = result
-
-  return result
 }
 
 // Native multi-window is supported on desktop and on iOS via UIScene (MJX-142) —
@@ -492,6 +471,74 @@ export async function openNewWindow(): Promise<void> {
 }
 
 // --------------------------------------------------------------------------
+// Browser pop-out and open-in-terminal. Rust has no command for either yet
+// (Phase 4), so both are feature-detected on the `window.hermesDesktop` bridge
+// exactly as desktop does it: `lib/hermes-desktop` is where the windows and
+// terminal namespaces land, and until they do the checks read false and the
+// openers take desktop's own absent-capability path.
+// --------------------------------------------------------------------------
+
+export function canOpenBrowserWindow(): boolean {
+  return typeof window !== 'undefined' && typeof window.hermesDesktop?.openBrowserWindow === 'function'
+}
+
+// A REMOTE connection is excluded by the caller: the terminal we'd open is on
+// this machine, but the session lives on the remote host.
+export function canOpenSessionInTerminal(): boolean {
+  return typeof window !== 'undefined' && typeof window.hermesDesktop?.openSessionInTerminal === 'function'
+}
+
+/** `runWindowOpen` for a bridge call, which answers `{ ok, error }` instead of
+ *  rejecting. Returns whether the window opened. */
+async function runBridgeWindowOpen(
+  call: () => Promise<{ ok: boolean; error?: string } | undefined>,
+  failMessage: string
+): Promise<boolean> {
+  try {
+    const result = await call()
+
+    if (!result?.ok) {
+      notifyError(new Error(result?.error || 'unknown error'), failMessage)
+
+      return false
+    }
+
+    return true
+  } catch (err) {
+    notifyError(err, failMessage)
+
+    return false
+  }
+}
+
+/** Pop the in-app Browser into its own OS window. Returns whether the
+ *  window opened so the caller can dock the tab again on failure. */
+export async function openBrowserInNewWindow(tabId: string): Promise<boolean> {
+  if (!tabId || !canOpenBrowserWindow()) {
+    return false
+  }
+
+  return runBridgeWindowOpen(() => window.hermesDesktop.openBrowserWindow(tabId), 'Could not pop out browser')
+}
+
+// Resume a session in the user's own terminal emulator, running the TUI there.
+// `cwd` starts the shell in the session's workspace; `profile` pins the runtime
+// to the profile that owns the session.
+export async function openSessionInTerminal(
+  sessionId: string,
+  opts?: { cwd?: string; profile?: string }
+): Promise<void> {
+  if (!sessionId || !canOpenSessionInTerminal()) {
+    return
+  }
+
+  await runBridgeWindowOpen(
+    () => window.hermesDesktop.openSessionInTerminal(sessionId, opts),
+    'Could not open chat in a terminal'
+  )
+}
+
+// --------------------------------------------------------------------------
 // Satellite windows (MJXHRM-55)
 //
 // A satellite is a SECOND SURFACE of the app in its own native window — not a
@@ -552,12 +599,20 @@ let teardownInstalled = false
  * handoff — and made `isSecondaryWindow()` accidentally true for activity
  * windows, which blanked the layout tree they legitimately need to read.
  */
-const RESERVED_WINDOW_FLAGS = new Set([SECONDARY_WINDOW_FLAG, TILE_WINDOW_FLAG, ACTIVITY_WINDOW_FLAG])
+function isReservedWindowFlag(flag: string): boolean {
+  return isTileFlag(flag) || isActivityFlag(flag)
+}
 
 /** A surface name is part of a window label and of a URL query, so it is held to
- *  the narrow shape both accept without escaping. */
+ *  the narrow shape both accept without escaping. Split from `satelliteLabel`
+ *  because `satelliteSurface()` is on the init-order path (see the top of this
+ *  file) and the label prefix is a module-level `const`. */
+function isSurfaceName(surface: string): boolean {
+  return /^[a-z][a-z0-9-]*$/.test(surface)
+}
+
 function satelliteLabel(surface: string): null | string {
-  return /^[a-z][a-z0-9-]*$/.test(surface) ? `${SATELLITE_LABEL_PREFIX}-${surface}` : null
+  return isSurfaceName(surface) ? `${SATELLITE_LABEL_PREFIX}-${surface}` : null
 }
 
 /**
@@ -646,15 +701,73 @@ export function satelliteSurfaceGrant(surface: string): null | SurfaceGrant {
 export function satelliteSurface(): null | string {
   const flag = winFlag()
 
-  if (!flag || RESERVED_WINDOW_FLAGS.has(flag)) {
+  if (!flag || isReservedWindowFlag(flag)) {
     return null
   }
 
-  return satelliteLabel(flag) ? flag : null
+  return isSurfaceName(flag) ? flag : null
 }
 
 export function isSatelliteWindow(): boolean {
   return satelliteSurface() !== null
+}
+
+/**
+ * Desktop's name for "this window is the HUD". There the HUD is its own `?win=`
+ * kind; here it is a satellite surface, carried by the same `?win=hud`
+ * (`open_satellite_window`), so this is `satelliteSurface()` under another name.
+ *
+ * The literal rather than `HUD_SURFACE`: `store/hud.ts` calls this while it
+ * initialises (see INIT ORDER at the top). The annotation is what keeps the two
+ * from drifting — a type position reads no binding.
+ */
+export function isHudWindow(): boolean {
+  const hud: typeof HUD_SURFACE = 'hud'
+
+  return satelliteSurface() === hud
+}
+
+// Phase 4: there is no browser window kind on Tauri yet — `src-tauri/src/window.rs`
+// builds tiles, instances, activities and the hud/quick/wake satellites, and
+// nothing else — so no window of this app can be one.
+export function isBrowserWindow(): boolean {
+  return false
+}
+
+// Phase 4: nothing builds a URL with `?tab=` yet, so this is null.
+export function windowBrowserTabId(): null | string {
+  return queryParam('tab')
+}
+
+// Desktop's "any window that is NOT the primary app instance". Every tile and
+// satellite (the HUD included) already answers `isSecondaryWindow()` here; the
+// composition is kept as desktop spells it so the two stay comparable.
+export function isAuxiliaryWindow(): boolean {
+  return isSecondaryWindow() || isHudWindow() || isBrowserWindow()
+}
+
+// Phase 4: `open_instance_window` builds a bare `index.html`, so no window
+// carries `?peer=1` yet and an instance window reads false here.
+export function isPeerInstanceWindow(search = typeof window === 'undefined' ? '' : window.location.search): boolean {
+  try {
+    return new URLSearchParams(search).get('peer') === '1'
+  } catch {
+    return false
+  }
+}
+
+// Phase 4: `open_satellite_window` puts no `?profile=` on the HUD's URL, so this
+// is null ("no override") and boot adopts the primary's profile, as it always has.
+export function windowProfileOverride(): null | string {
+  return queryParam('profile')
+}
+
+function queryParam(name: string): null | string {
+  try {
+    return new URLSearchParams(window.location.search).get(name)?.trim() || null
+  } catch {
+    return null
+  }
 }
 
 /**

@@ -63,10 +63,15 @@ store/gateway-secondaries.*
 store/gateway-soft-switch.*
 store/live-session-status.*
 store/session-replay.*
-store/session-request-router.*
+# LEGACY — universal's session-key route dispatch (was `store/session-request-router`,
+# which is now desktop's, verbatim). Universal-only, imported only by the old
+# fold's island; retires with it (MJXHRM-602 fold step 6).
+store/session-route-dispatch.*
+# LEGACY — universal's session-key session state (was `store/session-states`,
+# which is now desktop's, verbatim). In-memory only; retires with the old fold
+# and the ChatScreen family (MJXHRM-602 fold steps 6–8).
+store/session-key-states.*
 store/session-state-types.*
-store/session-states.*
-store/session-tile-delegate.*
 store/session-tiles-binding.*
 store/ssh-backend.*
 # Universal's session LIST/LIFECYCLE layer (list, paging, pins, tombstones,
@@ -78,12 +83,17 @@ store/chat.ts
 store/transcript-paint.*
 store/artifacts.*
 store/windows.ts
+store/windows.test.ts
+store/windows-kind.test.ts
 lib/connection-color.*
 components/chat/chat-connection-banner.*
 components/chat/connection-accent.*
 app/chat/use-tab-connection.*
 app/gateway/gateway-configurator.tsx
 hermes.ts
+# The entry carries two universal lines desktop has no place for: the persisted-tab
+# migration (must be the first import) and the hermesDesktop bridge install.
+main.tsx
 
 # ---------------------------------------------------------------------------
 # The mobile shell. Desktop has no phone presentation; these are the files that

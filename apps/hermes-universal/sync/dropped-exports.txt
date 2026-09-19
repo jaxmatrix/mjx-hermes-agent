@@ -5,7 +5,7 @@
 #
 #   git show 9ce16c77f9:apps/hermes-universal/src/<path>
 #
-# 147 files, 572 symbols.
+# 146 files, 564 symbols.
 
 lib/gateway-rpc.ts
     MessageReactTarget
@@ -233,7 +233,6 @@ components/pane-shell/tree/store.ts
     tabIsCloseable
     focusedTabTarget
     closeFocusedTabInZone
-    renameTreePane
     $enforcedDocksThisBoot
     __resetEnforcedDocks
     enforceDockedPanes
@@ -364,12 +363,6 @@ lib/reasoning-effort.ts
     REASONING_EFFORT_VALUES
     DEFAULT_REASONING_EFFORT
     isReasoningEffort
-store/compaction.ts
-    sessionCompactingSince
-    $activeSessionCompacting
-    turnCompacted
-    routeCompactionEvent
-    clearAllCompaction
 store/mcp-setup.ts
     readMcpSetupAction
     readMcpSetupRequest
@@ -406,7 +399,6 @@ app/chat/composer/rich-editor.ts
     insertComposerLineBreak
     insertPlainTextAtCaret
 components/pane-shell/tree/model.ts
-    renamePane
     adjacentGroup
     setGroupHeaderHidden
     splitGroupZone
@@ -428,7 +420,6 @@ store/plugin-install-request.ts
 store/subagents.ts
     SubagentWorktree
     normalizeSubagentStatus
-    clearAllSubagents
     sessionOfSubagent
 store/thread-scroll.ts
     sessionThreadScrolledUp

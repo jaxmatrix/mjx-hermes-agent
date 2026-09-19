@@ -7,7 +7,7 @@
  * it has more readers, and its reducer REPLACES the array on every delta, which
  * breaks identity and silently releases such a latch.
  *
- * So the guard is structural. The cached rows are not in `$sessionStates` at
+ * So the guard is structural. The cached rows are not in `$sessionKeyStates` at
  * all, and exactly one projection can see them
  * (`SessionView.$paintedMessages` → `app/chat/runtime.tsx`). Three universal
  * readers would each have consumed them as knowledge, and every one is a shipped
@@ -36,7 +36,7 @@
 import type { ChatMessage } from '@/lib/chat-messages'
 import { readTranscriptTail } from '@/lib/transcript-tail-cache'
 import { atom } from '@/store/atom'
-import { $sessionStates, scopedStoredKey } from '@/store/session-state-types'
+import { $sessionKeyStates, scopedStoredKey } from '@/store/session-state-types'
 
 export interface PaintedTail {
   /** The slice key this paint belongs to — `hydrating:<storedId>` for a cold
@@ -44,7 +44,7 @@ export interface PaintedTail {
   key: string
   storedSessionId: string
   /** DISPLAY ONLY. Never reconciled, journaled, narrated, branched or submitted
-   *  from. Not in `$sessionStates` on purpose — see the module header. */
+   *  from. Not in `$sessionKeyStates` on purpose — see the module header. */
   messages: ChatMessage[]
   paintedAt: number
 }
@@ -90,7 +90,7 @@ export function paintCachedTail(key: string, storedSessionId: null | string): bo
     return false
   }
 
-  if ($sessionStates.get()[key]?.messages.length) {
+  if ($sessionKeyStates.get()[key]?.messages.length) {
     return false
   }
 

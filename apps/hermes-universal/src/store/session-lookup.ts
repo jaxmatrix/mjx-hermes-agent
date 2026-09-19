@@ -38,9 +38,9 @@ import { useStore } from '@/store/atom'
 import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
 import { $projectTree } from '@/store/projects'
 import { $sessions, sessionMatchesStoredId, sessionPinId } from '@/store/session'
+import { $focusedStoredSessionId } from '@/store/session-key-states'
 import { $activeStoredSessionId, $pinnedSessionCache, archiveSessionLocal } from '@/store/session-lifecycle'
 import { withSessionOwner } from '@/store/session-owner-label'
-import { $focusedStoredSessionId } from '@/store/session-states'
 import type { SessionInfo } from '@/types/hermes'
 
 /** The atoms `sessionRowFor` reads. Pass these to a pane mirror's `also`, or to
