@@ -5,7 +5,7 @@
 #
 #   git show 9ce16c77f9:apps/hermes-universal/src/<path>
 #
-# 146 files, 564 symbols.
+# 146 files, 563 symbols.
 
 lib/gateway-rpc.ts
     MessageReactTarget
@@ -464,7 +464,6 @@ lib/chat-runtime.ts
     parseSlashCommand
     parseCommandDispatch
 lib/clipboard.ts
-    readClipboardText
     canReadClipboardImage
     readClipboardImage
 lib/connection-display.ts

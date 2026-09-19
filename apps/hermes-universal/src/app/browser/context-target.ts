@@ -10,8 +10,8 @@ import {
 } from '@/app/context-menu/registry'
 import { $contextMenu } from '@/app/context-menu/store'
 import { isWebUrl, resolveDomTarget } from '@/app/context-menu/target'
+import { writeClipboardText } from '@/components/ui/copy-button'
 import { registry } from '@/contrib/registry'
-import { writeClipboardText } from '@/lib/clipboard'
 import { openExternalLink } from '@/lib/external-link'
 import {
   $browserState,

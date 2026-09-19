@@ -2,7 +2,7 @@ import { cva } from 'class-variance-authority'
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router'
 
-import { useStatusbarContributions } from '@/app/contrib/surfaces'
+import { useStatusbarContributions } from '@/app/contrib/panes'
 import { useStatusbarItems } from '@/app/shell/hooks/use-statusbar-items'
 import { NAV_ROW_ACTIVE } from '@/app/shell/nav-row'
 import { SidebarPanelLabel } from '@/app/shell/sidebar-label'

@@ -9,11 +9,12 @@
  * `src/hermes.ts` and `src/store/gateway.ts` byte-identical to desktop, so a
  * resync never has to merge them.
  *
- * Two halves are wired. The REST door: every request desktop's API layer makes
+ * Three parts are wired. The REST door: every request desktop's API layer makes
  * funnels through `hermesApi` (`api/client.ts:117`) or calls
  * `window.hermesDesktop.api` directly, so that one binding turns on the whole
- * `@/hermes` surface. And the connection half (`./connections.ts`): what
- * desktop's gateway registry and boot hook resolve and dial through.
+ * `@/hermes` surface. The connection half (`./connections.ts`): what
+ * desktop's gateway registry and boot hook resolve and dial through. And the
+ * OS clipboard (`lib/clipboard-tauri.ts`), which desktop's copy paths detect.
  *
  * The remaining namespaces (windows, git, terminal, updates, themes,
  * `connections`, …) are added as their units land. A member that is not
@@ -23,6 +24,7 @@
  */
 
 import { api } from '@/lib/api'
+import { createClipboardBridge } from '@/lib/clipboard-tauri'
 
 import { connectionBridge, restScope } from './connections'
 
@@ -69,6 +71,10 @@ export function installHermesDesktopBridge(): void {
   window.hermesDesktop = {
     api: apiBridge,
     ...connectionBridge,
+    // The OS clipboard. Desktop's `installClipboardShim` and `writeClipboardText`
+    // feature-detect `writeClipboard`; without it every copy falls back to the
+    // web API, which WebKitGTK drops (see `lib/clipboard-tauri.ts`).
+    ...createClipboardBridge(),
     // Optional-chained by its only caller; an Electron backend-pool keepalive
     // with no Tauri analogue.
     touchBackend: async () => undefined

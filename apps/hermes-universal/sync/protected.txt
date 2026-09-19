@@ -107,7 +107,6 @@ app/chat/composer/bubble-row.tsx
 app/chat/composer/bubble-drag.*
 store/chat-bubbles.*
 hooks/use-keyboard-inset.*
-hooks/use-media-query.*
 lib/safe-area.*
 lib/touch.*
 lib/resize-gesture.*

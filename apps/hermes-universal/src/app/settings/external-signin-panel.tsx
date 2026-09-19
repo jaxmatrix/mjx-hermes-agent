@@ -1,8 +1,8 @@
 import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { writeClipboardText } from '@/components/ui/copy-button'
 import { useI18n } from '@/i18n'
-import { writeClipboardText } from '@/lib/clipboard'
 import { openExternalLink } from '@/lib/external-link'
 import { Loader2 } from '@/lib/icons'
 import { recheckExternalSignin } from '@/store/onboarding'
