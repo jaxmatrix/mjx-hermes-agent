@@ -39,7 +39,7 @@ import { onForeground } from '@/store/app-lifecycle'
 import type { TunnelStatus } from '@/store/connection-tunnels'
 import { type Connection, type GatewayMode, resolveWsUrl, ticketMintDeps } from '@/store/gateway-config'
 import { withSocketProfile } from '@/transport/gateway-profile'
-import { type GatewayMint, recordGatewayMint } from '@/transport/gateway-socket'
+import { type GatewayMint, onGatewayRefused, recordGatewayMint } from '@/transport/gateway-socket'
 
 import { onConnectionApplied } from './connection-applied'
 
@@ -57,6 +57,8 @@ interface ResolvedRow {
   kind: GatewayMode
   label: string
   remoteHost?: string
+  /** Rust holds a token for the row, and attaches it by connection. */
+  tokenAttached?: boolean
 }
 
 interface Dial {
@@ -132,29 +134,126 @@ async function cookieJarRestored(): Promise<void> {
   }
 }
 
+/**
+ * How a connection's gateway lets a socket in.
+ *
+ *  • `gated` — a session that IS a cookie: a cloud agent's, or a gateway behind
+ *    OAuth or a password login, whose handshake takes a single-use ticket.
+ *  • `open` — dialled with no cookie: a local or SSH tunnel, a token row (Rust
+ *    attaches it by connection), a gateway proven to ask for nothing.
+ *  • `unproven` — a URL row that names neither a gate nor a token. Its `none` is
+ *    a stamp, not a finding: a row seeded from the pre-registry target has it
+ *    whatever the gateway is (`registry.rs`, `migrate_from_v1_target`), because
+ *    the old launch negotiated on every connect. Electron has no such state —
+ *    its settings probe `/api/status` before a save and a tokenless `token` row
+ *    is refused — so this is where universal finds out (`discoverGate`).
+ */
+type Gate = 'gated' | 'open' | 'unproven'
+
+interface GateFacts {
+  authMode?: string
+  baseUrl?: string
+  hasToken?: boolean
+  kind?: GatewayMode
+}
+
+/**
+ * What this page has PROVEN about a URL row's gate, by the public status probe.
+ * Never a failed probe: offline says nothing about a gate. Forgotten when the
+ * gateway refuses a socket minted on the strength of it.
+ */
+const provenGates = new Map<string, { baseUrl: string; gated: boolean }>()
+const gateProbes = new Map<string, Promise<Gate>>()
+
+onGatewayRefused(connectionId => void provenGates.delete(connectionId))
+
+function isGated(authMode: string | undefined): boolean {
+  return authMode === 'oauth' || authMode === 'ticket'
+}
+
+function gateOf(connectionId: string | undefined, row: GateFacts, liveAuthMode?: string): Gate {
+  if (row.kind === 'cloud' || isGated(row.authMode) || isGated(liveAuthMode)) {
+    return 'gated'
+  }
+
+  if (row.kind !== 'remote' || row.authMode === 'token' || row.hasToken) {
+    return 'open'
+  }
+
+  const proven = connectionId ? provenGates.get(connectionId) : undefined
+
+  if (!proven || (row.baseUrl && proven.baseUrl !== row.baseUrl)) {
+    return 'unproven'
+  }
+
+  return proven.gated ? 'gated' : 'open'
+}
+
+/**
+ * Ask an unproven row's gateway how it authenticates: the credential-free
+ * status probe every connect used to start with (`negotiate`), once per
+ * connection. A gated answer is written back to the row (`correctAuthMode`),
+ * which re-dials every window on it and is never asked again; a failed probe
+ * proves nothing, is not remembered, and leaves the dial to proceed as the row
+ * says.
+ */
+function discoverGate(connectionId: string, baseUrl: string): Promise<Gate> {
+  const probing = gateProbes.get(connectionId)
+
+  if (probing) {
+    return probing
+  }
+
+  const probe = (async (): Promise<Gate> => {
+    // Dynamic: both stores reach `@/hermes`.
+    const { probeStatus } = await import('@/store/connection')
+    // Why it failed is the transport's text, which names the host.
+    const status = await probeStatus(baseUrl).catch(() => null)
+
+    if (!status) {
+      return 'unproven'
+    }
+
+    const gated = status.auth_required === true
+
+    provenGates.set(connectionId, { baseUrl, gated })
+
+    if (gated) {
+      const { correctAuthMode } = await import('@/store/connections')
+
+      // Swallowed: a list that cannot be written leaves the proof, which dials.
+      await correctAuthMode(connectionId, 'oauth').catch(() => {})
+    }
+
+    return gated ? 'gated' : 'open'
+  })().finally(() => gateProbes.delete(connectionId))
+
+  gateProbes.set(connectionId, probe)
+
+  return probe
+}
+
 export const __testing = {
   reset(): void {
     cookieJar = 'pending'
     cookieJarLanding = null
+    provenGates.clear()
+    gateProbes.clear()
   }
 }
 
 /**
- * Who needs the jar: a session that IS a cookie — a gated gateway's (OAuth or a
- * password login's ticket) and a cloud agent's. A local or SSH tunnel, an open
- * gateway and a token row (Rust attaches it by connection) are dialled with no
- * cookie, so a locked store must not stand between them and a person.
+ * Who waits for the jar: everyone whose session may be a cookie — a gated
+ * connection, and an unproven one, which would otherwise go out with an empty
+ * jar to a gateway that turns out to want it. An open one is dialled with no
+ * cookie, so a locked store must not stand between it and a person.
  */
-function needsCookieJar(kind: GatewayMode | undefined, ...authModes: (string | undefined)[]): boolean {
-  return kind === 'cloud' || authModes.some(isGated)
+function needsCookieJar(gate: Gate): boolean {
+  return gate !== 'open'
 }
 
 function profileKey(profile: null | string | undefined): string {
   return (profile ?? '').trim() || LAUNCH_PROFILE
-}
-
-function isGated(authMode: string | undefined): boolean {
-  return authMode === 'oauth' || authMode === 'ticket'
 }
 
 /**
@@ -212,7 +311,11 @@ async function tunnelDial(connectionId: string, row: ResolvedRow): Promise<Dial>
 async function liveDial(connectionId: string, live: Connection): Promise<Dial> {
   const gated = isGated(live.authMode)
 
-  if (needsCookieJar(live.mode, live.authMode)) {
+  if (
+    needsCookieJar(
+      gateOf(connectionId, { authMode: live.authMode, baseUrl: live.baseUrl, kind: live.mode ?? 'remote' })
+    )
+  ) {
     await cookieJarRestored()
   }
 
@@ -259,9 +362,16 @@ async function resolveDial(connectionId: string, live?: Connection): Promise<Dia
     throw new Error('This connection has no gateway address')
   }
 
+  // The live probe knows a gateway became gated before the saved row does.
+  let gate = gateOf(connectionId, { ...row, hasToken: row.tokenAttached }, live?.authMode)
+
+  if (gate === 'unproven') {
+    gate = await discoverGate(connectionId, row.baseUrl)
+  }
+
   // The boot hook's first dial races the cookie restore `boot.ts` started. Read
   // from the row, which is Rust's and needs no jar to be read.
-  if (needsCookieJar(row.kind, row.authMode, live?.authMode)) {
+  if (needsCookieJar(gate)) {
     await cookieJarRestored()
   }
 
@@ -273,8 +383,7 @@ async function resolveDial(connectionId: string, live?: Connection): Promise<Dia
   return {
     baseUrl: row.baseUrl,
     connectionId,
-    // The live probe knows a gateway became gated before the saved row does.
-    gated: isGated(row.authMode) || isGated(live?.authMode),
+    gated: gate === 'gated',
     kind: row.kind,
     mint,
     remoteHost: row.remoteHost,
@@ -550,6 +659,30 @@ async function dialFor(connectionId: null | string | undefined): Promise<Dial> {
 }
 
 /**
+ * The gate of the connection the window is on, from its identity — and from its
+ * row only where the identity leaves it open: a token Rust holds is on the row.
+ */
+async function activeGate(active: ActiveConnection): Promise<Gate> {
+  const { authMode, baseUrl } = active.connection
+  const gate = gateOf(active.connectionId, { authMode, baseUrl, kind: active.kind })
+
+  if (gate !== 'unproven') {
+    return gate
+  }
+
+  // Dynamic: the registry store imports `@/hermes`.
+  const { connectionById } = await import('@/store/connections')
+  const row = connectionById(active.connectionId)
+
+  return gateOf(active.connectionId, {
+    authMode: row?.authMode ?? authMode,
+    baseUrl,
+    hasToken: row?.hasToken,
+    kind: active.kind
+  })
+}
+
+/**
  * The same two facts, for REST. Desktop names the owning connection on every
  * call, the primary's included, while `lib/api.ts` reads a `connectionId` as a
  * gateway OTHER than the active one and finds a tunnelled one only through a
@@ -568,20 +701,19 @@ export async function restScope(
 
   if (primary && (!active || active.connection.baseUrl)) {
     // A cookie-backed REST call needs the jar as much as a dial does.
-    if (needsCookieJar(active?.kind, active?.connection.authMode)) {
+    if (active && needsCookieJar(await activeGate(active))) {
       await cookieJarRestored()
     }
 
     return { release: () => {} }
   }
 
-  const target = primary && active ? active.connectionId : id
-
   // Dynamic: the registry store imports `@/hermes`.
   const { connectionById } = await import('@/store/connections')
+  const target = primary && active ? active.connectionId : id
   const row = connectionById(target)
 
-  if (needsCookieJar(row?.kind, row?.authMode)) {
+  if (row && needsCookieJar(gateOf(target, { ...row, baseUrl: row.url }))) {
     await cookieJarRestored()
   }
 

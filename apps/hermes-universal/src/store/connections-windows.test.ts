@@ -12,7 +12,9 @@ const ctx = vi.hoisted(() => ({
   answerListeners: new Set<(prompt: { attemptId: string; kind: string }, answer: string) => void>(),
   applied: [] as string[],
   authenticate: new Map<string, (args: { url: string }) => Promise<unknown>>(),
+  cancelled: [] as string[],
   core: null as unknown,
+  legacyTarget: null as null | { mode: string; url: string },
   pendingOAuth: null as null | { base: string; connectionId?: string; nonce?: string }
 }))
 
@@ -37,6 +39,7 @@ vi.mock('@/store/ssh-backend', () => ({
     return () => ctx.answerListeners.delete(listener)
   },
   attachSshPrompts: vi.fn(async () => () => {}),
+  cancelSsh: async (attemptId: string) => void ctx.cancelled.push(attemptId),
   newAttemptId: () => 'attempt-1',
   onSshProgress: vi.fn(async () => () => {})
 }))
@@ -46,6 +49,7 @@ vi.mock('@/store/windows', () => ({
   isSatelliteWindow: () => false
 }))
 
+import { disposeSecondariesForConnection } from '@/store/gateway'
 import { deferred } from '@/test/deferred'
 import { createSourceCore, type SourceCore } from '@/test/source-core'
 
@@ -93,7 +97,7 @@ function mockWindow(id: string): void {
           ? pending
           : null
       },
-      loadGatewayTarget: () => null
+      loadGatewayTarget: () => ctx.legacyTarget
     }
   })
   vi.doMock('@/store/profile', async () => {
@@ -144,6 +148,8 @@ beforeEach(() => {
   ctx.answerListeners.clear()
   ctx.applied.length = 0
   ctx.authenticate.clear()
+  ctx.cancelled.length = 0
+  ctx.legacyTarget = null
   ctx.pendingOAuth = null
   ctx.core = createSourceCore({ lastUsed: 'home', rows: ['home', 'studio', 'lab'] })
 })
@@ -209,6 +215,11 @@ describe('several windows over one Rust core', () => {
 
     expect([main.on(), tile.on()]).toEqual(['home', 'home'])
     expect(core().current()?.connectionId).toBe('home')
+    // What following both costs: the app LEFT `home` and came back, so `home`
+    // was re-committed as a move (`dialSeq` 3) — and the tile, which never left
+    // it, re-dials once all the same. Only the superseded follow is free.
+    expect(core().current()).toEqual({ connectionId: 'home', dialSeq: 3, seq: 3 })
+    expect([appliedIn('main'), appliedIn('tile-1')]).toEqual([2, 1])
   })
 
   it('[3] leaves a window whose preflight failed on the source a peer committed meanwhile', async () => {
@@ -362,6 +373,267 @@ describe('several windows over one Rust core', () => {
     expect(core().current()).toEqual({ connectionId: 'home', dialSeq: 2, seq: 2 })
     expect([appliedIn('main'), appliedIn('tile-1')]).toEqual([1, 1])
     expect([main.on(), tile.on()]).toEqual(['home', 'home'])
+  })
+
+  // The save → re-commit path, as the editor drives it: Rust announces the
+  // re-commit BEFORE `connections_save` returns, and returns it as `source`.
+  it('re-dials the window that saved from the return value, and each peer on the row once', async () => {
+    const main = await openWindow('main', true)
+    const tile = await openWindow('tile-1')
+
+    const saved = await main.connections.saveConnection({
+      id: 'home',
+      kind: 'remote',
+      label: 'home',
+      url: 'https://home-moved.test'
+    })
+
+    await settled()
+
+    expect(saved).toMatchObject({ dialFieldsChanged: true, source: { connectionId: 'home', dialSeq: 2, seq: 2 } })
+    expect([appliedIn('main'), appliedIn('tile-1')]).toEqual([1, 1])
+
+    const { $activeConnection } = await import('./active-connection')
+
+    // (The last window opened is the one whose modules this test file sees.)
+    expect($activeConnection.get()?.connection.baseUrl).toBe('https://home-moved.test')
+
+    // A rename is no dial field, and a row nobody is on is nobody's re-dial.
+    await main.connections.saveConnection({ id: 'home', kind: 'remote', label: 'Home' })
+    await main.connections.saveConnection({ id: 'lab', kind: 'remote', label: 'lab', url: 'https://lab-moved.test' })
+    await settled()
+
+    expect(core().current()?.seq).toBe(2)
+    expect([appliedIn('main'), appliedIn('tile-1')]).toEqual([1, 1])
+  })
+
+  // A connect form's Connect onto the row the app is on (`applyConnection`):
+  // the save re-commits it, the select that follows commits it again — and a
+  // peer still re-dials ONCE, for the save; the select's commit moves nothing.
+  it('re-dials a peer once when a connect form re-applies the row the app is on with a new dial field', async () => {
+    const main = await openWindow('main', true)
+    const tile = await openWindow('tile-1')
+
+    await main.connections.applyConnection({ authMode: 'token', kind: 'remote', token: 't', url: 'https://home.test' })
+    await settled()
+
+    expect(core().row('home')?.authMode).toBe('token')
+    expect(core().current()).toEqual({ connectionId: 'home', dialSeq: 2, seq: 3 })
+    expect(appliedIn('tile-1')).toBe(1)
+    expect([main.on(), tile.on()]).toEqual(['home', 'home'])
+  })
+
+  // A row seeded from the pre-registry target says `none` whatever its gateway
+  // is. The click that proves otherwise writes it back BEFORE it commits, so
+  // the peers it moves resolve a row that names the gate.
+  it('re-stamps a row its preflight proved gated before committing it, so a peer mints for the gate', async () => {
+    const main = await openWindow('main', true)
+
+    await openWindow('tile-1')
+
+    ctx.authenticate.set('main', async ({ url }) => ({
+      authMode: url === 'https://studio.test' ? 'oauth' : 'none',
+      baseUrl: url,
+      mode: 'remote'
+    }))
+    await main.connections.selectConnection('studio')
+    await settled()
+
+    const order = core()
+      .calls.filter(call => call.command === 'connections_save' || call.command === 'connections_commit_source')
+      .map(call => call.command)
+
+    expect(order).toEqual(['connections_save', 'connections_commit_source'])
+    expect(core().saves).toEqual([
+      { authMode: 'oauth', id: 'studio', kind: 'remote', label: 'studio', url: 'https://studio.test' }
+    ])
+
+    const { $activeConnection } = await import('./active-connection')
+
+    // The tile's identity, which it built from the row alone.
+    expect($activeConnection.get()).toMatchObject({ connection: { authMode: 'oauth' }, connectionId: 'studio' })
+    expect([appliedIn('main'), appliedIn('tile-1')]).toEqual([1, 1])
+
+    // A row that already agrees is left alone: no save, so no re-dial to loop on.
+    await main.connections.selectConnection('home')
+    await main.connections.selectConnection('studio')
+    await settled()
+
+    expect(core().count('connections_save')).toBe(1)
+  })
+
+  // The same correction on the row the app is ON (a connect form's Connect):
+  // the save re-commits it, and Rust announces that before the save returns.
+  // The window that is about to commit must not apply it as a peer's — it would
+  // re-dial twice, the first time without what its preflight proved.
+  it('re-dials the window that corrected the row it is on once, from its own commit', async () => {
+    const main = await openWindow('main', true)
+    const tile = await openWindow('tile-1')
+
+    ctx.authenticate.set('main', async ({ url }) => ({ authMode: 'ticket', baseUrl: url, mode: 'remote' }))
+    await main.connections.applyConnection({ kind: 'remote', url: 'https://home.test' })
+    await settled()
+
+    expect(core().row('home')?.authMode).toBe('oauth')
+    expect(core().current()).toEqual({ connectionId: 'home', dialSeq: 2, seq: 3 })
+    expect([appliedIn('main'), appliedIn('tile-1')]).toEqual([1, 1])
+    expect([main.on(), tile.on()]).toEqual(['home', 'home'])
+  })
+
+  // The upgraded user who never clicks: the bridge's dial-time probe finds the
+  // gate (`discoverGate`) and writes it back. `authMode` is a dial field, so
+  // every window on the row re-dials — once: the row agrees from then on.
+  it('re-dials every window on a row whose gate a dial discovered, once, and does not loop', async () => {
+    const main = await openWindow('main', true)
+    const tile = await openWindow('tile-1')
+
+    expect(await tile.connections.correctAuthMode('home', 'oauth')).toBe(true)
+    await settled()
+
+    expect(core().row('home')?.authMode).toBe('oauth')
+    expect(core().current()).toEqual({ connectionId: 'home', dialSeq: 2, seq: 2 })
+    expect([appliedIn('main'), appliedIn('tile-1')]).toEqual([1, 1])
+
+    // The re-dial it caused probes nothing; a window that had probed for itself
+    // finds the row already says so.
+    expect(await main.connections.correctAuthMode('home', 'oauth')).toBe(false)
+    expect(await tile.connections.correctAuthMode('home', 'oauth')).toBe(false)
+    await settled()
+
+    expect(core().count('connections_save')).toBe(1)
+    expect([appliedIn('main'), appliedIn('tile-1')]).toEqual([1, 1])
+  })
+
+  // The launch read returned seq N; N+1 was announced while the launch apply
+  // was resolving its row. The launch settled on the null before N+1 landed,
+  // and the released bridge answered the hook's first dial with no connection.
+  it('holds the launch until the source that overtook it has been applied', async () => {
+    const main = await openWindow('main', true)
+    const openHome = core().holdResolve('tile-1', 'home')
+    const openStudio = core().holdResolve('tile-1', 'studio')
+    let launched = false
+
+    const opening = openWindow('tile-1').then(tile => {
+      launched = true
+
+      return tile
+    })
+
+    await vi.waitFor(() => expect(core().count('connections_resolve', 'tile-1')).toBe(1))
+    await main.connections.selectConnection('studio')
+    await vi.waitFor(() => expect(core().count('connections_resolve', 'tile-1')).toBe(2))
+
+    // The launch apply loses to the newer source…
+    openHome()
+    await settled()
+    // …and the launch is still held, because that source is still resolving.
+    expect(launched).toBe(false)
+
+    openStudio()
+
+    expect((await opening).on()).toBe('studio')
+  })
+
+  // A peer re-committing the row this window is ON moves nothing here, so it
+  // must not cancel the switch a person has in flight.
+  it('lets a click in flight land when a peer re-commits the row the window is on', async () => {
+    const main = await openWindow('main', true)
+    const tile = await openWindow('tile-1')
+    const preflight = deferred<unknown>()
+
+    ctx.authenticate.set('tile-1', () => preflight.promise)
+
+    const switching = tile.connections.selectConnection('lab')
+
+    await settled()
+    await main.connections.selectConnection('home')
+    await settled()
+
+    expect(tile.pending()).toBe('lab')
+
+    preflight.resolve({ authMode: 'none', baseUrl: 'https://lab.test', mode: 'remote' })
+    await switching
+    await settled()
+
+    expect([main.on(), tile.on()]).toEqual(['lab', 'lab'])
+  })
+
+  // …and one that IS superseded takes its question down with it: the prompt
+  // used to stay up until Rust's timeout, taking an answer that went nowhere.
+  it('cancels the SSH attempt of a preflight a newer source superseded', async () => {
+    ctx.core = createSourceCore({ rows: ['home', 'studio', { id: 'box', kind: 'ssh' }] })
+
+    const asked = deferred()
+    const dial = deferred<unknown>()
+    const invoke = core().invoke
+
+    core().invoke = async (window, command, args) => {
+      if (command === 'tunnel_page_open') {
+        return 1
+      }
+
+      if (command === 'tunnel_acquire') {
+        asked.resolve()
+
+        return dial.promise
+      }
+
+      return invoke(window, command, args)
+    }
+
+    const main = await openWindow('main', true)
+    const tile = await openWindow('tile-1')
+    const switching = tile.connections.selectConnection('box')
+
+    await asked.promise
+    expect(ctx.cancelled).toEqual([])
+
+    await main.connections.selectConnection('studio')
+    await settled()
+
+    expect(ctx.cancelled).toEqual(['attempt-1'])
+
+    // Rust ends the cancelled attempt; the superseded switch says nothing.
+    dial.reject({ kind: 'cancelled', message: 'cancelled' })
+
+    await expect(switching).resolves.toBeUndefined()
+    expect([tile.on(), tile.pending()]).toEqual(['studio', null])
+    expect(ctx.answerListeners.size).toBe(0)
+  })
+
+  // The apply of a switch's own commit supersedes everything in flight — the
+  // switch that made it included, whose own failure then read as nobody's.
+  it('reports a failure of its own apply, which used to read as a superseded switch', async () => {
+    const main = await openWindow('main', true)
+
+    vi.mocked(disposeSecondariesForConnection).mockImplementationOnce(() => {
+      throw new Error('registry torn')
+    })
+
+    await expect(main.connections.selectConnection('studio')).rejects.toThrow()
+    expect(main.pending()).toBeNull()
+  })
+
+  // The owner window seeds the registry AFTER another window has already asked
+  // where the app is: launch is asked again, of the real rows.
+  it('moves a window that launched before the seed onto the row the seed names', async () => {
+    ctx.core = createSourceCore({ rows: ['studio'], unseeded: true })
+
+    const early = await openWindow('tile-1')
+
+    expect(early.on()).toBeNull()
+
+    ctx.legacyTarget = { mode: 'remote', url: 'https://studio.test' }
+
+    const owner = await openWindow('main', true)
+
+    await settled()
+
+    expect(core().current()).toEqual({ connectionId: 'studio', dialSeq: 2, seq: 2 })
+    expect([early.on(), owner.on()]).toEqual(['studio', 'studio'])
+    // A second owner (another instance window) re-seeds nothing.
+    await openWindow('instance-1', true)
+    expect(core().current()?.seq).toBe(2)
   })
 
   it('costs a peer nothing when a window re-commits the row the app is already on', async () => {

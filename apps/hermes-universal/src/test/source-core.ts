@@ -2,8 +2,10 @@
 // by every fake window of a test, behind the same commands and the same event
 // the real one speaks (`src-tauri/src/connections/source.rs` + `mod.rs`). Its
 // rules are that file's, restated — launch decided once, a commit takes the
-// next `seq`, a removed row moves the source to the primary, an edited one
-// re-commits it for a re-dial — so a test can interleave windows against them.
+// next `seq`, a removed row moves the source to the primary, a save that edits
+// its dial fields re-commits it for a re-dial (announced BEFORE the save
+// returns, and returned as `source`), a seed that lands after launch asks
+// launch again — so a test can interleave windows against them.
 //
 // What a test controls: WHEN a window hears an announcement (`hold` / `deliver`)
 // and WHEN a window's `connections_resolve` answers (`holdResolve`).
@@ -21,6 +23,17 @@ export interface CoreRow {
   kind: 'cloud' | 'local' | 'remote' | 'ssh'
   label?: string
   url?: string
+  authMode?: 'none' | 'oauth' | 'token'
+  host?: string
+  user?: string
+  port?: number
+}
+
+/** `registry.rs`'s `dial_fields`: what a live socket depends on. Never the label. */
+function dialFields(row: CoreRow): string {
+  const url = row.kind === 'remote' || row.kind === 'cloud' ? (row.url ?? `https://${row.id}.test`) : ''
+
+  return JSON.stringify([row.kind, url, row.authMode ?? 'none', row.host ?? '', row.user ?? '', row.port ?? 22])
 }
 
 type Handler = (event: { payload: unknown }) => void
@@ -38,6 +51,9 @@ export function createSourceCore(init: {
   lastUsed?: string
   launchMode?: 'last-used' | 'primary'
   primary?: string
+  /** No document yet: the first `connections_migrate` seeds it from the
+   *  pre-registry target, as Rust's does. Until then there are no rows. */
+  unseeded?: boolean
 }) {
   const rows = new Map<string, CoreRow>(
     init.rows
@@ -54,6 +70,12 @@ export function createSourceCore(init: {
   let lastUsed = init.lastUsed ?? primary
   let launchMode = init.launchMode ?? 'last-used'
   let current: CoreSource | null = null
+  let seeded = !init.unseeded
+  const seedRows = init.unseeded ? new Map(rows) : null
+
+  if (init.unseeded) {
+    rows.clear()
+  }
 
   const windowOf = (id: string): CoreWindow => {
     let held = windows.get(id)
@@ -112,7 +134,9 @@ export function createSourceCore(init: {
       label: row.label ?? row.id,
       legacy: false,
       order,
-      ...(row.kind === 'remote' || row.kind === 'cloud' ? { url: row.url ?? `https://${row.id}.test` } : {})
+      ...(row.kind === 'remote' || row.kind === 'cloud'
+        ? { authMode: row.authMode ?? 'none', url: row.url ?? `https://${row.id}.test` }
+        : {})
     })),
     keyringAvailable: true,
     lastUsed,
@@ -132,14 +156,47 @@ export function createSourceCore(init: {
 
     switch (command) {
       case 'connections_list':
-
-      case 'connections_migrate':
         return view()
+      case 'connections_migrate': {
+        // Idempotent once a document exists. The seed makes its one row the
+        // primary and the last-used; a window that asked where the app is
+        // BEFORE it is told where launch really lands (`reseeded`).
+        if (!seeded) {
+          seeded = true
+
+          for (const [id, row] of seedRows ?? []) {
+            rows.set(id, row)
+          }
+
+          const target = (args.legacyTarget ?? null) as { url?: string } | null
+
+          const seed = [...rows.values()].find(
+            row => target?.url && (row.url ?? `https://${row.id}.test`) === target.url
+          )
+
+          if (seed) {
+            primary = seed.id
+            lastUsed = seed.id
+          }
+
+          repair()
+
+          if (current && launchTarget() !== current.connectionId) {
+            advance(launchTarget(), false)
+          }
+        }
+
+        return view()
+      }
 
       case 'connections_current_source':
         if (!current) {
           current = { connectionId: launchTarget(), dialSeq: 1, seq: 1 }
-          lastUsed = current.connectionId ?? lastUsed
+
+          // Rust's: only into a document that exists, and only when it moved.
+          if (seeded && current.connectionId && current.connectionId !== lastUsed) {
+            lastUsed = current.connectionId
+          }
         }
 
         return { ...current }
@@ -184,7 +241,7 @@ export function createSourceCore(init: {
           tokenAttached: false,
           ...(tunnelled
             ? { remoteHost: `me@${row.id}` }
-            : { authMode: 'none', baseUrl: row.url ?? `https://${row.id}.test` })
+            : { authMode: row.authMode ?? 'none', baseUrl: row.url ?? `https://${row.id}.test` })
         }
       }
 
@@ -205,13 +262,37 @@ export function createSourceCore(init: {
       }
 
       case 'connections_save': {
-        // Secrets and labels only: `editRow` is the dial-field edit.
-        const input = (args.input ?? {}) as Record<string, unknown>
+        const input = (args.input ?? {}) as Partial<CoreRow> & Record<string, unknown>
 
         saves.push(input)
-        emit({ connectionId: input.id, reason: 'saved' })
 
-        return { connectionId: input.id, dialFieldsChanged: false, droppedHeaders: [], registry: view() }
+        const existing = input.id ? rows.get(input.id) : undefined
+
+        if (input.id && !existing) {
+          throw notFound(input.id)
+        }
+
+        // What the editor does not send is inherited (`normalize_connection_input`).
+        const id = existing?.id ?? String(input.label ?? 'gateway').toLowerCase()
+        const next: CoreRow = { ...existing, id, kind: input.kind ?? existing?.kind ?? 'remote' }
+
+        for (const key of ['authMode', 'host', 'label', 'port', 'url', 'user'] as const) {
+          if (input[key] !== undefined) {
+            Object.assign(next, { [key]: input[key] })
+          }
+        }
+
+        const changed = !existing || dialFields(existing) !== dialFields(next)
+
+        rows.set(id, next)
+
+        // Rust's order: the re-commit is announced (`redial_source`) before
+        // `saved` is, and both before the command returns.
+        const source = changed && current?.connectionId === id ? { ...advance(id, true) } : undefined
+
+        emit({ connectionId: id, reason: 'saved' })
+
+        return { connectionId: id, dialFieldsChanged: changed, droppedHeaders: [], registry: view(), source }
       }
 
       case 'connections_claim_resume': {
@@ -250,14 +331,17 @@ export function createSourceCore(init: {
         }
       }
     },
-    /** A row's dial fields were edited (`connections_save`): re-dial if the app is on it. */
-    editRow(connectionId: string): void {
-      if (current?.connectionId === connectionId) {
-        advance(connectionId, true)
-      }
+    /** A row's dial fields were edited by a window no test drives (a settings
+     *  Activity): the same `connections_save`, so the same re-commit. */
+    editRow(connectionId: string, fields: Partial<CoreRow> = {}): Promise<unknown> {
+      const row = rows.get(connectionId)
 
-      emit({ connectionId, reason: 'saved' })
+      return invoke('elsewhere', 'connections_save', {
+        input: { url: `https://${connectionId}-moved.test`, ...fields, id: connectionId, kind: row?.kind }
+      })
     },
+    /** A row as the core holds it. */
+    row: (connectionId: string) => rows.get(connectionId),
     /** Queue a window's announcements until `deliver`. */
     hold(window: string): void {
       windowOf(window).held ??= []

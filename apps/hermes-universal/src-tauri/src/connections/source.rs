@@ -28,9 +28,10 @@
 //!
 //!  * EVERY WINDOW APPLIES A COMMIT THE SAME WAY (`applySource`,
 //!    `store/connections.ts`): ignore `seq <= applied`; else record it and
-//!    supersede whatever the window had in flight — a local preflight or an
-//!    older apply — then re-home, unless it is already on that row and has
-//!    dialled it since `dial_seq`. The window that committed applies its own
+//!    supersede an older apply still in flight. A window already on that row
+//!    that has dialled it since `dial_seq` has nothing more to do — and a
+//!    person's switch preflighting in it carries on; any other re-homes, which
+//!    supersedes that preflight too. The window that committed applies its own
 //!    commit from the command's return value; the announcement that follows
 //!    carries the same `seq` and is a no-op.
 //!
@@ -45,7 +46,7 @@
 //! This file is the pure half, so it can be tested with no app attached; the
 //! lock, the write and the announcement are `mod.rs`'s.
 
-use std::collections::BTreeSet;
+use std::collections::VecDeque;
 
 use serde::Serialize;
 
@@ -62,12 +63,21 @@ pub struct CurrentSource {
     pub dial_seq: u64,
 }
 
+/// How many resumed sign-ins are remembered. A marker is claimed within one
+/// boot of the windows that can see it, so only the newest few can matter.
+const MAX_RESUMED: usize = 32;
+
+/// A marker is a UUID the webview minted (`savePendingOAuth`). Anything longer
+/// is not one, and is not kept.
+const MAX_RESUME_MARKER_BYTES: usize = 128;
+
 /// `None` until launch is decided; guarded by `ConnectionsState::source`.
 #[derive(Default)]
 pub struct SourceBook {
     current: Option<CurrentSource>,
-    /// Interrupted sign-ins already resumed by some window of this process.
-    resumed: BTreeSet<String>,
+    /// Interrupted sign-ins already resumed by some window of this process,
+    /// oldest first, at most `MAX_RESUMED`.
+    resumed: VecDeque<String>,
 }
 
 fn has(registry: &Registry, id: &str) -> bool {
@@ -182,8 +192,21 @@ impl SourceBook {
     }
 
     /// First caller wins: an interrupted sign-in is finished by one window.
+    /// Bounded: a marker that is no marker is claimed by nobody, and the oldest
+    /// claim is forgotten past `MAX_RESUMED`.
     pub fn claim_resume(&mut self, marker: &str) -> bool {
-        self.resumed.insert(marker.to_string())
+        if marker.len() > MAX_RESUME_MARKER_BYTES || self.resumed.iter().any(|held| held == marker)
+        {
+            return false;
+        }
+
+        if self.resumed.len() >= MAX_RESUMED {
+            self.resumed.pop_front();
+        }
+
+        self.resumed.push_back(marker.to_string());
+
+        true
     }
 }
 
@@ -406,5 +429,25 @@ mod tests {
         assert!(book.claim_resume("a"));
         assert!(!book.claim_resume("a"));
         assert!(book.claim_resume("b"));
+    }
+
+    #[test]
+    fn the_resumed_claims_are_bounded() {
+        let mut book = SourceBook::default();
+
+        // Something far too long to be a marker: nobody's to claim, and nothing
+        // is kept of it.
+        assert!(!book.claim_resume(&"x".repeat(MAX_RESUME_MARKER_BYTES + 1)));
+        assert!(book.claim_resume(&"x".repeat(MAX_RESUME_MARKER_BYTES)));
+        assert_eq!(book.resumed.len(), 1);
+
+        for index in 0..MAX_RESUMED * 2 {
+            assert!(book.claim_resume(&format!("marker-{index}")));
+        }
+
+        assert_eq!(book.resumed.len(), MAX_RESUMED);
+        // The newest are still held; the oldest were let go.
+        assert!(!book.claim_resume(&format!("marker-{}", MAX_RESUMED * 2 - 1)));
+        assert!(book.claim_resume("marker-0"));
     }
 }

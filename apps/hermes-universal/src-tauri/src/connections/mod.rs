@@ -343,6 +343,27 @@ impl ConnectionsState {
         Ok(outcome)
     }
 
+    /// The seed of `connections_migrate`, under its locks. Written FIRST, as
+    /// `mutate` writes: a failed write leaves the registry unseeded in memory
+    /// too, so the next migrate seeds it again and launch is asked again with
+    /// it — rather than a seeded registry whose source was never re-asked.
+    fn seed(
+        &self,
+        book: &mut SourceBook,
+        path: Option<&Path>,
+        migrated: &Registry,
+    ) -> Result<Option<CurrentSource>, ConnectionsError> {
+        if let Some(path) = path {
+            write_document(path, migrated)?;
+        }
+
+        if let Ok(mut slot) = self.document.lock() {
+            *slot = Some(migrated.clone());
+        }
+
+        Ok(book.reseeded(migrated))
+    }
+
     fn book(&self) -> std::sync::MutexGuard<'_, SourceBook> {
         self.source
             .lock()
@@ -726,16 +747,9 @@ pub async fn connections_migrate(
             None
         } else {
             let migrated = migrate_from_v1_target(legacy_target.as_ref(), local_supported());
+            let path = registry_path(&app);
 
-            if let Ok(mut slot) = state.document.lock() {
-                *slot = Some(migrated.clone());
-            }
-
-            if let Some(path) = registry_path(&app) {
-                write_document(&path, &migrated)?;
-            }
-
-            if let Some(source) = book.reseeded(&migrated) {
+            if let Some(source) = state.seed(&mut book, path.as_deref(), &migrated)? {
                 announce(&app, &source);
             }
 
@@ -1372,6 +1386,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         dir.join(FILE_NAME)
+    }
+
+    #[test]
+    fn a_seed_that_cannot_be_written_seeds_nothing_and_a_later_one_asks_launch_again() {
+        let dir = std::env::temp_dir().join("hermes-connections-seed");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+
+        // A FILE where the data dir should be: `create_dir_all` fails under it.
+        let blocked = dir.join("not-a-dir");
+        std::fs::write(&blocked, b"").expect("blocker");
+
+        let state = ConnectionsState::default();
+        let migrated = registry::migrate_from_v1_target(
+            Some(&serde_json::json!({ "mode": "remote", "url": "https://studio.test" })),
+            false,
+        );
+        let seeded_id = migrated.last_used.clone();
+        let mut book = SourceBook::default();
+
+        // A window asked where the app is before the seed: nowhere yet.
+        book.launch(&Registry::default());
+
+        let refused = state
+            .seed(&mut book, Some(&blocked.join(FILE_NAME)), &migrated)
+            .expect_err("the write fails");
+
+        assert_eq!(refused.kind, ConnectionsErrorKind::WriteFailed);
+        assert!(state.document.lock().expect("document").is_none());
+        assert_eq!(book.current().map(|held| held.seq), Some(1));
+
+        // The retry writes, seeds, and only then re-asks launch.
+        let source = state
+            .seed(&mut book, Some(&dir.join(FILE_NAME)), &migrated)
+            .expect("the write lands")
+            .expect("launch moves to the seeded row");
+
+        assert_eq!(source.connection_id.as_deref(), Some(seeded_id.as_str()));
+        assert_eq!(source.seq, 2);
+        assert_eq!(
+            state.document.lock().expect("document").as_ref(),
+            Some(&migrated)
+        );
     }
 
     #[test]

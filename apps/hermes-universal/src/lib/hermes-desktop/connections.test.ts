@@ -66,6 +66,14 @@ const cookies = vi.hoisted(() => ({ restored: Promise.resolve() }))
 // The launch identity `boot.ts` is publishing, likewise.
 const launch = vi.hoisted(() => ({ settled: Promise.resolve() }))
 
+// A gateway's public status probe, the write-back of what it proved, and the
+// socket seam's word that a gateway refused a connection's socket.
+const gate = vi.hoisted(() => ({
+  correct: vi.fn(async (_connectionId: string, _authMode: string): Promise<boolean> => true),
+  probe: vi.fn(async (_base: string): Promise<{ auth_required?: boolean }> => ({ auth_required: false })),
+  refused: [] as ((connectionId: string) => void)[]
+}))
+
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/plugin-os', () => ({ platform: () => 'linux' }))
 vi.mock('@/lib/api', () => ({ api: apiMock }))
@@ -84,6 +92,7 @@ vi.mock('@/store/active-connection', () => ({
   launchSettled: () => launch.settled,
   publishActiveConnection: (next: typeof active.current) => void (active.current = next)
 }))
+vi.mock('@/store/connection', () => ({ probeStatus: gate.probe }))
 vi.mock('@/store/connection-tunnels', async () => ({
   $tunnelStatus: (await import('nanostores')).map({}),
   acquireTunnel: acquireMock
@@ -94,16 +103,21 @@ vi.mock('@/store/connections', () => ({
   connectionById: (id: string) => {
     const row = rows.get(id)
 
-    return row && { ...row, id, url: row.baseUrl }
+    return row && { ...row, hasToken: row.tokenAttached === true, id, url: row.baseUrl }
   },
+  correctAuthMode: gate.correct,
   rememberProfile: (id: string, profile: string) => void lastProfiles.set(id, profile)
 }))
 vi.mock('@/store/windows', () => ({ windowProfileOverride: () => windowProfile.current }))
-vi.mock('@/transport/gateway-socket', () => ({ recordGatewayMint: vi.fn() }))
+vi.mock('@/transport/gateway-socket', () => ({
+  onGatewayRefused: (listener: (connectionId: string) => void) => void gate.refused.push(listener),
+  recordGatewayMint: vi.fn()
+}))
 
 import { GatewayReauthRequiredError } from '@/gateway'
 import { TRANSLATIONS } from '@/i18n/catalog'
 import { $tunnelStatus, type TunnelStatus } from '@/store/connection-tunnels'
+import { deferred } from '@/test/deferred'
 import { profileScoped, socketProfile } from '@/transport/gateway-profile'
 import { recordGatewayMint } from '@/transport/gateway-socket'
 
@@ -147,6 +161,8 @@ beforeEach(() => {
   windowProfile.current = null
   lastProfiles.clear()
   $tunnelStatus.set({})
+  gate.probe.mockImplementation(async () => ({ auth_required: false }))
+  gate.correct.mockImplementation(async () => true)
 
   rows.set('home', { authMode: 'token', baseUrl: 'https://home.test', kind: 'remote', label: 'Home' })
   rows.set('cloud', { authMode: 'oauth', baseUrl: 'https://cloud.test', kind: 'cloud', label: 'Cloud' })
@@ -177,7 +193,11 @@ describe('the primary', () => {
   it("serves another profile on its own socket: 'sharedPrimary', never a second dial", async () => {
     activate('home')
 
-    expect(await bridge.getConnection('work')).toMatchObject({ connectionId: 'home', profile: 'work', sharedPrimary: true })
+    expect(await bridge.getConnection('work')).toMatchObject({
+      connectionId: 'home',
+      profile: 'work',
+      sharedPrimary: true
+    })
     expect((await bridge.getConnection('default')).sharedPrimary).toBeUndefined()
   })
 
@@ -202,7 +222,10 @@ describe('the primary', () => {
 
   it('rejects when the window is on no connection', async () => {
     await expect(bridge.getConnection()).rejects.toThrow('Not connected to a Hermes backend')
-    expect(await bridge.getBootProgress()).toMatchObject({ error: 'Not connected to a Hermes backend', retryable: false })
+    expect(await bridge.getBootProgress()).toMatchObject({
+      error: 'Not connected to a Hermes backend',
+      retryable: false
+    })
   })
 
   it('dials its live descriptor while the registry has no row for it yet', async () => {
@@ -589,7 +612,11 @@ describe('a local or SSH connection', () => {
 
   it('reports a tunnel failure as copy, never as the text Rust gave', async () => {
     activate('box')
-    acquireMock.mockRejectedValueOnce({ kind: 'credentials-needed', message: 'me@box.internal refused', terminal: true })
+    acquireMock.mockRejectedValueOnce({
+      kind: 'credentials-needed',
+      message: 'me@box.internal refused',
+      terminal: true
+    })
 
     await expect(bridge.getConnection()).rejects.toThrow(TRANSLATIONS.en.settings.gateway.sshErrAuth)
     expect(await bridge.getBootProgress()).toMatchObject({ retryable: false })
@@ -663,7 +690,10 @@ describe('a fresh WebSocket URL', () => {
     activate('cloud')
     mintTicketMock.mockRejectedValue('error sending request for url (https://cloud.test/api/auth/ws-ticket)')
 
-    expect(await bridge.getGatewayWsUrl()).toEqual({ error: 'Could not refresh the gateway WebSocket ticket', ok: false })
+    expect(await bridge.getGatewayWsUrl()).toEqual({
+      error: 'Could not refresh the gateway WebSocket ticket',
+      ok: false
+    })
   })
 
   it('answers a removed connection rather than rejecting', async () => {
@@ -673,6 +703,134 @@ describe('a fresh WebSocket URL', () => {
       error: 'No connection with id "gone"',
       ok: false
     })
+  })
+})
+
+// A row seeded from the pre-registry target is stamped `none` whatever its
+// gateway is, and the launch no longer negotiates: a gated gateway's upgraded
+// user was dialled ungated, straight into a 4401.
+describe("a URL row whose 'none' is only a stamp", () => {
+  const legacy = (facts: Record<string, unknown> = {}) =>
+    rows.set('legacy', { authMode: 'none', baseUrl: 'https://legacy.test', kind: 'remote', label: 'Legacy', ...facts })
+
+  /** What the correction does in Rust: the row says so from then on. */
+  const restamping = () =>
+    gate.correct.mockImplementation(async (id, authMode) => {
+      rows.set(id, { ...rows.get(id), authMode })
+
+      return true
+    })
+
+  beforeEach(() => {
+    legacy()
+    activate('legacy', { baseUrl: 'https://legacy.test' })
+    active.current = active.current && { ...active.current, kind: 'remote' }
+  })
+
+  it('asks the gateway, and mints a ticket when it turns out to be gated and a session is held', async () => {
+    gate.probe.mockResolvedValue({ auth_required: true })
+    restamping()
+
+    expect((await bridge.getConnection()).authMode).toBe('oauth')
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl: 'wss://legacy.test/api/ws?ticket=TICKET' })
+    expect(gate.probe).toHaveBeenCalledExactlyOnceWith('https://legacy.test')
+  })
+
+  it("answers 'needsOauthLogin' when it is gated and no session is held", async () => {
+    gate.probe.mockResolvedValue({ auth_required: true })
+    mintTicketMock.mockRejectedValue(new GatewayReauthRequiredError('Session expired — sign in again'))
+
+    expect(await bridge.getGatewayWsUrl()).toMatchObject({ needsOauthLogin: true, ok: false })
+    // …as the typed error desktop's hook turns into its sign-in surface.
+    const failure = await resolveGatewayWsUrl(bridge, await bridge.getConnection()).catch((error: unknown) => error)
+
+    expect(isGatewayReauthRequired(failure)).toBe(true)
+  })
+
+  it('re-stamps the row ONCE, and the re-dial that causes asks nothing and saves nothing', async () => {
+    gate.probe.mockResolvedValue({ auth_required: true })
+    restamping()
+
+    // Two dials at once (the hook's descriptor and its mint) share one probe.
+    // Started a turn apart: two dynamic imports of a mocked module racing each
+    // other can hand one of them the REAL module, here and in every test after.
+    const probed = deferred<{ auth_required: boolean }>()
+    const turn = () => new Promise(resolve => setTimeout(resolve, 0))
+
+    gate.probe.mockReturnValue(probed.promise)
+
+    const descriptor = bridge.getConnection()
+
+    await turn()
+
+    const minted = bridge.getGatewayWsUrl()
+
+    await turn()
+    probed.resolve({ auth_required: true })
+
+    expect((await descriptor).authMode).toBe('oauth')
+    expect(await minted).toEqual({ ok: true, wsUrl: 'wss://legacy.test/api/ws?ticket=TICKET' })
+    expect(gate.correct).toHaveBeenCalledExactlyOnceWith('legacy', 'oauth')
+
+    // `authMode` is a dial field: the save re-dials every window on the row.
+    emitConnectionApplied()
+    await bridge.getConnection()
+    await bridge.getGatewayWsUrl()
+
+    expect(gate.probe).toHaveBeenCalledTimes(1)
+    expect(gate.correct).toHaveBeenCalledTimes(1)
+  })
+
+  it('still dials gated when the list could not be written, without trying again', async () => {
+    gate.probe.mockResolvedValue({ auth_required: true })
+    gate.correct.mockRejectedValue(new Error('this gateway list was written by a newer version of Hermes'))
+
+    expect((await bridge.getConnection()).authMode).toBe('oauth')
+    expect((await bridge.getConnection()).authMode).toBe('oauth')
+    expect(gate.probe).toHaveBeenCalledTimes(1)
+    expect(gate.correct).toHaveBeenCalledTimes(1)
+  })
+
+  it('dials an open gateway as the row says, asks once, and saves nothing', async () => {
+    expect((await bridge.getConnection()).authMode).toBe('token')
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl: 'wss://legacy.test/api/ws' })
+    expect(gate.probe).toHaveBeenCalledTimes(1)
+    expect(gate.correct).not.toHaveBeenCalled()
+    expect(mintTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('lets the dial proceed when the probe fails, and does not remember offline as open', async () => {
+    gate.probe.mockRejectedValueOnce('error sending request for url (https://legacy.test/api/status)')
+
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl: 'wss://legacy.test/api/ws' })
+
+    gate.probe.mockResolvedValue({ auth_required: true })
+
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl: 'wss://legacy.test/api/ws?ticket=TICKET' })
+    expect(gate.probe).toHaveBeenCalledTimes(2)
+  })
+
+  it('asks again after the gateway refuses a socket it had proven open', async () => {
+    await bridge.getConnection()
+    await bridge.getConnection()
+    expect(gate.probe).toHaveBeenCalledTimes(1)
+
+    // The operator turned the gate on: the ungated socket closes 4401.
+    gate.probe.mockResolvedValue({ auth_required: true })
+    gate.refused.forEach(listener => listener('legacy'))
+
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl: 'wss://legacy.test/api/ws?ticket=TICKET' })
+    expect(gate.correct).toHaveBeenCalledExactlyOnceWith('legacy', 'oauth')
+  })
+
+  it('takes a row that names a token, or holds one, at its word', async () => {
+    legacy({ tokenAttached: true })
+    await bridge.getConnection()
+
+    activate('home')
+    await bridge.getConnection()
+
+    expect(gate.probe).not.toHaveBeenCalled()
   })
 })
 
@@ -796,6 +954,61 @@ describe('the boot cookie restore', () => {
     await expect(window.hermesDesktop.api({ connectionId: 'box', path: '/api/status' })).resolves.toEqual({ ok: true })
   })
 
+  // …but a URL row whose `none` is only a stamp may yet turn out to want the
+  // cookie, so it waits like a gated one until its gateway has been asked.
+  it('is waited on by a URL row that names neither a gate nor a token, until it is proven open', async () => {
+    let finish = (): void => {}
+
+    cookies.restored = new Promise<void>(resolve => (finish = resolve))
+    rows.set('legacy', { authMode: 'none', baseUrl: 'https://legacy.test', kind: 'remote', label: 'Legacy' })
+    rows.set('held', {
+      authMode: 'none',
+      baseUrl: 'https://held.test',
+      kind: 'remote',
+      label: 'Held',
+      tokenAttached: true
+    })
+    activate('home')
+    installHermesDesktopBridge()
+
+    const asked: Promise<unknown>[] = []
+
+    const settledSoon = async (pending: Promise<unknown>): Promise<unknown> => {
+      asked.push(pending)
+
+      return Promise.race([pending, new Promise(resolve => setTimeout(() => resolve('waiting'), 5))])
+    }
+
+    // Another connection's REST: nothing has asked its gateway yet.
+    expect(await settledSoon(window.hermesDesktop.api({ connectionId: 'legacy', path: '/api/status' }))).toBe('waiting')
+    // A token Rust holds is a credential that is not a cookie.
+    expect(await settledSoon(window.hermesDesktop.api({ connectionId: 'held', path: '/api/status' }))).toEqual({
+      ok: true
+    })
+
+    // The probe fails: unproven still, so the dial waits for the jar too.
+    gate.probe.mockRejectedValueOnce(new Error('offline'))
+    expect(await settledSoon(bridge.getConnectionFor({ connectionId: 'legacy', profile: null }))).toBe('waiting')
+
+    // Proven open: neither waits any more.
+    expect(await settledSoon(bridge.getConnectionFor({ connectionId: 'legacy', profile: null }))).toMatchObject({
+      connectionId: 'legacy'
+    })
+    expect(await settledSoon(window.hermesDesktop.api({ connectionId: 'legacy', path: '/api/status' }))).toEqual({
+      ok: true
+    })
+
+    // The window's own, by the same rule.
+    rows.set('own', { authMode: 'none', baseUrl: 'https://own.test', kind: 'remote', label: 'Own' })
+    activate('own', { baseUrl: 'https://own.test' })
+    active.current = active.current && { ...active.current, kind: 'remote' }
+    expect(await settledSoon(window.hermesDesktop.api({ path: '/api/status' }))).toBe('waiting')
+
+    // Nothing is left waiting for the next test to find.
+    finish()
+    await Promise.all(asked)
+  })
+
   // `secrets_unlock` has no bound of its own off Apple's platforms, and every
   // dial waits on the restore behind it. Before the resync the boot waited on it
   // just as silently (`restoreSessionCookies().finally(autoRestoreConnection)`).
@@ -859,7 +1072,7 @@ describe('the boot cookie restore', () => {
 })
 
 describe('the launch identity', () => {
-  it('is waited on, so the boot hook\'s first ask does not meet the null before it', async () => {
+  it("is waited on, so the boot hook's first ask does not meet the null before it", async () => {
     let finish = (): void => {}
 
     launch.settled = new Promise<void>(resolve => (finish = resolve))

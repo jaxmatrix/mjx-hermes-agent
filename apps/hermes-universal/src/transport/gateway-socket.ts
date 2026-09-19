@@ -61,6 +61,23 @@ function mintFor(wsUrl: string): GatewayMint | undefined {
   return mint
 }
 
+/** The gateway refused the credential (4401) or the peer (4403) at the upgrade. */
+const REFUSED_CLOSE_CODES = new Set([4401, 4403])
+
+const refusedListeners = new Set<(connectionId: string) => void>()
+
+/**
+ * Hear a connection's socket being REFUSED. `HermesGateway.lastCloseCode` tells
+ * its owner the same thing, but only this seam knows which connection a socket
+ * was minted for — and the bridge, which minted it, is who has to stop trusting
+ * what it believed about that gateway's gate.
+ */
+export function onGatewayRefused(listener: (connectionId: string) => void): () => void {
+  refusedListeners.add(listener)
+
+  return () => void refusedListeners.delete(listener)
+}
+
 /**
  * `HermesGateway`'s `socketFactory`. A URL nothing minted opens as it always
  * has: whatever auth it carries is in the URL itself.
@@ -73,7 +90,17 @@ export function openGatewaySocket(wsUrl: string): WebSocketLike {
   }
 
   if (!mint.tunnel) {
-    return new TauriWebSocket(wsUrl, { connectionId: mint.connectionId }) as unknown as WebSocketLike
+    const socket = new TauriWebSocket(wsUrl, { connectionId: mint.connectionId })
+
+    socket.addEventListener('close', event => {
+      if (REFUSED_CLOSE_CODES.has((event as { code?: number }).code ?? 0)) {
+        for (const listener of [...refusedListeners]) {
+          listener(mint.connectionId)
+        }
+      }
+    })
+
+    return socket as unknown as WebSocketLike
   }
 
   return new TunnelGatewaySocket(wsUrl, mint) as unknown as WebSocketLike

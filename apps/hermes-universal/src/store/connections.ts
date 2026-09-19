@@ -45,6 +45,7 @@ import {
 } from '@/store/profile'
 import { $connection as $desktopConnection } from '@/store/session'
 import type { KeptSshAnswer } from '@/store/ssh-answers'
+import { cancelSsh } from '@/store/ssh-backend'
 
 /**
  * THE REGISTRY, as the webview sees it (MJXHRM-446).
@@ -114,13 +115,7 @@ export interface ProbeLeg {
 }
 
 export type ProbeVerdict =
-  | 'ok'
-  | 'credential-rejected'
-  | 'unreachable'
-  | 'auth-required'
-  | 'skipped-no-token'
-  | 'ws-unreachable'
-  | 'timeout'
+  'ok' | 'credential-rejected' | 'unreachable' | 'auth-required' | 'skipped-no-token' | 'ws-unreachable' | 'timeout'
 
 export interface ProbeResult {
   ok: boolean
@@ -214,10 +209,7 @@ export const $connectionsRegistry = atom<RegistryView>(EMPTY)
  * everything" are ABSENT — not disabled, not collapsed. Acceptance criterion 1
  * is that such an install looks exactly like today's.
  */
-export const $hasMultipleConnections = computed(
-  $connectionsRegistry,
-  registry => registry.connections.length > 1
-)
+export const $hasMultipleConnections = computed($connectionsRegistry, registry => registry.connections.length > 1)
 
 /**
  * Desktop's: the source the FOLD is on — the identity of the descriptor the boot
@@ -342,6 +334,46 @@ export async function saveConnection(input: ConnectionSaveInput): Promise<SaveOu
   }
 
   return outcome
+}
+
+/**
+ * THE ROW IS THE DURABLE TRUTH of how its gateway authenticates — and a stamp
+ * can be wrong: a row seeded from the pre-registry target says `none`, because
+ * that target carried no auth hint and the old launch negotiated on every
+ * connect. Desktop never stores a guess (its settings probe `/api/status`
+ * before the save, `probeRemoteAuthMode`); here whoever PROVES the mode — a
+ * switch's preflight, the bridge's dial-time probe — writes it back.
+ *
+ * `authMode` is a dial field (`registry.rs`, `dial_fields`), so correcting the
+ * row the app is on re-commits it and every window on it re-dials — which is
+ * right: their sockets were minted for the wrong gate. It cannot loop: nothing
+ * is saved unless the stored mode DISAGREES, and the re-dial it causes resolves
+ * a row that now agrees.
+ *
+ * `apply: false` is for a caller that is about to commit the row itself
+ * (`selectConnection`): its own commit is newer than the save's re-commit.
+ * Resolves true when the row was re-stamped.
+ */
+export async function correctAuthMode(
+  connectionId: string,
+  authMode: 'none' | 'oauth' | 'token',
+  options: { apply?: boolean } = {}
+): Promise<boolean> {
+  const row = connectionById(connectionId) ?? (await refreshConnections()).connections.find(r => r.id === connectionId)
+
+  if (!row || row.kind !== 'remote' || (row.authMode ?? 'none') === authMode) {
+    return false
+  }
+
+  const input = { authMode, id: row.id, kind: row.kind, label: row.label, url: row.url }
+
+  if (options.apply === false) {
+    $connectionsRegistry.set((await call<SaveOutcome>('connections_save', { input })).registry)
+  } else {
+    await saveConnection(input)
+  }
+
+  return true
 }
 
 export async function removeConnection(connectionId: string): Promise<RegistryView> {
@@ -626,6 +658,10 @@ export async function restoreLaunchConnection(owner: boolean): Promise<void> {
     // reason is not logged: Rust's text can name the gateway.
     console.warn('[connections] launch connection unavailable')
   } finally {
+    // A newer source announced meanwhile superseded the launch apply and is
+    // still resolving its row: the bridge is released onto THAT identity, not
+    // onto the null before it.
+    await appliesSettled()
     $restoring.set(false)
   }
 }
@@ -675,6 +711,9 @@ async function preflight(
     // — or Rust's next background redial is refused for want of a person.
     const keeper = options.interactive ? keepTunnelAnswers(resolved.connectionId, options.attemptId) : null
 
+    // Whatever supersedes this switch closes the question it is asking.
+    preflightAttempt = keeper?.attemptId ?? null
+
     const lease = await acquireTunnel(resolved.connectionId, {
       attemptId: keeper?.attemptId,
       interactive: options.interactive,
@@ -683,7 +722,13 @@ async function preflight(
       .catch(error => {
         throw tunnelFailure(error)
       })
-      .finally(() => keeper?.stop())
+      .finally(() => {
+        keeper?.stop()
+
+        if (keeper && preflightAttempt === keeper.attemptId) {
+          preflightAttempt = null
+        }
+      })
 
     return {
       connection: {
@@ -743,13 +788,45 @@ async function preflight(
  *    its row publishes nothing. ONLY an apply supersedes an apply: a click in
  *    this window must not cancel a commit the app has already made, or a failed
  *    preflight would leave the window behind every other.
- *  • `switchRevision` — bumped by every local preflight AND every apply, so a
- *    later click, or a newer source, owns the outcome of a preflight in flight.
+ *  • `switchRevision` — bumped by every local preflight AND every apply that
+ *    MOVES the window, so a later click, or a newer source, owns the outcome of
+ *    a preflight in flight. An announcement the window has nothing to do for (a
+ *    peer re-committed the row it is on) supersedes no click.
  */
 let appliedSeq = 0
 let dialledSeq = 0
 let applyRevision = 0
 let switchRevision = 0
+
+/** The SSH attempt of the interactive preflight in flight (`preflight`). */
+let preflightAttempt: null | string = null
+
+/**
+ * A preflight in flight no longer owns its outcome. Its spinner goes, and so
+ * does the question it may be asking: a passphrase prompt left up would take an
+ * answer that goes nowhere, until Rust's prompt timeout.
+ */
+function supersedeSwitch(): number {
+  const attemptId = preflightAttempt
+
+  preflightAttempt = null
+  $pendingConnectionId.set(null)
+
+  if (attemptId) {
+    void cancelSsh(attemptId).catch(() => {})
+  }
+
+  return ++switchRevision
+}
+
+/** Every apply still running, so the launch can wait for the one that overtook it. */
+const applies = new Set<Promise<unknown>>()
+
+async function appliesSettled(): Promise<void> {
+  while (applies.size) {
+    await Promise.allSettled([...applies])
+  }
+}
 
 function isSourceCommit(value: unknown): value is SourceCommit {
   const { connectionId, dialSeq, seq } = (value ?? {}) as Partial<SourceCommit>
@@ -798,6 +875,10 @@ function landNewChatsOn(connectionId: string, profile: string): void {
 interface ProvenSwitch {
   connection: Connection
   resolved: ResolvedDial
+  /** The apply of a switch's own commit supersedes everything in flight, that
+   *  switch included — which is handed the revision, so what fails after it is
+   *  still its own to report. */
+  adopt?: (revision: number) => void
 }
 
 /**
@@ -813,9 +894,20 @@ interface ProvenSwitch {
  *
  * Resolves true when it published.
  */
-export async function applySource(
+export function applySource(
   source: SourceCommit,
   options: { launch?: boolean; own?: ProvenSwitch } = {}
+): Promise<boolean> {
+  const apply = applyCommitted(source, options)
+
+  applies.add(apply)
+
+  return apply.finally(() => applies.delete(apply))
+}
+
+async function applyCommitted(
+  source: SourceCommit,
+  options: { launch?: boolean; own?: ProvenSwitch }
 ): Promise<boolean> {
   if (!isSourceCommit(source) || source.seq <= appliedSeq) {
     return false
@@ -823,17 +915,15 @@ export async function applySource(
 
   appliedSeq = source.seq
 
-  // Whatever was in flight — a local preflight, an older apply still resolving
-  // — is superseded, and its spinner goes with it.
+  // An older apply still resolving its row is superseded, whatever this one
+  // goes on to do.
   const revision = ++applyRevision
-
-  switchRevision += 1
-  $pendingConnectionId.set(null)
-
   const connectionId = source.connectionId
   const active = $activeConnection.get()
 
   if (!connectionId) {
+    supersedeSwitch()
+
     // No row is left to be on. The window leaves the one it had rather than
     // serve a source that no longer exists.
     if (active) {
@@ -844,9 +934,16 @@ export async function applySource(
     return Boolean(active)
   }
 
+  // Nothing to do here: a peer re-committed the row this window is on. A click
+  // preflighting in this window is not superseded by it.
   if (!options.own && active?.connectionId === connectionId && source.dialSeq <= dialledSeq) {
     return false
   }
+
+  // The window moves: a local preflight in flight no longer owns its outcome.
+  const switching = supersedeSwitch()
+
+  options.own?.adopt?.(switching)
 
   if (!options.own) {
     // The window that switched remembered its profile before it committed.
@@ -887,6 +984,47 @@ export async function applySource(
 const commits = new Set<Promise<unknown>>()
 
 /**
+ * Run `work` with Rust's announcements held back (`startConnectionsWatcher`
+ * waits for every entry of `commits`): they are applied after it, by which time
+ * a commit `work` made has been applied from its return value.
+ */
+function heldFromAnnouncements<T>(work: () => Promise<T>): Promise<T> {
+  let done: () => void = () => {}
+
+  const pending = new Promise<void>(resolve => {
+    done = resolve
+  })
+
+  // Before anything is sent: nothing announced can be ahead of it.
+  commits.add(pending)
+
+  return work().finally(() => {
+    commits.delete(pending)
+    done()
+  })
+}
+
+/**
+ * What a preflight PROVED about how a URL row authenticates, when the row says
+ * otherwise (`correctAuthMode`). `ticket` is an outcome of a gated connect, not
+ * a stored mode (`registry.rs`, `AuthMode`): the row of a gated gateway says
+ * `oauth`. An open gateway's says `token` when Rust holds one for it.
+ */
+function provenAuthMode(resolved: ResolvedDial, connection: Connection): 'none' | 'oauth' | 'token' | null {
+  if (resolved.mode !== 'remote') {
+    return null
+  }
+
+  const gated = connection.authMode === 'oauth' || connection.authMode === 'ticket'
+
+  if (gated === (resolved.authMode === 'oauth')) {
+    return null
+  }
+
+  return gated ? 'oauth' : resolved.tokenAttached ? 'token' : 'none'
+}
+
+/**
  * Commit a switch through Rust, and apply it from the return value.
  *
  * Rust's announcement of the commit can reach this window BEFORE the command
@@ -896,21 +1034,9 @@ const commits = new Set<Promise<unknown>>()
  * already applied.
  */
 function commitSource(connectionId: string, own?: ProvenSwitch): Promise<boolean> {
-  let applied: () => void = () => {}
-
-  const pending = new Promise<void>(resolve => {
-    applied = resolve
-  })
-
-  // Before the command is sent: nothing announced can be ahead of it.
-  commits.add(pending)
-
-  return call<SourceCommit>('connections_commit_source', { connectionId })
-    .then(source => applySource(source, { own }))
-    .finally(() => {
-      commits.delete(pending)
-      applied()
-    })
+  return heldFromAnnouncements(() =>
+    call<SourceCommit>('connections_commit_source', { connectionId }).then(source => applySource(source, { own }))
+  )
 }
 
 /**
@@ -953,8 +1079,7 @@ export async function selectConnection(connectionId: string, options: SelectConn
     if ($pendingConnectionId.get() !== null) {
       // Another source is preflighting. Its revision goes stale here, so it
       // commits nothing when it lands; its own `finally` returns the lease.
-      switchRevision += 1
-      $pendingConnectionId.set(null)
+      supersedeSwitch()
     }
 
     // Desktop's: picking a source is a concrete-source action, so it leaves
@@ -985,7 +1110,8 @@ export async function selectConnection(connectionId: string, options: SelectConn
     return
   }
 
-  const revision = ++switchRevision
+  // A later click owns the outcome of an earlier one still preflighting.
+  let revision = supersedeSwitch()
   let lease: null | TunnelLease = null
 
   $pendingConnectionId.set(connectionId)
@@ -1009,7 +1135,25 @@ export async function selectConnection(connectionId: string, options: SelectConn
     // Before the commit: the peers it tells read this memory, not a payload.
     rememberProfile(connectionId, identityOf(resolved, proven.connection).profile)
 
-    await commitSource(connectionId, { connection: proven.connection, resolved }).catch(() => {
+    const corrected = provenAuthMode(resolved, proven.connection)
+
+    await heldFromAnnouncements(async () => {
+      // Before the commit, too: the peers it tells resolve the ROW, and must
+      // mint for the gate the preflight found. Not applied — the commit below
+      // is newer than the re-commit this save may cause. Swallowed: a list that
+      // cannot be written must not fail a switch the preflight has proven.
+      if (corrected) {
+        await correctAuthMode(connectionId, corrected, { apply: false }).catch(() => {})
+      }
+
+      await commitSource(connectionId, {
+        adopt: next => {
+          revision = next
+        },
+        connection: proven.connection,
+        resolved
+      })
+    }).catch(() => {
       // Rust's text can name the row; the person reads this app's words.
       throw preflightFailure(null)
     })
@@ -1203,6 +1347,9 @@ export const __testing = {
     applyRevision = 0
     appliedSeq = 0
     dialledSeq = 0
+    preflightAttempt = null
+    applies.clear()
+    commits.clear()
     watching = null
     $connectionsRegistry.set(EMPTY)
     $lastProfileByConnection.set({})

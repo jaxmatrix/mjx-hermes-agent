@@ -1037,9 +1037,11 @@ pub fn migrate_from_v1_target(
                     label,
                     order: 0,
                     url: Some(url),
-                    // The pre-registry remote path negotiates its auth on every
-                    // connect; `none` is the honest stored answer until a save
-                    // says otherwise, and it never gates a dial.
+                    // The pre-registry remote path negotiated its auth on every
+                    // connect, so the target carries no hint: `none` here is a
+                    // stamp, not a finding. Whoever proves the gate — a switch's
+                    // preflight, the bridge's dial-time probe — writes it back
+                    // (`correctAuthMode`, `store/connections.ts`).
                     auth_mode: Some(AuthMode::None),
                     header_names: Vec::new(),
                     org: None,

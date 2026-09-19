@@ -64,7 +64,7 @@ vi.mock('@/store/connection-tunnels', () => ({ acquireTunnel: acquireMock }))
 import { HermesGateway as DesktopGateway } from '@/api/client'
 import { HermesGateway } from '@/hermes'
 
-import { __testing, openGatewaySocket, recordGatewayMint } from './gateway-socket'
+import { __testing, onGatewayRefused, openGatewaySocket, recordGatewayMint } from './gateway-socket'
 
 const REMOTE = 'wss://gw.test/api/ws'
 const TUNNEL = 'ws://127.0.0.1:4100/api/ws'
@@ -124,6 +124,29 @@ describe('the mint ledger', () => {
 
     expect((await opened(2)).map(args => args.connectionId)).toEqual(['conn-a', 'conn-a'])
     expect(__testing.mintCount()).toBe(1)
+  })
+
+  // Only this seam knows which connection a refused socket was minted for.
+  it('says which connection a gateway refused, and nothing for a drop', async () => {
+    const refused: string[] = []
+    const off = onGatewayRefused(connectionId => void refused.push(connectionId))
+
+    recordGatewayMint(REMOTE, { connectionId: 'conn-a' })
+    openGatewaySocket(REMOTE)
+    openGatewaySocket(REMOTE)
+    openGatewaySocket(REMOTE)
+
+    const [first, second, third] = await opened(3)
+
+    emit(first.id, 'close', { code: 1006 })
+    expect(refused).toEqual([])
+
+    emit(second.id, 'close', { code: 4401, reason: 'unauthorized' })
+    expect(refused).toEqual(['conn-a'])
+
+    off()
+    emit(third.id, 'close', { code: 4403 })
+    expect(refused).toEqual(['conn-a'])
   })
 
   it('lets the latest mint of a URL win', async () => {
