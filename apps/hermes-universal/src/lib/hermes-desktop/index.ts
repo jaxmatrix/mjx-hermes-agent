@@ -9,12 +9,14 @@
  * `src/hermes.ts` and `src/store/gateway.ts` byte-identical to desktop, so a
  * resync never has to merge them.
  *
- * Three parts are wired. The REST door: every request desktop's API layer makes
+ * Three parts are wired in full. The REST door: every request desktop's API layer makes
  * funnels through `hermesApi` (`api/client.ts:117`) or calls
  * `window.hermesDesktop.api` directly, so that one binding turns on the whole
  * `@/hermes` surface. The connection half (`./connections.ts`): what
  * desktop's gateway registry and boot hook resolve and dial through. And the
  * OS clipboard (`lib/clipboard-tauri.ts`), which desktop's copy paths detect.
+ * Two smaller ones ride along: the wake light (`./wake-indicator.ts`) and
+ * `readWindowBelow`, the one bridge member desktop's server-request fold calls.
  *
  * The remaining namespaces (windows, git, terminal, updates, themes,
  * `connections`, …) are added as their units land. A member that is not
@@ -25,8 +27,12 @@
 
 import { api } from '@/lib/api'
 import { createClipboardBridge } from '@/lib/clipboard-tauri'
+import { IS_DESKTOP, IS_TAURI } from '@/lib/platform'
+import { readWindowBelow } from '@/lib/surface'
 
 import { connectionBridge, restScope } from './connections'
+import { wakeIndicatorBridge } from './wake-indicator'
+import { installWindowControlsOverlay } from './window-chrome'
 
 /**
  * Desktop's `HermesApiRequest` and universal's `ApiRequest` agree field for
@@ -64,6 +70,10 @@ export function installHermesDesktopBridge(): void {
     return
   }
 
+  // Not a bridge member, but the same kind of thing: what Electron's frame
+  // tells the renderer about the OS buttons, before any connection exists.
+  installWindowControlsOverlay()
+
   // Deliberately a partial object cast to the full bridge type. The alternative
   // is stubbing 18 namespaces of methods nothing calls yet, which would hide
   // which parts are actually wired — a missing method throws a TypeError naming
@@ -75,6 +85,14 @@ export function installHermesDesktopBridge(): void {
     // feature-detect `writeClipboard`; without it every copy falls back to the
     // web API, which WebKitGTK drops (see `lib/clipboard-tauri.ts`).
     ...createClipboardBridge(),
+    // `window.read` (the read_window_below tool): desktop's fold answers it from
+    // this one optional member, and answers "unavailable" without it. Rust reads
+    // the window stack (`surface/below.rs`); its refusals go back VERBATIM — an
+    // `{ error }` tells the model the window could not be read, where an empty
+    // answer would tell it the screen is empty. No window stack on a phone.
+    ...(IS_DESKTOP && { readWindowBelow }),
+    // The wake light. A whole namespace or none — see `./wake-indicator`.
+    ...(IS_TAURI && { wakeIndicator: wakeIndicatorBridge }),
     // Optional-chained by its only caller; an Electron backend-pool keepalive
     // with no Tauri analogue.
     touchBackend: async () => undefined

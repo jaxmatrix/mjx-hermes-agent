@@ -4,14 +4,13 @@ import { BrowserBar } from '@/app/browser/browser-bar'
 import { BrowserConsolePanel } from '@/app/browser/browser-console-panel'
 import { PREVIEW_BROWSER_ATTR, registerBrowserNav } from '@/app/browser/browser-nav'
 import { MobileBrowserOverlay } from '@/app/browser/mobile-browser-overlay'
-import { isLoopbackUrl } from '@/app/context-menu/target'
+import { $restartPreviewServer } from '@/app/contrib/panes'
 import { Codicon } from '@/components/ui/codicon'
 import { writeClipboardText } from '@/components/ui/copy-button'
 import { useI18n } from '@/i18n'
 import type { Translations } from '@/i18n/types'
 import { openGuest, setGuestBounds, setGuestVisible, subscribeGuest } from '@/lib/browser/host'
 import { openExternalLink } from '@/lib/external-link'
-import { requestPreviewRestart } from '@/lib/gateway-rpc'
 import { IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
@@ -29,10 +28,14 @@ import {
   markGuestOpen,
   takePendingNavigation
 } from '@/store/browser'
-import { $browserConsole, appendBrowserConsole, drainBrowserConsole, isModuleMimeFailure } from '@/store/browser-console'
-import { $guestOccluded } from '@/store/browser-occlusion'
+import {
+  $browserConsole,
+  appendBrowserConsole,
+  drainBrowserConsole,
+  isModuleMimeFailure
+} from '@/store/browser-console'
+import { $guestOccluded, watchGuestOccluders } from '@/store/browser-occlusion'
 import { notify, notifyError } from '@/store/notifications'
-import { $activeStoredSessionId } from '@/store/session-lifecycle'
 
 /**
  * The pane the guest sits over.
@@ -44,6 +47,17 @@ import { $activeStoredSessionId } from '@/store/session-lifecycle'
  */
 
 const BOUNDS_EPSILON = 0.5
+
+// Desktop's own spelling (`right-rail/preview-pane.tsx`), which keeps it private.
+const LOOPBACK_HOST_RE = /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[?::1\]?)$/i
+
+function isLoopbackUrl(url: string): boolean {
+  try {
+    return LOOPBACK_HOST_RE.test(new URL(url).hostname)
+  } catch {
+    return false
+  }
+}
 
 export function BrowserPane() {
   const page = useStore($browserState)
@@ -58,6 +72,10 @@ export function BrowserPane() {
   useEffect(() => {
     void ensureBrowserCapabilities().then(resolved => setReady(resolved.host !== 'none'))
   }, [])
+
+  // The guest is painted above the whole DOM: while this pane is up, anything
+  // that floats over a pane has to hide it first.
+  useEffect(() => watchGuestOccluders(), [])
 
   // The nav handle, so ⌘R reloads the PAGE while focus is in the pane and the
   // WINDOW while it is not.
@@ -369,14 +387,19 @@ function LoadError() {
  * It sends the CONSOLE as context, which is the whole reason the drain runs
  * after every load even with the panel closed: the module-script/MIME line is
  * what tells the agent which dev server failed to start.
+ *
+ * The restart itself is desktop's: its wiring (`usePreviewRouting`) publishes
+ * the handler — session, cwd and the `preview.restart` call — through
+ * `$restartPreviewServer`, the same one desktop's own pane is handed. A window
+ * without that wiring has no restart to offer.
  */
 function RestartServerButton() {
   const { t } = useI18n()
   const page = useStore($browserState)
-  const sessionId = useStore($activeStoredSessionId)
+  const restart = useStore($restartPreviewServer)
   const [busy, setBusy] = useState(false)
 
-  if (!sessionId) {
+  if (!restart) {
     return null
   }
 
@@ -394,7 +417,7 @@ function RestartServerButton() {
             .map(entry => `[${entry.level}] ${entry.text}`)
             .join('\n')
 
-          const taskId = await requestPreviewRestart({ context, sessionId, url: page.url })
+          const taskId = await restart(page.url, context)
 
           notify({ message: t.preview.web.restartingMessage, title: t.preview.web.restartingTitle })
           appendBrowserConsole([{ at: Date.now(), level: 'info', text: t.preview.web.lookingRestart(taskId) }])
@@ -430,7 +453,10 @@ function Refusal({ notes, url }: { notes: string[]; url?: string }) {
 
   return (
     <div
-      className={cn('flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-xs', IS_MOBILE && 'px-6')}
+      className={cn(
+        'flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-xs',
+        IS_MOBILE && 'px-6'
+      )}
       data-glass-opaque=""
     >
       <Codicon name="globe" size="1rem" />

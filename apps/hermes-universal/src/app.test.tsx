@@ -51,6 +51,10 @@ vi.mock('@/app/mcp-install-deeplink-dialog', () => ({ McpInstallDeepLinkDialog: 
 // below and turned the whole file into a collect-time crash.
 vi.mock('@/app/settings/plugin-install-modal', () => ({ PluginInstallModal: () => null }))
 vi.mock('@/store/deep-link', () => ({ startDeepLinkRouter: vi.fn() }))
+// The frameless window's own min / max / close. Stubbed: the real one reaches
+// the Tauri window API, and this file is about WHICH windows get one.
+vi.mock('@/app/shell/window-chrome', () => ({ WindowChrome: () => <div data-testid="window-chrome" /> }))
+vi.mock('@/lib/hermes-desktop/window-chrome', () => ({ hostsWindowChrome: () => root.chrome }))
 vi.mock('@/store/mcp-health', () => ({ startMcpHealthChecker: vi.fn() }))
 
 // `vi.hoisted`, not three `let`s: the mock factory below is called during the
@@ -59,7 +63,13 @@ vi.mock('@/store/mcp-health', () => ({ startMcpHealthChecker: vi.fn() }))
 // module scope, so a plain `let` is a temporal-dead-zone crash the moment this
 // file's graph reaches the layout tree — which MJXHRM-455 and then MJXHRM-478
 // each widened it into.
-const root = vi.hoisted(() => ({ activity: false, mobile: false, surface: null as null | string, tile: false }))
+const root = vi.hoisted(() => ({
+  activity: false,
+  chrome: true,
+  mobile: false,
+  surface: null as null | string,
+  tile: false
+}))
 
 // `IS_MOBILE` is a boot-time constant; a getter lets one file render both the
 // phone's main window and the desktop's.
@@ -108,6 +118,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   root.activity = false
+  root.chrome = true
   root.mobile = false
   root.tile = false
   root.surface = null
@@ -132,6 +143,33 @@ describe('App', () => {
     expect(screen.queryByTestId('remote-picker')).not.toBeInTheDocument()
     expect(screen.queryByTestId('close-confirm')).not.toBeInTheDocument()
     expect(screen.queryByTestId('explorer-path-dialog')).not.toBeInTheDocument()
+  })
+
+  // Electron's frame gives desktop's root its buttons and a titlebar that moves
+  // the window; a frameless Tauri window has neither unless `App` mounts them —
+  // and it has to before the root's chunk arrives, or a root that fails to load
+  // is a window that cannot be closed.
+  it('gives the window that renders desktop’s root its min / max / close, before the root has loaded', async () => {
+    render(<App />)
+
+    expect(screen.getByTestId('window-chrome')).toBeInTheDocument()
+    expect(await screen.findByText('desktop')).toBeInTheDocument()
+  })
+
+  it('draws no window chrome where desktop’s root is not on a desktop OS', async () => {
+    root.chrome = false
+    render(<App />)
+
+    expect(await screen.findByText('desktop')).toBeInTheDocument()
+    expect(screen.queryByTestId('window-chrome')).not.toBeInTheDocument()
+  })
+
+  it.each(ROOTS)('leaves %s its own chrome', async (_name, arrange, marker) => {
+    arrange()
+    render(<App />)
+
+    expect(await screen.findByText(marker)).toBeInTheDocument()
+    expect(screen.queryByTestId('window-chrome')).not.toBeInTheDocument()
   })
 
   it('still asks a pending SSH question in the desktop main window', () => {
@@ -183,7 +221,9 @@ describe('App', () => {
     expect(statics.sort()).toEqual([
       '@/app/background-close-dialog',
       '@/app/gateway/ssh-prompt-dialog',
+      '@/app/shell/window-chrome',
       '@/app/wake-indicator-overlay',
+      '@/lib/hermes-desktop/window-chrome',
       '@/lib/platform',
       '@/store/deep-link',
       '@/store/windows',

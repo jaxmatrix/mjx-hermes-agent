@@ -8,6 +8,11 @@
    it: an unknown Tailwind class is silently dropped, which is the whole reason
    `better-tailwindcss/no-unknown-classes` now guards this app. */
 @import 'tw-animate-css';
+/* As desktop's stylesheet imports them. Universal's old entry imported both as
+   modules; the entry is desktop's file now and imports only this stylesheet, so
+   without these every `Codicon` is an empty box and every equation unstyled. */
+@import 'katex/dist/katex.min.css';
+@import '@vscode/codicons/dist/codicon.css';
 /* Class-based dark variant (matches desktop). `.dark` is toggled on <html> by
    the ThemeProvider (Ic7); the mode-appropriate `--theme-*` seeds are injected
    inline per skin by applyTheme(). Declared here so `dark:` utilities compile. */
@@ -816,7 +821,12 @@
        --titlebar-height: desktop sets this from JS (Electron chrome); the
          universal titlebar is CSS-sized.
        --composer-fill: desktop declares the same fallback in its own :root
-         beside the composer state ladder; universal keeps it here. */
+         beside the composer state ladder; universal keeps it here.
+       --z-window-chrome: the frameless window's own min/max/close
+         (`app/shell/window-chrome.tsx`). On Electron those are OS buttons and
+         float over every web layer, so this is the top rung — above the boot
+         chain, or a window showing a crash surface could not be closed. */
+    --z-window-chrome: 1600;
     --dt-midground-foreground: #fcfcfc;
     --titlebar-height: 2.125rem;
     --composer-fill: color-mix(in srgb, var(--dt-card) 90%, var(--dt-background));
@@ -943,6 +953,10 @@
                             follows it, satellites included. Tint only.
    `data-hermes-clear`      the whole window is being faded, text included.  */
 :root[data-hermes-glass] {
+  /* As desktop's: the boot script in index.html pins an opaque inline
+     background on <html> before first paint; it has to go transparent here or
+     it sits behind the translucent <body> and blocks the material. */
+  background-color: transparent !important;
   --ui-chat-surface-background: transparent;
   --ui-sidebar-surface-background: transparent;
   --ui-editor-surface-background: transparent;

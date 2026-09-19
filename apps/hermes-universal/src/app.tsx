@@ -3,7 +3,9 @@ import { type ComponentType, lazy, type LazyExoticComponent, Suspense, useState 
 import { BackgroundCloseDialog } from '@/app/background-close-dialog'
 import { SshPromptDialog } from '@/app/gateway/ssh-prompt-dialog'
 import type { QUICK_ENTRY_SURFACE } from '@/app/quick-entry/quick-entry'
+import { WindowChrome } from '@/app/shell/window-chrome'
 import { WakeIndicatorOverlay } from '@/app/wake-indicator-overlay'
+import { hostsWindowChrome } from '@/lib/hermes-desktop/window-chrome'
 import { IS_MOBILE } from '@/lib/platform'
 import { startDeepLinkRouter } from '@/store/deep-link'
 import { HUD_SURFACE, isActivityWindow, isTileWindow, satelliteSurface, WAKE_INDICATOR_SURFACE } from '@/store/windows'
@@ -109,6 +111,12 @@ const WindowHosts = lazy(() => import('@/app/window-hosts').then(m => ({ default
  *    the window that armed the detector is not necessarily the one the app shell
  *    is in. On desktop that is Electron main's job.
  *
+ * A fourth is mounted for the windows that render desktop's root on a desktop
+ * OS: `WindowChrome` — the min / max / close buttons and the titlebar drag,
+ * which Electron's frame supplies there and a frameless Tauri window does not.
+ * Outside the Suspense boundary on purpose: a root that is still loading, or
+ * that failed to, is still a window the user has to be able to move and close.
+ *
  * Everything else a universal root needs is `WindowHosts`. The DESKTOP MAIN
  * WINDOW skips it: `ContribController` / `ContribWiring` already mount
  * `AppContextMenu`, `ConfirmHost`, `FindBar`, `RemoteFolderPicker`,
@@ -136,6 +144,7 @@ export function App() {
         <Root />
         {kind !== 'desktop' && <WindowHosts />}
       </Suspense>
+      {kind === 'desktop' && hostsWindowChrome() && <WindowChrome />}
       <BackgroundCloseDialog />
       <SshPromptDialog />
       <WakeIndicatorOverlay />

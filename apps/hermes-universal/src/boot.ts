@@ -8,15 +8,23 @@
  * `hermesDesktop` bridge.
  */
 
+import { initTerminalFontSync } from './app/right-pane/terminal/terminal-font-sync'
+import { hostsWindowChrome } from './lib/hermes-desktop/window-chrome'
+import { warmKatexFonts } from './lib/katex-fonts'
+import { installNativeContextMenuGuard } from './lib/native-context-menu'
 import { IS_MOBILE, IS_TAURI } from './lib/platform'
 import { initSafeAreaInsets } from './lib/safe-area'
 import { persistSessionCookies, sessionCookiesRestored } from './lib/session-persist'
 import { installObservability } from './observability/install'
 import { holdForLaunch } from './store/active-connection'
 import { initAppLifecycle, onBackground } from './store/app-lifecycle'
+import { initBackgroundMode } from './store/background-mode'
 import { openTunnelPage } from './store/connection-tunnels'
 import { restoreLaunchConnection, startConnectionsWatcher } from './store/connections'
-import { ownsPersistedAppState } from './store/windows'
+import { registerBuiltinDeepLinkRoutes } from './store/deep-link-builtins'
+import { initDownloadSync } from './store/downloads'
+import { installNotificationActivation } from './store/plugin-notify-handlers'
+import { installWindowCloseGuard, ownsPersistedAppState, sweepStaleSurfaceGrants } from './store/windows'
 
 let booted = false
 
@@ -27,9 +35,11 @@ let booted = false
  *
  * Reported with its stack: what is caught here is a SYNCHRONOUS throw, which is
  * this app's own code and cannot carry Rust's text (which can name a gateway).
- * Checked per lever — tracing, lifecycle and safe area touch the DOM alone; the
- * tunnel page, the watcher, the cookie restore and the launch reach Rust only
- * through a promise, whose rejection each handles itself and never lands here.
+ * Checked per lever — tracing, lifecycle, the context-menu guard, the font warm
+ * and safe area touch the DOM alone; the route table is a Map; the tunnel page,
+ * the watcher, the cookie restore, the launch, the peer followers, the close
+ * guard, background mode and the grant sweep reach Rust only through a promise,
+ * whose rejection each handles itself and never lands here.
  * A lever that could throw a URL synchronously must report its name alone.
  */
 function lever(name: string, run: () => void): void {
@@ -89,6 +99,49 @@ export function bootUniversal(): void {
   if (IS_TAURI) {
     lever('launch connection', () => holdForLaunch(restoreLaunchConnection(ownsPersistedAppState())))
   }
+
+  // The core `hermes://` route table, before `App()` arms the router: a link
+  // that cold-started the app is drained within milliseconds of the first paint.
+  // Desktop answers the same links through `hermesDesktop.onDeepLink`, which
+  // Electron's main process feeds; here Rust's buffer feeds universal's router.
+  lever('deep link routes', () => registerBuiltinDeepLinkRoutes())
+
+  // Cross-WebView followers. Every surface is its own WebView with its own copy
+  // of each store, and a `storage` event does not cross them, so the writer
+  // announces on the Tauri bus and the others adopt: a transfer started in one
+  // window (its tray is in every other), and the terminal font, whose picker and
+  // whose terminal are in different WebViews on Android.
+  lever('download sync', () => initDownloadSync())
+  lever('terminal font sync', () => initTerminalFontSync())
+
+  // A notification outlives the process that sent it, so a tap can arrive cold:
+  // the listener has to exist before any surface mounts. A no-op where the
+  // platform has no activation (desktop — desktop's tree has its own door there).
+  lever('notification taps', () => installNotificationActivation())
+
+  // Desktop's context menu never cancels the gesture (Electron shows no menu by
+  // default); every Tauri webview would open its own beside it. First capture
+  // listener on the window, which is what lets a dev build keep Inspect Element.
+  if (hostsWindowChrome()) {
+    lever('native context menu', () => void installNativeContextMenuGuard())
+  }
+
+  // Background mode (MJXHRM-436), in the window that owns the app's state only:
+  // the close guard is the ONE `close-requested` listener this window gets — it
+  // parks the first close behind the question `BackgroundCloseDialog` asks, and
+  // otherwise ends in a Rust destroy or a hide — and registering one inside a
+  // satellite would route its summoner's teardown through that satellite's JS.
+  // The preference is re-mirrored because Rust's copy is process-local, and the
+  // surface grants a dead process left in localStorage are swept.
+  if (IS_TAURI && ownsPersistedAppState()) {
+    lever('close guard', () => void installWindowCloseGuard())
+    lever('background mode', () => initBackgroundMode())
+    lever('surface grants', () => void sweepStaleSurfaceGrants())
+  }
+
+  // KaTeX's faces are `font-display: block`: the first equation of a session is
+  // invisible until they land. Loaded at idle.
+  lever('katex fonts', () => warmKatexFonts())
 
   // Deterministic `--safe-area-inset-*` vars and `html.is-mobile`, both before
   // the first paint: env() reports 0 for a few frames (see lib/safe-area), and

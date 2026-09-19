@@ -96,6 +96,14 @@ hermes.ts
 # specifier here, or a runtime-loaded plugin would see a narrower SDK than a
 # bundled one. `sdk/index.ts` itself stays desktop's, verbatim.
 sdk/runtime.ts
+# Desktop's pane host plus ONE branch: a `url` tab renders universal's
+# `BrowserPane` (the Rust guest webview, bound to the focused url tab) instead of
+# desktop's `PreviewPane`. Desktop draws a url tab with an Electron `<webview>`,
+# an element a Tauri webview does not have; the guest is the Tauri seam. File,
+# artifact and html tabs still render desktop's pane. `preview-tile.tsx` and
+# `browser-popout-shell.tsx` mount this component, so they stay desktop's.
+app/chat/right-rail/preview.tsx
+app/chat/right-rail/preview.test.tsx
 # The entry carries three universal lines desktop has no place for, in this order:
 # the persisted-tab migration (must be the first import), the hermesDesktop bridge
 # install (a side-effect import, second, so it precedes every module-scope
