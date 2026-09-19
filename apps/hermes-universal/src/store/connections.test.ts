@@ -45,6 +45,7 @@ import {
   $hasMultipleConnections,
   __testing,
   lastProfileFor,
+  loadConnectionsRegistry,
   saveTunnelAnswer,
   selectConnection
 } from './connections'
@@ -114,6 +115,26 @@ describe('$hasMultipleConnections', () => {
 
     seedRegistry([LOCAL_CONNECTION_ID, 'studio'])
     expect($hasMultipleConnections.get()).toBe(true)
+  })
+})
+
+describe('loadConnectionsRegistry', () => {
+  it('seeds and publishes the roster without dialling, and reports a degraded one once', async () => {
+    seedRegistry(['home', 'studio'])
+
+    const registry = { ...$connectionsRegistry.get(), degraded: true }
+
+    __testing.reset()
+    invoke.mockImplementation(async () => registry)
+
+    await loadConnectionsRegistry()
+    await loadConnectionsRegistry()
+
+    expect(invoke).toHaveBeenCalledWith('connections_migrate', { legacyTarget: null })
+    expect($connectionsRegistry.get()).toBe(registry)
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(softSwitchGateway).not.toHaveBeenCalled()
+    expect($activeConnection.get()).toBeNull()
   })
 })
 

@@ -48,10 +48,14 @@ const { acquireMock, active, apiMock, invokeMock, leases, mintTicketMock, rows, 
   }
 })
 
+// The boot cookie restore, as the bridge waits on it.
+const cookies = vi.hoisted(() => ({ restored: Promise.resolve() }))
+
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/plugin-os', () => ({ platform: () => 'linux' }))
 vi.mock('@/lib/api', () => ({ api: apiMock }))
 vi.mock('@/lib/auth', () => ({ mintWsTicket: mintTicketMock }))
+vi.mock('@/lib/session-persist', () => ({ sessionCookiesRestored: () => cookies.restored }))
 vi.mock('@/store/active-connection', () => ({ $activeConnection: { get: () => active.current } }))
 vi.mock('@/store/connection-tunnels', () => ({ acquireTunnel: acquireMock }))
 // The registry store's rows are `connections_resolve`'s, with the id and a `url`.
@@ -90,6 +94,7 @@ beforeEach(() => {
   leases.length = 0
   rows.clear()
   active.current = null
+  cookies.restored = Promise.resolve()
   windowProfile.current = null
 
   rows.set('home', { authMode: 'token', baseUrl: 'https://home.test', kind: 'remote', label: 'Home' })
@@ -397,6 +402,29 @@ describe('a REST call', () => {
 
     expect(failure).not.toContain('me@box')
     expect(apiMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('the boot cookie restore', () => {
+  it('is waited on by a dial and by a REST call, so neither meets an empty jar', async () => {
+    let finish = (): void => {}
+
+    cookies.restored = new Promise<void>(resolve => (finish = resolve))
+    activate('home')
+
+    installHermesDesktopBridge()
+
+    const dial = bridge.getConnection()
+    const rest = window.hermesDesktop.api({ path: '/api/status' })
+
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(invokeMock).not.toHaveBeenCalled()
+    expect(apiMock).not.toHaveBeenCalled()
+
+    finish()
+
+    await expect(dial).resolves.toMatchObject({ connectionId: 'home' })
+    await expect(rest).resolves.toEqual({ ok: true })
   })
 })
 

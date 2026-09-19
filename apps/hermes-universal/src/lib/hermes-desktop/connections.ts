@@ -32,6 +32,7 @@ import { TRANSLATIONS } from '@/i18n/catalog'
 import { getRuntimeI18nLocale } from '@/i18n/runtime'
 import { errorText } from '@/lib/error-text'
 import { IS_MOBILE } from '@/lib/platform'
+import { sessionCookiesRestored } from '@/lib/session-persist'
 import { onForeground } from '@/store/app-lifecycle'
 import { type Connection, type GatewayMode, resolveWsUrl, ticketMintDeps } from '@/store/gateway-config'
 import { withSocketProfile } from '@/transport/gateway-profile'
@@ -149,6 +150,9 @@ async function liveDial(connectionId: string, live: Connection): Promise<Dial> {
 }
 
 async function resolveDial(connectionId: string, live?: Connection): Promise<Dial> {
+  // The boot hook's first dial races the cookie restore `boot.ts` started.
+  await sessionCookiesRestored()
+
   let row: ResolvedRow
 
   try {
@@ -333,6 +337,9 @@ export async function restScope(
   connectionId: null | string | undefined
 ): Promise<{ connectionId?: string; release: () => void }> {
   const id = (connectionId ?? '').trim()
+
+  // A cookie-backed REST call needs the jar as much as a dial does.
+  await sessionCookiesRestored()
 
   if (!id || id === (await activeConnection())?.connectionId) {
     return { release: () => {} }

@@ -106,6 +106,18 @@ export async function restoreSessionCookies(): Promise<void> {
   }
 }
 
+let restored: null | Promise<void> = null
+
+/**
+ * The boot restore, once. `boot.ts` starts it before the first render, and the
+ * `hermesDesktop` bridge waits on it ahead of every dial and REST call, so a
+ * cookie-backed session (ticket/oauth/cloud) never mints against an empty jar.
+ * Never rejects: a failed read degrades to a fresh sign-in.
+ */
+export function sessionCookiesRestored(): Promise<void> {
+  return (restored ??= restoreSessionCookies())
+}
+
 /**
  * Drop the memo above, so the next connect re-persists the jar unconditionally.
  *

@@ -24,6 +24,7 @@ import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router'
 
 import App from './app'
+import { bootUniversal } from './boot'
 import { RootErrorBoundary } from './components/error-boundary'
 import { HapticsProvider } from './components/haptics-provider'
 import { RootTooltipProvider } from './components/ui/tooltip'
@@ -40,6 +41,8 @@ import { ThemeProvider } from './themes/context'
 // side effects can issue a request during evaluation. Installing the bridge
 // after them would let a boot-time call hit an undefined global.
 installHermesDesktopBridge()
+// Universal's platform levers, before the first render — see `boot.ts`.
+bootUniversal()
 installClipboardShim()
 // Chromium serializes selection copies (Cmd+C, right-click Copy) with the
 // theme's computed colors inlined; without this guard a dark-theme selection

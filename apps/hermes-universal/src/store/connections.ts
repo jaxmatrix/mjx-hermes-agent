@@ -381,6 +381,34 @@ setTunnelAnswerSaver(saveTunnelAnswer)
 // --------------------------------------------------------------------------
 
 let restoreAttempted = false
+let degradedNoticed = false
+
+/**
+ * Seed the registry (once, from the pre-registry target) and publish the roster.
+ *
+ * The half of boot that dials nothing, so `boot.ts` runs it on its own: the
+ * re-point below goes through `selectConnection`, which dials.
+ */
+export async function loadConnectionsRegistry(): Promise<RegistryView> {
+  // Rust cannot read `localStorage`, so the webview hands over the one
+  // non-secret value it already holds. Idempotent once the document exists.
+  const registry = await call<RegistryView>('connections_migrate', { legacyTarget: loadGatewayTarget() })
+
+  $connectionsRegistry.set(registry)
+
+  if (registry.degraded && !degradedNoticed) {
+    degradedNoticed = true
+    // Rule 9. "You have one gateway" and "your gateway list was eaten" must
+    // never look the same.
+    notify({
+      kind: 'warning',
+      message: translateNow('settings.connections.degradedMessage'),
+      title: translateNow('settings.connections.degradedTitle')
+    })
+  }
+
+  return registry
+}
 
 /**
  * Read (and, once, seed) the registry.
@@ -401,22 +429,7 @@ export async function initializeConnectionsRegistry(): Promise<void> {
   restoreAttempted = true
 
   try {
-    // Rust cannot read `localStorage`, so the webview hands over the one
-    // non-secret value it already holds. Idempotent once the document exists.
-    const registry = await call<RegistryView>('connections_migrate', { legacyTarget: loadGatewayTarget() })
-
-    $connectionsRegistry.set(registry)
-
-    if (registry.degraded) {
-      // Rule 9. "You have one gateway" and "your gateway list was eaten" must
-      // never look the same.
-      notify({
-        kind: 'warning',
-        message: translateNow('settings.connections.degradedMessage'),
-        title: translateNow('settings.connections.degradedTitle')
-      })
-    }
-
+    const registry = await loadConnectionsRegistry()
     const target = registry.launchMode === 'last-used' ? registry.lastUsed : registry.primary
     const active = $activeConnection.get()
 
@@ -605,7 +618,7 @@ function republishActive(registry: RegistryView): void {
  * Follow the registry from every window.
  *
  * `app.emit` on the Rust side, so a rename made in a settings Activity reaches
- * the shell that is painting the source chip. Started from `main.tsx`.
+ * the shell that is painting the source chip. Started from `boot.ts`.
  */
 export function startConnectionsWatcher(): () => void {
   if (!IS_TAURI) {
@@ -628,6 +641,7 @@ export const __testing = {
   rememberProfile,
   reset(): void {
     restoreAttempted = false
+    degradedNoticed = false
     switchRevision = 0
     $connectionsRegistry.set(EMPTY)
     $lastProfileByConnection.set({})
