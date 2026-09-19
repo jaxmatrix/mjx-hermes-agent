@@ -63,6 +63,7 @@ use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
 };
 use connections::{
+    connections_claim_resume, connections_commit_source, connections_current_source,
     connections_list, connections_migrate, connections_remove, connections_resolve,
     connections_roster, connections_save, connections_set_last_used, connections_set_launch_mode,
     connections_set_primary, connections_test, connections_update_all, ConnectionsState,
@@ -505,6 +506,9 @@ pub fn run() {
             connections_set_primary,
             connections_set_launch_mode,
             connections_set_last_used,
+            connections_current_source,
+            connections_commit_source,
+            connections_claim_resume,
             connections_resolve,
             connections_test,
             connections_roster,

@@ -29,7 +29,12 @@ const { acquireMock, active, apiMock, invokeMock, leases, mintTicketMock, rows, 
       }
     }),
     active: {
-      current: null as null | { connection: Record<string, unknown>; connectionId: string; profile: string },
+      current: null as null | {
+        connection: Record<string, unknown>
+        connectionId: string
+        kind?: string
+        profile: string
+      },
       /** Runs after each read of the active connection: a re-home mid-answer. */
       afterRead: null as (() => void) | null
     },
@@ -103,7 +108,7 @@ import { profileScoped, socketProfile } from '@/transport/gateway-profile'
 import { recordGatewayMint } from '@/transport/gateway-socket'
 
 import { emitConnectionApplied } from './connection-applied'
-import { connectionBridge as bridge, NeedsUnlockError, tunnelBootProgress } from './connections'
+import { __testing, connectionBridge as bridge, NeedsUnlockError, tunnelBootProgress } from './connections'
 
 import { installHermesDesktopBridge } from '.'
 
@@ -122,8 +127,15 @@ function activate(connectionId: string, connection: Record<string, unknown> = {}
   }
 }
 
+/** On the gated cloud row: the one kind of session that IS a cookie. */
+function activateCloud(): void {
+  activate('cloud', { authMode: 'oauth', baseUrl: 'https://cloud.test', mode: 'cloud' })
+  active.current = active.current && { ...active.current, kind: 'cloud' }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  __testing.reset()
   acquireMock.mockReset()
   mintTicketMock.mockReset()
   leases.length = 0
@@ -735,31 +747,59 @@ describe('a REST call', () => {
 })
 
 describe('the boot cookie restore', () => {
-  it('is waited on by a dial and by a REST call, so neither meets an empty jar', async () => {
+  it('is waited on by a dial and by a REST call of a cookie-backed connection, so neither meets an empty jar', async () => {
     let finish = (): void => {}
+    let dialled = false
 
     cookies.restored = new Promise<void>(resolve => (finish = resolve))
-    activate('home')
+    activateCloud()
 
     installHermesDesktopBridge()
 
     const dial = bridge.getConnection()
     const rest = window.hermesDesktop.api({ path: '/api/status' })
+    const other = window.hermesDesktop.api({ connectionId: 'cloud-2', path: '/api/status' })
+
+    rows.set('cloud-2', { authMode: 'oauth', baseUrl: 'https://cloud-2.test', kind: 'remote', label: 'Gated' })
+    void dial.then(() => (dialled = true))
 
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(invokeMock).not.toHaveBeenCalled()
+    expect(dialled).toBe(false)
     expect(apiMock).not.toHaveBeenCalled()
 
     finish()
 
-    await expect(dial).resolves.toMatchObject({ connectionId: 'home' })
+    await expect(dial).resolves.toMatchObject({ connectionId: 'cloud' })
     await expect(rest).resolves.toEqual({ ok: true })
+    await expect(other).resolves.toEqual({ ok: true })
+  })
+
+  // N3: a locked store must not stand between a person and a connection that
+  // carries no cookie — a tunnel, an open gateway, a token Rust attaches itself.
+  it('is not waited on by a connection that needs no cookie', async () => {
+    cookies.restored = new Promise<void>(() => {})
+    rows.set('open', { authMode: 'none', baseUrl: 'https://open.test', kind: 'remote', label: 'Open' })
+    installHermesDesktopBridge()
+
+    for (const id of ['home', 'open', 'box', 'local']) {
+      activate(id, { authMode: id === 'open' ? 'none' : 'token', baseUrl: id === 'box' || id === 'local' ? '' : 'x' })
+
+      await expect(bridge.getConnection()).resolves.toMatchObject({ connectionId: id })
+      await expect(window.hermesDesktop.api({ path: '/api/status' })).resolves.toEqual({ ok: true })
+    }
+
+    activateCloud()
+
+    await expect(bridge.getConnectionFor({ connectionId: 'home', profile: null })).resolves.toMatchObject({
+      connectionId: 'home'
+    })
+    await expect(window.hermesDesktop.api({ connectionId: 'box', path: '/api/status' })).resolves.toEqual({ ok: true })
   })
 
   // `secrets_unlock` has no bound of its own off Apple's platforms, and every
   // dial waits on the restore behind it. Before the resync the boot waited on it
   // just as silently (`restoreSessionCookies().finally(autoRestoreConnection)`).
-  it('says a person must unlock after a bounded wait, never retries it, and proceeds once the restore lands', async () => {
+  it('says a person must unlock after ONE bounded wait, never retries it, and proceeds once the restore lands', async () => {
     vi.useFakeTimers()
 
     try {
@@ -768,7 +808,8 @@ describe('the boot cookie restore', () => {
       cookies.restored = new Promise<void>(resolve => {
         land = resolve
       })
-      activate('home')
+      activateCloud()
+      installHermesDesktopBridge()
 
       const dial = bridge.getConnection().catch((error: unknown) => error)
 
@@ -778,16 +819,39 @@ describe('the boot cookie restore', () => {
 
       expect(failure).toBeInstanceOf(NeedsUnlockError)
       expect(failure.message).toBe(TRANSLATIONS.en.boot.errors.needsUnlock)
+      // Neutral: a desktop keyring is unlocked with a password, not the device.
+      expect(failure.message).not.toMatch(/unlock this device/i)
       expect(await bridge.getBootProgress()).toMatchObject({
         error: TRANSLATIONS.en.boot.errors.needsUnlock,
         phase: 'backend.error',
         retryable: false
       })
 
+      // N3: latched. The next dial and the next REST call fail at once instead
+      // of each spending its own 30 s behind the same prompt. (One after the
+      // other: two concurrent dynamic imports never settle under fake timers.)
+      const soon = async (pending: Promise<unknown>): Promise<unknown> => {
+        const outcome = pending.catch((error: unknown) => error)
+
+        await vi.advanceTimersByTimeAsync(10)
+
+        return Promise.race([outcome, 'still waiting'])
+      }
+
+      expect(await soon(bridge.getConnection())).toBeInstanceOf(NeedsUnlockError)
+      expect(await soon(window.hermesDesktop.api({ path: '/api/status' }))).toBeInstanceOf(NeedsUnlockError)
+      expect(apiMock).not.toHaveBeenCalled()
+      // …while a connection that needs no cookie is not held up by the latch.
+      await expect(window.hermesDesktop.api({ connectionId: 'home', path: '/api/status' })).resolves.toEqual({
+        ok: true
+      })
+
       // The restore was never abandoned: unlocked, the next ask goes through.
       land()
+      await vi.advanceTimersByTimeAsync(1)
 
-      expect(await bridge.getConnection()).toMatchObject({ baseUrl: 'https://home.test' })
+      expect(await bridge.getConnection()).toMatchObject({ baseUrl: 'https://cloud.test' })
+      await expect(window.hermesDesktop.api({ path: '/api/status' })).resolves.toEqual({ ok: true })
     } finally {
       vi.useRealTimers()
     }

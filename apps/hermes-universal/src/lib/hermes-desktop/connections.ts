@@ -30,7 +30,7 @@ import { sshStepLabel, tunnelErrorMessage } from '@/app/gateway/ssh-copy'
 import { isGatewayReauthRequired } from '@/gateway'
 import type { DesktopBootProgress, HermesConnection } from '@/global'
 import { TRANSLATIONS } from '@/i18n/catalog'
-import { getRuntimeI18nLocale } from '@/i18n/runtime'
+import { getRuntimeI18nLocale, translateNow } from '@/i18n/runtime'
 import { errorText, ownWords } from '@/lib/error-text'
 import { IS_MOBILE } from '@/lib/platform'
 import { sessionCookiesRestored } from '@/lib/session-persist'
@@ -76,11 +76,12 @@ interface Dial {
 class RetryableDialError extends Error {}
 
 /**
- * The boot cookie restore is still behind the OS unlock prompt
- * (`secure-store.ts` → `secrets_unlock`, which no platform but Apple's bounds).
- * A locked keyring a person must open is legitimate; a dial that says nothing
- * while it waits is not. Not retryable: a retry cannot answer the prompt, and
- * the hook's Retry is what a person presses once they have.
+ * The boot cookie restore is still behind the OS credential store's unlock
+ * prompt (`secure-store.ts` → `secrets_unlock`, which no platform but Apple's
+ * bounds) — a phone's lock screen, a desktop keyring's password. A locked store
+ * a person must open is legitimate; a dial that says nothing while it waits is
+ * not. Not retryable: a retry cannot answer the prompt, and the hook's Retry is
+ * what a person presses once they have.
  */
 export class NeedsUnlockError extends Error {
   override name = 'NeedsUnlockError'
@@ -90,12 +91,30 @@ export class NeedsUnlockError extends Error {
  *  person reads is why, not "timed out". */
 const COOKIE_RESTORE_WAIT_MS = 30_000
 
+/** Where the boot cookie restore stands, as this page has seen it. */
+let cookieJar: 'locked' | 'pending' | 'restored' = 'pending'
+let cookieJarLanding: null | Promise<void> = null
+
 /**
- * The boot cookie restore, waited on for a bounded time. The restore itself is
- * never abandoned: it lands when the person unlocks, and every later call
- * proceeds at once.
+ * The boot cookie restore, waited on for a bounded time — ONCE. The first caller
+ * to run out of patience latches `locked`, and every call after it fails at
+ * once instead of spending its own 30 s behind the same prompt. The restore
+ * itself is never abandoned: it lands when the person unlocks, and from then on
+ * every call proceeds.
  */
 async function cookieJarRestored(): Promise<void> {
+  cookieJarLanding ??= sessionCookiesRestored().then(() => {
+    cookieJar = 'restored'
+  })
+
+  if (cookieJar === 'restored') {
+    return
+  }
+
+  if (cookieJar === 'locked') {
+    throw new NeedsUnlockError(translateNow('boot.errors.needsUnlock'))
+  }
+
   let timer: ReturnType<typeof setTimeout> | undefined
 
   const waited = new Promise<'waiting'>(resolve => {
@@ -103,12 +122,31 @@ async function cookieJarRestored(): Promise<void> {
   })
 
   try {
-    if ((await Promise.race([sessionCookiesRestored(), waited])) === 'waiting') {
-      throw new NeedsUnlockError(TRANSLATIONS[getRuntimeI18nLocale()].boot.errors.needsUnlock)
+    if ((await Promise.race([cookieJarLanding, waited])) === 'waiting') {
+      cookieJar = 'locked'
+
+      throw new NeedsUnlockError(translateNow('boot.errors.needsUnlock'))
     }
   } finally {
     clearTimeout(timer)
   }
+}
+
+export const __testing = {
+  reset(): void {
+    cookieJar = 'pending'
+    cookieJarLanding = null
+  }
+}
+
+/**
+ * Who needs the jar: a session that IS a cookie — a gated gateway's (OAuth or a
+ * password login's ticket) and a cloud agent's. A local or SSH tunnel, an open
+ * gateway and a token row (Rust attaches it by connection) are dialled with no
+ * cookie, so a locked store must not stand between them and a person.
+ */
+function needsCookieJar(kind: GatewayMode | undefined, ...authModes: (string | undefined)[]): boolean {
+  return kind === 'cloud' || authModes.some(isGated)
 }
 
 function profileKey(profile: null | string | undefined): string {
@@ -173,6 +211,11 @@ async function tunnelDial(connectionId: string, row: ResolvedRow): Promise<Dial>
  */
 async function liveDial(connectionId: string, live: Connection): Promise<Dial> {
   const gated = isGated(live.authMode)
+
+  if (needsCookieJar(live.mode, live.authMode)) {
+    await cookieJarRestored()
+  }
+
   const wsUrl = await resolveWsUrl(gated ? { ...live, authMode: 'none' } : live)
 
   const mint = { connectionId }
@@ -191,9 +234,6 @@ async function liveDial(connectionId: string, live: Connection): Promise<Dial> {
 }
 
 async function resolveDial(connectionId: string, live?: Connection): Promise<Dial> {
-  // The boot hook's first dial races the cookie restore `boot.ts` started.
-  await cookieJarRestored()
-
   let row: ResolvedRow
 
   try {
@@ -217,6 +257,12 @@ async function resolveDial(connectionId: string, live?: Connection): Promise<Dia
     }
 
     throw new Error('This connection has no gateway address')
+  }
+
+  // The boot hook's first dial races the cookie restore `boot.ts` started. Read
+  // from the row, which is Rust's and needs no jar to be read.
+  if (needsCookieJar(row.kind, row.authMode, live?.authMode)) {
+    await cookieJarRestored()
   }
 
   const mint = { connectionId }
@@ -517,14 +563,15 @@ export async function restScope(
   connectionId: null | string | undefined
 ): Promise<{ connectionId?: string; release: () => void }> {
   const id = (connectionId ?? '').trim()
-
-  // A cookie-backed REST call needs the jar as much as a dial does.
-  await cookieJarRestored()
-
   const active = await activeConnection()
   const primary = !id || id === active?.connectionId
 
   if (primary && (!active || active.connection.baseUrl)) {
+    // A cookie-backed REST call needs the jar as much as a dial does.
+    if (needsCookieJar(active?.kind, active?.connection.authMode)) {
+      await cookieJarRestored()
+    }
+
     return { release: () => {} }
   }
 
@@ -533,6 +580,10 @@ export async function restScope(
   // Dynamic: the registry store imports `@/hermes`.
   const { connectionById } = await import('@/store/connections')
   const row = connectionById(target)
+
+  if (needsCookieJar(row?.kind, row?.authMode)) {
+    await cookieJarRestored()
+  }
 
   if (!row || row.url || (row.kind !== 'local' && row.kind !== 'ssh')) {
     return { connectionId: target, release: () => {} }

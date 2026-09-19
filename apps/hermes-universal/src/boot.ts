@@ -8,11 +8,6 @@
  * `hermesDesktop` bridge.
  */
 
-// Side-effect import: every WebView must be listening for another WebView's
-// gateway switch before its fold dials, or it keeps serving the gateway the user
-// just moved off.
-import './store/gateway-switch-sync'
-
 import { IS_MOBILE, IS_TAURI } from './lib/platform'
 import { initSafeAreaInsets } from './lib/safe-area'
 import { persistSessionCookies, sessionCookiesRestored } from './lib/session-persist'
@@ -30,14 +25,18 @@ let booted = false
  * `main.tsx` calls this module before `createRoot`, so a lever that threw past
  * here was a white screen.
  *
- * Reported by name and error KIND, never its text: levers reach Rust, whose
- * messages can name the gateway.
+ * Reported with its stack: what is caught here is a SYNCHRONOUS throw, which is
+ * this app's own code and cannot carry Rust's text (which can name a gateway).
+ * Checked per lever — tracing, lifecycle and safe area touch the DOM alone; the
+ * tunnel page, the watcher, the cookie restore and the launch reach Rust only
+ * through a promise, whose rejection each handles itself and never lands here.
+ * A lever that could throw a URL synchronously must report its name alone.
  */
 function lever(name: string, run: () => void): void {
   try {
     run()
   } catch (error) {
-    console.error(`[boot] ${name} failed`, error instanceof Error ? error.name : typeof error)
+    console.error(`[boot] ${name} failed`, error instanceof Error ? (error.stack ?? error.name) : typeof error)
   }
 }
 
@@ -56,12 +55,13 @@ export function bootUniversal(): void {
   // Foreground/background, before anything that wants the first edge after
   // launch: the bridge's `onPowerResume` is this signal on a phone, where the
   // socket always dies while the app is away.
-  lever('app lifecycle', () => {
-    initAppLifecycle()
-    // Going away snapshots the cookie jar while there is still a process to do
-    // it — the rotation it holds is what the next cold launch needs.
-    onBackground(() => void persistSessionCookies())
-  })
+  lever('app lifecycle', () => initAppLifecycle())
+
+  // Going away snapshots the cookie jar while there is still a process to do
+  // it — the rotation it holds is what the next cold launch needs. A lever of
+  // its own: the subscription needs nothing from the install above, so a failed
+  // install is reported there and does not also, silently, cost this.
+  lever('cookie snapshot', () => void onBackground(() => void persistSessionCookies()))
 
   // Rehydrate the persisted gateway/cloud session into the Rust cookie jar.
   // Started here and awaited by the bridge ahead of every dial and REST call,
@@ -73,16 +73,19 @@ export function bootUniversal(): void {
   // at its first acquire, which may never come.
   lever('tunnel page', () => openTunnelPage())
 
-  // Every window follows the registry: a rename made in a settings Activity has
-  // to reach the shell painting the source chip.
+  // Every window follows Rust: the registry (a rename made in a settings
+  // Activity has to reach the shell painting the source chip) and the source the
+  // app is on. Before the launch below, which waits for it to be listening — or
+  // a window keeps serving the gateway the user just moved off.
   lever('connections watcher', () => void startConnectionsWatcher())
 
-  // …and every window publishes where it launches, because each runs its own
-  // fold over its own bridge: the owner of the app's persisted state seeds the
-  // registry and honours the launch mode; a tile, an activity screen or the HUD
-  // opens onto the source the app is on. No window's URL names a connection, and
-  // a switch made later reaches them all as a broadcast. Identity only — the
-  // bridge holds its first answer for this, and the boot hook does the dialling.
+  // …and every window publishes the source the app is on, because each runs its
+  // own fold over its own bridge. None decides it: Rust decides launch once per
+  // process, and a tile, an instance window, an activity screen or the HUD reads
+  // the same answer as the main window (the owner of the app's persisted state
+  // only seeds the registry first). A switch made later reaches them all as
+  // Rust's announcement. Identity only — the bridge holds its first answer for
+  // this, and the boot hook does the dialling.
   if (IS_TAURI) {
     lever('launch connection', () => holdForLaunch(restoreLaunchConnection(ownsPersistedAppState())))
   }

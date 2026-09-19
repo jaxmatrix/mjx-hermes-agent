@@ -325,6 +325,32 @@ export function setTunnelAnswerSaver(saver: TunnelAnswerSaver): () => void {
   }
 }
 
+/**
+ * Keep what a person answers on ONE interactive dial of `connectionId`
+ * (MJXHRM-592): a passphrase or a password, never a one-time code
+ * (`keptSshAnswer`), written where that connection's dials read it (the
+ * registered saver). Every dial a person drives keeps its answer this way — a
+ * tunnel's own Connect and a switch's preflight alike — because Rust lingers an
+ * unheld tunnel only briefly, and its next background redial cannot ask.
+ *
+ * The answer is matched by attempt, so another dial's prompt is not this one's
+ * to keep. `stop()` when the dial settles.
+ */
+export function keepTunnelAnswers(
+  connectionId: string,
+  attemptId: string = newAttemptId()
+): { attemptId: string; stop: () => void } {
+  const stop = addSshPromptAnswerListener((prompt, answer) => {
+    const kept = prompt.attemptId === attemptId ? keptSshAnswer(prompt.kind, answer) : null
+
+    if (kept && answerSaver) {
+      void answerSaver(connectionId, kept).catch(() => {})
+    }
+  })
+
+  return { attemptId, stop }
+}
+
 function hostKeyNotificationId(connectionId: string): string {
   return `tunnel-hostkey:${connectionId}`
 }
@@ -364,18 +390,10 @@ function notifyBackgroundFailure(connectionId: string, label: string, error: unk
  * Runs the interactive dial and only connects: the action that failed is not
  * re-run, because a rename, a delete or a Bot Mode send must never be replayed
  * on the user's behalf. A passphrase or password answered on THIS dial is kept
- * (the configurator's rules), so the next background dial authenticates.
+ * (`keepTunnelAnswers`), so the next background dial authenticates.
  */
 export async function connectTunnel(connectionId: string, label: string): Promise<void> {
-  const attemptId = newAttemptId()
-
-  const keep = addSshPromptAnswerListener((prompt, answer) => {
-    const kept = prompt.attemptId === attemptId ? keptSshAnswer(prompt.kind, answer) : null
-
-    if (kept && answerSaver) {
-      void answerSaver(connectionId, kept).catch(() => {})
-    }
-  })
+  const { attemptId, stop: keep } = keepTunnelAnswers(connectionId)
 
   try {
     const lease = await acquireTunnel(connectionId, { attemptId, interactive: true, label })

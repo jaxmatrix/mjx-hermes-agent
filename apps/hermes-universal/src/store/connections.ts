@@ -14,7 +14,6 @@ import { statusSupportsNativeFlow } from '@/lib/native-auth-decisions'
 import { loadString, saveString } from '@/lib/persist'
 import { IS_TAURI } from '@/lib/platform'
 import { mergeSshSecrets } from '@/lib/secure-store'
-import { WEBVIEW_ID } from '@/lib/webview-id'
 import {
   $activeConnection,
   type ConnectionDescriptorHint,
@@ -27,14 +26,14 @@ import { isLatched, releaseLatch } from '@/store/connection-latches'
 import {
   acquireTunnel,
   connectionBase,
+  keepTunnelAnswers,
   liveTunnelBase,
   setTunnelAnswerSaver,
   type TunnelLease
 } from '@/store/connection-tunnels'
 import { disposeSecondariesForConnection } from '@/store/gateway'
 import type { AuthMode, Connection, GatewayMode } from '@/store/gateway-config'
-import { $restoring, loadGatewayTarget, takePendingOAuth } from '@/store/gateway-restore'
-import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
+import { $restoring, claimPendingOAuth, loadGatewayTarget } from '@/store/gateway-restore'
 import { notify } from '@/store/notifications'
 import {
   $activeGatewayProfile,
@@ -50,9 +49,10 @@ import type { KeptSshAnswer } from '@/store/ssh-answers'
 /**
  * THE REGISTRY, as the webview sees it (MJXHRM-446).
  *
- * Rust owns the document, the credentials and the probe; this store owns the
- * non-secret projection, the ACTIVE pointer and the switch. Two rules keep that
- * split honest:
+ * Rust owns the document, the credentials, the probe and WHICH source the app
+ * is on (`src-tauri/src/connections/source.rs`); this store owns the non-secret
+ * projection, this window's pointer and the preflight of a switch. Two rules
+ * keep that split honest:
  *
  *  • nothing here ever holds a token. `hasToken` and a four-character
  *    `tokenPreview` are the whole surface, and a save's credential fields are
@@ -177,6 +177,21 @@ export interface SaveOutcome {
   connectionId: string
   dialFieldsChanged: boolean
   droppedHeaders: string[]
+  /** The save edited the dial fields of the row the app is on: Rust's re-commit
+   *  of it, which every window is also told. */
+  source?: SourceCommit
+}
+
+/**
+ * Rust's `CurrentSource`: the source the app is on, and where that sits in the
+ * one order every window shares. `dialSeq` is the `seq` at which a window
+ * already on `connectionId` last had to re-dial; `connectionId` is null when
+ * there is no row to be on.
+ */
+export interface SourceCommit {
+  connectionId: null | string
+  seq: number
+  dialSeq: number
 }
 
 const EMPTY: RegistryView = {
@@ -233,7 +248,9 @@ function loadLastProfiles(): Record<string, string> {
 export const $lastProfileByConnection = atom<Record<string, string>>(loadLastProfiles())
 
 export function rememberProfile(connectionId: string, profile: string): void {
-  const next = { ...$lastProfileByConnection.get(), [connectionId]: profile }
+  // Onto storage, not this window's copy: every window of the origin writes the
+  // one key, and a map read at page load would write a peer's entries away.
+  const next = { ...loadLastProfiles(), [connectionId]: profile }
   const keys = Object.keys(next)
 
   // Bounded, oldest-inserted first. Object key order is insertion order for
@@ -316,6 +333,13 @@ export async function saveConnection(input: ConnectionSaveInput): Promise<SaveOu
   const outcome = await call<SaveOutcome>('connections_save', { input })
 
   $connectionsRegistry.set(outcome.registry)
+
+  // The row this window is on was re-pointed. Applied from the return value,
+  // like a commit of its own: whatever the caller does next — a preflight, say
+  // — starts after it, and the announcement that follows is a no-op.
+  if (outcome.source) {
+    await applySource(outcome.source).catch(() => {})
+  }
 
   return outcome
 }
@@ -533,25 +557,17 @@ function resolveConnection(connectionId: string, named: null | string = null): P
   return call<ResolvedDial>('connections_resolve', { connectionId, profile: named ?? heldProfileFor(connectionId) })
 }
 
-/** The row a registry names for launch, if it still has it. */
-function launchTarget(registry: RegistryView, owner: boolean): null | string {
-  const has = (id: string) => registry.connections.some(row => row.id === id)
-  const lastUsed = has(registry.lastUsed) ? registry.lastUsed : registry.primary
-  // The launch mode is the OWNER's question. Every other window opens onto the
-  // source the app is on, which is the last one a switch remembered.
-  const target = owner && registry.launchMode === 'primary' ? registry.primary : lastUsed
-
-  return has(target) ? target : null
-}
-
 /**
  * A mobile sign-in navigated this WebView away and back (`beginOAuthLogin`):
  * finish the switch it interrupted. The session outlived the reload, so the
  * preflight passes without a login page — and a cancelled or expired one falls
  * through to the ordinary launch instead of navigating again.
+ *
+ * It finishes a person's click, so it is a switch like any other: a preflight,
+ * then a commit through Rust. One window claims the marker (`claimPendingOAuth`).
  */
 async function resumePendingSignIn(registry: RegistryView): Promise<boolean> {
-  const pending = takePendingOAuth()
+  const pending = await claimPendingOAuth()
 
   if (!pending) {
     return false
@@ -573,15 +589,18 @@ async function resumePendingSignIn(registry: RegistryView): Promise<boolean> {
 }
 
 /**
- * Publish where this window launches — and dial nothing (MJXHRM-602).
+ * Publish the source the app is on — and dial nothing (MJXHRM-602).
  *
- * The identity is all desktop's fold needs: its boot hook dials through the
- * bridge, which answers from `$activeConnection`. A phone with nothing
- * configured has no row to name, publishes nothing, and stays on the connect
- * screen.
+ * No window decides where it launches: Rust decides once per process, and
+ * every window — main, instance, tile, HUD, activity — reads that and applies
+ * it like any other commit (`applySource`). So a window opened later lands on
+ * the source the person chose, whatever the launch mode says. The identity is
+ * all desktop's fold needs: its boot hook dials through the bridge, which
+ * answers from `$activeConnection`. A phone with nothing configured has no row
+ * to be on, publishes nothing, and stays on the connect screen.
  *
- * `owner` is the window that owns the app's persisted state: it alone seeds the
- * registry and honours the launch mode. `boot.ts` holds the bridge on this
+ * `owner` is the window that owns the app's persisted state: it alone hands
+ * Rust the pre-registry target to seed from. `boot.ts` holds the bridge on this
  * (`holdForLaunch`), so it must always settle.
  */
 export async function restoreLaunchConnection(owner: boolean): Promise<void> {
@@ -592,46 +611,16 @@ export async function restoreLaunchConnection(owner: boolean): Promise<void> {
   restoreAttempted = true
 
   try {
+    // Listening BEFORE the read: a commit between the two would be in neither.
+    await watching?.catch(() => {})
+
     const registry = await (owner ? loadConnectionsRegistry() : refreshConnections())
 
-    if ($activeConnection.get() || (await resumePendingSignIn(registry))) {
+    if (await resumePendingSignIn(registry)) {
       return
     }
 
-    const target = launchTarget(registry, owner)
-
-    if (!target) {
-      return
-    }
-
-    const resolved = await resolveConnection(target)
-
-    // A person got there first while the registry was being read.
-    if ($activeConnection.get()) {
-      return
-    }
-
-    publishActiveConnection(identityOf(resolved))
-
-    if (owner) {
-      const moved = target !== registry.lastUsed
-      const commit = moved ? stampCommit() : null
-
-      // Desktop's restore remembers the source it lands on, which is also what
-      // every later window launches onto. Swallowed: see the command's own note.
-      void call('connections_set_last_used', { connectionId: target })
-        .catch(() => {})
-        .then(() => {
-          // The launch mode moved the pointer (`primary`): a window booting
-          // alongside read `lastUsed` before this write and sits on the old
-          // one. The launch is a commit like any switch, told once the write
-          // has landed — whoever read before it was listening before this — and
-          // a window a person has since moved ignores it (`SwitchCommit`).
-          if (commit) {
-            broadcastGatewaySwitch(resolved.mode, { connectionId: target, mode: resolved.mode }, commit.at)
-          }
-        })
-    }
+    await applySource(await call<SourceCommit>('connections_current_source'), { launch: true })
   } catch {
     // Unconfigured is a state the app can stand in; a thrown boot is not. The
     // reason is not logged: Rust's text can name the gateway.
@@ -681,13 +670,20 @@ async function preflight(
   options: { attemptId?: string; interactive: boolean }
 ): Promise<{ connection: Connection; lease: null | TunnelLease }> {
   if (resolved.mode === 'local' || resolved.mode === 'ssh') {
+    // A person's dial may ask for a passphrase or a password. What they answer
+    // is kept, by the rules a tunnel's own Connect keeps it (`keepTunnelAnswers`)
+    // — or Rust's next background redial is refused for want of a person.
+    const keeper = options.interactive ? keepTunnelAnswers(resolved.connectionId, options.attemptId) : null
+
     const lease = await acquireTunnel(resolved.connectionId, {
-      attemptId: options.attemptId,
+      attemptId: keeper?.attemptId,
       interactive: options.interactive,
       label: resolved.label
-    }).catch(error => {
-      throw tunnelFailure(error)
     })
+      .catch(error => {
+        throw tunnelFailure(error)
+      })
+      .finally(() => keeper?.stop())
 
     return {
       connection: {
@@ -732,35 +728,33 @@ async function preflight(
   }
 }
 
-/** A newer click owns the outcome. Bumped before every preflight. */
+/**
+ * THE ORDER, as this window holds it. The model is Rust's
+ * (`src-tauri/src/connections/source.rs`); this is a window's half of it.
+ *
+ *  • `appliedSeq` — the highest `seq` this window has SEEN. A source no newer
+ *    is dropped: the announcement of a commit this window made itself, or the
+ *    losing half of two crossed switches.
+ *  • `dialledSeq` — the `dialSeq` of the last apply that PUBLISHED. A window
+ *    already on the committed row re-homes only if that row has had to be
+ *    re-dialled since (its dial fields were edited); otherwise another window's
+ *    re-apply or profile click costs this one nothing.
+ *  • `applyRevision` — bumped by every apply, so an older one still resolving
+ *    its row publishes nothing. ONLY an apply supersedes an apply: a click in
+ *    this window must not cancel a commit the app has already made, or a failed
+ *    preflight would leave the window behind every other.
+ *  • `switchRevision` — bumped by every local preflight AND every apply, so a
+ *    later click, or a newer source, owns the outcome of a preflight in flight.
+ */
+let appliedSeq = 0
+let dialledSeq = 0
+let applyRevision = 0
 let switchRevision = 0
 
-/**
- * Which commit wins when two windows switch at once: the LATER one, everywhere.
- *
- * Each commit is stamped `(at, origin)` and rides the broadcast. `at` is the
- * wall clock, pushed past every stamp this window has seen (a Lamport clock),
- * so a commit made after hearing a peer's is always newer than it; `origin` —
- * the WebView's id — breaks a tie. The order is total, so two crossed
- * broadcasts are compared the same way at both ends: the newer window ignores
- * the older follow, the older one takes the newer, and both land on one source.
- */
-export interface SwitchCommit {
-  at: number
-  origin: string
-}
+function isSourceCommit(value: unknown): value is SourceCommit {
+  const { connectionId, dialSeq, seq } = (value ?? {}) as Partial<SourceCommit>
 
-/** The newest commit this window knows of: its own, or a peer's it was told. */
-let latestCommit: SwitchCommit = { at: 0, origin: '' }
-
-export function isNewerCommit(next: SwitchCommit, than: SwitchCommit): boolean {
-  return next.at === than.at ? next.origin > than.origin : next.at > than.at
-}
-
-function stampCommit(): SwitchCommit {
-  latestCommit = { at: Math.max(Date.now(), latestCommit.at + 1), origin: WEBVIEW_ID }
-
-  return latestCommit
+  return Number.isFinite(seq) && Number.isFinite(dialSeq) && (connectionId === null || typeof connectionId === 'string')
 }
 
 export interface SelectConnectionOptions {
@@ -774,7 +768,7 @@ export interface SelectConnectionOptions {
    * A caller that is NOT a person passes `false` and gets the failure instead
    * of the question: the post-sign-in resume (`resumePendingSignIn`, and the
    * legacy `autoRestoreConnection`). A peer's re-home and the launch never come
-   * through here at all (`followConnection`, `restoreLaunchConnection`).
+   * through here at all (`applySource`).
    */
   allowInteractive?: boolean
   /** The SSH attempt the caller follows progress on. Interactive only. */
@@ -800,29 +794,152 @@ function landNewChatsOn(connectionId: string, profile: string): void {
   requestFreshSession()
 }
 
+/** What a window's own preflight proved, for the apply of its own commit. */
+interface ProvenSwitch {
+  connection: Connection
+  resolved: ResolvedDial
+}
+
 /**
- * Switch this window onto another source — in two phases (MJXHRM-602), the
- * contract desktop's `selectConnection` has: a dead target costs nothing.
+ * Put this window on a source Rust has committed — the ONE way a window's
+ * source moves, whoever committed it: this window (`own`, applied from the
+ * command's return value), a peer, Rust itself (the source's row was removed or
+ * re-pointed), or the launch (`launch`: identity only — the boot hook has not
+ * dialled yet, so there is nothing to wipe or re-dial).
+ *
+ * Nothing here may prompt: a peer's apply has no person behind it, and the
+ * window that committed has already asked. The fold's own dial surfaces
+ * whatever this window still lacks.
+ *
+ * Resolves true when it published.
+ */
+export async function applySource(
+  source: SourceCommit,
+  options: { launch?: boolean; own?: ProvenSwitch } = {}
+): Promise<boolean> {
+  if (!isSourceCommit(source) || source.seq <= appliedSeq) {
+    return false
+  }
+
+  appliedSeq = source.seq
+
+  // Whatever was in flight — a local preflight, an older apply still resolving
+  // — is superseded, and its spinner goes with it.
+  const revision = ++applyRevision
+
+  switchRevision += 1
+  $pendingConnectionId.set(null)
+
+  const connectionId = source.connectionId
+  const active = $activeConnection.get()
+
+  if (!connectionId) {
+    // No row is left to be on. The window leaves the one it had rather than
+    // serve a source that no longer exists.
+    if (active) {
+      publishActiveConnection(null)
+      emitConnectionApplied()
+    }
+
+    return Boolean(active)
+  }
+
+  if (!options.own && active?.connectionId === connectionId && source.dialSeq <= dialledSeq) {
+    return false
+  }
+
+  if (!options.own) {
+    // The window that switched remembered its profile before it committed.
+    reloadLastProfiles()
+  }
+
+  const resolved = options.own?.resolved ?? (await resolveConnection(connectionId).catch(() => null))
+
+  // A row that is gone has a removal on its way; a newer source owns the window.
+  if (!resolved || revision !== applyRevision) {
+    return false
+  }
+
+  const next = identityOf(resolved, options.own?.connection)
+
+  publishActiveConnection(next)
+  dialledSeq = Math.max(dialledSeq, source.dialSeq)
+
+  if (options.launch) {
+    return true
+  }
+
+  // The registry may hold this source as a secondary (a tab, a relay). It is
+  // the primary's now, and one id must not be both.
+  disposeSecondariesForConnection(connectionId)
+  emitConnectionApplied()
+
+  if (options.own) {
+    $showAllProfiles.set(false)
+  }
+
+  landNewChatsOn(connectionId, next.profile)
+
+  return true
+}
+
+/** This window's commits that have not been applied yet (`commitSource`). */
+const commits = new Set<Promise<unknown>>()
+
+/**
+ * Commit a switch through Rust, and apply it from the return value.
+ *
+ * Rust's announcement of the commit can reach this window BEFORE the command
+ * returns — and would be applied as a peer's: without what the preflight proved,
+ * or not at all on a row the window is already on. So an announcement waits for
+ * the commits in flight (`startConnectionsWatcher`), and then finds its `seq`
+ * already applied.
+ */
+function commitSource(connectionId: string, own?: ProvenSwitch): Promise<boolean> {
+  let applied: () => void = () => {}
+
+  const pending = new Promise<void>(resolve => {
+    applied = resolve
+  })
+
+  // Before the command is sent: nothing announced can be ahead of it.
+  commits.add(pending)
+
+  return call<SourceCommit>('connections_commit_source', { connectionId })
+    .then(source => applySource(source, { own }))
+    .finally(() => {
+      commits.delete(pending)
+      applied()
+    })
+}
+
+/**
+ * Switch this window — and with it the app — onto another source, in two
+ * phases (MJXHRM-602), the contract desktop's `selectConnection` has: a dead
+ * target costs nothing.
  *
  *  1. PREFLIGHT, activating nothing (`preflight`). A failure throws with the
- *     window still on the source it came from.
- *  2. COMMIT, synchronously: publish the identity → remember it → drop the
- *     registry secondaries on that id (it is the primary now) → tell the peer
- *     windows → `emitConnectionApplied()`, which is what makes the boot hook
- *     soft-switch: wipe, then re-dial the primary through the bridge → desktop's
- *     own landing (browse mode off, new chats on the target).
+ *     window still on the source it came from — and if a peer's commit arrived
+ *     meanwhile it has already been applied, because an apply supersedes a
+ *     preflight.
+ *  2. COMMIT, through Rust (`connections_commit_source`): it remembers the row,
+ *     takes the next `seq` and tells every window. This one applies its commit
+ *     from the return value (`applySource`): publish the identity → drop the
+ *     registry secondaries on that id (it is the primary now) →
+ *     `emitConnectionApplied()`, which is what makes the boot hook soft-switch:
+ *     wipe, then re-dial the primary through the bridge → desktop's own landing
+ *     (browse mode off, new chats on the target). A commit a NEWER one has
+ *     already overtaken is not applied: the window is on the newer source.
  *
  * Desktop's select opens a registry SECONDARY and never moves the primary.
  * Re-homing the primary is universal's, for mobile: a phone has no launch
  * backend, so the primary has to be the source the window is on.
  *
- * A re-click is a no-op except for `lastUsed` — and, like desktop's, it CANCELS
- * a switch that is still preflighting: backing out of a slow target is a click
- * on the source the window never left. A LATCHED source refuses with its
- * reason; a superseded switch publishes nothing, says nothing (its failure is
- * nobody's any more) and still gives its tunnel back; and
- * `connections_set_last_used` is swallowed, because a full disk must not turn a
- * successful switch into a failed one.
+ * A re-click re-commits the row it is on, which no window has to act on — and,
+ * like desktop's, it CANCELS a switch that is still preflighting: backing out
+ * of a slow target is a click on the source the window never left. A LATCHED
+ * source refuses with its reason; a superseded switch commits nothing, says
+ * nothing (its failure is nobody's any more) and still gives its tunnel back.
  */
 export async function selectConnection(connectionId: string, options: SelectConnectionOptions = {}): Promise<void> {
   const explicitProfile = (options.profile ?? '').trim()
@@ -835,7 +952,7 @@ export async function selectConnection(connectionId: string, options: SelectConn
   ) {
     if ($pendingConnectionId.get() !== null) {
       // Another source is preflighting. Its revision goes stale here, so it
-      // publishes nothing when it lands; its own `finally` returns the lease.
+      // commits nothing when it lands; its own `finally` returns the lease.
       switchRevision += 1
       $pendingConnectionId.set(null)
     }
@@ -847,9 +964,11 @@ export async function selectConnection(connectionId: string, options: SelectConn
       landNewChatsOn(connectionId, normalizeProfileKey(profile))
     }
 
-    // Already here. Remember it (the launch mode may read it) and stop — a
-    // re-dial would drop a live socket for nothing.
-    void call('connections_set_last_used', { connectionId }).catch(() => {})
+    // Already here — a re-dial would drop a live socket for nothing. Still a
+    // commit: it is remembered for the next launch, and if a peer's switch was
+    // on its way to this window the click made after it wins, everywhere.
+    // Swallowed: a row removed under the click has its own announcement coming.
+    await commitSource(connectionId).catch(() => {})
 
     return
   }
@@ -882,27 +1001,20 @@ export async function selectConnection(connectionId: string, options: SelectConn
     lease = proven.lease
 
     if (revision !== switchRevision) {
-      // A later click owns the outcome. Publishing here would re-home the app
-      // onto a source the user has already navigated away from.
+      // A later click, or a newer source, owns the outcome. Committing here
+      // would re-home the APP onto a source the user has already left.
       return
     }
 
-    const next = identityOf(resolved, proven.connection)
-    const commit = stampCommit()
+    // Before the commit: the peers it tells read this memory, not a payload.
+    rememberProfile(connectionId, identityOf(resolved, proven.connection).profile)
 
-    publishActiveConnection(next)
-    // Before the emit: the peers that follow read this memory, not the payload.
-    rememberProfile(connectionId, next.profile)
+    await commitSource(connectionId, { connection: proven.connection, resolved }).catch(() => {
+      // Rust's text can name the row; the person reads this app's words.
+      throw preflightFailure(null)
+    })
+
     releaseLatch(connectionId)
-    // Swallowed ON PURPOSE: see the command's own note.
-    void call('connections_set_last_used', { connectionId }).catch(() => {})
-    // The registry may hold this source as a secondary (a tab, a relay). It is
-    // the primary's now, and one id must not be both.
-    disposeSecondariesForConnection(connectionId)
-    broadcastGatewaySwitch(resolved.mode, { connectionId, mode: resolved.mode }, commit.at)
-    emitConnectionApplied()
-    $showAllProfiles.set(false)
-    landNewChatsOn(connectionId, next.profile)
     // A deliberate connect's session is the user's to keep, sign-out latch or not.
     void keepSession().catch(() => {})
   } catch (error) {
@@ -917,49 +1029,6 @@ export async function selectConnection(connectionId: string, options: SelectConn
       $pendingConnectionId.set(null)
     }
   }
-}
-
-/**
- * A PEER window switched (`store/gateway-switch-sync.ts`): put this window on
- * the same source. The initiator has already proven it, so there is no
- * preflight, nothing is remembered or re-broadcast, and nothing may prompt —
- * the fold's own dial surfaces whatever this window still lacks.
- *
- * `commit` is the peer's stamp (`SwitchCommit`): a follow no newer than what
- * this window already knows of is the losing half of a crossed pair, and is
- * dropped. A follow supersedes a switch this window is still preflighting, so
- * it takes the spinner down with it.
- */
-export async function followConnection(connectionId: string, commit?: SwitchCommit): Promise<void> {
-  if (commit) {
-    if (!isNewerCommit(commit, latestCommit)) {
-      return
-    }
-
-    latestCommit = commit
-  }
-
-  if ($activeConnection.get()?.connectionId === connectionId) {
-    return
-  }
-
-  const revision = ++switchRevision
-
-  $pendingConnectionId.set(null)
-  reloadLastProfiles()
-
-  const resolved = await resolveConnection(connectionId)
-
-  if (revision !== switchRevision) {
-    return
-  }
-
-  const next = identityOf(resolved)
-
-  publishActiveConnection(next)
-  disposeSecondariesForConnection(connectionId)
-  emitConnectionApplied()
-  landNewChatsOn(connectionId, next.profile)
 }
 
 /** What a connect form names: a row's dial fields and its write-only secrets. */
@@ -1084,22 +1153,40 @@ function republishActive(registry: RegistryView): void {
   }
 }
 
+/** The registry's event. With reason `source` it is also Rust's announcement
+ *  of a commit (`src-tauri/src/connections/mod.rs`, `announce`). */
+const CHANGED_EVENT = 'hermes://connections-changed'
+
+/** The watcher's subscription: the launch waits on it before it reads. */
+let watching: null | Promise<unknown> = null
+
 /**
- * Follow the registry from every window.
+ * Follow Rust from every window: the registry, and the source the app is on.
  *
  * `app.emit` on the Rust side, so a rename made in a settings Activity reaches
- * the shell that is painting the source chip. Started from `boot.ts`.
+ * the shell that is painting the source chip — and a switch committed in any
+ * window re-homes them all (`applySource`). It is the ONLY cross-window signal
+ * for the source. Started from `boot.ts`, ahead of the launch read.
  */
 export function startConnectionsWatcher(): () => void {
   if (!IS_TAURI) {
     return () => {}
   }
 
-  const pending = listen('hermes://connections-changed', () => {
+  const pending = listen<Partial<SourceCommit> & { reason?: string }>(CHANGED_EVENT, event => {
+    if (event.payload?.reason === 'source') {
+      // After this window's own commits: see `commitSource`.
+      void Promise.all([...commits])
+        .then(() => applySource(event.payload as SourceCommit))
+        .catch(() => {})
+    }
+
     void refreshConnections()
       .then(republishActive)
       .catch(() => {})
   })
+
+  watching = pending
 
   return () => {
     void pending.then(unlisten => unlisten()).catch(() => {})
@@ -1113,7 +1200,10 @@ export const __testing = {
     restoreAttempted = false
     degradedNoticed = false
     switchRevision = 0
-    latestCommit = { at: 0, origin: '' }
+    applyRevision = 0
+    appliedSeq = 0
+    dialledSeq = 0
+    watching = null
     $connectionsRegistry.set(EMPTY)
     $lastProfileByConnection.set({})
     $pendingConnectionId.set(null)

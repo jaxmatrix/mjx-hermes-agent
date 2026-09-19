@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// The Tauri event bus, reduced to what the module uses — same shape as
-// store/gateway-switch-sync.test.ts. `emit` broadcasts to every WebView INCLUDING
+// The Tauri event bus, reduced to what the module uses. `emit` broadcasts to every WebView INCLUDING
 // the sender (which is why the payload carries an origin), and `listen` registers
 // this WebView's receiver. Hoisted, because vi.mock's factory is lifted above
 // ordinary top-level declarations.

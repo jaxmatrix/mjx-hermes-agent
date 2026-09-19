@@ -1,18 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The two-phase switch (MJXHRM-602): preflight with the current source untouched,
-// then publish → remember → persist → dispose → broadcast → emit → land →
-// release. `order` records the commit as it happens, across every seam it crosses.
+// then remember → commit (Rust) → publish → dispose → emit → land → release.
+// `order` records the commit as it happens, across every seam it crosses. One
+// window here; several over one core are `connections-windows.test.ts`.
 const {
   acquireTunnel,
   authenticate,
-  broadcastGatewaySwitch,
   captureNewChatSource,
+  claimPendingOAuth,
   desktop,
   disposeSecondariesForConnection,
   emitConnectionApplied,
   invoke,
   keepSession,
+  keepTunnelAnswers,
+  listen,
   mergeSshSecrets,
   notify,
   oauthStatus,
@@ -20,14 +23,14 @@ const {
   platform,
   portalAgentSignIn,
   requestFreshSession,
-  takePendingOAuth
+  rustSource
 } = vi.hoisted(() => {
   const order: string[] = []
 
   return {
     acquireTunnel: vi.fn(),
     authenticate: vi.fn(),
-    broadcastGatewaySwitch: vi.fn((..._args: unknown[]) => void order.push('broadcast')),
+    claimPendingOAuth: vi.fn(),
     desktop: {} as {
       connection?: { set(value: unknown): void }
       newChatProfile?: { get(): null | string; set(value: null | string): void }
@@ -39,6 +42,8 @@ const {
     emitConnectionApplied: vi.fn(() => void order.push('emit')),
     invoke: vi.fn(),
     keepSession: vi.fn(async () => {}),
+    listen: vi.fn(async (..._args: unknown[]): Promise<unknown> => vi.fn()),
+    keepTunnelAnswers: vi.fn((_connectionId: string, attemptId = 'attempt-kept') => ({ attemptId, stop: vi.fn() })),
     mergeSshSecrets: vi.fn(async () => true),
     notify: vi.fn(),
     oauthStatus: vi.fn(),
@@ -46,12 +51,13 @@ const {
     platform: { tauri: true },
     portalAgentSignIn: vi.fn(),
     requestFreshSession: vi.fn(() => void order.push('land')),
-    takePendingOAuth: vi.fn()
+    /** Rust's book, as far as one window goes: where the app is, and the order. */
+    rustSource: { connectionId: null as null | string, dialSeq: 1, seq: 1 }
   }
 })
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => vi.fn()) }))
+vi.mock('@tauri-apps/api/event', () => ({ listen }))
 vi.mock('@/hermes', () => ({ setApiRequestProfile: vi.fn() }))
 vi.mock('@/lib/auth', () => ({
   oauthStatus,
@@ -69,6 +75,7 @@ vi.mock('@/store/connection', () => ({ authenticate, keepSession }))
 vi.mock('@/store/connection-tunnels', () => ({
   acquireTunnel,
   connectionBase: vi.fn(),
+  keepTunnelAnswers,
   liveTunnelBase: vi.fn(() => null),
   setTunnelAnswerSaver: vi.fn()
 }))
@@ -77,9 +84,8 @@ vi.mock('@/store/gateway', () => ({ disposeSecondariesForConnection }))
 vi.mock('@/store/gateway-restore', async () => {
   const { atom } = await import('@/store/atom')
 
-  return { $restoring: atom(true), loadGatewayTarget: () => null, takePendingOAuth }
+  return { $restoring: atom(true), claimPendingOAuth, loadGatewayTarget: () => null }
 })
-vi.mock('@/store/gateway-switch-broadcast', () => ({ broadcastGatewaySwitch }))
 vi.mock('@/store/notifications', () => ({ notify, notifyError: vi.fn() }))
 vi.mock('@/store/profile', async () => {
   const { atom } = await import('@/store/atom')
@@ -107,7 +113,6 @@ vi.mock('@/store/session', async () => {
 
 import { GatewaySignInRequiredError } from '@/gateway'
 import { LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
-import { WEBVIEW_ID } from '@/lib/webview-id'
 
 import { $activeConnection, describeConnection, publishActiveConnection } from './active-connection'
 import { $latchedConnections, __resetConnectionLatches } from './connection-latches'
@@ -119,14 +124,14 @@ import {
   $pendingConnectionId,
   __testing,
   applyConnection,
-  followConnection,
+  applySource,
   initializeConnectionsRegistry,
-  isNewerCommit,
   lastProfileFor,
   loadConnectionsRegistry,
   restoreLaunchConnection,
   saveTunnelAnswer,
-  selectConnection
+  selectConnection,
+  startConnectionsWatcher
 } from './connections'
 import { $restoring } from './gateway-restore'
 
@@ -170,7 +175,22 @@ function seedRegistry(ids: string[], overrides: Record<string, unknown> = {}): v
   })
 }
 
-/** Rust, as far as these tests go: the roster it holds and one resolvable row. */
+/** Rust's two source commands: where the app is, and a commit's next `seq`. */
+function rustSourceCommand(command: string, connectionId?: string): null | typeof rustSource {
+  if (command === 'connections_commit_source') {
+    order.push('commit')
+
+    const moved = rustSource.connectionId !== connectionId
+
+    rustSource.seq += 1
+    rustSource.dialSeq = moved ? rustSource.seq : rustSource.dialSeq
+    rustSource.connectionId = connectionId ?? null
+  }
+
+  return command === 'connections_commit_source' || command === 'connections_current_source' ? { ...rustSource } : null
+}
+
+/** Rust, as far as these tests go: the roster it holds, one resolvable row, the source. */
 function rust(resolved: Record<string, unknown> = RESOLVED): void {
   invoke.mockImplementation(async (command: string, args: { connectionId?: string; profile?: null | string } = {}) => {
     if (command === 'connections_resolve') {
@@ -182,12 +202,16 @@ function rust(resolved: Record<string, unknown> = RESOLVED): void {
       }
     }
 
-    if (command === 'connections_set_last_used') {
-      order.push('persist')
-    }
-
-    return command.startsWith('connections_') ? $connectionsRegistry.get() : undefined
+    return (
+      rustSourceCommand(command, args.connectionId) ??
+      (command.startsWith('connections_') ? $connectionsRegistry.get() : undefined)
+    )
   })
+}
+
+/** Where Rust says the app is, for the launch read. */
+function appIsOn(connectionId: null | string): void {
+  Object.assign(rustSource, { connectionId, dialSeq: 1, seq: 1 })
 }
 
 function lease() {
@@ -201,6 +225,14 @@ function onOld(): void {
       { connectionId: 'old', dialConnectionId: 'old', label: 'Old' }
     )
   )
+}
+
+/** On `old` the way a window gets anywhere: Rust said so, and it applied it. */
+async function onOldAsRustHasIt(): Promise<void> {
+  Object.assign(rustSource, { connectionId: 'old', dialSeq: 2, seq: 2 })
+  await applySource({ ...rustSource })
+  vi.clearAllMocks()
+  order.length = 0
 }
 
 $activeConnection.listen(active => void (active && order.push(`publish:${active.connectionId}`)))
@@ -219,11 +251,6 @@ function gated<T>(value: T): { open: () => void; pending: Promise<T> } {
   return { open, pending }
 }
 
-/** The `(at, origin)` this window's last broadcast was stamped with. */
-function lastStamp(): { at: number; origin: string } {
-  return { at: broadcastGatewaySwitch.mock.lastCall?.[2] as number, origin: WEBVIEW_ID }
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
   platform.tauri = true
@@ -237,7 +264,8 @@ beforeEach(() => {
   desktop.showAllProfiles?.set(false)
   order.length = 0
   $restoring.set(true)
-  takePendingOAuth.mockReturnValue(null)
+  appIsOn(null)
+  claimPendingOAuth.mockResolvedValue(null)
   authenticate.mockImplementation(async ({ url }: { url: string }) => ({
     authMode: 'oauth',
     baseUrl: url,
@@ -275,10 +303,12 @@ describe('loadConnectionsRegistry', () => {
   })
 })
 
-// Boot: W0 → W1 by identity alone. Desktop's fold dials through the bridge.
+// Boot: W0 → W1 by identity alone. Desktop's fold dials through the bridge. WHERE
+// is Rust's to say (`source.rs`, and its tests): no window decides its launch.
 describe('restoreLaunchConnection', () => {
-  it('publishes the launch identity without a preflight, a dial or a broadcast', async () => {
-    seedRegistry(['home', 'studio'], { lastUsed: 'studio' })
+  it('publishes the source the app is on without a preflight, a dial or a commit', async () => {
+    seedRegistry(['home', 'studio'])
+    appIsOn('studio')
 
     await restoreLaunchConnection(true)
 
@@ -289,13 +319,19 @@ describe('restoreLaunchConnection', () => {
     })
     expect(authenticate).not.toHaveBeenCalled()
     expect(acquireTunnel).not.toHaveBeenCalled()
-    expect(broadcastGatewaySwitch).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalledWith('connections_commit_source', expect.anything())
+    expect(invoke).not.toHaveBeenCalledWith('connections_set_last_used', expect.anything())
+    // An identity, not a switch: the boot hook has not dialled, so there is
+    // nothing to wipe, re-dial or start afresh.
+    // (`remember` is the re-read of the profile memory, which is not a write.)
+    expect(order.filter(step => step !== 'remember')).toEqual(['publish:studio'])
     expect(emitConnectionApplied).not.toHaveBeenCalled()
     expect($restoring.get()).toBe(false)
   })
 
   it("publishes a tunnelled source with no address: its base is the dial's to find", async () => {
     seedRegistry(['box'])
+    appIsOn('box')
     rust(SSH)
 
     await restoreLaunchConnection(true)
@@ -305,37 +341,30 @@ describe('restoreLaunchConnection', () => {
     expect(acquireTunnel).not.toHaveBeenCalled()
   })
 
-  it('honours the launch mode in the window that owns app state, and remembers where it landed', async () => {
-    seedRegistry(['home', 'studio'], { lastUsed: 'studio', launchMode: 'primary' })
+  // B1: "New window" owns app state too. It used to honour the launch mode and
+  // drag every window off the source the person chose.
+  it("never decides the launch itself: the launch mode is not this window's to read, owner or not", async () => {
+    for (const owner of [true, false]) {
+      __testing.reset()
+      publishActiveConnection(null)
+      invoke.mockClear()
+      seedRegistry(['home', 'studio'], { lastUsed: 'home', launchMode: 'primary', primary: 'home' })
+      appIsOn('studio')
 
-    await restoreLaunchConnection(true)
+      await restoreLaunchConnection(owner)
 
-    expect($activeConnection.get()?.connectionId).toBe('home')
-    expect(invoke).toHaveBeenCalledWith('connections_set_last_used', { connectionId: 'home' })
-  })
-
-  it('opens every other window onto the source the app is on, seeding and remembering nothing', async () => {
-    seedRegistry(['home', 'studio'], { lastUsed: 'studio', launchMode: 'primary' })
-
-    await restoreLaunchConnection(false)
-
-    expect($activeConnection.get()?.connectionId).toBe('studio')
-    expect(invoke).toHaveBeenCalledWith('connections_list', {})
-    expect(invoke).not.toHaveBeenCalledWith('connections_migrate', expect.anything())
-    expect(invoke).not.toHaveBeenCalledWith('connections_set_last_used', expect.anything())
-  })
-
-  it('falls back to the primary when the last-used row is gone', async () => {
-    seedRegistry(['home'], { lastUsed: 'removed' })
-
-    await restoreLaunchConnection(true)
-
-    expect($activeConnection.get()?.connectionId).toBe('home')
+      expect($activeConnection.get()?.connectionId).toBe('studio')
+      expect(invoke).toHaveBeenCalledWith(owner ? 'connections_migrate' : 'connections_list', expect.anything())
+      expect(invoke).not.toHaveBeenCalledWith(owner ? 'connections_list' : 'connections_migrate', expect.anything())
+      expect(invoke).not.toHaveBeenCalledWith('connections_commit_source', expect.anything())
+      expect(invoke).not.toHaveBeenCalledWith('connections_set_last_used', expect.anything())
+    }
   })
 
   // A phone cannot run a backend, so a fresh one has no row at all.
   it('stays unconfigured on a phone with nothing configured', async () => {
     seedRegistry([], { localSupported: false })
+    appIsOn(null)
 
     await restoreLaunchConnection(true)
 
@@ -353,22 +382,58 @@ describe('restoreLaunchConnection', () => {
     expect($restoring.get()).toBe(false)
   })
 
+  // A commit between "listening" and "read" would otherwise be in neither.
+  it('reads where the app is only once it is listening for where it goes next', async () => {
+    const listening = gated(vi.fn())
+
+    seedRegistry(['home'])
+    appIsOn('home')
+    listen.mockImplementationOnce(() => listening.pending)
+    startConnectionsWatcher()
+
+    const launching = restoreLaunchConnection(true)
+
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(invoke).not.toHaveBeenCalled()
+
+    listening.open()
+    await launching
+
+    expect(invoke).toHaveBeenCalledWith('connections_current_source', {})
+    expect($activeConnection.get()?.connectionId).toBe('home')
+  })
+
+  it('changes nothing when the window has already heard of a newer source than the one it read', async () => {
+    seedRegistry(['home', 'studio'])
+    appIsOn('home')
+
+    await applySource({ connectionId: 'studio', dialSeq: 5, seq: 5 })
+    await restoreLaunchConnection(true)
+
+    expect($activeConnection.get()?.connectionId).toBe('studio')
+  })
+
   it('finishes the switch a mobile sign-in navigated away from, on the row it was for', async () => {
     seedRegistry(['home', 'studio'])
-    takePendingOAuth.mockReturnValue({ base: 'https://studio.test', connectionId: 'studio' })
+    appIsOn('home')
+    claimPendingOAuth.mockResolvedValue({ base: 'https://studio.test', connectionId: 'studio' })
     oauthStatus.mockResolvedValue({ signedIn: true })
 
     await restoreLaunchConnection(true)
 
     expect($activeConnection.get()?.connectionId).toBe('studio')
-    // The interrupted switch, completed: never interactive, remembered and told.
+    // The interrupted click, completed: never interactive, and a commit like
+    // any other — so every window follows it.
     expect(authenticate).toHaveBeenCalledWith(expect.objectContaining({ allowInteractive: false }))
-    expect(broadcastGatewaySwitch).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith('connections_commit_source', { connectionId: 'studio' })
+    expect(invoke).not.toHaveBeenCalledWith('connections_current_source', expect.anything())
   })
 
   it('launches normally when that sign-in was abandoned', async () => {
     seedRegistry(['home', 'studio'])
-    takePendingOAuth.mockReturnValue({ base: 'https://studio.test', connectionId: 'studio' })
+    appIsOn('home')
+    claimPendingOAuth.mockResolvedValue({ base: 'https://studio.test', connectionId: 'studio' })
     oauthStatus.mockResolvedValue({ signedIn: false })
 
     await restoreLaunchConnection(true)
@@ -382,6 +447,7 @@ describe('restoreLaunchConnection', () => {
   // and, never used, with the row's own, which only Rust knows.
   it('builds the launch identity with the profile the source was last used on', async () => {
     seedRegistry(['home'])
+    appIsOn('home')
     __testing.rememberProfile('home', 'work')
 
     await restoreLaunchConnection(true)
@@ -392,6 +458,7 @@ describe('restoreLaunchConnection', () => {
 
   it("takes a never-used row's own profile from Rust, and keeps `default` once a person chose it", async () => {
     seedRegistry(['box'])
+    appIsOn('box')
     // Rust's fallback: no profile named → the row's `remote_profile`.
     invoke.mockImplementation(async (command: string, args: { connectionId?: string; profile?: null | string } = {}) =>
       command === 'connections_resolve'
@@ -401,7 +468,7 @@ describe('restoreLaunchConnection', () => {
             dialConnectionId: args.connectionId,
             profile: args.profile ?? 'work'
           }
-        : $connectionsRegistry.get()
+        : (rustSourceCommand(command, args.connectionId) ?? $connectionsRegistry.get())
     )
 
     await restoreLaunchConnection(true)
@@ -417,58 +484,6 @@ describe('restoreLaunchConnection', () => {
 
     expect(invoke).toHaveBeenCalledWith('connections_resolve', { connectionId: 'box', profile: 'default' })
     expect($activeConnection.get()?.profile).toBe('default')
-  })
-
-  // Launch mode `primary`: a window booting alongside the owner read `lastUsed`
-  // before the owner's write landed, and sits on the old source.
-  it('tells the other windows where the owner launched, once the write has landed, when the launch mode moved it', async () => {
-    seedRegistry(['home', 'studio'], { lastUsed: 'studio', launchMode: 'primary' })
-
-    const write = gated($connectionsRegistry.get())
-
-    invoke.mockImplementation(async (command: string, args: { connectionId?: string } = {}) => {
-      if (command === 'connections_resolve') {
-        return { ...RESOLVED, connectionId: args.connectionId, dialConnectionId: args.connectionId }
-      }
-
-      return command === 'connections_set_last_used' ? write.pending : $connectionsRegistry.get()
-    })
-
-    await restoreLaunchConnection(true)
-
-    expect($activeConnection.get()?.connectionId).toBe('home')
-    expect(broadcastGatewaySwitch).not.toHaveBeenCalled()
-
-    write.open()
-    await vi.waitFor(() => expect(broadcastGatewaySwitch).toHaveBeenCalledTimes(1))
-
-    expect(broadcastGatewaySwitch).toHaveBeenCalledWith(
-      'remote',
-      { connectionId: 'home', mode: 'remote' },
-      expect.any(Number)
-    )
-  })
-
-  it('says nothing when the owner launched where every window reads', async () => {
-    seedRegistry(['home', 'studio'], { lastUsed: 'studio' })
-
-    await restoreLaunchConnection(true)
-    await Promise.resolve()
-
-    expect(broadcastGatewaySwitch).not.toHaveBeenCalled()
-  })
-
-  it("converges a window that launched on the stale source onto the owner's launch", async () => {
-    seedRegistry(['home', 'studio'], { lastUsed: 'studio', launchMode: 'primary' })
-
-    await restoreLaunchConnection(false)
-
-    expect($activeConnection.get()?.connectionId).toBe('studio')
-
-    // The owner's launch commit, as the sync listener hands it over.
-    await followConnection('home', { at: Date.now(), origin: 'owner' })
-
-    expect($activeConnection.get()?.connectionId).toBe('home')
   })
 
   it("leaves the switcher's own restore with nothing to re-home", async () => {
@@ -487,19 +502,17 @@ describe('selectConnection', () => {
     seedRegistry([LOCAL_CONNECTION_ID, 'studio'])
   })
 
-  it('commits in order: publish → remember → persist → dispose → broadcast → emit → land', async () => {
+  it('commits in order: remember → commit → publish → dispose → emit → land', async () => {
     await selectConnection('studio')
 
-    // `remember` before `broadcast` and `emit`: a following peer builds its
-    // identity from that memory.
-    expect(order).toEqual(['publish:studio', 'remember', 'persist', 'dispose', 'broadcast', 'emit', 'land'])
+    // `remember` before `commit`: Rust tells the peers as it commits, and a peer
+    // builds its identity from that memory.
+    expect(order).toEqual(['remember', 'commit', 'publish:studio', 'dispose', 'emit', 'land'])
     expect($activeConnection.get()).toMatchObject({ connectionId: 'studio', label: 'Studio' })
     expect(disposeSecondariesForConnection).toHaveBeenCalledWith('studio')
-    expect(broadcastGatewaySwitch).toHaveBeenCalledWith(
-      'remote',
-      { connectionId: 'studio', mode: 'remote' },
-      expect.any(Number)
-    )
+    expect(invoke).toHaveBeenCalledWith('connections_commit_source', { connectionId: 'studio' })
+    // Remembering the row is the commit's, in Rust. Nothing here writes it.
+    expect(invoke).not.toHaveBeenCalledWith('connections_set_last_used', expect.anything())
     expect(keepSession).toHaveBeenCalledTimes(1)
     expect($pendingConnectionId.get()).toBeNull()
   })
@@ -512,7 +525,7 @@ describe('selectConnection', () => {
 
     await selectConnection('studio')
 
-    expect(order).toEqual(['publish:studio', 'remember', 'persist', 'dispose', 'broadcast', 'emit', 'land', 'release'])
+    expect(order).toEqual(['remember', 'commit', 'publish:studio', 'dispose', 'emit', 'land', 'release'])
     // The tunnel's own base, and no token: Rust attaches it by base.
     expect($activeConnection.get()?.connection).toEqual({
       authMode: 'token',
@@ -532,7 +545,7 @@ describe('selectConnection', () => {
 
     expect($activeConnection.get()?.connectionId).toBe('old')
     expect(order).toEqual([])
-    expect(invoke).not.toHaveBeenCalledWith('connections_set_last_used', expect.anything())
+    expect(invoke).not.toHaveBeenCalledWith('connections_commit_source', expect.anything())
     expect($pendingConnectionId.get()).toBeNull()
   })
 
@@ -593,6 +606,41 @@ describe('selectConnection', () => {
     expect(acquireTunnel).toHaveBeenLastCalledWith('studio', expect.objectContaining({ interactive: false }))
   })
 
+  // S2: a switcher click prompted for the passphrase and kept nothing, so Rust's
+  // first background redial after its linger was refused as needing a person.
+  it('keeps what a person answers an interactive tunnel preflight, for as long as that dial', async () => {
+    const stop = vi.fn(() => void order.push('stop-keeping'))
+
+    rust(SSH)
+    acquireTunnel.mockImplementation(async () => (order.push('dial'), lease()))
+    keepTunnelAnswers.mockImplementation((_connectionId: string, attemptId = 'attempt-kept') => ({ attemptId, stop }))
+
+    await selectConnection('studio')
+
+    // Listening under the attempt the dial prompts on, before it starts.
+    expect(keepTunnelAnswers).toHaveBeenCalledExactlyOnceWith('studio', undefined)
+    expect(acquireTunnel).toHaveBeenLastCalledWith('studio', {
+      attemptId: 'attempt-kept',
+      interactive: true,
+      label: 'Studio'
+    })
+    expect(order.slice(0, 2)).toEqual(['dial', 'stop-keeping'])
+
+    // A failed dial stops listening too…
+    publishActiveConnection(null)
+    acquireTunnel.mockRejectedValue({ kind: 'cancelled', terminal: true })
+    await selectConnection('studio', { attemptId: 'attempt-1' }).catch(() => {})
+
+    expect(keepTunnelAnswers).toHaveBeenLastCalledWith('studio', 'attempt-1')
+    expect(stop).toHaveBeenCalledTimes(2)
+
+    // …and a dial nobody is behind cannot be asked anything, so keeps nothing.
+    keepTunnelAnswers.mockClear()
+    await selectConnection('studio', { allowInteractive: false }).catch(() => {})
+
+    expect(keepTunnelAnswers).not.toHaveBeenCalled()
+  })
+
   // Finding 5: a rejected `invoke` is a bare Rust string that quotes the URL.
   it('throws a URL preflight failure as copy, never as the text Rust gave', async () => {
     onOld()
@@ -644,16 +692,18 @@ describe('selectConnection', () => {
     expect($activeConnection.get()).toBeNull()
   })
 
-  it('is a no-op except for lastUsed when the same source is re-clicked', async () => {
+  it('re-commits the row and does nothing else when the same source is re-clicked', async () => {
     await selectConnection('studio')
     order.length = 0
     authenticate.mockClear()
 
     await selectConnection('studio')
 
-    // A re-dial would drop a live socket for nothing.
+    // A re-dial would drop a live socket for nothing. Still a commit: Rust
+    // remembers the row, and a peer's switch on its way here loses to the click.
     expect(authenticate).not.toHaveBeenCalled()
-    expect(order).toEqual(['persist'])
+    expect(order).toEqual(['commit'])
+    expect(rustSource).toEqual({ connectionId: 'studio', dialSeq: 2, seq: 3 })
   })
 
   it('re-runs the switch onto the same source when its row was just saved', async () => {
@@ -662,7 +712,7 @@ describe('selectConnection', () => {
 
     await selectConnection('studio', { reapply: true })
 
-    expect(order).toEqual(['publish:studio', 'remember', 'persist', 'dispose', 'broadcast', 'emit', 'land'])
+    expect(order).toEqual(['remember', 'commit', 'publish:studio', 'dispose', 'emit', 'land'])
   })
 
   it('lands on the profile the fleet rail named, the same source included', async () => {
@@ -689,17 +739,24 @@ describe('selectConnection', () => {
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ kind: 'warning' }))
   })
 
-  it('does not let a set_last_used failure fail the switch', async () => {
+  // A full disk is Rust's to swallow (`commit_source`). What it REFUSES — the row
+  // went while the preflight ran — fails the switch, and never in Rust's words.
+  it("fails the switch in this app's words when Rust refuses the commit", async () => {
+    onOld()
     invoke.mockImplementation(async (command: string) => {
-      if (command === 'connections_set_last_used') {
-        throw new Error('read-only disk')
+      if (command === 'connections_commit_source') {
+        throw { kind: 'not-found', message: 'no gateway with id "studio"' }
       }
 
       return command === 'connections_resolve' ? RESOLVED : undefined
     })
 
-    await expect(selectConnection('studio')).resolves.toBeUndefined()
-    expect($activeConnection.get()?.connectionId).toBe('studio')
+    const failure = (await selectConnection('studio').catch((error: unknown) => error)) as Error
+
+    expect(failure.message).toBe('Could not reach this gateway.')
+    expect(failure.cause).toBeUndefined()
+    expect($activeConnection.get()?.connectionId).toBe('old')
+    expect($pendingConnectionId.get()).toBeNull()
   })
 
   it('lets a LATER click own the outcome while an earlier preflight is pending', async () => {
@@ -721,7 +778,7 @@ describe('selectConnection', () => {
     invoke.mockImplementation(async (command: string, args: { connectionId?: string }) =>
       command === 'connections_resolve'
         ? { ...(args.connectionId === 'studio' ? SSH : RESOLVED), connectionId: args.connectionId, label: 'Row' }
-        : undefined
+        : (rustSourceCommand(command, args?.connectionId) ?? undefined)
     )
 
     const first = selectConnection('studio')
@@ -734,7 +791,7 @@ describe('selectConnection', () => {
     // The slow preflight passed, but its revision is stale: it publishes nothing,
     // remembers nothing, and still gives its tunnel back.
     expect($activeConnection.get()?.connectionId).toBe(LOCAL_CONNECTION_ID)
-    expect(invoke).not.toHaveBeenCalledWith('connections_set_last_used', { connectionId: 'studio' })
+    expect(invoke).not.toHaveBeenCalledWith('connections_commit_source', { connectionId: 'studio' })
     expect(emitConnectionApplied).toHaveBeenCalledTimes(1)
     expect(slow.release).toHaveBeenCalledTimes(1)
   })
@@ -744,8 +801,7 @@ describe('selectConnection', () => {
     const slow = lease()
     const gate = gated(slow)
 
-    onOld()
-    order.length = 0
+    await onOldAsRustHasIt()
     rust(SSH)
     acquireTunnel.mockImplementation(() => gate.pending)
 
@@ -763,7 +819,7 @@ describe('selectConnection', () => {
 
     expect($activeConnection.get()?.connectionId).toBe('old')
     expect(emitConnectionApplied).not.toHaveBeenCalled()
-    expect(broadcastGatewaySwitch).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalledWith('connections_commit_source', { connectionId: 'studio' })
     expect(slow.release).toHaveBeenCalledTimes(1)
   })
 
@@ -771,7 +827,7 @@ describe('selectConnection', () => {
   it('says nothing about the failure of a switch the person backed out of', async () => {
     let fail: (reason: unknown) => void = () => {}
 
-    onOld()
+    await onOldAsRustHasIt()
     rust(SSH)
     acquireTunnel.mockImplementation(() => new Promise((_resolve, reject) => void (fail = reject)))
 
@@ -784,8 +840,8 @@ describe('selectConnection', () => {
     await expect(pending).resolves.toBeUndefined()
   })
 
-  // Finding 4: the follow bumps the revision, so the select's `finally` steps aside.
-  it("takes the spinner down when a peer's switch supersedes a local one", async () => {
+  // Finding 4: the apply supersedes the preflight, so the select's `finally` steps aside.
+  it("takes the spinner down when a peer's commit supersedes a local switch", async () => {
     const gate = gated(lease())
 
     onOld()
@@ -793,14 +849,14 @@ describe('selectConnection', () => {
     invoke.mockImplementation(async (command: string, args: { connectionId?: string } = {}) =>
       command === 'connections_resolve'
         ? { ...(args.connectionId === 'studio' ? SSH : RESOLVED), connectionId: args.connectionId }
-        : undefined
+        : (rustSourceCommand(command, args.connectionId) ?? undefined)
     )
     acquireTunnel.mockImplementation(() => gate.pending)
 
     const pending = selectConnection('studio')
 
     await vi.waitFor(() => expect(acquireTunnel).toHaveBeenCalled())
-    await followConnection('lab')
+    await applySource({ connectionId: 'lab', dialSeq: 9, seq: 9 })
 
     expect($pendingConnectionId.get()).toBeNull()
 
@@ -809,6 +865,8 @@ describe('selectConnection', () => {
 
     expect($pendingConnectionId.get()).toBeNull()
     expect($activeConnection.get()?.connectionId).toBe('lab')
+    // The superseded preflight passed, and committed nothing.
+    expect(invoke).not.toHaveBeenCalledWith('connections_commit_source', expect.anything())
   })
 
   // 8i — desktop's select also lands the window on its target, so nothing of
@@ -853,16 +911,21 @@ describe('selectConnection', () => {
   })
 })
 
-// A peer window switched: same source here, by identity alone.
-describe('followConnection', () => {
+// Rust committed a source this window did not: same source here, by identity alone.
+describe('applySource', () => {
   beforeEach(() => {
-    seedRegistry([LOCAL_CONNECTION_ID, 'studio'])
+    seedRegistry([LOCAL_CONNECTION_ID, 'studio', 'lab'])
+    invoke.mockImplementation(async (command: string, args: { connectionId?: string; profile?: string } = {}) =>
+      command === 'connections_resolve'
+        ? { ...RESOLVED, connectionId: args.connectionId, profile: args.profile ?? undefined }
+        : undefined
+    )
     onOld()
     order.length = 0
   })
 
-  it('re-homes locally — no preflight, nothing remembered, nothing re-broadcast', async () => {
-    await followConnection('studio')
+  it('re-homes locally — no preflight, nothing remembered, no commit', async () => {
+    await expect(applySource({ connectionId: 'studio', dialSeq: 2, seq: 2 })).resolves.toBe(true)
 
     // (`remember` would be the re-read of the profile memory, which is not a write.)
     expect(order.filter(step => step !== 'remember')).toEqual(['publish:studio', 'dispose', 'emit', 'land'])
@@ -872,85 +935,101 @@ describe('followConnection', () => {
     expect(authenticate).not.toHaveBeenCalled()
     expect(acquireTunnel).not.toHaveBeenCalled()
     expect(keepSession).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalledWith('connections_commit_source', expect.anything())
   })
 
   it('re-reads the last-profile store, which the switching window just wrote', async () => {
     // This page loaded before the other window remembered `work`.
     localStorage.setItem('hermes.connections.lastProfileByConnection', JSON.stringify({ studio: 'work' }))
 
-    await followConnection('studio')
+    await applySource({ connectionId: 'studio', dialSeq: 2, seq: 2 })
 
     expect(invoke).toHaveBeenCalledWith('connections_resolve', { connectionId: 'studio', profile: 'work' })
     expect(lastProfileFor('studio')).toBe('work')
   })
 
-  it('does nothing when this window is already there', async () => {
-    await followConnection('old')
+  it('drops a source no newer than the one it has applied: a replay, the older half of a crossed pair', async () => {
+    await applySource({ connectionId: 'studio', dialSeq: 5, seq: 5 })
 
-    expect(order).toEqual([])
-  })
-})
-
-// 8b — two windows select different rows within milliseconds: each publishes and
-// broadcasts, then each hears the other. Without an order they swap.
-describe('two crossed switches', () => {
-  beforeEach(() => {
-    seedRegistry([LOCAL_CONNECTION_ID, 'studio', 'lab'])
-    invoke.mockImplementation(async (command: string, args: { connectionId?: string } = {}) =>
-      command === 'connections_resolve' ? { ...RESOLVED, connectionId: args.connectionId } : undefined
-    )
-  })
-
-  it('orders any two commits the same way at both ends', () => {
-    const early = { at: 100, origin: 'b' }
-    const late = { at: 101, origin: 'a' }
-
-    expect(isNewerCommit(late, early)).toBe(true)
-    expect(isNewerCommit(early, late)).toBe(false)
-    // The same instant: the origin decides, and only one of the pair is newer.
-    expect(isNewerCommit({ at: 100, origin: 'b' }, { at: 100, origin: 'a' })).toBe(true)
-    expect(isNewerCommit({ at: 100, origin: 'a' }, { at: 100, origin: 'b' })).toBe(false)
-    expect(isNewerCommit(early, early)).toBe(false)
-  })
-
-  it('ignores the older half of a crossed pair, and follows the newer one', async () => {
-    await selectConnection('studio')
-
-    const mine = lastStamp()
-
-    // The peer committed `lab` BEFORE this window committed `studio`; its
-    // broadcast crossed ours. This window is the later one: it stays, and the
-    // peer — comparing the same two stamps — follows `studio`.
-    await followConnection('lab', { at: mine.at - 1, origin: 'peer' })
+    await expect(applySource({ connectionId: 'lab', dialSeq: 5, seq: 5 })).resolves.toBe(false)
+    await expect(applySource({ connectionId: 'lab', dialSeq: 4, seq: 4 })).resolves.toBe(false)
 
     expect($activeConnection.get()?.connectionId).toBe('studio')
 
-    // The same instant: the origin breaks the tie, the same way at both ends.
-    await followConnection('lab', { at: mine.at, origin: '' })
-
-    expect($activeConnection.get()?.connectionId).toBe('studio')
-
-    await followConnection('lab', { at: mine.at, origin: `${mine.origin}~` })
+    await applySource({ connectionId: 'lab', dialSeq: 6, seq: 6 })
 
     expect($activeConnection.get()?.connectionId).toBe('lab')
   })
 
-  it('stamps a commit made after hearing a peer as newer than it, whatever the clock says', async () => {
-    const future = Date.now() + 60_000
+  it('does nothing on the row it is already on — until that row has had to be re-dialled', async () => {
+    await applySource({ connectionId: 'studio', dialSeq: 2, seq: 2 })
+    order.length = 0
 
-    await followConnection('lab', { at: future, origin: 'peer' })
-    await selectConnection('studio')
+    // A peer re-applied the row, or clicked another of its profiles.
+    await expect(applySource({ connectionId: 'studio', dialSeq: 2, seq: 3 })).resolves.toBe(false)
+    expect(order).toEqual([])
 
-    expect(lastStamp().at).toBeGreaterThan(future)
-    expect(isNewerCommit(lastStamp(), { at: future, origin: 'peer' })).toBe(true)
+    // Its dial fields were edited: every window on it re-dials.
+    await expect(applySource({ connectionId: 'studio', dialSeq: 4, seq: 4 })).resolves.toBe(true)
+    expect(order.filter(step => step !== 'remember')).toEqual(['publish:studio', 'dispose', 'emit', 'land'])
   })
 
-  it('does not replay a follow it has already heard', async () => {
-    await followConnection('lab', { at: 500, origin: 'peer' })
-    onOld()
-    await followConnection('lab', { at: 500, origin: 'peer' })
+  // S1: the newer source was recorded without superseding the older apply, which
+  // then landed last and left this window on a source no other window was on.
+  it('publishes nothing from an older apply that resolves after a newer one', async () => {
+    const slow = gated({ ...RESOLVED, connectionId: 'studio' })
+
+    await applySource({ connectionId: 'lab', dialSeq: 2, seq: 2 })
+    invoke.mockImplementation(async (command: string, args: { connectionId?: string } = {}) =>
+      args.connectionId === 'studio' ? slow.pending : { ...RESOLVED, connectionId: args.connectionId }
+    )
+
+    const older = applySource({ connectionId: 'studio', dialSeq: 3, seq: 3 })
+
+    // Back to the row the window never left — the early return of the bug.
+    await applySource({ connectionId: 'lab', dialSeq: 4, seq: 4 })
+    slow.open()
+
+    await expect(older).resolves.toBe(false)
+    expect($activeConnection.get()?.connectionId).toBe('lab')
+  })
+
+  it('leaves the source it had when no row is left to be on', async () => {
+    await expect(applySource({ connectionId: null, dialSeq: 2, seq: 2 })).resolves.toBe(true)
+
+    expect($activeConnection.get()).toBeNull()
+    expect(emitConnectionApplied).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays where it is when the row cannot be resolved, or the payload is not a source', async () => {
+    invoke.mockRejectedValue({ kind: 'not-found', message: 'no gateway with id "gone"' })
+
+    await expect(applySource({ connectionId: 'gone', dialSeq: 2, seq: 2 })).resolves.toBe(false)
+    await expect(applySource({ connectionId: 'studio' } as never)).resolves.toBe(false)
 
     expect($activeConnection.get()?.connectionId).toBe('old')
+  })
+})
+
+// The watcher is the only cross-window signal for the source.
+describe('startConnectionsWatcher', () => {
+  it("applies Rust's announcement of a source, and refreshes the roster on every change", async () => {
+    seedRegistry([LOCAL_CONNECTION_ID, 'studio'])
+    onOld()
+
+    const stop = startConnectionsWatcher()
+    const heard = listen.mock.calls.at(-1)?.[1] as (event: { payload: unknown }) => void
+
+    expect(listen.mock.calls.at(-1)?.[0]).toBe('hermes://connections-changed')
+
+    heard({ payload: { connectionId: 'studio', reason: 'saved' } })
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('connections_list', {}))
+    expect($activeConnection.get()?.connectionId).toBe('old')
+
+    heard({ payload: { connectionId: 'studio', dialSeq: 7, reason: 'source', seq: 7 } })
+    await vi.waitFor(() => expect($activeConnection.get()?.connectionId).toBe('studio'))
+
+    stop()
   })
 })
 
@@ -968,7 +1047,7 @@ describe('applyConnection', () => {
           return { ...RESOLVED, connectionId: args.connectionId }
         }
 
-        return $connectionsRegistry.get()
+        return rustSourceCommand(command, args.connectionId) ?? $connectionsRegistry.get()
       }
     )
   })
@@ -1035,6 +1114,19 @@ describe('the last-profile writer', () => {
     desktop.connection?.set(descriptor())
 
     expect(lastProfileFor('studio')).toBeNull()
+  })
+
+  // N6: every window of the origin writes the one key. A page that wrote the map
+  // it LOADED with wrote away whatever a peer had remembered since.
+  it("merges onto storage, so two windows do not write each other's entries away", () => {
+    const key = 'hermes.connections.lastProfileByConnection'
+
+    localStorage.setItem(key, JSON.stringify({ lab: 'play' }))
+
+    __testing.rememberProfile('studio', 'work')
+
+    expect(JSON.parse(localStorage.getItem(key) ?? '{}')).toEqual({ lab: 'play', studio: 'work' })
+    expect($lastProfileByConnection.get()).toEqual({ lab: 'play', studio: 'work' })
   })
 
   it('remembers nothing while no source is active', () => {

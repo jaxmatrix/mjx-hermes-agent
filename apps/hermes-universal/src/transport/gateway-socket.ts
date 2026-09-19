@@ -98,11 +98,18 @@ type SocketListener = (event: SocketEvent) => void
  *     `lastCloseCode` is how the supervisor tells a refused credential
  *     (4401/4403) from a drop.
  *
- * A local `close()` between the two says the one `close` itself, code-less.
+ * A local `close()` between the two says the one `close` itself, code-less —
+ * and so does `CLOSE_AFTER_ERROR_MS` running out. "Always follows" is the
+ * transport's promise, not this socket's: the shared client learns of a death
+ * from `close` alone, and one that never came would leave it never reconnecting.
  *
  * The tunnel moving to a later generation, or no longer serving the lease, ends
  * the socket (`gateway-secondaries.ts`'s rule): the owner's next dial re-mints.
  */
+/** How long the transport's `close` may trail its `error`. It is dispatched in
+ *  the same turn or the next event; this is only the bound on never. */
+const CLOSE_AFTER_ERROR_MS = 2_000
+
 class TunnelGatewaySocket {
   readonly CONNECTING = 0
   readonly OPEN = 1
@@ -115,6 +122,7 @@ class TunnelGatewaySocket {
   private lease: null | TunnelLease = null
   private released = false
   private ended = false
+  private closeOverdue: ReturnType<typeof setTimeout> | undefined
   private sendQueue: string[] = []
   private unsubscribe: (() => void)[] = []
   private readonly listeners = new Map<string, Set<SocketListener>>()
@@ -183,6 +191,7 @@ class TunnelGatewaySocket {
       if (!this.ended) {
         this.readyState = this.CLOSING
         this.letGo()
+        this.closeOverdue ??= setTimeout(() => this.end(), CLOSE_AFTER_ERROR_MS)
       }
     })
     inner.addEventListener('close', event => this.end(event))
@@ -216,6 +225,7 @@ class TunnelGatewaySocket {
 
     this.ended = true
     this.readyState = this.CLOSED
+    clearTimeout(this.closeOverdue)
     this.letGo()
     this.inner?.close()
     this.dispatch(event)

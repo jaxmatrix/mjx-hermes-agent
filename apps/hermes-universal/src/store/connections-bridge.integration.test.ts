@@ -3,13 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // A REAL select, the REAL `connection-applied` emitter and the REAL bridge, end
 // to end: what the boot hook reads when the switch tells it to soft-switch
 // (`profile.get`, `getConnection`) is the identity the select just published.
-// Only Rust (`invoke`), the tunnels and the peer broadcast channel are faked —
-// the unit tests on either side each fake the other half.
+// Only Rust (`invoke`) and the tunnels are faked — the unit tests on either side
+// each fake the other half.
 
-const { acquireTunnel, invoke, rows } = vi.hoisted(() => ({
+const { acquireTunnel, invoke, rows, source } = vi.hoisted(() => ({
   acquireTunnel: vi.fn(),
   invoke: vi.fn(),
-  rows: new Map<string, Record<string, unknown>>()
+  rows: new Map<string, Record<string, unknown>>(),
+  /** Rust's book: where the app is, and the order of its commits. */
+  source: { connectionId: null as null | string, dialSeq: 1, seq: 1 }
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
@@ -19,6 +21,7 @@ vi.mock('@/store/connection-tunnels', async () => ({
   $tunnelStatus: (await import('nanostores')).map({}),
   acquireTunnel,
   connectionBase: vi.fn(),
+  keepTunnelAnswers: (_connectionId: string, attemptId = 'attempt-1') => ({ attemptId, stop: vi.fn() }),
   liveTunnelBase: vi.fn(() => null),
   openTunnelPage: vi.fn(),
   setTunnelAnswerSaver: vi.fn()
@@ -54,6 +57,7 @@ beforeEach(() => {
   __testing.reset()
   publishActiveConnection(null)
   rows.clear()
+  Object.assign(source, { connectionId: null, dialSeq: 1, seq: 1 })
   rows.set('home', { baseUrl: 'https://home.test', kind: 'remote', mode: 'remote' })
   // An SSH row migrated with a profile of its own (`remote_profile`).
   rows.set('box', { kind: 'ssh', mode: 'ssh', remoteHost: 'me@box', remoteProfile: 'work' })
@@ -78,6 +82,19 @@ beforeEach(() => {
         profile: args.profile ?? remoteProfile,
         tokenAttached: false
       }
+    }
+
+    if (command === 'connections_current_source') {
+      return { ...source, connectionId: [...rows.keys()][0] ?? null }
+    }
+
+    if (command === 'connections_commit_source') {
+      const moved = source.connectionId !== args.connectionId
+
+      source.seq += 1
+      Object.assign(source, { connectionId: args.connectionId, dialSeq: moved ? source.seq : source.dialSeq })
+
+      return { ...source }
     }
 
     // An ungated gateway's status probe.

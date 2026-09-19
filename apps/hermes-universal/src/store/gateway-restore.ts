@@ -1,3 +1,5 @@
+import { invoke } from '@tauri-apps/api/core'
+
 import { isGatewayReauthRequired, isGatewaySignInBusy, isGatewaySignInRequired } from '@/gateway'
 import { oauthStatus } from '@/lib/auth'
 import { loadString, removeKey, saveString } from '@/lib/persist'
@@ -15,7 +17,6 @@ import {
 } from '@/store/connection'
 import type { GatewayMode } from '@/store/gateway-config'
 import { $gatewayMode } from '@/store/gateway-mode'
-import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
 
 // Auto-connect on restart (D8). The live connection ($connection/$connectionPhase)
 // is memory-only, so without this the app always cold-boots to the connect screen
@@ -142,12 +143,15 @@ export interface PendingOAuth {
    * install means coming back on the wrong machine.
    */
   connectionId?: string
+  /** Names THIS sign-in, and nothing else: what a window claims it by
+   *  (`claimPendingOAuth`). Absent on a marker an older build left. */
+  nonce?: string
 }
 
 /** Queue an OAuth resume for the next boot (best-effort). Mobile only. */
 export function savePendingOAuth(pending: PendingOAuth): void {
   try {
-    saveString(PENDING_OAUTH_KEY, JSON.stringify(pending))
+    saveString(PENDING_OAUTH_KEY, JSON.stringify({ ...pending, nonce: crypto.randomUUID() }))
   } catch {
     // storage disabled — resume simply won't fire (the user taps sign-in again).
   }
@@ -156,19 +160,44 @@ export function savePendingOAuth(pending: PendingOAuth): void {
 /** Read AND clear the pending marker (one-shot), or null when absent/malformed. */
 export function takePendingOAuth(): PendingOAuth | null {
   const raw = loadString(PENDING_OAUTH_KEY)
+
   removeKey(PENDING_OAUTH_KEY)
 
-  if (!raw) {
-    return null
-  }
+  return parsePendingOAuth(raw)
+}
 
+function parsePendingOAuth(raw: null | string): PendingOAuth | null {
   try {
-    const parsed = JSON.parse(raw) as PendingOAuth
+    const parsed = JSON.parse(raw || 'null') as PendingOAuth | null
 
     return typeof parsed?.base === 'string' && parsed.base ? parsed : null
   } catch {
     return null
   }
+}
+
+/**
+ * `takePendingOAuth` for a boot every window runs: the marker is in storage all
+ * of them read, and a read-then-remove there is two steps, so two windows
+ * booting together could both resume the one sign-in. Rust decides who has it
+ * (`connections_claim_resume`, first caller wins); only the winner clears it.
+ * A marker with no nonce (an older build's) falls back to the plain take.
+ */
+export async function claimPendingOAuth(): Promise<PendingOAuth | null> {
+  const pending = parsePendingOAuth(loadString(PENDING_OAUTH_KEY))
+
+  if (!pending?.nonce) {
+    return takePendingOAuth()
+  }
+
+  // No Rust to ask (a browser): this page is the only one there is.
+  if (!(await invoke<boolean>('connections_claim_resume', { marker: pending.nonce }).catch(() => true))) {
+    return null
+  }
+
+  removeKey(PENDING_OAUTH_KEY)
+
+  return pending
 }
 
 /**
@@ -248,7 +277,7 @@ export function cancelRestore(): void {
  * The one place that knows how to turn a persisted target back into a live
  * connection, for all four modes. Three callers share it: the boot restore below,
  * the rollback of a failed gateway switch, and a follower WebView re-homing onto
- * the gateway another WebView just switched to (store/gateway-switch-sync.ts).
+ * the gateway another WebView just switched to.
  *
  * Sets `$gatewayMode` from the target, so a failed dial lands on the right connect
  * surface and a rollback puts the mode selection back where it was.
@@ -324,8 +353,8 @@ export async function autoRestoreConnection(): Promise<void> {
       // The sign-in was for a REGISTERED source: finish on that one rather than
       // re-dialling its URL as an anonymous remote (MJXHRM-446 §8.5). The source
       // was saved BEFORE the navigation, so it is already in the registry — and
-      // `selectConnection` broadcasts the switch itself, which is what re-homes
-      // the other WebViews (on Android, Settings runs in its own activity).
+      // `selectConnection` commits the switch through Rust, which is what
+      // re-homes the other WebViews (on Android, Settings runs in its own activity).
       if (pending.connectionId) {
         try {
           // Imported lazily: `store/connections.ts` reads `loadGatewayTarget`
@@ -345,17 +374,6 @@ export async function autoRestoreConnection(): Promise<void> {
 
       try {
         await connect({ url: pending.base, username: pending.username })
-        // Only the ONE WebView the sign-in navigated came back on the new gateway — and
-        // it need not be the shell: on Android, Settings runs in its own activity, so a
-        // switch driven from there leaves MainActivity serving the gateway we just left.
-        // This is the same broadcast the configurator makes for a switch that completed
-        // without a round-trip (the resume can't use it — the navigation destroyed that
-        // JS context mid-`softSwitchGateway`).
-        const target = loadGatewayTarget()
-
-        if (target) {
-          broadcastGatewaySwitch('remote', target, Date.now())
-        }
       } catch {
         // connect() already set $connectionError + phase; connect screen surfaces it.
       } finally {

@@ -55,6 +55,7 @@ import {
   connectionBase,
   connectTunnel,
   isTunnelSignInError,
+  keepTunnelAnswers,
   needsInteraction,
   openTunnelPage,
   setTunnelAnswerSaver,
@@ -562,6 +563,37 @@ describe('acquireTunnel', () => {
 
       expect(saved).toEqual([['ssh1', { passphrase: 'open sesame' }]])
       expect(answerListeners.size).toBe(0)
+    })
+  })
+
+  // The one keeper a tunnel's Connect and a switch's preflight share (S2).
+  describe('keepTunnelAnswers', () => {
+    it("keeps its own attempt's passphrase or password, until it is stopped", () => {
+      const saved: unknown[] = []
+      const off = setTunnelAnswerSaver(async (connectionId, answer) => saved.push([connectionId, answer]))
+
+      const answer = (attemptId: string, kind: string, text: string) =>
+        [...answerListeners].forEach(listener => listener({ attemptId, kind }, text))
+
+      try {
+        const minted = keepTunnelAnswers('ssh1')
+        const named = keepTunnelAnswers('ssh2', 'attempt-9')
+
+        expect([minted.attemptId, named.attemptId]).toEqual(['attempt-7', 'attempt-9'])
+
+        answer('attempt-9', 'password', 'hunter2')
+        answer('attempt-9', 'keyboard-interactive', '123456')
+        answer('attempt-9', 'passphrase', '')
+        named.stop()
+        answer('attempt-9', 'password', 'too late')
+
+        expect(saved).toEqual([['ssh2', { password: 'hunter2' }]])
+
+        minted.stop()
+        expect(answerListeners.size).toBe(0)
+      } finally {
+        off()
+      }
     })
   })
 

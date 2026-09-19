@@ -46,7 +46,7 @@ function ChatTileHost() {
   const navigate = useNavigate()
   const { t } = useI18n()
   const phase = useStore($connectionPhase)
-  // This window re-homes when another WebView switches gateway (store/gateway-switch-sync).
+  // This window re-homes when another WebView switches gateway (`applySource`, store/connections).
   // Hold the chat across that window rather than blanking to an empty pane for the
   // second the socket is down — the same tolerance the other two roots carry.
   const switching = useStore($gatewaySwitching)

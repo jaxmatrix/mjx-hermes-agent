@@ -132,7 +132,8 @@ export const ja = defineLocale({
       gatewayConnectionLostDetail:
         'Still retrying in the background. You can keep reading and drafting — open Gateway settings if this persists.',
       gatewaySignInRequired: 'ゲートウェイへのサインインが必要です',
-      needsUnlock: '保存済みのサインイン情報を Hermes が使えるよう、このデバイスのロックを解除してから再試行してください。',
+      needsUnlock:
+        'このデバイスの資格情報ストアのロックが解除されるまで、Hermes は保存済みのサインイン情報を読み取れません。ロックを解除してから再試行してください。',
       ipcBridgeUnavailable: 'デスクトップ IPC ブリッジが利用できません。'
     },
     failure: {

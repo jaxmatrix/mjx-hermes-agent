@@ -15,7 +15,6 @@ const { calls, platform, state } = vi.hoisted(() => ({
 
 const lever = (name: string) => vi.fn(() => void calls.push(name))
 
-vi.mock('./store/gateway-switch-sync', () => ({}))
 vi.mock('./lib/platform', () => ({
   get IS_MOBILE() {
     return platform.mobile
@@ -135,16 +134,18 @@ describe('bootUniversal', () => {
 
   // `main.tsx` calls this before `createRoot`: a lever that threw past it was a
   // white screen.
-  it('lets one lever fail without stopping the rest, and says which — never what it said', async () => {
+  it('lets one lever fail without stopping the rest, and says which, with its stack', async () => {
     const { installObservability } = await import('./observability/install')
     const { openTunnelPage } = await import('./store/connection-tunnels')
     const reported = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const noExporter = new TypeError('no such exporter')
+    const noEpoch = new Error('this page has no tunnel epoch')
 
     vi.mocked(installObservability).mockImplementationOnce(() => {
-      throw new TypeError('no such exporter')
+      throw noExporter
     })
     vi.mocked(openTunnelPage).mockImplementationOnce(() => {
-      throw new Error('could not reach https://gw.example.com')
+      throw noEpoch
     })
     platform.mobile = true
 
@@ -160,10 +161,32 @@ describe('bootUniversal', () => {
       'initSafeAreaInsets'
     ])
     expect(document.documentElement.classList.contains('is-mobile')).toBe(true)
+    // A bare name says which lever and nothing about why.
     expect(reported.mock.calls).toEqual([
-      ['[boot] observability failed', 'TypeError'],
-      ['[boot] tunnel page failed', 'Error']
+      ['[boot] observability failed', noExporter.stack],
+      ['[boot] tunnel page failed', noEpoch.stack]
     ])
+    expect(noExporter.stack).toContain('no such exporter')
+    reported.mockRestore()
+  })
+
+  it('still snapshots the cookie jar when the lifecycle install failed, and reports the install', async () => {
+    const { initAppLifecycle } = await import('./store/app-lifecycle')
+    const reported = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    vi.mocked(initAppLifecycle).mockImplementationOnce(() => {
+      throw new Error('no document')
+    })
+
+    await boot()
+
+    expect(reported.mock.calls.map(call => call[0])).toEqual(['[boot] app lifecycle failed'])
+    expect(calls).toContain('onBackground')
+
+    calls.length = 0
+    state.background?.()
+
+    expect(calls).toEqual(['persistSessionCookies'])
     reported.mockRestore()
   })
 

@@ -169,7 +169,8 @@ export const en: Translations = {
       gatewayConnectionLostDetail:
         'Still retrying in the background. You can keep reading and drafting — open Gateway settings if this persists.',
       gatewaySignInRequired: 'Gateway sign-in required',
-      needsUnlock: 'Unlock this device so Hermes can use your saved sign-in, then retry.',
+      needsUnlock:
+        "Hermes can't read your saved sign-in until this device's credential store is unlocked. Unlock it, then retry.",
       ipcBridgeUnavailable: 'Desktop IPC bridge is unavailable.'
     },
     failure: {

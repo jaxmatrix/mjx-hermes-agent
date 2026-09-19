@@ -249,6 +249,57 @@ describe('a tunnelled socket', () => {
     expect(leases[0].release).toHaveBeenCalledTimes(1)
   })
 
+  // The shared client learns of a death from `close` alone (`json-rpc-gateway`):
+  // a transport `close` that never follows its `error` would strand it.
+  it("says the one code-less close itself when the transport's never follows its error", async () => {
+    const socket = openGatewaySocket(TUNNEL)
+    const codes = closeCodes(socket)
+    const [args] = await opened()
+
+    vi.useFakeTimers()
+
+    try {
+      emit(args.id, 'error', 'connection reset')
+      vi.advanceTimersByTime(1_999)
+
+      expect(codes).toEqual([])
+      expect(invokeMock).not.toHaveBeenCalledWith('ws_close', expect.anything())
+
+      vi.advanceTimersByTime(1)
+
+      expect(codes).toEqual([undefined])
+      expect(socket.readyState).toBe(3)
+      expect(invokeMock).toHaveBeenCalledWith('ws_close', { id: args.id })
+
+      // Late, and nobody's any more: one close, one release.
+      emit(args.id, 'close', { code: 4401 })
+      vi.advanceTimersByTime(10_000)
+
+      expect(codes).toEqual([undefined])
+      expect(leases[0].release).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not say a second close once the real one arrived in time', async () => {
+    const socket = openGatewaySocket(TUNNEL)
+    const codes = closeCodes(socket)
+    const [args] = await opened()
+
+    vi.useFakeTimers()
+
+    try {
+      emit(args.id, 'error', 'connection reset')
+      emit(args.id, 'close', { code: 4401 })
+      vi.advanceTimersByTime(10_000)
+
+      expect(codes).toEqual([4401])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('releases once when the connect never opens', async () => {
     invokeMock.mockImplementation(async command => {
       if (command === 'ws_open') {
