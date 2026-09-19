@@ -14,6 +14,10 @@
  *    second dial, and the launch profile is `default` — what `local_backend.rs`
  *    and the SSH bootstrap both spawn.
  *
+ * The socket itself has no profile, so a URL minted for any other profile says
+ * so (`withSocketProfile`) and `HermesGateway` names it per RPC: a secondary on
+ * another connection, or a window opened on a profile of its own.
+ *
  * No descriptor carries a token. A URL a gateway may dial is recorded with
  * `recordGatewayMint`, and Rust attaches the credential on `ws_open`.
  */
@@ -30,7 +34,8 @@ import { errorText } from '@/lib/error-text'
 import { IS_MOBILE } from '@/lib/platform'
 import { onForeground } from '@/store/app-lifecycle'
 import { type Connection, type GatewayMode, resolveWsUrl, ticketMintDeps } from '@/store/gateway-config'
-import { recordGatewayMint } from '@/transport/gateway-socket'
+import { withSocketProfile } from '@/transport/gateway-profile'
+import { type GatewayMint, recordGatewayMint } from '@/transport/gateway-socket'
 
 type Bridge = NonNullable<typeof window.hermesDesktop>
 
@@ -54,6 +59,8 @@ interface Dial {
   /** The handshake needs a fresh single-use ticket (OAuth or password login). */
   gated: boolean
   kind: GatewayMode
+  /** What every URL of this dial is recorded as. */
+  mint: GatewayMint
   remoteHost?: string
   /** Recorded, and ticketless: what an ungated or token connection dials. */
   wsUrl: string
@@ -98,11 +105,20 @@ async function tunnelDial(connectionId: string, row: ResolvedRow): Promise<Dial>
   })
 
   try {
+    const mint = { connectionId, label: row.label, tunnel: true }
     const wsUrl = lease.wsUrl()
 
-    recordGatewayMint(wsUrl, { connectionId, label: row.label, tunnel: true })
+    recordGatewayMint(wsUrl, mint)
 
-    return { baseUrl: lease.baseUrl(), connectionId, gated: false, kind: row.kind, remoteHost: row.remoteHost, wsUrl }
+    return {
+      baseUrl: lease.baseUrl(),
+      connectionId,
+      gated: false,
+      kind: row.kind,
+      mint,
+      remoteHost: row.remoteHost,
+      wsUrl
+    }
   } finally {
     lease.release()
   }
@@ -117,9 +133,19 @@ async function liveDial(connectionId: string, live: Connection): Promise<Dial> {
   const gated = isGated(live.authMode)
   const wsUrl = await resolveWsUrl(gated ? { ...live, authMode: 'none' } : live)
 
-  recordGatewayMint(wsUrl, { connectionId })
+  const mint = { connectionId }
 
-  return { baseUrl: live.baseUrl, connectionId, gated, kind: live.mode ?? 'remote', remoteHost: live.remoteHost, wsUrl }
+  recordGatewayMint(wsUrl, mint)
+
+  return {
+    baseUrl: live.baseUrl,
+    connectionId,
+    gated,
+    kind: live.mode ?? 'remote',
+    mint,
+    remoteHost: live.remoteHost,
+    wsUrl
+  }
 }
 
 async function resolveDial(connectionId: string, live?: Connection): Promise<Dial> {
@@ -148,9 +174,10 @@ async function resolveDial(connectionId: string, live?: Connection): Promise<Dia
     throw new Error('This connection has no gateway address')
   }
 
+  const mint = { connectionId }
   const wsUrl = await resolveWsUrl({ authMode: 'none', baseUrl: row.baseUrl })
 
-  recordGatewayMint(wsUrl, { connectionId })
+  recordGatewayMint(wsUrl, mint)
 
   return {
     baseUrl: row.baseUrl,
@@ -158,30 +185,48 @@ async function resolveDial(connectionId: string, live?: Connection): Promise<Dia
     // The live probe knows a gateway became gated before the saved row does.
     gated: isGated(row.authMode) || isGated(live?.authMode),
     kind: row.kind,
+    mint,
     remoteHost: row.remoteHost,
     wsUrl
   }
 }
 
+/**
+ * `wsUrl` as `profile`'s socket dials it. The launch profile's is as minted: an
+ * RPC naming no profile is already its own. Recorded again, because the ledger
+ * is keyed by URL.
+ */
+function profileWsUrl(dial: Dial, wsUrl: string, profile: string): string {
+  if (profile === LAUNCH_PROFILE) {
+    return wsUrl
+  }
+
+  const scoped = withSocketProfile(wsUrl, profile)
+
+  recordGatewayMint(scoped, dial.mint)
+
+  return scoped
+}
+
 /** The URL to dial NOW: a gated connection's ticket is single-use. */
-async function freshWsUrl(dial: Dial): Promise<string> {
+async function freshWsUrl(dial: Dial, profile: string): Promise<string> {
   if (!dial.gated) {
-    return dial.wsUrl
+    return profileWsUrl(dial, dial.wsUrl, profile)
   }
 
   // Minted directly: `resolveGatewayWsUrl` would wrap a transport rejection — a
   // bare string that can name the host — into an Error like any other.
   const wsUrl = await ticketMintDeps(dial.baseUrl).getGatewayWsUrl()
 
-  recordGatewayMint(wsUrl, { connectionId: dial.connectionId })
+  recordGatewayMint(wsUrl, dial.mint)
 
-  return wsUrl
+  return profileWsUrl(dial, wsUrl, profile)
 }
 
 /** Electron's `gatewayWsUrlIpcResult`: a mint never rejects, it answers. */
-async function wsUrlResult(dial: Promise<Dial>): Promise<GatewayWsUrlResult> {
+async function wsUrlResult(dial: Promise<Dial>, profile: string): Promise<GatewayWsUrlResult> {
   try {
-    return { ok: true, wsUrl: await freshWsUrl(await dial) }
+    return { ok: true, wsUrl: await freshWsUrl(await dial, profile) }
   } catch (error) {
     if (isGatewayReauthRequired(error)) {
       return { error: SIGN_IN_REQUIRED, needsOauthLogin: true, ok: false }
@@ -192,7 +237,7 @@ async function wsUrlResult(dial: Promise<Dial>): Promise<GatewayWsUrlResult> {
   }
 }
 
-function descriptor(dial: Dial, scope: Partial<HermesConnection> = {}): HermesConnection {
+function descriptor(dial: Dial, profile: string, scope: Partial<HermesConnection> = {}): HermesConnection {
   return {
     authMode: dial.gated ? 'oauth' : 'token',
     baseUrl: dial.baseUrl,
@@ -205,7 +250,7 @@ function descriptor(dial: Dial, scope: Partial<HermesConnection> = {}): HermesCo
     ...(dial.remoteHost && { remoteHost: dial.remoteHost }),
     token: '',
     windowButtonPosition: null,
-    wsUrl: dial.wsUrl,
+    wsUrl: profileWsUrl(dial, dial.wsUrl, profile),
     ...scope
   }
 }
@@ -239,6 +284,13 @@ async function activeConnection() {
   return $activeConnection.get()
 }
 
+async function windowProfile(): Promise<null | string> {
+  // Dynamic: `store/windows.ts` imports the route tree.
+  const { windowProfileOverride } = await import('@/store/windows')
+
+  return windowProfileOverride()
+}
+
 async function primaryDial(): Promise<Dial> {
   try {
     const active = await activeConnection()
@@ -268,6 +320,41 @@ async function dialFor(connectionId: null | string | undefined): Promise<Dial> {
   return !id || id === (await activeConnection())?.connectionId ? primaryDial() : resolveDial(id)
 }
 
+/**
+ * The same two facts, for REST. Desktop names the owning connection on every
+ * call, the primary's included, while `lib/api.ts` reads a `connectionId` as a
+ * gateway OTHER than the active one and finds a tunnelled one only through a
+ * lease this window holds. So the primary's id is dropped — the call takes the
+ * active path, `$connection`'s base, which needs no lease — and another local or
+ * SSH connection is held for the length of the call (`tunnelDial`'s rule: the
+ * slot lingers, so the next call finds it warm).
+ */
+export async function restScope(
+  connectionId: null | string | undefined
+): Promise<{ connectionId?: string; release: () => void }> {
+  const id = (connectionId ?? '').trim()
+
+  if (!id || id === (await activeConnection())?.connectionId) {
+    return { release: () => {} }
+  }
+
+  // Dynamic: the registry store imports `@/hermes`.
+  const { connectionById } = await import('@/store/connections')
+  const row = connectionById(id)
+
+  if (!row || row.url || (row.kind !== 'local' && row.kind !== 'ssh')) {
+    return { connectionId: id, release: () => {} }
+  }
+
+  const { acquireTunnel } = await import('@/store/connection-tunnels')
+
+  const lease = await acquireTunnel(id, { label: row.label }).catch(error => {
+    throw tunnelFailure(error)
+  })
+
+  return { connectionId: id, release: () => lease.release() }
+}
+
 export const connectionBridge: Pick<
   Bridge,
   'getBootProgress' | 'getConnection' | 'getGatewayWsUrl' | 'onBackendExit' | 'onBootProgress' | 'onPowerResume'
@@ -277,17 +364,22 @@ export const connectionBridge: Pick<
 
   getConnection: async profile => {
     const dial = await primaryDial()
-    const key = profileKey(profile)
+    // Naming none asks for this window's own primary (the boot hook's wake
+    // reconnect): the profile it was opened on, when it was opened on one.
+    const key = profileKey(profile?.trim() || (await windowProfile()))
 
-    return descriptor(dial, key === LAUNCH_PROFILE ? {} : { profile: key, sharedPrimary: true })
+    return descriptor(dial, key, key === LAUNCH_PROFILE ? {} : { profile: key, sharedPrimary: true })
   },
 
-  getConnectionFor: async ({ connectionId, profile }) =>
-    descriptor(await dialFor(connectionId), { profile: profileKey(profile), registryScoped: true, sharedRemote: true }),
+  getConnectionFor: async ({ connectionId, profile }) => {
+    const key = profileKey(profile)
 
-  getGatewayWsUrl: () => wsUrlResult(primaryDial()),
+    return descriptor(await dialFor(connectionId), key, { profile: key, registryScoped: true, sharedRemote: true })
+  },
 
-  getGatewayWsUrlFor: ({ connectionId }) => wsUrlResult(dialFor(connectionId)),
+  getGatewayWsUrl: profile => wsUrlResult(primaryDial(), profileKey(profile)),
+
+  getGatewayWsUrlFor: ({ connectionId, profile }) => wsUrlResult(dialFor(connectionId), profileKey(profile)),
 
   // No exit signal exists: a local child that dies is a closed socket and a
   // tunnel status, both already handled where they land.

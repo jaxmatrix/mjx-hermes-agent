@@ -9,11 +9,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // Rust is faked at the module boundary (`gateway-socket.test.ts`'s shape) and
 // the stores the half reaches by dynamic import are faked whole.
 
-const { acquireMock, active, invokeMock, leases, mintTicketMock, rows } = vi.hoisted(() => {
+const { acquireMock, active, apiMock, invokeMock, leases, mintTicketMock, rows, windowProfile } = vi.hoisted(() => {
   const leases: { release: ReturnType<typeof vi.fn> }[] = []
   const rows = new Map<string, Record<string, unknown>>()
 
   return {
+    apiMock: vi.fn(async (_request: Record<string, unknown>): Promise<unknown> => ({ ok: true })),
+    windowProfile: { current: null as null | string },
     acquireMock: vi.fn(async (connectionId: string, _options?: { label?: string }) => {
       const lease = { release: vi.fn() }
 
@@ -48,9 +50,19 @@ const { acquireMock, active, invokeMock, leases, mintTicketMock, rows } = vi.hoi
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/plugin-os', () => ({ platform: () => 'linux' }))
+vi.mock('@/lib/api', () => ({ api: apiMock }))
 vi.mock('@/lib/auth', () => ({ mintWsTicket: mintTicketMock }))
 vi.mock('@/store/active-connection', () => ({ $activeConnection: { get: () => active.current } }))
 vi.mock('@/store/connection-tunnels', () => ({ acquireTunnel: acquireMock }))
+// The registry store's rows are `connections_resolve`'s, with the id and a `url`.
+vi.mock('@/store/connections', () => ({
+  connectionById: (id: string) => {
+    const row = rows.get(id)
+
+    return row && { ...row, id, url: row.baseUrl }
+  }
+}))
+vi.mock('@/store/windows', () => ({ windowProfileOverride: () => windowProfile.current }))
 vi.mock('@/transport/gateway-socket', () => ({ recordGatewayMint: vi.fn() }))
 
 import { GatewayReauthRequiredError } from '@/gateway'
@@ -78,6 +90,7 @@ beforeEach(() => {
   leases.length = 0
   rows.clear()
   active.current = null
+  windowProfile.current = null
 
   rows.set('home', { authMode: 'token', baseUrl: 'https://home.test', kind: 'remote', label: 'Home' })
   rows.set('cloud', { authMode: 'oauth', baseUrl: 'https://cloud.test', kind: 'cloud', label: 'Cloud' })
@@ -110,6 +123,17 @@ describe('the primary', () => {
 
     expect(await bridge.getConnection('work')).toMatchObject({ connectionId: 'home', profile: 'work', sharedPrimary: true })
     expect((await bridge.getConnection('default')).sharedPrimary).toBeUndefined()
+  })
+
+  it('is the profile the window was opened on, whenever the boot hook names none', async () => {
+    activate('home')
+    windowProfile.current = 'work'
+
+    const conn = await bridge.getConnection()
+
+    expect(conn).toMatchObject({ profile: 'work', wsUrl: 'wss://home.test/api/ws?profile=work' })
+    expect(mintedFor(conn.wsUrl)).toEqual({ connectionId: 'home' })
+    expect((await bridge.getConnection('default')).wsUrl).toBe('wss://home.test/api/ws')
   })
 
   it("launches as 'default', so an RPC naming no profile is already correct", async () => {
@@ -151,9 +175,19 @@ describe('a registered connection', () => {
       registryScoped: true,
       remoteKind: 'cloud',
       sharedRemote: true,
-      token: ''
+      token: '',
+      // The socket has no profile of its own: the URL tells the client which to name.
+      wsUrl: 'wss://cloud.test/api/ws?profile=work'
     })
     expect(mintedFor(conn.wsUrl)).toEqual({ connectionId: 'cloud' })
+  })
+
+  it("leaves the launch profile's URL as minted", async () => {
+    activate('home')
+
+    expect((await bridge.getConnectionFor({ connectionId: 'cloud', profile: 'default' })).wsUrl).toBe(
+      'wss://cloud.test/api/ws'
+    )
   })
 
   it('treats an empty id as the primary', async () => {
@@ -191,6 +225,15 @@ describe('a local or SSH connection', () => {
       token: '',
       wsUrl: 'ws://127.0.0.1:4100/api/ws'
     })
+    expect(mintedFor(conn.wsUrl)).toEqual({ connectionId: 'box', label: 'Box', tunnel: true })
+  })
+
+  it("records another profile's URL as the same tunnel mint", async () => {
+    activate('home')
+
+    const conn = await bridge.getConnectionFor({ connectionId: 'box', profile: 'work' })
+
+    expect(conn.wsUrl).toBe('ws://127.0.0.1:4100/api/ws?profile=work')
     expect(mintedFor(conn.wsUrl)).toEqual({ connectionId: 'box', label: 'Box', tunnel: true })
   })
 
@@ -232,9 +275,22 @@ describe('a fresh WebSocket URL', () => {
   it('is the recorded ticketless URL for a token connection', async () => {
     activate('home')
 
-    expect(await bridge.getGatewayWsUrl('work')).toEqual({ ok: true, wsUrl: 'wss://home.test/api/ws' })
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl: 'wss://home.test/api/ws' })
     expect(mintTicketMock).not.toHaveBeenCalled()
     expect(mintedFor('wss://home.test/api/ws')).toEqual({ connectionId: 'home' })
+  })
+
+  it('names the profile it was asked for, and is recorded under that URL', async () => {
+    activate('home')
+
+    expect(await bridge.getGatewayWsUrl('work')).toEqual({ ok: true, wsUrl: 'wss://home.test/api/ws?profile=work' })
+    expect(mintedFor('wss://home.test/api/ws?profile=work')).toEqual({ connectionId: 'home' })
+
+    expect(await bridge.getGatewayWsUrlFor({ connectionId: 'cloud', profile: 'work' })).toEqual({
+      ok: true,
+      wsUrl: 'wss://cloud.test/api/ws?ticket=TICKET&profile=work'
+    })
+    expect(mintedFor('wss://cloud.test/api/ws?ticket=TICKET&profile=work')).toEqual({ connectionId: 'cloud' })
   })
 
   it('carries a single-use ticket for a gated connection, recorded like any other', async () => {
@@ -281,6 +337,66 @@ describe('a fresh WebSocket URL', () => {
       error: 'No connection with id "gone"',
       ok: false
     })
+  })
+})
+
+describe('a REST call', () => {
+  const call = (connectionId?: null | string) => {
+    installHermesDesktopBridge()
+
+    return window.hermesDesktop.api({ connectionId, path: '/api/status', profile: 'work' })
+  }
+
+  it("takes the active path for the primary's own id, which needs no lease", async () => {
+    activate('box')
+
+    expect(await call('box')).toEqual({ ok: true })
+    expect(await call(null)).toEqual({ ok: true })
+    expect(apiMock.mock.calls.map(([request]) => request.connectionId)).toEqual([undefined, undefined])
+    expect(apiMock).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/status', profile: 'work' }))
+    expect(acquireMock).not.toHaveBeenCalled()
+  })
+
+  it('names another connection that has a URL of its own', async () => {
+    activate('box')
+
+    await call('home')
+
+    expect(apiMock).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'home' }))
+    expect(acquireMock).not.toHaveBeenCalled()
+  })
+
+  it('holds the tunnel of another local or SSH connection for the length of the call', async () => {
+    activate('home')
+    apiMock.mockImplementationOnce(async () => {
+      expect(leases[0].release).not.toHaveBeenCalled()
+
+      return { ok: true }
+    })
+
+    await call('box')
+
+    expect(acquireMock).toHaveBeenCalledWith('box', { label: 'Box' })
+    expect(apiMock).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'box' }))
+    expect(leases[0].release).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets go of the tunnel when the call fails', async () => {
+    activate('home')
+    apiMock.mockRejectedValueOnce(new Error('GET /api/status → HTTP 500: '))
+
+    await expect(call('box')).rejects.toThrow('HTTP 500')
+    expect(leases[0].release).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a tunnel failure as copy, and sends nothing', async () => {
+    activate('home')
+    acquireMock.mockRejectedValueOnce({ kind: 'unreachable', message: 'ssh: connect to me@box', terminal: true })
+
+    const failure = await call('box').catch((error: Error) => error.message)
+
+    expect(failure).not.toContain('me@box')
+    expect(apiMock).not.toHaveBeenCalled()
   })
 })
 

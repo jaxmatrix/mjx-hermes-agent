@@ -24,14 +24,14 @@
 
 import { api } from '@/lib/api'
 
-import { connectionBridge } from './connections'
+import { connectionBridge, restScope } from './connections'
 
 /**
  * Desktop's `HermesApiRequest` and universal's `ApiRequest` agree field for
  * field — `path`, `method`, `body`, `upload`, `timeoutMs`, `profile`,
  * `connectionId` — and `HttpUpload` is structurally identical to desktop's
  * upload shape, so this is a straight pass-through onto the Rust
- * `http_request` command.
+ * `http_request` command. Only `connectionId` is translated (`restScope`).
  *
  * `passive` is the one field with nowhere to go. It tells Electron's backend
  * pool not to cold-start a child for a background read (#103375). Universal has
@@ -39,16 +39,23 @@ import { connectionBridge } from './connections'
  * `?profile=` — so there is nothing to avoid starting, and dropping it changes
  * no behaviour here.
  */
-const apiBridge: NonNullable<typeof window.hermesDesktop>['api'] = request =>
-  api({
-    path: request.path,
-    method: request.method,
-    body: request.body,
-    upload: request.upload,
-    timeoutMs: request.timeoutMs,
-    profile: request.profile,
-    connectionId: request.connectionId ?? undefined
-  })
+const apiBridge: NonNullable<typeof window.hermesDesktop>['api'] = async request => {
+  const scope = await restScope(request.connectionId)
+
+  try {
+    return await api({
+      path: request.path,
+      method: request.method,
+      body: request.body,
+      upload: request.upload,
+      timeoutMs: request.timeoutMs,
+      profile: request.profile,
+      connectionId: scope.connectionId
+    })
+  } finally {
+    scope.release()
+  }
+}
 
 export function installHermesDesktopBridge(): void {
   if (typeof window === 'undefined' || window.hermesDesktop) {

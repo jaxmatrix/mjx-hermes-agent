@@ -354,6 +354,68 @@ describe('HermesGateway', () => {
     expect(gateway.connectionState).toBe('closed')
   })
 
+  describe('names the profile its URL was minted for', () => {
+    /** Connect to `wsUrl`, send each request, and read the frames Rust was handed. */
+    async function sent(wsUrl: string, requests: [method: string, params?: Record<string, unknown>][]) {
+      const gateway = new HermesGateway()
+      const connecting = gateway.connect(wsUrl)
+      const [args] = await opened()
+
+      emit(args.id, 'open')
+      await connecting
+
+      for (const [method, params] of requests) {
+        void gateway.request(method, params).catch(() => undefined)
+      }
+
+      gateway.close()
+
+      return invokeMock.mock.calls
+        .filter(([command]) => command === 'ws_send')
+        .map(([, frame]) => JSON.parse(String(frame?.text)) as { method: string; params: Record<string, unknown> })
+        .map(({ method, params }) => [method, params])
+    }
+
+    it('on a method whose contract declares it', async () => {
+      expect(await sent(`${REMOTE}?profile=work`, [['session.list', { limit: 5 }], ['config.get']])).toEqual([
+        ['session.list', { limit: 5, profile: 'work' }],
+        ['config.get', { profile: 'work' }]
+      ])
+    })
+
+    it('never on a method that does not: the backend answers 4000', async () => {
+      expect(await sent(`${REMOTE}?profile=work`, [['reload.env'], ['complete.slash', { text: '/m' }]])).toEqual([
+        ['reload.env', {}],
+        ['complete.slash', { text: '/m' }]
+      ])
+    })
+
+    it("keeps the caller's profile, and drops one the registry stamped where none is declared", async () => {
+      expect(
+        await sent(`${REMOTE}?profile=work`, [
+          ['session.list', { profile: 'other' }],
+          ['reload.env', { profile: 'other' }],
+          ['plugin.method', { profile: 'other' }]
+        ])
+      ).toEqual([
+        ['session.list', { profile: 'other' }],
+        ['reload.env', {}],
+        ['plugin.method', { profile: 'other' }]
+      ])
+    })
+
+    it('names none for the launch profile, whose URL is as minted', async () => {
+      expect(await sent(REMOTE, [['session.list', { limit: 5 }]])).toEqual([['session.list', { limit: 5 }]])
+    })
+
+    it("dials a tunnel with the profile still on the lease's URL", async () => {
+      recordGatewayMint(`${TUNNEL}?profile=work`, { connectionId: 'box', tunnel: true })
+
+      expect(await sent(`${TUNNEL}?profile=work`, [['session.list']])).toEqual([['session.list', { profile: 'work' }]])
+      expect((await opened())[0]).toMatchObject({ connectionId: 'box', url: `${TUNNEL}?profile=work` })
+    })
+  })
+
   it('reads a dropped connection as no code', async () => {
     const gateway = new HermesGateway()
     const connecting = gateway.connect(REMOTE)

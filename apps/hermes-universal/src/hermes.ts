@@ -6,6 +6,7 @@
 // request scoping stops having a single owner.
 import { JsonRpcGatewayClient } from '@hermes/shared'
 
+import { profileScoped, socketProfile } from './transport/gateway-profile'
 import { openGatewaySocket } from './transport/gateway-socket'
 
 export {
@@ -145,6 +146,11 @@ export * from './api/universal'
  * this one is the same client — desktop's options, value for value — over the
  * Rust transport (`transport/gateway-socket.ts`). Desktop's registry and boot
  * hook construct it from `@/hermes` unchanged.
+ *
+ * And it names its profile. Desktop's socket is its profile's own backend; here
+ * one backend serves every profile and an RPC says which, so the client learns
+ * its profile from the URL it dials and scopes each request by the wire
+ * contract (`transport/gateway-profile.ts`).
  */
 export class HermesGateway extends JsonRpcGatewayClient {
   /**
@@ -153,6 +159,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
    * after the close, so it outlives the socket.
    */
   lastCloseCode: number | undefined
+
+  /** The profile this socket was minted for; none is the launch profile. */
+  private profile: string | undefined
 
   constructor() {
     super({
@@ -166,5 +175,20 @@ export class HermesGateway extends JsonRpcGatewayClient {
       requestTimeoutMs: 30_000,
       socketFactory: openGatewaySocket
     })
+  }
+
+  override connect(wsUrl: string): Promise<void> {
+    this.profile = socketProfile(wsUrl)
+
+    return super.connect(wsUrl)
+  }
+
+  override request<T>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs?: number,
+    signal?: AbortSignal
+  ): Promise<T> {
+    return super.request<T>(method, profileScoped(method, params, this.profile), timeoutMs, signal)
   }
 }
