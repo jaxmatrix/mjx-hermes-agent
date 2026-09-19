@@ -8,7 +8,8 @@ import { TitlebarButton } from './titlebar-button'
 
 // Custom minimize / maximize-restore / close for the frameless window. Desktop
 // (apps/desktop) leaves these to the OS; universal draws its own so the whole
-// chrome is ours. Only mounted on desktop Tauri (see Titlebar / IS_DESKTOP).
+// chrome is ours. Desktop Tauri only. Mounted by the tile window today; the
+// main window lost its mount with the old titlebar and needs one back.
 export function WindowControls() {
   const { t } = useI18n()
   const [maximized, setMaximized] = useState(false)
