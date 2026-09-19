@@ -20,6 +20,13 @@ import type { Tile } from '@/components/pane-shell/tile/types'
 import { findGroupOfPane, group, split } from '@/components/pane-shell/tree/model'
 import { $layoutTree } from '@/components/pane-shell/tree/store'
 import { DRAFT_TILE_KEY, DRAFT_TILE_PANE_ID, sessionTilePaneId, WORKSPACE_PANE_ID } from '@/lib/pane-ids'
+import {
+  $sessionKeyTabs,
+  clearAllSessionStates,
+  closeSessionTile,
+  newSessionTab,
+  tileRuntimeKey
+} from '@/store/session-key-states'
 import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
@@ -27,13 +34,6 @@ import {
   publishSessionState,
   type SessionKeyState
 } from '@/store/session-state-types'
-import {
-  $sessionKeyTabs,
-  clearAllSessionStates,
-  closeSessionTile,
-  newSessionTab,
-  tileRuntimeKey
-} from '@/store/session-states'
 
 const CHAT_GROUP = 'chat-zone'
 const EXISTING = 'sess-existing'
@@ -101,14 +101,6 @@ describe('newSessionTab', () => {
     newSessionTab()
 
     expect($sessionKeyTabs.get().filter(t => t.storedSessionId === DRAFT_TILE_KEY)).toHaveLength(1)
-  })
-
-  it('is never persisted — a draft names no session to restore', () => {
-    seedTree([WORKSPACE_PANE_ID])
-
-    newSessionTab()
-
-    expect(JSON.stringify(window.localStorage.getItem('hermes.sessionTiles.v2') ?? '')).not.toContain(DRAFT_TILE_KEY)
   })
 })
 

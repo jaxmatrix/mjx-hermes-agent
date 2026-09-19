@@ -33,7 +33,7 @@ import { group, split } from '@/components/pane-shell/tree/model'
 import { declareDefaultTree } from '@/components/pane-shell/tree/store'
 import { registry } from '@/contrib/registry'
 
-import { $sessionKeyTabs, nextSessionTileForWorkspace, type SessionTile } from './session-states'
+import { $sessionKeyTabs, nextSessionTileForWorkspace, type SessionTile } from './session-key-states'
 
 const tile = (storedSessionId: string): SessionTile =>
   ({ connectionId: 'local', profile: 'default', storedSessionId, tileKey: storedSessionId }) as SessionTile

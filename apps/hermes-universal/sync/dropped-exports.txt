@@ -5,7 +5,7 @@
 #
 #   git show 9ce16c77f9:apps/hermes-universal/src/<path>
 #
-# 146 files, 567 symbols.
+# 146 files, 566 symbols.
 
 lib/gateway-rpc.ts
     MessageReactTarget
@@ -422,7 +422,6 @@ store/plugin-install-request.ts
 store/subagents.ts
     SubagentWorktree
     normalizeSubagentStatus
-    clearAllSubagents
     sessionOfSubagent
 store/thread-scroll.ts
     sessionThreadScrolledUp

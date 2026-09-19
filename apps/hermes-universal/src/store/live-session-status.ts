@@ -64,19 +64,19 @@ import { $changeEventsAvailable, $sessionsChangeTick } from '@/store/live-sync'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import { $unreadFinishedSessionIds } from '@/store/session'
 import {
-  refreshMessagingSessions,
-  refreshSessions,
-  sameStoredSession,
-  unreadPersistenceHooks
-} from '@/store/session-lifecycle'
-import {
   $focusedStoredSessionId,
   $sessionKeyStates,
   publishSessionState,
   runtimeKeyForStoredSession,
   SESSION_WATCHDOG_TIMEOUT_MS,
   setSessionStalled
-} from '@/store/session-states'
+} from '@/store/session-key-states'
+import {
+  refreshMessagingSessions,
+  refreshSessions,
+  sameStoredSession,
+  unreadPersistenceHooks
+} from '@/store/session-lifecycle'
 
 /**
  * Backstop cadence for the snapshot when the gateway broadcasts: the tick

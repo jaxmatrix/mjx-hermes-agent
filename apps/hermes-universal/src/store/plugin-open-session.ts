@@ -2,6 +2,7 @@ import { atom } from '@/store/atom'
 
 import { $connectionReady } from './connection-ready'
 import { $activeGatewayProfile, normalizeProfileKey, selectProfile } from './profile'
+import { focusOpenSession, openSessionTab } from './session-key-states'
 import {
   adoptLiveSession,
   knownSessionProfileFor,
@@ -11,7 +12,6 @@ import {
   resolveSessionProfile
 } from './session-lifecycle'
 import { $sessionKeyStates, runtimeKeyForStoredSession } from './session-state-types'
-import { focusOpenSession, openSessionTab } from './session-states'
 import { awaitSessionPainted, SessionWakeError } from './transcript-cache-sync'
 
 /**

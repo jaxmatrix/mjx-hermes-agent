@@ -45,6 +45,16 @@ import { $tunnelStatus } from '@/store/connection-tunnels'
 import { notifyError } from '@/store/notifications'
 import { $sessions } from '@/store/session'
 import {
+  $sessionKeyTabs,
+  closeSessionTile,
+  noteTileBackendIdentity,
+  openBranchTile,
+  setSessionTileDelegate,
+  tileKeyFor,
+  tileRef,
+  updateSession
+} from '@/store/session-key-states'
+import {
   archiveSessionLocal,
   branchStoredSession,
   deleteSessionLocal,
@@ -68,16 +78,6 @@ import {
   runtimeKeyForStoredSession,
   type SessionRef
 } from '@/store/session-state-types'
-import {
-  $sessionKeyTabs,
-  closeSessionTile,
-  noteTileBackendIdentity,
-  openBranchTile,
-  setSessionTileDelegate,
-  tileKeyFor,
-  tileRef,
-  updateSession
-} from '@/store/session-states'
 import { tabIsUnsupportedHere } from '@/store/tab-connection'
 import { clearTranscriptPaint, paintCachedTail } from '@/store/transcript-paint'
 import { adoptResumedTurn, beginTurn, resumedTurnIsLive, settleTurn } from '@/store/turn-lifecycle'

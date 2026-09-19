@@ -48,7 +48,7 @@ vi.mock('@/store/gateway-secondaries', async importActual => {
     unpinSecondary: vi.fn()
   }
 })
-vi.mock('@/store/session-states', async () => {
+vi.mock('@/store/session-key-states', async () => {
   const { atom } = await import('@/store/atom')
 
   // MJXHRM-591: the wipe drops only the LEAVING connection's unheld slices, and
@@ -118,6 +118,7 @@ import { notify, notifyError } from '@/store/notifications'
 import { $projectTree } from '@/store/project-scope'
 import { resetPullRequestsForBackendSwitch } from '@/store/pull-requests'
 import { $messagingSessions, $sessions, $sessionsLoading, $unreadFinishedSessionIds } from '@/store/session'
+import { dropUnheldSessionStates } from '@/store/session-key-states'
 import {
   $activeStoredSessionId,
   $sessionsTotal,
@@ -126,7 +127,6 @@ import {
   refreshMessagingSessions,
   refreshSessions
 } from '@/store/session-lifecycle'
-import { dropUnheldSessionStates } from '@/store/session-states'
 import { disconnectSsh } from '@/store/ssh-backend'
 import type { SessionInfo } from '@/types/hermes'
 

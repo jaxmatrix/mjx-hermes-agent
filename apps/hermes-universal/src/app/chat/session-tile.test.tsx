@@ -44,7 +44,11 @@ vi.mock('@/app/chat/chat-screen', () => ({
   }
 }))
 
-const { $sessionKeyTabs, patchSessionTile } = await import('@/store/session-states')
+// BRIDGE (MJXHRM-602): the pane under test is desktop's and reads desktop's
+// `$sessionTiles`; the rekey it is asserted against belongs to the legacy
+// session-key fold. The one file that names both keyspaces — it retires with
+// the old fold.
+const { $sessionTiles, patchSessionTile } = await import('@/store/session-states')
 
 const { $sessionKeyStates, emptySessionState, publishSessionState, rekeySession } =
   await import('@/store/session-state-types')
@@ -54,13 +58,13 @@ const { SessionTilePane } = await import('./session-tile')
 
 beforeEach(() => {
   $sessionKeyStates.set({})
-  $sessionKeyTabs.set([])
+  $sessionTiles.set([])
 })
 
 describe('SessionTilePane composer scope', () => {
   it('sees a clarify raised after a recovery moved the slice', async () => {
     publishSessionState('runtime-1', { ...emptySessionState('stored-1'), runtimeSessionId: 'runtime-1' })
-    $sessionKeyTabs.set([{ connectionId: 'local', profile: 'default', storedSessionId: 'stored-1', tileKey: 'stored-1' }])
+    $sessionTiles.set([{ connectionId: 'local', profile: 'default', storedSessionId: 'stored-1', tileKey: 'stored-1' }])
     patchSessionTile('stored-1', { runtimeId: 'runtime-1' })
 
     render(<SessionTilePane storedSessionId="stored-1" />)
@@ -76,7 +80,7 @@ describe('SessionTilePane composer scope', () => {
 
     // The tile record still names the dead runtime; only the reverse index — and
     // therefore `tileRuntimeKey` — knows where the session went.
-    expect($sessionKeyTabs.get()[0].runtimeId).toBe('runtime-1')
+    expect($sessionTiles.get()[0].runtimeId).toBe('runtime-1')
     expect(screen.getByTestId('key').textContent).toBe('runtime-2')
 
     // The gateway parks the recovered turn on a question. Bound to the dead key

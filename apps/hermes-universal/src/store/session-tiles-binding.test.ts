@@ -4,8 +4,6 @@
  * Invariant 37: a connection or profile switch changes nothing about a tab.
  * Invariant 38: a bound tab's ref is immutable — a backend change makes it
  *               UNAVAILABLE (Close and nothing else), never repointed.
- * Invariant 41: v2 tiles migrate into v3 once, and a v3 read never resurrects
- *               the profile-keyed shape.
  *
  * Invariant 38's first half is enforced by the COMPILER (`SessionTilePatch`
  * omits every ref field), so it is not asserted here — a test that could observe
@@ -15,14 +13,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { $layoutTree } from '@/components/pane-shell/tree/store'
-import { sessionTilePaneId } from '@/lib/pane-ids'
-import { readKey, writeKey } from '@/lib/persist'
 import { $activeProfile } from '@/store/profiles'
-import { $sessionKeyStates, emptySessionState, publishSessionState, runtimeKeyFor } from '@/store/session-state-types'
 import {
   $sessionKeyTabs,
   dropUnheldSessionStates,
-  migrateLegacyTiles,
   noteTileBackendIdentity,
   refreshTileTitles,
   saveSessionTiles,
@@ -31,10 +25,8 @@ import {
   tileKeyFor,
   tileRuntimeKey,
   UNAVAILABLE_TILE_ACTIONS
-} from '@/store/session-states'
-
-const TILES_V2 = 'hermes.sessionTiles.v2'
-const TILES_V3 = 'hermes.sessionTiles.v3'
+} from '@/store/session-key-states'
+import { $sessionKeyStates, emptySessionState, publishSessionState, runtimeKeyFor } from '@/store/session-state-types'
 
 const tile = (
   connectionId: string,
@@ -50,8 +42,6 @@ const tile = (
 })
 
 beforeEach(() => {
-  writeKey(TILES_V2, null)
-  writeKey(TILES_V3, null)
   $sessionKeyTabs.set([])
   $sessionKeyStates.set({})
   $layoutTree.set(null)
@@ -122,7 +112,6 @@ describe('invariant 38 — a bound tab’s ref is immutable', () => {
     saveSessionTiles([{ ...bound, connectionId: 'conn-b' }])
 
     expect($sessionKeyTabs.get()[0].connectionId).toBe('conn-a')
-    expect(JSON.parse(readKey(TILES_V3) ?? '[]')[0].connectionId).toBe('conn-a')
   })
 
   it('learns the backend it bound to, once', () => {
@@ -162,80 +151,6 @@ describe('invariant 38 — a bound tab’s ref is immutable', () => {
     expect(tileActions(changed)).toEqual(['close'])
     expect(UNAVAILABLE_TILE_ACTIONS).toEqual(['close'])
     expect(tileActions(tile('conn-a', 'default', 'def67890'))).toContain('retry')
-  })
-})
-
-describe('invariant 41 — the v2 migration runs once', () => {
-  it('assigns the registry primary, keeps the profile, and renames the pane', () => {
-    writeKey(
-      TILES_V2,
-      JSON.stringify({
-        default: [{ dir: 'right', storedSessionId: 'abc12345' }],
-        work: [{ anchor: 'workspace', dir: 'center', storedSessionId: 'def67890' }]
-      })
-    )
-    $layoutTree.set({
-      active: sessionTilePaneId('abc12345'),
-      id: 'g1',
-      panes: ['workspace', sessionTilePaneId('abc12345')],
-      type: 'group'
-    })
-
-    migrateLegacyTiles('conn-a')
-
-    const stored = JSON.parse(readKey(TILES_V3) ?? '[]') as SessionTile[]
-
-    expect(stored).toEqual([
-      {
-        anchor: undefined,
-        before: undefined,
-        connectionId: 'conn-a',
-        dir: 'right',
-        profile: 'default',
-        storedSessionId: 'abc12345'
-      },
-      {
-        anchor: 'workspace',
-        before: undefined,
-        connectionId: 'conn-a',
-        dir: 'center',
-        profile: 'work',
-        storedSessionId: 'def67890'
-      }
-    ])
-    expect($sessionKeyTabs.get().map(t => t.tileKey)).toEqual([
-      tileKeyFor({ connectionId: 'conn-a', profile: 'default', storedSessionId: 'abc12345' }),
-      tileKeyFor({ connectionId: 'conn-a', profile: 'work', storedSessionId: 'def67890' })
-    ])
-
-    // The tab's pane moved with its key, so a restored layout keeps its slot.
-    const tree = $layoutTree.get()
-
-    expect(tree?.type === 'group' && tree.panes).toEqual([
-      'workspace',
-      sessionTilePaneId(tileKeyFor({ connectionId: 'conn-a', profile: 'default', storedSessionId: 'abc12345' }))
-    ])
-  })
-
-  it('deletes v2, so a second read resurrects nothing', () => {
-    writeKey(TILES_V2, JSON.stringify({ default: [{ storedSessionId: 'abc12345' }] }))
-
-    migrateLegacyTiles('conn-a')
-    expect(readKey(TILES_V2)).toBeNull()
-
-    saveSessionTiles([])
-    migrateLegacyTiles('conn-a')
-
-    expect($sessionKeyTabs.get()).toEqual([])
-    expect(readKey(TILES_V3)).toBeNull()
-  })
-
-  it('keeps the local connection’s keys byte-identical to the legacy ones', () => {
-    writeKey(TILES_V2, JSON.stringify({ default: [{ storedSessionId: 'abc12345' }] }))
-
-    migrateLegacyTiles('local')
-
-    expect($sessionKeyTabs.get()[0].tileKey).toBe('abc12345')
   })
 })
 
@@ -334,7 +249,7 @@ describe('invariant 37 — the headline: a bound tab keeps streaming across a sw
 })
 
 describe('invariant 43 — a tab keeps its name when the rows go', () => {
-  it('takes its title from its OWN connection\u2019s row, and persists it', () => {
+  it('takes its title from its OWN connection\u2019s row', () => {
     const a = tile('conn-a', 'default', 'abc12345')
 
     saveSessionTiles([a])
@@ -344,7 +259,6 @@ describe('invariant 43 — a tab keeps its name when the rows go', () => {
     ])
 
     expect($sessionKeyTabs.get()[0].title).toBe('Deploy notes')
-    expect(JSON.parse(readKey(TILES_V3) ?? '[]')[0].title).toBe('Deploy notes')
   })
 
   it('keeps the last known name when the rows are emptied by a switch', () => {
@@ -371,7 +285,7 @@ describe('v1.2 \u00a74 addenda \u2014 the artifact registry and the boot marker'
     upsertArtifact('@conn-a|default|loose', { kind: 'html', language: 'html', title: 'Loose' }, '<html>loose</html>')
     upsertArtifact('@conn-b|default|abc12345', { kind: 'html', language: 'html', title: 'Other' }, '<html>other</html>')
 
-    const { heldSessionKeys } = await import('@/store/session-states')
+    const { heldSessionKeys } = await import('@/store/session-key-states')
 
     dropArtifactsForConnection('conn-a', heldSessionKeys())
 

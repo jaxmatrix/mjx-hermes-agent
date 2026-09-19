@@ -2,8 +2,8 @@ import { atom, computed } from 'nanostores'
 
 import { type SessionView } from '@/app/chat/session-view'
 import { type ChatMessage } from '@/store/chat'
+import { $sessionKeyTabs, tileRuntimeKey } from '@/store/session-key-states'
 import { $sessionKeyStates } from '@/store/session-state-types'
-import { $sessionKeyTabs, tileRuntimeKey } from '@/store/session-states'
 import { $transcriptPaint } from '@/store/transcript-paint'
 
 /**

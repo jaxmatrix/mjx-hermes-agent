@@ -35,9 +35,9 @@ import { declareDefaultTree, noteActiveTreeGroup } from '@/components/pane-shell
 import { registry } from '@/contrib/registry'
 import { KEYBIND_ACTIONS } from '@/lib/keybinds/actions'
 
+import { $sessionKeyTabs, type SessionTile } from './session-key-states'
 import { $activeStoredSessionId } from './session-lifecycle'
 import { archiveActiveSession } from './session-lookup'
-import { $sessionKeyTabs, type SessionTile } from './session-states'
 
 const tile = (storedSessionId: string): SessionTile => ({ storedSessionId }) as SessionTile
 

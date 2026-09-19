@@ -50,7 +50,7 @@ const live = new Map<string, string>()
 // Which slices are "still working" — the predicate the close gate consults.
 const busyKeys = new Set<string>()
 
-vi.mock('@/store/session-states', () => ({
+vi.mock('@/store/session-key-states', () => ({
   dropSessionState: vi.fn(),
   runtimeKeyForStoredSession: (id: null | string) => (id ? (live.get(id) ?? null) : null),
   sessionKeyNeedsCloseConfirm: (key: null | string) => Boolean(key && busyKeys.has(key)),
@@ -64,9 +64,9 @@ vi.mock('@/store/session-states', () => ({
 }))
 
 import { $sessions } from '@/store/session'
+import { dropSessionState, sessionTileDelegate } from '@/store/session-key-states'
 import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import { $activeSessionKey } from '@/store/session-state-types'
-import { dropSessionState, sessionTileDelegate } from '@/store/session-states'
 
 import {
   $chatBubbles,

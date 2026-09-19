@@ -477,7 +477,7 @@ describe('invariant 47 — the tab records own the holds', () => {
   })
 
   it('takes one hold per held record, and gives it back when the record goes', async () => {
-    const { $sessionKeyTabs, saveSessionTiles } = await import('@/store/session-states')
+    const { $sessionKeyTabs, saveSessionTiles } = await import('@/store/session-key-states')
 
     $sessionKeyTabs.set([])
     saveSessionTiles([tab('conn-b', 'one'), tab('conn-b', 'two')] as never)
@@ -500,7 +500,7 @@ describe('invariant 47 — the tab records own the holds', () => {
   })
 
   it('gives the hold back when a tab goes unavailable, without closing it', async () => {
-    const { $sessionKeyTabs, saveSessionTiles } = await import('@/store/session-states')
+    const { $sessionKeyTabs, saveSessionTiles } = await import('@/store/session-key-states')
 
     $sessionKeyTabs.set([])
     saveSessionTiles([tab('conn-b', 'one')] as never)

@@ -67,8 +67,11 @@ store/session-replay.*
 # which is now desktop's, verbatim). Universal-only, imported only by the old
 # fold's island; retires with it (MJXHRM-602 fold step 6).
 store/session-route-dispatch.*
+# LEGACY — universal's session-key session state (was `store/session-states`,
+# which is now desktop's, verbatim). In-memory only; retires with the old fold
+# and the ChatScreen family (MJXHRM-602 fold steps 6–8).
+store/session-key-states.*
 store/session-state-types.*
-store/session-states.*
 store/session-tile-delegate.*
 store/session-tiles-binding.*
 store/ssh-backend.*

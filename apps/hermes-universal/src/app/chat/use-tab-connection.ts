@@ -4,8 +4,8 @@ import { readTranscriptTail } from '@/lib/transcript-tail-cache'
 import { useStore } from '@/store/atom'
 import { $connectionClients, isAmbientConnection, retryConnectionClient } from '@/store/connection-clients'
 import { $connectionsRegistry } from '@/store/connections'
+import { $sessionKeyTabs, closeSessionTile, tileKeyFor } from '@/store/session-key-states'
 import { $sessionKeyStates, scopedStoredKey } from '@/store/session-state-types'
-import { $sessionKeyTabs, closeSessionTile, tileKeyFor } from '@/store/session-states'
 import { type TabConnection, tabConnectionFor } from '@/store/tab-connection'
 
 /**

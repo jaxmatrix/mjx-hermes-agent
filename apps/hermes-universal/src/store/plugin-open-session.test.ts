@@ -32,7 +32,7 @@ vi.mock('./session-lifecycle', () => ({
   resolveSessionProfile: () => resolveSessionProfile()
 }))
 
-vi.mock('./session-states', () => ({
+vi.mock('./session-key-states', () => ({
   focusOpenSession: (id: string) => focusOpenSession(id),
   openSessionTab: (id: string, focus?: boolean) => openSessionTab(id, focus)
 }))

@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { SessionTileDelegate } from '@/store/session-states'
+import type { SessionTileDelegate } from '@/store/session-key-states'
 
 const requestGateway = vi.fn()
 const getSessionMessages = vi.fn(async (..._args: unknown[]) => ({ messages: [] as unknown[] }))
@@ -52,7 +52,7 @@ const captured = vi.fn((next: SessionTileDelegate) => {
   delegate = next
 })
 
-vi.mock('@/store/session-states', async () => {
+vi.mock('@/store/session-key-states', async () => {
   const { atom } = await import('@/store/atom')
   const types = await import('@/store/session-state-types')
 
@@ -278,14 +278,14 @@ describe('the delegate surface', () => {
 // workspace's.
 describe('branchSession', () => {
   beforeEach(async () => {
-    const { openBranchTile } = await import('@/store/session-states')
+    const { openBranchTile } = await import('@/store/session-key-states')
 
     vi.mocked(openBranchTile).mockClear()
   })
 
   it('opens the branch beside the session it was branched from', async () => {
     const { branchStoredSession } = await import('@/store/session')
-    const { openBranchTile } = await import('@/store/session-states')
+    const { openBranchTile } = await import('@/store/session-key-states')
 
     vi.mocked(branchStoredSession).mockResolvedValue('branch-1')
 
@@ -296,7 +296,7 @@ describe('branchSession', () => {
 
   it('opens nothing when the fork failed', async () => {
     const { branchStoredSession } = await import('@/store/session')
-    const { openBranchTile } = await import('@/store/session-states')
+    const { openBranchTile } = await import('@/store/session-key-states')
 
     vi.mocked(branchStoredSession).mockResolvedValue(null)
 
@@ -321,7 +321,7 @@ describe('a tab bound to a background connection', () => {
   let restoreRouter: (() => void) | null = null
 
   beforeEach(async () => {
-    const { $sessionKeyTabs, tileKeyFor } = await import('@/store/session-states')
+    const { $sessionKeyTabs, tileKeyFor } = await import('@/store/session-key-states')
     const { setSessionRequestRouter } = await import('@/store/session-route-dispatch')
 
     routes = []
@@ -363,7 +363,7 @@ describe('a tab bound to a background connection', () => {
   })
 
   it('resumes on its own connection, and fetches its transcript from it', async () => {
-    const { tileKeyFor } = await import('@/store/session-states')
+    const { tileKeyFor } = await import('@/store/session-key-states')
 
     const key = await delegate.resumeTile(tileKeyFor(TAB))
 
@@ -378,7 +378,7 @@ describe('a tab bound to a background connection', () => {
   })
 
   it('submits on its own connection, still, after the app moved on', async () => {
-    const { tileKeyFor } = await import('@/store/session-states')
+    const { tileKeyFor } = await import('@/store/session-key-states')
     const key = await delegate.resumeTile(tileKeyFor(TAB))
 
     routes.length = 0
@@ -388,7 +388,7 @@ describe('a tab bound to a background connection', () => {
   })
 
   it('refuses to resume a tab this device cannot host, before any dial', async () => {
-    const { $sessionKeyTabs, tileKeyFor } = await import('@/store/session-states')
+    const { $sessionKeyTabs, tileKeyFor } = await import('@/store/session-key-states')
     const ref = { connectionId: 'cannot-host', profile: 'default', storedSessionId: 'abc12345' }
 
     $sessionKeyTabs.set([{ ...ref, tileKey: tileKeyFor(ref) }] as never)
@@ -399,7 +399,7 @@ describe('a tab bound to a background connection', () => {
   })
 
   it('refuses to resume a tab whose backend changed under it', async () => {
-    const { $sessionKeyTabs, tileKeyFor } = await import('@/store/session-states')
+    const { $sessionKeyTabs, tileKeyFor } = await import('@/store/session-key-states')
 
     $sessionKeyTabs.set([{ ...TAB, tileKey: tileKeyFor(TAB), unavailable: true }] as never)
 

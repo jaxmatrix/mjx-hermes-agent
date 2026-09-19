@@ -31,6 +31,12 @@ import {
   isAmbientConnection,
   releaseConnectionClient
 } from '@/store/connection-clients'
+import {
+  dropSessionState,
+  runtimeKeyForStoredSession,
+  sessionKeyNeedsCloseConfirm,
+  sessionTileDelegate
+} from '@/store/session-key-states'
 import { $activeStoredSessionId, newSession, openSession, sameStoredSession } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
@@ -38,12 +44,6 @@ import {
   isDraftKey,
   LOCAL_SESSION_SCOPE
 } from '@/store/session-state-types'
-import {
-  dropSessionState,
-  runtimeKeyForStoredSession,
-  sessionKeyNeedsCloseConfirm,
-  sessionTileDelegate
-} from '@/store/session-states'
 import { tabKeyFor, type TabRef, tabRefFor, takeProfileKeyedTabs } from '@/store/tab-ref'
 import { isSecondaryWindow, ownsPersistedAppState } from '@/store/windows'
 

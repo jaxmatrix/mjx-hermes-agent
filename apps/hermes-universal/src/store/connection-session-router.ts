@@ -8,6 +8,7 @@ import { $gatewayState, requestGateway, setGatewayRequestProfile } from '@/store
 import { leaseSecondary, releaseSecondary } from '@/store/gateway-secondaries'
 import { $gatewaySwitching } from '@/store/gateway-switch'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
+import { setSessionRefResolver } from '@/store/session-key-states'
 import {
   legacyRouteNeedsProfileParam,
   type SessionRequestRouter,
@@ -16,7 +17,6 @@ import {
   setSessionRequestRouter
 } from '@/store/session-route-dispatch'
 import { connectionIdForSession } from '@/store/session-sources'
-import { migrateLegacyTiles, setSessionRefResolver } from '@/store/session-states'
 
 /**
  * THE MULTI-CONNECTION ROUTER — MJXHRM-480's interface, second implementation.
@@ -198,15 +198,14 @@ setSessionRefResolver(storedSessionId => {
   }
 })
 
-// v2 tabs were keyed by profile alone, so the only connection they could have
+// v2 bubbles were keyed by profile alone, so the only connection they could have
 // belonged to is the one the app was pointed at: the registry's primary. Run as
 // soon as the registry names it, and once.
-let tilesMigrated = false
+let bubblesMigrated = false
 
 $connectionsRegistry.listen(registry => {
-  if (!tilesMigrated && registry.connections.length > 0) {
-    tilesMigrated = true
-    migrateLegacyTiles(registry.primary)
+  if (!bubblesMigrated && registry.connections.length > 0) {
+    bubblesMigrated = true
     migrateLegacyBubbles(registry.primary)
   }
 })

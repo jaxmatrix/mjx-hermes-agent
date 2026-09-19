@@ -39,6 +39,7 @@ import {
 } from '@/store/live-session-status'
 import { $changeEventsAvailable, $sessionsChangeTick, resetLiveSync } from '@/store/live-sync'
 import { $unreadFinishedSessionIds } from '@/store/session'
+import { $stalledSessionIds, clearAllSessionStates, SESSION_WATCHDOG_TIMEOUT_MS } from '@/store/session-key-states'
 import { $activeStoredSessionId, $attentionSessionIds, $workingSessionIds } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
@@ -48,7 +49,6 @@ import {
   runtimeKeyFor,
   runtimeKeyForStoredSession
 } from '@/store/session-state-types'
-import { $stalledSessionIds, clearAllSessionStates, SESSION_WATCHDOG_TIMEOUT_MS } from '@/store/session-states'
 
 const snapshot = (...sessions: LiveSessionStatusItem[]): LiveSessionStatusResponse => ({ sessions })
 

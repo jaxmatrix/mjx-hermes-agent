@@ -30,8 +30,8 @@ import { newChatBubble } from '@/store/chat-bubbles'
 import { NEW_SESSION_FLASH_EVENT } from '@/store/layout'
 import { normalizeProfileKey } from '@/store/profile'
 import { setActiveProfile } from '@/store/profiles'
+import { focusWorkspaceSession, newSessionTab } from '@/store/session-key-states'
 import { newSession, startSessionInWorkspace } from '@/store/session-lifecycle'
-import { focusWorkspaceSession, newSessionTab } from '@/store/session-states'
 
 /**
  * Land on the chat that was just created: route to it, front its pane and claim
