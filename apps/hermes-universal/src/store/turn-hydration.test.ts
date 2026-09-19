@@ -17,7 +17,7 @@ import {
   readInFlightTurnJournal
 } from '@/lib/inflight-turn-journal'
 import {
-  $sessionStates,
+  $sessionKeyStates,
   ensureSessionSlice,
   hydratingKey,
   rekeySession,
@@ -82,12 +82,12 @@ function coldOpen(committed: ChatMessage[], stillRunning: boolean): void {
   })
 }
 
-const slice = () => $sessionStates.get()[runtime]
+const slice = () => $sessionKeyStates.get()[runtime]
 
 beforeEach(() => {
   window.localStorage.clear()
   __resetInFlightTurnJournalCache()
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   seq += 1
   stored = `stored-crash-${seq}`
   runtime = `runtime-${seq}`
@@ -158,7 +158,7 @@ describe('the journaling pass', () => {
     expect(readInFlightTurnJournal(stored)).toBeNull()
   })
 
-  // `$sessionStates` republishes the WHOLE map on every delta. Journaling every
+  // `$sessionKeyStates` republishes the WHOLE map on every delta. Journaling every
   // session inline on every publish put the bookkeeping for N idle sessions on
   // the token path of the one that is streaming.
   it('does not re-journal a session whose slice did not change', async () => {
@@ -225,7 +225,7 @@ describe('a painted cold open', () => {
     })
 
     // The authoritative rows stand, untouched by anything cached.
-    const messages = $sessionStates.get()['runtime-painted'].messages
+    const messages = $sessionKeyStates.get()['runtime-painted'].messages
 
     expect(messages.map(m => m.id)).toEqual(['h1', 'h2'])
     expect(messages.some(m => m.id === 'cached-u')).toBe(false)

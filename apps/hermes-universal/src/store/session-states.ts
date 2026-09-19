@@ -1,6 +1,6 @@
 /**
  * MULTI-SESSION VIEW STATE — the write path and derivations over
- * `$sessionStates`, the single map that holds EVERY session: the one on screen,
+ * `$sessionKeyStates`, the single map that holds EVERY session: the one on screen,
  * the ones in layout-tree tiles, and the ones behind mobile bubbles.
  *
  * The map is keyed by SESSION KEY (a runtime id once the gateway has issued one,
@@ -10,7 +10,7 @@
  * projections of that slice, so there is no second place a transcript can live
  * and no "is this event for the chat on screen?" guard to fail open (MJX-132).
  *
- * `$sessionTiles` holds the stored-session ids of open tiles (persisted — tiles
+ * `$sessionKeyTabs` holds the stored-session ids of open tiles (persisted — tiles
  * survive restarts); the wiring layer owns resume/submit and registers itself as
  * the delegate so tile UI stays dependency-light.
  *
@@ -61,10 +61,9 @@ import {
 } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   aliasStoredSessionId,
   clearStoredIdIndex,
-  type ClientSessionState,
   connectionOfSessionKey,
   DEFAULT_SESSION_PROFILE,
   dropSessionState,
@@ -76,6 +75,7 @@ import {
   publishSessionState,
   rekeySession,
   runtimeKeyForStoredSession,
+  type SessionKeyState,
   type SessionRef,
   setSessionDisposeHook,
   setSessionTransitionHook,
@@ -86,8 +86,8 @@ import { sameTabRef, setTabRefResolver, tabKeyFor, tabRefFor, tabRefOf, takeProf
 import { clearAllTurns } from '@/store/turn-lifecycle'
 import { isSecondaryWindow, ownsPersistedAppState } from '@/store/windows'
 
-export { $activeSessionKey, $sessionStates }
-export type { ClientSessionState }
+export { $activeSessionKey, $sessionKeyStates }
+export type { SessionKeyState }
 
 // ---------------------------------------------------------------------------
 // Stall detection (presentation hint; never mutates busy).
@@ -97,7 +97,7 @@ export const $stalledSessionIds = atom<string[]>([])
 
 // A stable identity for "no slice", so `$activeSessionState` and the views built
 // on it don't churn subscribers with a fresh object every read.
-const EMPTY_SESSION_STATE: ClientSessionState = emptySessionState()
+const EMPTY_SESSION_STATE: SessionKeyState = emptySessionState()
 
 export function setSessionStalled(storedSessionId: string | null | undefined, stalled: boolean) {
   if (!storedSessionId) {
@@ -129,7 +129,7 @@ function armWatchdog(runtimeId: string) {
     runtimeId,
     setTimeout(() => {
       sessionWatchdogTimers.delete(runtimeId)
-      const current = $sessionStates.get()[runtimeId]
+      const current = $sessionKeyStates.get()[runtimeId]
 
       if (current?.busy) {
         setSessionStalled(current.storedSessionId, true)
@@ -148,7 +148,7 @@ function clearWatchdog(runtimeId: string) {
 }
 
 // --- Transition detection (called automatically from publishSessionState) ---
-function handleTransition(previous: ClientSessionState | null, next: ClientSessionState, key: string) {
+function handleTransition(previous: SessionKeyState | null, next: SessionKeyState, key: string) {
   // Compression id rotation: signal the route-follow effect with enough
   // provenance that the consumer can reject it if the user navigated away.
   if (previous?.storedSessionId && next.storedSessionId && previous.storedSessionId !== next.storedSessionId) {
@@ -275,7 +275,7 @@ export function clearAllSessionStates() {
   clearAllSubagents()
   disposeStreamBatch()
   $stalledSessionIds.set([])
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
 }
 
 /**
@@ -311,7 +311,7 @@ function draftSliceKeyOf(tile: SessionTile): null | string {
 export function heldSessionKeys(): Set<string> {
   const held = new Set<string>()
 
-  for (const tile of $sessionTiles.get()) {
+  for (const tile of $sessionKeyTabs.get()) {
     // EVERY record's slice key, focused or not (Design v1.3, N8): the draft
     // tile's resolver answers for the ACTIVE placeholder only, so a background
     // draft — a second tab the user started and moved away from — was not in
@@ -336,7 +336,7 @@ export function dropUnheldSessionStates(leavingConnectionId: null | string): voi
   const held = heldSessionKeys()
   const leaving = leavingConnectionId ?? LOCAL_SESSION_SCOPE
 
-  for (const [key, state] of Object.entries($sessionStates.get())) {
+  for (const [key, state] of Object.entries($sessionKeyStates.get())) {
     if (held.has(key)) {
       continue
     }
@@ -379,7 +379,7 @@ export const MAX_CACHED_SESSIONS = 12
 function pinnedSessionKeys(): Set<string> {
   const pinned = new Set<string>([$activeSessionKey.get()])
 
-  for (const tile of $sessionTiles.get()) {
+  for (const tile of $sessionKeyTabs.get()) {
     const key = tileRuntimeKey(tile.storedSessionId)
 
     if (key) {
@@ -412,7 +412,7 @@ export function setVisibleBubbleKeysProvider(provider: () => string[]): void {
  * cap — dropping a live turn to respect a cache bound would be the wrong trade.
  */
 export function pruneSessionStates(): void {
-  const states = $sessionStates.get()
+  const states = $sessionKeyStates.get()
   const keys = Object.keys(states)
 
   if (keys.length <= MAX_CACHED_SESSIONS) {
@@ -441,7 +441,7 @@ let pruning = false
 let lastSliceCount = 0
 
 if (ownsPersistedAppState()) {
-  $sessionStates.subscribe(states => {
+  $sessionKeyStates.subscribe(states => {
     const count = Object.keys(states).length
     const grew = count > lastSliceCount
     lastSliceCount = count
@@ -494,7 +494,7 @@ export function invalidateRuntimeBindings(): void {
   flushDeltas()
   resetTileRuntimeBindings()
 
-  for (const [key, state] of Object.entries($sessionStates.get())) {
+  for (const [key, state] of Object.entries($sessionKeyStates.get())) {
     if (state.busy || state.turnStartedAt !== null) {
       updateSession(key, current => ({ ...current, busy: false, turnStartedAt: null }))
     }
@@ -505,7 +505,7 @@ export function invalidateRuntimeBindings(): void {
  *  lives in the same map, so this is a plain lookup rather than the projection
  *  of a parallel set of global atoms that `$primarySessionState` used to be. */
 export const $activeSessionState = computed(
-  [$activeSessionKey, $sessionStates],
+  [$activeSessionKey, $sessionKeyStates],
   (key, states) => states[key] ?? EMPTY_SESSION_STATE
 )
 
@@ -656,7 +656,7 @@ function loadTiles(): StoredTile[] {
 let storedTiles = loadTiles()
 
 // A secondary window shows no tiles.
-export const $sessionTiles = atom<SessionTile[]>(isSecondaryWindow() ? [] : storedTiles.map(fromStored))
+export const $sessionKeyTabs = atom<SessionTile[]>(isSecondaryWindow() ? [] : storedTiles.map(fromStored))
 
 function persistTiles() {
   if (!ownsPersistedAppState()) {
@@ -711,10 +711,10 @@ export function migrateLegacyTiles(primaryConnectionId: string): void {
   persistTiles()
 
   if (!isSecondaryWindow()) {
-    const live = $sessionTiles.get()
+    const live = $sessionKeyTabs.get()
     const known = new Set(live.map(t => t.tileKey))
 
-    $sessionTiles.set([...migrated.filter(t => !known.has(tileKeyFor(t))).map(fromStored), ...live])
+    $sessionKeyTabs.set([...migrated.filter(t => !known.has(tileKeyFor(t))).map(fromStored), ...live])
   }
 }
 
@@ -766,7 +766,7 @@ export function saveSessionTiles(tiles: SessionTile[]) {
   // A write may not repoint a tab. `patchSessionTile` makes a repoint impossible
   // to COMPILE; this catches one assembled dynamically — a merged list, a
   // restored blob — and keeps the live tab rather than adopting the stranger.
-  const live = new Map($sessionTiles.get().map(tile => [tile.tileKey, tile]))
+  const live = new Map($sessionKeyTabs.get().map(tile => [tile.tileKey, tile]))
 
   const guarded = tiles.map(tile => {
     const current = live.get(tile.tileKey)
@@ -780,7 +780,7 @@ export function saveSessionTiles(tiles: SessionTile[]) {
     return tile
   })
 
-  $sessionTiles.set(guarded)
+  $sessionKeyTabs.set(guarded)
   // …and the holds follow the records, in the same commit.
   commitTabHolds(guarded)
   // The draft tile is never persisted: `draft` names no session, so restoring it
@@ -815,7 +815,7 @@ export function tileRuntimeKey(tileKey: null | string): null | string {
     return isPlaceholderKey(active) ? active : null
   }
 
-  const tile = $sessionTiles.get().find(t => t.tileKey === tileKey)
+  const tile = $sessionKeyTabs.get().find(t => t.tileKey === tileKey)
 
   return runtimeKeyForStoredSession(tile?.storedSessionId ?? tileKey, tile && tileRef(tile)) ?? tile?.runtimeId ?? null
 }
@@ -834,7 +834,7 @@ export type SessionTilePatch = Partial<
 >
 
 export function patchSessionTile(tileKey: string, patch: SessionTilePatch) {
-  saveSessionTiles($sessionTiles.get().map(t => (t.tileKey === tileKey ? { ...t, ...patch } : t)))
+  saveSessionTiles($sessionKeyTabs.get().map(t => (t.tileKey === tileKey ? { ...t, ...patch } : t)))
 }
 
 /**
@@ -864,7 +864,7 @@ export function refreshTileTitles(
 
   let changed = false
 
-  const next = $sessionTiles.get().map(tile => {
+  const next = $sessionKeyTabs.get().map(tile => {
     const title = byKey.get(`${tile.connectionId}\u0000${tile.storedSessionId}`)
 
     if (!title || title === tile.title) {
@@ -897,7 +897,7 @@ export function refreshTileTitles(
  */
 export function noteTileBackendIdentity(tileKey: string, instanceKey: null | string | undefined): boolean {
   const key = (instanceKey ?? '').trim()
-  const tiles = $sessionTiles.get()
+  const tiles = $sessionKeyTabs.get()
   const tile = tiles.find(open => open.tileKey === tileKey)
 
   if (!tile || !key) {
@@ -931,10 +931,10 @@ export function tileActions(tile: SessionTile): readonly string[] {
 
 /** Drop live runtime bindings so every tile re-resumes — used on gateway reconnect. */
 export function resetTileRuntimeBindings() {
-  const tiles = $sessionTiles.get()
+  const tiles = $sessionKeyTabs.get()
 
   if (tiles.some(t => t.runtimeId)) {
-    $sessionTiles.set(tiles.map(({ runtimeId: _runtimeId, ...tile }) => tile))
+    $sessionKeyTabs.set(tiles.map(({ runtimeId: _runtimeId, ...tile }) => tile))
   }
 }
 
@@ -949,7 +949,7 @@ export interface SessionTileDelegate {
   interruptSession(runtimeId: string): Promise<void>
   resumeTile(storedSessionId: string): Promise<string>
   submitToSession(runtimeId: string, text: string, displayText?: string): Promise<void>
-  updateSession(runtimeId: string, updater: (state: ClientSessionState) => ClientSessionState): ClientSessionState
+  updateSession(runtimeId: string, updater: (state: SessionKeyState) => SessionKeyState): SessionKeyState
 }
 
 let delegate: SessionTileDelegate | null = null
@@ -1000,12 +1000,12 @@ export function orderTilesByTree<T extends { tileKey: string }>(
 /**
  * Keep the PERSISTED tile order in step with the order on screen.
  *
- * The layout tree owns where a tab sits; `$sessionTiles` is a parallel list that
+ * The layout tree owns where a tab sits; `$sessionKeyTabs` is a parallel list that
  * outlives it, and two consumers read that list's ORDER rather than the tree's:
  *
  *  - `stackSessionTilesIntoMain` — the layout-RESET handler
  *    (`registerLayoutResetHandler`, app/contrib/controller.tsx) — restacks every
- *    tile into the workspace zone by walking `$sessionTiles` front to back;
+ *    tile into the workspace zone by walking `$sessionKeyTabs` front to back;
  *  - `paneMirror` re-registers panes in array order, which is the order they
  *    dock in when the tree holds no pane for them yet (a profile switch back, or
  *    a tree that lost them).
@@ -1024,12 +1024,12 @@ export function orderTilesByTree<T extends { tileKey: string }>(
  *
  * Safe to run on every commit. `orderTilesByTree` returns `null` unless the
  * order actually moved, so the common case costs one walk and no write; and a
- * pure reorder of `$sessionTiles` registers and removes nothing in `paneMirror`
+ * pure reorder of `$sessionKeyTabs` registers and removes nothing in `paneMirror`
  * (it diffs by key, then by title/accent), so this cannot drive the tree write
  * that would re-enter it.
  */
 function syncTileStripOrder() {
-  const next = orderTilesByTree($layoutTree.get(), $sessionTiles.get())
+  const next = orderTilesByTree($layoutTree.get(), $sessionKeyTabs.get())
 
   if (next) {
     saveSessionTiles(next)
@@ -1085,7 +1085,7 @@ export function noteSessionTileMounted(storedSessionId: string): void {
  * fought the first for its pane title and its close verb (MJXHRM-423).
  *
  * The existing tile's OWN key is what gets moved: its pane id and its
- * `$sessionTiles` record are both keyed on it, and re-keying a live tile to the
+ * `$sessionKeyTabs` record are both keyed on it, and re-keying a live tile to the
  * new id would strand the pane the layout tree already holds.
  */
 export function openSessionTile(
@@ -1094,7 +1094,7 @@ export function openSessionTile(
   anchor?: string,
   before?: null | string
 ) {
-  const tiles = $sessionTiles.get()
+  const tiles = $sessionKeyTabs.get()
 
   if (sameStoredSession(storedSessionId, $activeStoredSessionId.get())) {
     return
@@ -1145,7 +1145,7 @@ export function openSessionTile(
  */
 export function openBranchTile(branchStoredId: string, parentStoredId: null | string): void {
   const anchor =
-    parentStoredId && $sessionTiles.get().some(t => t.tileKey === tileKeyFor(sessionRefFor(parentStoredId)))
+    parentStoredId && $sessionKeyTabs.get().some(t => t.tileKey === tileKeyFor(sessionRefFor(parentStoredId)))
       ? `${TILE_PANE_PREFIX}${tileKeyFor(sessionRefFor(parentStoredId))}`
       : WORKSPACE_PANE_ID
 
@@ -1169,7 +1169,7 @@ export function openSessionTab(storedSessionId: string, focus = true): void {
 
   const onScreen =
     sameStoredSession(storedSessionId, $activeStoredSessionId.get()) ||
-    $sessionTiles.get().some(tile => sameTileConversation(tile, ref))
+    $sessionKeyTabs.get().some(tile => sameTileConversation(tile, ref))
 
   if (!onScreen) {
     openSessionTile(storedSessionId, 'center', WORKSPACE_PANE_ID)
@@ -1187,7 +1187,7 @@ export function openSessionTab(storedSessionId: string, focus = true): void {
  * work the other way around: the draft took over the main pane and the chat that
  * was already there got parked into a tile — so asking for a new chat moved a
  * chat you had not asked about, and the new one was the single chat in the app
- * that was not a tile. A draft is a session like any other in `$sessionStates`;
+ * that was not a tile. A draft is a session like any other in `$sessionKeyStates`;
  * this makes it a tile like any other too.
  *
  * ONE draft at a time: a second `+` on an empty draft fronts the one already
@@ -1203,12 +1203,12 @@ export function newSessionTab(): void {
   // tab belongs in the strip you asked from, not docked to the side.
   const anchor = activeChatPaneId()
 
-  if (!$sessionTiles.get().some(t => t.tileKey === DRAFT_TILE_KEY)) {
+  if (!$sessionKeyTabs.get().some(t => t.tileKey === DRAFT_TILE_KEY)) {
     // The one UNBOUND tab (invariant 42): it holds no ref, so it renders and
     // routes against the active connection and re-points on every switch, until
     // its first `session.create` dispatch binds it once and for good.
     saveSessionTiles([
-      ...$sessionTiles.get(),
+      ...$sessionKeyTabs.get(),
       {
         anchor,
         connectionId: LOCAL_SESSION_SCOPE,
@@ -1254,7 +1254,7 @@ function focusDraftTile(anchor: string): void {
 function activeChatPaneId(): string {
   const active = $activeStoredSessionId.get()
   const key = active ? tileKeyFor(sessionRefFor(active)) : null
-  const tile = key && $sessionTiles.get().some(t => t.tileKey === key)
+  const tile = key && $sessionKeyTabs.get().some(t => t.tileKey === key)
 
   return tile ? `${TILE_PANE_PREFIX}${key}` : WORKSPACE_PANE_ID
 }
@@ -1268,7 +1268,7 @@ function activeChatPaneId(): string {
  * the width and the active flag; this carries the tile record.
  */
 function adoptDraftTile(ref: SessionRef): void {
-  const tiles = $sessionTiles.get()
+  const tiles = $sessionKeyTabs.get()
 
   if (!tiles.some(t => t.tileKey === DRAFT_TILE_KEY)) {
     return
@@ -1320,7 +1320,7 @@ export function focusWorkspaceSession(): void {
 export function focusOpenSession(storedSessionId: string, ref?: SessionRef): boolean {
   const tileKey = tileKeyFor(ref ?? sessionRefFor(storedSessionId))
 
-  if ($sessionTiles.get().some(t => t.tileKey === tileKey)) {
+  if ($sessionKeyTabs.get().some(t => t.tileKey === tileKey)) {
     const paneId = `${TILE_PANE_PREFIX}${tileKey}`
     revealTreePane(paneId)
     const tree = $layoutTree.get()
@@ -1350,7 +1350,7 @@ const closedTiles: SessionTile[] = []
 const closedStack = (): SessionTile[] => closedTiles
 
 export function closeSessionTile(tileKey: string) {
-  const tile = $sessionTiles.get().find(t => t.tileKey === tileKey)
+  const tile = $sessionKeyTabs.get().find(t => t.tileKey === tileKey)
 
   // The draft is not reopenable: ⌘⇧T would restore a tab for a chat that never
   // existed. Closing an empty draft discards it, which is what closing an empty
@@ -1365,7 +1365,7 @@ export function closeSessionTile(tileKey: string) {
     })
   }
 
-  saveSessionTiles($sessionTiles.get().filter(t => t.tileKey !== tileKey))
+  saveSessionTiles($sessionKeyTabs.get().filter(t => t.tileKey !== tileKey))
 }
 
 /**
@@ -1382,7 +1382,7 @@ export function closeSessionTile(tileKey: string) {
  * session's busy flag.
  */
 export function sessionKeyNeedsCloseConfirm(runtimeKey: null | string): boolean {
-  const state = runtimeKey ? $sessionStates.get()[runtimeKey] : undefined
+  const state = runtimeKey ? $sessionKeyStates.get()[runtimeKey] : undefined
 
   return Boolean(state?.busy || state?.awaitingResponse || state?.needsInput)
 }
@@ -1407,7 +1407,7 @@ export function discardSessionTile(tileKey: string) {
     dropSessionState(key)
   }
 
-  saveSessionTiles($sessionTiles.get().filter(t => t.tileKey !== tileKey))
+  saveSessionTiles($sessionKeyTabs.get().filter(t => t.tileKey !== tileKey))
 }
 
 /** ⌘⇧T — reopen the most recently closed tab where it was, then FOCUS it.
@@ -1427,7 +1427,7 @@ export function reopenLastClosedTile(): void {
       continue
     }
 
-    if (!$sessionTiles.get().some(t => sameTileConversation(t, tileRef(tile)))) {
+    if (!$sessionKeyTabs.get().some(t => sameTileConversation(t, tileRef(tile)))) {
       openSessionTile(storedSessionId, tile.dir, tile.anchor, tile.before)
       focusOpenSession(storedSessionId, tileRef(tile))
 
@@ -1443,7 +1443,7 @@ export function reopenLastClosedTile(): void {
  *  unknown rather than empty, so it is left alone. */
 export function blankDraftTile(
   tiles: readonly SessionTile[],
-  states: Record<string, ClientSessionState>
+  states: Record<string, SessionKeyState>
 ): null | SessionTile {
   // Reverse scan rather than `findLast` — this project's lib target predates it.
   for (let i = tiles.length - 1; i >= 0; i--) {
@@ -1463,7 +1463,7 @@ export function blankDraftTile(
  *  draft is DISCARDED rather than closed: it never held a conversation, so ⌘⇧T
  *  resurrecting it would just restore an empty tab. */
 export function reuseBlankDraftTile(storedSessionId: string): boolean {
-  const tile = blankDraftTile($sessionTiles.get(), $sessionStates.get())
+  const tile = blankDraftTile($sessionKeyTabs.get(), $sessionKeyStates.get())
 
   if (!tile || tile.storedSessionId === storedSessionId) {
     return false
@@ -1497,7 +1497,7 @@ export function nextSessionTileForWorkspace(): null | string {
     return null
   }
 
-  const tiles = $sessionTiles.get()
+  const tiles = $sessionKeyTabs.get()
   const idx = group.panes.indexOf(WORKSPACE_PANE_ID)
   // After the workspace tab first, then the ones before it (nearest-out).
   const ordered = [...group.panes.slice(idx + 1), ...group.panes.slice(0, idx).reverse()]
@@ -1577,7 +1577,7 @@ $focusedStoredSessionId.listen(storedId => {
 
 /** Session key of the focused session (a tile's bound key, else the active one). */
 export const $focusedRuntimeId = computed(
-  [$focusedStoredSessionId, $activeStoredSessionId, $activeSessionKey, $sessionStates],
+  [$focusedStoredSessionId, $activeStoredSessionId, $activeSessionKey, $sessionKeyStates],
   (focused, selected, activeKey, _states) => {
     if (focused && focused !== selected) {
       return runtimeKeyForStoredSession(focused)
@@ -1590,7 +1590,7 @@ export const $focusedRuntimeId = computed(
 /** The focused session's slice. One map, so this is a plain lookup — falling
  *  back to the active session when a tile has no live key yet. */
 export const $focusedSessionState = computed(
-  [$focusedRuntimeId, $activeSessionKey, $sessionStates],
+  [$focusedRuntimeId, $activeSessionKey, $sessionKeyStates],
   (key, activeKey, states) => states[key ?? activeKey] ?? states[activeKey] ?? EMPTY_SESSION_STATE
 )
 
@@ -1605,7 +1605,7 @@ export const selectionHomesToWorkspace = (selected: null | string, tiles: readon
   !(selected && tiles.some(t => t.storedSessionId === selected))
 
 $activeStoredSessionId.listen(selected => {
-  if (!selectionHomesToWorkspace(selected, $sessionTiles.get())) {
+  if (!selectionHomesToWorkspace(selected, $sessionKeyTabs.get())) {
     return
   }
 
@@ -1625,7 +1625,7 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
     open: openSessionTile,
     patch: patchSessionTile,
     publish: publishSessionState,
-    states: () => $sessionStates.get(),
-    tiles: () => $sessionTiles.get()
+    states: () => $sessionKeyStates.get(),
+    tiles: () => $sessionKeyTabs.get()
   }
 }

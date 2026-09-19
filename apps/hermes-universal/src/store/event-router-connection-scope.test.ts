@@ -31,7 +31,7 @@ import { resetUnscopedStreamPin, routeGatewayEvent } from '@/store/event-router'
 import { connectionEpoch, replayCursor, __testing as replayTesting } from '@/store/session-replay'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   emptySessionState,
   publishSessionState,
   runtimeKeyFor
@@ -57,10 +57,10 @@ const seed = (connectionId: string) => {
 
 /** `status.update` folds straight into the slice, so it reads back without the
  *  delta batcher's flush window — this test is about WHERE a frame lands. */
-const statusOf = (key: string) => $sessionStates.get()[key]?.statusLine ?? ''
+const statusOf = (key: string) => $sessionKeyStates.get()[key]?.statusLine ?? ''
 
 beforeEach(() => {
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   replayTesting.reset()
   resetUnscopedStreamPin()
   $activeConnection.set({ connectionId: 'conn-a', profile: 'default', scopeKey: 'conn-a' } as unknown as never)
@@ -230,14 +230,14 @@ describe('invariant 45 — a slice from the ordinary chat path', () => {
 
     const key = runtimeKeyFor('conn-a', 'run-1')
 
-    expect($sessionStates.get()[key]).toMatchObject({ connectionId: 'conn-a', runtimeSessionId: 'run-1' })
+    expect($sessionKeyStates.get()[key]).toMatchObject({ connectionId: 'conn-a', runtimeSessionId: 'run-1' })
     // …and the bare key, which is what an unscoped mint would have produced, is
     // not there at all.
-    expect($sessionStates.get()['run-1']).toBeUndefined()
+    expect($sessionKeyStates.get()['run-1']).toBeUndefined()
 
     routeGatewayEvent({ payload: { text: 'streams' }, session_id: 'run-1', type: 'status.update' } as GatewayEvent)
 
-    expect($sessionStates.get()[key]?.statusLine).toBe('streams')
+    expect($sessionKeyStates.get()[key]?.statusLine).toBe('streams')
   })
 
   it('finds that slice again by its durable id, under the ambient scope', async () => {

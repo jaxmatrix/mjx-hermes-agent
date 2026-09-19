@@ -1,6 +1,6 @@
 import { requestForSession, routeScopeForSession } from '@/store/session-route-dispatch'
 import {
-  $sessionStates,
+  $sessionKeyStates,
   dropSessionState,
   ensureSessionSlice,
   hydratingKeyFor,
@@ -11,7 +11,7 @@ import {
 
 /**
  * BIND a session this window is not looking at — give it a real
- * `$sessionStates` slice, streaming.
+ * `$sessionKeyStates` slice, streaming.
  *
  * `host.openSession` FOCUSES; this does not. A surface that drives several
  * foreign sessions at once (a Bot Mode room's six members) needs their turns,
@@ -73,7 +73,7 @@ export async function bindSessionSlice(
 
   // Already bound — unless the caller wants the transcript, which the first
   // bind may not have asked for.
-  if (existing && $sessionStates.get()[existing]?.runtimeSessionId && !options.withHistory) {
+  if (existing && $sessionKeyStates.get()[existing]?.runtimeSessionId && !options.withHistory) {
     return { ok: true, sessionKey: existing }
   }
 

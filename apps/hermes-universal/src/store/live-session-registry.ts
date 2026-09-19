@@ -7,7 +7,7 @@
  * WHY IT IS NOT A SESSION SLICE. The snapshot's job is to light up a row for a
  * session running somewhere else — a cron tick, an inbound messaging turn, the
  * TUI, or the crash continuation the gateway scheduled while this app was dead.
- * That used to be done by publishing a `$sessionStates` slice for the stranger,
+ * That used to be done by publishing a `$sessionKeyStates` slice for the stranger,
  * seeded from the snapshot alone: no transcript, no `session.resume`, no
  * transport bound to this webview.
  *

@@ -18,9 +18,9 @@ import { $layoutTree } from '@/components/pane-shell/tree/store'
 import { sessionTilePaneId } from '@/lib/pane-ids'
 import { readKey, writeKey } from '@/lib/persist'
 import { $activeProfile } from '@/store/profiles'
-import { $sessionStates, emptySessionState, publishSessionState, runtimeKeyFor } from '@/store/session-state-types'
+import { $sessionKeyStates, emptySessionState, publishSessionState, runtimeKeyFor } from '@/store/session-state-types'
 import {
-  $sessionTiles,
+  $sessionKeyTabs,
   dropUnheldSessionStates,
   migrateLegacyTiles,
   noteTileBackendIdentity,
@@ -52,8 +52,8 @@ const tile = (
 beforeEach(() => {
   writeKey(TILES_V2, null)
   writeKey(TILES_V3, null)
-  $sessionTiles.set([])
-  $sessionStates.set({})
+  $sessionKeyTabs.set([])
+  $sessionKeyStates.set({})
   $layoutTree.set(null)
   $activeProfile.set('default')
 })
@@ -84,9 +84,9 @@ describe('invariant 37 — a switch leaves every tab where it is', () => {
     $activeProfile.set('other')
     $activeProfile.set('default')
 
-    expect($sessionTiles.get().map(t => t.tileKey)).toEqual([a.tileKey, b.tileKey])
-    expect($sessionStates.get()[keyA]?.runtimeSessionId).toBe('run-a')
-    expect($sessionStates.get()[keyB]?.runtimeSessionId).toBe('run-b')
+    expect($sessionKeyTabs.get().map(t => t.tileKey)).toEqual([a.tileKey, b.tileKey])
+    expect($sessionKeyStates.get()[keyA]?.runtimeSessionId).toBe('run-a')
+    expect($sessionKeyStates.get()[keyB]?.runtimeSessionId).toBe('run-b')
   })
 
   it('resolves each tab to its OWN slice when two backends minted the same id', () => {
@@ -121,7 +121,7 @@ describe('invariant 38 — a bound tab’s ref is immutable', () => {
     // can produce, which the patch type alone cannot catch.
     saveSessionTiles([{ ...bound, connectionId: 'conn-b' }])
 
-    expect($sessionTiles.get()[0].connectionId).toBe('conn-a')
+    expect($sessionKeyTabs.get()[0].connectionId).toBe('conn-a')
     expect(JSON.parse(readKey(TILES_V3) ?? '[]')[0].connectionId).toBe('conn-a')
   })
 
@@ -131,11 +131,11 @@ describe('invariant 38 — a bound tab’s ref is immutable', () => {
     saveSessionTiles([tab])
 
     expect(noteTileBackendIdentity(tab.tileKey, 'ssh:deploy@box:22')).toBe(true)
-    expect($sessionTiles.get()[0].backendIdentity).toBe('ssh:deploy@box:22')
+    expect($sessionKeyTabs.get()[0].backendIdentity).toBe('ssh:deploy@box:22')
 
     // The same machine again is just the same tab.
     expect(noteTileBackendIdentity(tab.tileKey, 'ssh:deploy@box:22')).toBe(true)
-    expect($sessionTiles.get()[0].unavailable).toBeUndefined()
+    expect($sessionKeyTabs.get()[0].unavailable).toBeUndefined()
   })
 
   it('goes unavailable when a DIFFERENT backend answers, keeping its ref', () => {
@@ -149,7 +149,7 @@ describe('invariant 38 — a bound tab’s ref is immutable', () => {
     // machine's chat under this tab's history.
     expect(noteTileBackendIdentity(tab.tileKey, 'ssh:deploy@other:22')).toBe(false)
 
-    const after = $sessionTiles.get()[0]
+    const after = $sessionKeyTabs.get()[0]
 
     expect(after).toMatchObject({ connectionId: 'conn-a', storedSessionId: 'abc12345', unavailable: true })
     expect(after.backendIdentity).toBe('ssh:deploy@box:22')
@@ -203,7 +203,7 @@ describe('invariant 41 — the v2 migration runs once', () => {
         storedSessionId: 'def67890'
       }
     ])
-    expect($sessionTiles.get().map(t => t.tileKey)).toEqual([
+    expect($sessionKeyTabs.get().map(t => t.tileKey)).toEqual([
       tileKeyFor({ connectionId: 'conn-a', profile: 'default', storedSessionId: 'abc12345' }),
       tileKeyFor({ connectionId: 'conn-a', profile: 'work', storedSessionId: 'def67890' })
     ])
@@ -226,7 +226,7 @@ describe('invariant 41 — the v2 migration runs once', () => {
     saveSessionTiles([])
     migrateLegacyTiles('conn-a')
 
-    expect($sessionTiles.get()).toEqual([])
+    expect($sessionKeyTabs.get()).toEqual([])
     expect(readKey(TILES_V3)).toBeNull()
   })
 
@@ -235,7 +235,7 @@ describe('invariant 41 — the v2 migration runs once', () => {
 
     migrateLegacyTiles('local')
 
-    expect($sessionTiles.get()[0].tileKey).toBe('abc12345')
+    expect($sessionKeyTabs.get()[0].tileKey).toBe('abc12345')
   })
 })
 
@@ -266,10 +266,10 @@ describe('invariant 37 — a switch touches only what it leaves', () => {
     // own client.
     dropUnheldSessionStates('conn-a')
 
-    expect($sessionStates.get()[a.key]?.runtimeSessionId).toBe('run-a')
-    expect($sessionStates.get()[b.key]?.runtimeSessionId).toBe('run-b')
-    expect($sessionTiles.get().map(t => t.tileKey)).toEqual([a.tab.tileKey, b.tab.tileKey])
-    expect($sessionTiles.get().every(t => t.connectionId !== '')).toBe(true)
+    expect($sessionKeyStates.get()[a.key]?.runtimeSessionId).toBe('run-a')
+    expect($sessionKeyStates.get()[b.key]?.runtimeSessionId).toBe('run-b')
+    expect($sessionKeyTabs.get().map(t => t.tileKey)).toEqual([a.tab.tileKey, b.tab.tileKey])
+    expect($sessionKeyTabs.get().every(t => t.connectionId !== '')).toBe(true)
   })
 
   it('drops only the leaving connection\u2019s slices that no tab holds', () => {
@@ -286,11 +286,11 @@ describe('invariant 37 — a switch touches only what it leaves', () => {
 
     dropUnheldSessionStates('conn-a')
 
-    expect($sessionStates.get()[loose]).toBeUndefined()
-    expect($sessionStates.get()[a.key]).toBeUndefined()
-    expect($sessionStates.get()[held.key]).toBeDefined()
+    expect($sessionKeyStates.get()[loose]).toBeUndefined()
+    expect($sessionKeyStates.get()[a.key]).toBeUndefined()
+    expect($sessionKeyStates.get()[held.key]).toBeDefined()
     // Another connection's loose slice is none of this switch's business.
-    expect($sessionStates.get()[elsewhere]).toBeDefined()
+    expect($sessionKeyStates.get()[elsewhere]).toBeDefined()
   })
 })
 
@@ -323,11 +323,11 @@ describe('invariant 37 — the headline: a bound tab keeps streaming across a sw
       type: 'status.update'
     } as never)
 
-    const slice = $sessionStates.get()[key]
+    const slice = $sessionKeyStates.get()[key]
 
     expect(slice?.statusLine).toBe('still mine')
     expect(slice?.runtimeSessionId).toBe('run-a')
-    expect($sessionTiles.get()[0]).toMatchObject({ connectionId: 'conn-a', storedSessionId: 'abc12345' })
+    expect($sessionKeyTabs.get()[0]).toMatchObject({ connectionId: 'conn-a', storedSessionId: 'abc12345' })
 
     $activeConnection.set(null)
   })
@@ -343,7 +343,7 @@ describe('invariant 43 — a tab keeps its name when the rows go', () => {
       { connection_id: 'conn-a', id: 'abc12345', title: 'Deploy notes' }
     ])
 
-    expect($sessionTiles.get()[0].title).toBe('Deploy notes')
+    expect($sessionKeyTabs.get()[0].title).toBe('Deploy notes')
     expect(JSON.parse(readKey(TILES_V3) ?? '[]')[0].title).toBe('Deploy notes')
   })
 
@@ -354,7 +354,7 @@ describe('invariant 43 — a tab keeps its name when the rows go', () => {
     refreshTileTitles([{ connection_id: 'conn-a', id: 'abc12345', title: 'Deploy notes' }])
     refreshTileTitles([])
 
-    expect($sessionTiles.get()[0].title).toBe('Deploy notes')
+    expect($sessionKeyTabs.get()[0].title).toBe('Deploy notes')
   })
 })
 

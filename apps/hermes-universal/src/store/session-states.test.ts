@@ -16,7 +16,7 @@ import { $sessions } from '@/store/session'
 import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   aliasStoredSessionId,
   dropSessionState,
   emptySessionState,
@@ -29,7 +29,7 @@ import {
 import {
   $focusedChatPane,
   $focusedCwd,
-  $sessionTiles,
+  $sessionKeyTabs,
   clearAllSessionStates,
   closeSessionTile,
   focusOpenSession,
@@ -64,7 +64,7 @@ describe('rekeySession', () => {
 
     const frames: boolean[] = []
 
-    const unsubscribe = $sessionStates.subscribe(states => {
+    const unsubscribe = $sessionKeyStates.subscribe(states => {
       frames.push('draft:1' in states || 'runtime-1' in states)
     })
 
@@ -72,8 +72,8 @@ describe('rekeySession', () => {
     unsubscribe()
 
     expect(frames.every(Boolean)).toBe(true)
-    expect($sessionStates.get()['draft:1']).toBeUndefined()
-    expect($sessionStates.get()['runtime-1']).toMatchObject({ runtimeSessionId: 'runtime-1' })
+    expect($sessionKeyStates.get()['draft:1']).toBeUndefined()
+    expect($sessionKeyStates.get()['runtime-1']).toMatchObject({ runtimeSessionId: 'runtime-1' })
   })
 
   it('carries the active pointer with the slice', () => {
@@ -139,13 +139,13 @@ describe('updateSession', () => {
     const next = updateSession('never-seen', state => ({ ...state, statusLine: 'hi' }))
 
     expect(next.statusLine).toBe('hi')
-    expect($sessionStates.get()['never-seen']).toBeDefined()
+    expect($sessionKeyStates.get()['never-seen']).toBeDefined()
   })
 
   it('does not republish when the updater returns the same state', () => {
     let frames = 0
 
-    const unsubscribe = $sessionStates.subscribe(() => {
+    const unsubscribe = $sessionKeyStates.subscribe(() => {
       frames++
     })
 
@@ -167,9 +167,9 @@ describe('pruneSessionStates', () => {
     fill(MAX_CACHED_SESSIONS + 3)
     pruneSessionStates()
 
-    expect(Object.keys($sessionStates.get())).toHaveLength(MAX_CACHED_SESSIONS)
-    expect($sessionStates.get()['idle-0']).toBeUndefined()
-    expect($sessionStates.get()['idle-1']).toBeUndefined()
+    expect(Object.keys($sessionKeyStates.get())).toHaveLength(MAX_CACHED_SESSIONS)
+    expect($sessionKeyStates.get()['idle-0']).toBeUndefined()
+    expect($sessionKeyStates.get()['idle-1']).toBeUndefined()
   })
 
   it('never evicts the session on screen', () => {
@@ -177,7 +177,7 @@ describe('pruneSessionStates', () => {
     // `active` was seeded first, so it is the oldest by lastTouchedAt.
     pruneSessionStates()
 
-    expect($sessionStates.get().active).toBeDefined()
+    expect($sessionKeyStates.get().active).toBeDefined()
   })
 
   // Dropping a live turn to respect a cache bound would be the wrong trade — an
@@ -186,7 +186,7 @@ describe('pruneSessionStates', () => {
     fill(MAX_CACHED_SESSIONS + 4, { busy: true })
     pruneSessionStates()
 
-    expect(Object.keys($sessionStates.get()).length).toBeGreaterThan(MAX_CACHED_SESSIONS)
+    expect(Object.keys($sessionKeyStates.get()).length).toBeGreaterThan(MAX_CACHED_SESSIONS)
 
     clearAllSessionStates()
     $activeSessionKey.set('active')
@@ -194,7 +194,7 @@ describe('pruneSessionStates', () => {
     fill(MAX_CACHED_SESSIONS + 4, { needsInput: true })
     pruneSessionStates()
 
-    expect(Object.keys($sessionStates.get()).length).toBeGreaterThan(MAX_CACHED_SESSIONS)
+    expect(Object.keys($sessionKeyStates.get()).length).toBeGreaterThan(MAX_CACHED_SESSIONS)
   })
 
   it('never evicts a draft — its unsent text cannot be re-fetched', () => {
@@ -202,7 +202,7 @@ describe('pruneSessionStates', () => {
     fill(MAX_CACHED_SESSIONS + 4)
     pruneSessionStates()
 
-    expect($sessionStates.get()['draft:9']).toBeDefined()
+    expect($sessionKeyStates.get()['draft:9']).toBeDefined()
   })
 })
 
@@ -242,7 +242,7 @@ describe('focusWorkspaceSession', () => {
   }
 
   beforeEach(() => {
-    $sessionTiles.set([])
+    $sessionKeyTabs.set([])
     $activeStoredSessionId.set(null)
     noteActiveTreeGroup(TOOL_GROUP)
   })
@@ -311,13 +311,13 @@ describe('focusWorkspaceSession', () => {
 
     it('anchors the branch to the PARENT strip when the parent is a tile', () => {
       seedTree([WORKSPACE_PANE_ID])
-      $sessionTiles.set([
+      $sessionKeyTabs.set([
         { dir: 'center', connectionId: 'local', profile: 'default', storedSessionId: 'parent-1', tileKey: 'parent-1' }
       ])
 
       openBranchTile('branch-1', 'parent-1')
 
-      expect($sessionTiles.get().find(t => t.storedSessionId === 'branch-1')).toMatchObject({
+      expect($sessionKeyTabs.get().find(t => t.storedSessionId === 'branch-1')).toMatchObject({
         anchor: sessionTilePaneId('parent-1'),
         dir: 'center'
       })
@@ -328,7 +328,7 @@ describe('focusWorkspaceSession', () => {
 
       openBranchTile('branch-1', 'parent-1')
 
-      expect($sessionTiles.get().find(t => t.storedSessionId === 'branch-1')).toMatchObject({
+      expect($sessionKeyTabs.get().find(t => t.storedSessionId === 'branch-1')).toMatchObject({
         anchor: WORKSPACE_PANE_ID,
         dir: 'center'
       })
@@ -347,7 +347,7 @@ describe('focusWorkspaceSession', () => {
 
       openSessionTab('bot-chat')
 
-      expect($sessionTiles.get().find(t => t.storedSessionId === 'bot-chat')).toMatchObject({
+      expect($sessionKeyTabs.get().find(t => t.storedSessionId === 'bot-chat')).toMatchObject({
         anchor: WORKSPACE_PANE_ID,
         dir: 'center'
       })
@@ -358,7 +358,7 @@ describe('focusWorkspaceSession', () => {
     it('opens no second tab for a chat already on screen — in main, or as a tile in another zone', () => {
       seedTree([WORKSPACE_PANE_ID])
       $activeStoredSessionId.set('loaded')
-      $sessionTiles.set([
+      $sessionKeyTabs.set([
         {
           anchor: 'elsewhere',
           dir: 'left',
@@ -373,7 +373,7 @@ describe('focusWorkspaceSession', () => {
       openSessionTab('tiled')
 
       // Not moved either: `openSessionTile` would drag the tile out of its zone.
-      expect($sessionTiles.get()).toEqual([
+      expect($sessionKeyTabs.get()).toEqual([
         {
           anchor: 'elsewhere',
           connectionId: 'local',
@@ -392,7 +392,7 @@ describe('focusWorkspaceSession', () => {
    * A tile keeps the id its chat was opened with; auto-compression rotates the
    * live one. So the sidebar row of a compacted chat names it `tip` while the
    * tile already showing it is keyed on `root` — and matching on identity
-   * contributed a SECOND pane onto the same `$sessionStates` slice, two tabs
+   * contributed a SECOND pane onto the same `$sessionKeyStates` slice, two tabs
    * fighting over one live conversation.
    */
   describe('openSessionTile — one tile per conversation', () => {
@@ -403,17 +403,17 @@ describe('focusWorkspaceSession', () => {
     it('reveals the tile already open under the lineage root rather than adding a second', () => {
       seedTree([WORKSPACE_PANE_ID, sessionTilePaneId('root')], WORKSPACE_PANE_ID)
       $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
-      $sessionTiles.set([
+      $sessionKeyTabs.set([
         { dir: 'right', connectionId: 'local', profile: 'default', storedSessionId: 'root', tileKey: 'root' }
       ])
 
       openSessionTile('tip', 'center')
 
-      expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual(['root'])
+      expect($sessionKeyTabs.get().map(t => t.storedSessionId)).toEqual(['root'])
       // ...and the re-dock landed on the tile's OWN key: its pane id and its
       // record are both on `root`, so patching under `tip` would have written a
       // dock nothing reads.
-      expect($sessionTiles.get()[0].dir).toBe('center')
+      expect($sessionKeyTabs.get()[0].dir).toBe('center')
     })
 
     it('never opens a tile for the conversation already loaded in main', () => {
@@ -423,19 +423,19 @@ describe('focusWorkspaceSession', () => {
 
       openSessionTile('root')
 
-      expect($sessionTiles.get()).toEqual([])
+      expect($sessionKeyTabs.get()).toEqual([])
     })
 
     it('still opens a tile for a genuinely different session', () => {
       seedTree([WORKSPACE_PANE_ID])
       $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
-      $sessionTiles.set([
+      $sessionKeyTabs.set([
         { dir: 'right', connectionId: 'local', profile: 'default', storedSessionId: 'root', tileKey: 'root' }
       ])
 
       openSessionTile('unrelated')
 
-      expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual(['root', 'unrelated'])
+      expect($sessionKeyTabs.get().map(t => t.storedSessionId)).toEqual(['root', 'unrelated'])
     })
   })
 
@@ -465,24 +465,24 @@ describe('focusWorkspaceSession', () => {
     const stackDecoyOver = (wanted: string) => {
       seedTree([WORKSPACE_PANE_ID])
       $sessions.set([{ _lineage_root_id: 'root', id: 'tip' } as SessionInfo])
-      $sessionTiles.set([
+      $sessionKeyTabs.set([
         { dir: 'right', connectionId: 'local', profile: 'default', storedSessionId: wanted, tileKey: wanted },
         { dir: 'right', connectionId: 'local', profile: 'default', storedSessionId: 'root', tileKey: 'root' }
       ])
       closeSessionTile(wanted)
       closeSessionTile('root')
-      $sessionTiles.set([])
+      $sessionKeyTabs.set([])
     }
 
     it('moves past a tab whose conversation is open again under its live tip', () => {
       stackDecoyOver('wanted-1')
-      $sessionTiles.set([
+      $sessionKeyTabs.set([
         { dir: 'right', connectionId: 'local', profile: 'default', storedSessionId: 'tip', tileKey: 'tip' }
       ])
 
       reopenLastClosedTile()
 
-      expect($sessionTiles.get().map(t => t.storedSessionId)).toContain('wanted-1')
+      expect($sessionKeyTabs.get().map(t => t.storedSessionId)).toContain('wanted-1')
     })
 
     it('moves past a tab whose conversation is now the primary', () => {
@@ -491,7 +491,7 @@ describe('focusWorkspaceSession', () => {
 
       reopenLastClosedTile()
 
-      expect($sessionTiles.get().map(t => t.storedSessionId)).toContain('wanted-2')
+      expect($sessionKeyTabs.get().map(t => t.storedSessionId)).toContain('wanted-2')
     })
 
     it('still restores the top of the stack when its conversation is genuinely gone', () => {
@@ -499,15 +499,15 @@ describe('focusWorkspaceSession', () => {
 
       reopenLastClosedTile()
 
-      expect($sessionTiles.get().map(t => t.storedSessionId)).toContain('root')
-      expect($sessionTiles.get().map(t => t.storedSessionId)).not.toContain('wanted-3')
+      expect($sessionKeyTabs.get().map(t => t.storedSessionId)).toContain('root')
+      expect($sessionKeyTabs.get().map(t => t.storedSessionId)).not.toContain('wanted-3')
     })
   })
 
   /**
    * MJXHRM-404 — the persisted tile list must follow the order on SCREEN.
    *
-   * `$sessionTiles` is a second list beside the layout tree, and two things read
+   * `$sessionKeyTabs` is a second list beside the layout tree, and two things read
    * its ORDER rather than the tree's: `stackSessionTilesIntoMain` (the layout
    * RESET handler) restacks tiles by walking it front to back, and `paneMirror`
    * docks panes in array order when the tree holds none for them.
@@ -522,7 +522,7 @@ describe('focusWorkspaceSession', () => {
    */
   describe('tile strip order follows the layout tree', () => {
     const tiles = (...ids: string[]) =>
-      $sessionTiles.set(
+      $sessionKeyTabs.set(
         ids.map(id => ({
           dir: 'right' as const,
           connectionId: 'local',
@@ -532,7 +532,7 @@ describe('focusWorkspaceSession', () => {
         }))
       )
 
-    const order = () => $sessionTiles.get().map(t => t.storedSessionId)
+    const order = () => $sessionKeyTabs.get().map(t => t.storedSessionId)
 
     it('re-orders the persisted list when a tab is dragged within its strip', () => {
       seedTree([WORKSPACE_PANE_ID, sessionTilePaneId('a'), sessionTilePaneId('b'), sessionTilePaneId('c')])
@@ -558,14 +558,14 @@ describe('focusWorkspaceSession', () => {
       seedTree([WORKSPACE_PANE_ID, sessionTilePaneId('a'), sessionTilePaneId('b')])
       tiles('a', 'b')
 
-      const before = $sessionTiles.get()
+      const before = $sessionKeyTabs.get()
 
       reorderTreePanes(TOOL_GROUP, ['terminal'], null)
 
       // Same ARRAY identity: `orderTilesByTree` answers null and nothing is
       // written. A sync that rewrote the list on every commit would churn
       // localStorage on every tab activate and every sash release.
-      expect($sessionTiles.get()).toBe(before)
+      expect($sessionKeyTabs.get()).toBe(before)
     })
 
     it('keeps a tile the tree has no pane for, rather than dropping it', () => {
@@ -592,7 +592,7 @@ describe('focusWorkspaceSession', () => {
       openSessionTile('a', 'left', WORKSPACE_PANE_ID, WORKSPACE_PANE_ID)
 
       expect(order()).toEqual(['a', 'b'])
-      expect($sessionTiles.get().find(t => t.storedSessionId === 'a')?.dir).toBe('left')
+      expect($sessionKeyTabs.get().find(t => t.storedSessionId === 'a')?.dir).toBe('left')
     })
   })
 })
@@ -629,7 +629,7 @@ describe('$focusedCwd', () => {
   }
 
   beforeEach(() => {
-    $sessionTiles.set([])
+    $sessionKeyTabs.set([])
     $activeStoredSessionId.set(null)
     $workspaceCwd.set('')
     seed('rt-a', { cwd: '/proj/a', storedSessionId: 'a' })
@@ -755,7 +755,7 @@ describe('invalidateRuntimeBindings', () => {
 
     invalidateRuntimeBindings()
 
-    expect($sessionStates.get()['runtime-1']).toMatchObject({
+    expect($sessionKeyStates.get()['runtime-1']).toMatchObject({
       runtimeSessionId: 'runtime-1',
       storedSessionId: 'stored-1',
       busy: false,
@@ -770,6 +770,6 @@ describe('invalidateRuntimeBindings', () => {
 
     invalidateRuntimeBindings()
 
-    expect($sessionStates.get()['draft:9']).toMatchObject({ busy: false, turnStartedAt: null })
+    expect($sessionKeyStates.get()['draft:9']).toMatchObject({ busy: false, turnStartedAt: null })
   })
 })

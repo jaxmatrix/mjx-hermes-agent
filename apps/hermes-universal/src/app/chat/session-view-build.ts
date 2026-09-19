@@ -2,8 +2,8 @@ import { atom, computed } from 'nanostores'
 
 import { type SessionView } from '@/app/chat/session-view'
 import { type ChatMessage } from '@/store/chat'
-import { $sessionStates } from '@/store/session-state-types'
-import { $sessionTiles, tileRuntimeKey } from '@/store/session-states'
+import { $sessionKeyStates } from '@/store/session-state-types'
+import { $sessionKeyTabs, tileRuntimeKey } from '@/store/session-states'
 import { $transcriptPaint } from '@/store/transcript-paint'
 
 /**
@@ -35,16 +35,16 @@ function lastVisibleIsUser(messages: ChatMessage[]): boolean {
   return false
 }
 
-/** A SessionView driven entirely by the tile's `$sessionStates` slice — the same
+/** A SessionView driven entirely by the tile's `$sessionKeyStates` slice — the same
  *  shape the primary chat's PRIMARY_SESSION_VIEW provides, so one ChatScreen
  *  serves both. */
 export function buildSessionView(storedSessionId: string): SessionView {
   // Resolved through the reverse index (which carries lineage aliases) rather
   // than the tile's cached runtimeId, so the tile follows its session across a
   // background auto-compaction instead of pointing at a dead slice (MJX-133).
-  const $runtimeId = computed([$sessionTiles, $sessionStates], () => tileRuntimeKey(storedSessionId))
+  const $runtimeId = computed([$sessionKeyTabs, $sessionKeyStates], () => tileRuntimeKey(storedSessionId))
 
-  const $state = computed([$runtimeId, $sessionStates], (rt, states) => (rt ? states[rt] : undefined))
+  const $state = computed([$runtimeId, $sessionKeyStates], (rt, states) => (rt ? states[rt] : undefined))
   const $messages = computed($state, s => s?.messages ?? NO_MESSAGES)
 
   // The tile's own paint lane slot, keyed by the same slice key its `$messages`

@@ -32,7 +32,7 @@ import { requestGateway } from '@/store/gateway-client'
 import { $activeProfile } from '@/store/profiles'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   emptySessionState,
   newDraftKey,
   publishSessionState
@@ -53,7 +53,7 @@ const openDraft = () => {
 }
 
 beforeEach(() => {
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   $activeProfile.set('default')
   vi.mocked(requestGateway).mockReset()
 })
@@ -67,7 +67,7 @@ describe('the draft binds at its create dispatch', () => {
     const { id } = await ensureSession()
 
     expect(id).toBe('run-1')
-    expect($sessionStates.get()['@conn-a|run-1']).toMatchObject({
+    expect($sessionKeyStates.get()['@conn-a|run-1']).toMatchObject({
       connectionId: 'conn-a',
       profile: 'default',
       runtimeSessionId: 'run-1',
@@ -89,8 +89,8 @@ describe('the draft binds at its create dispatch', () => {
 
     await ensureSession()
 
-    expect($sessionStates.get()['@conn-a|run-1']).toMatchObject({ connectionId: 'conn-a' })
-    expect($sessionStates.get()['@conn-b|run-1']).toBeUndefined()
+    expect($sessionKeyStates.get()['@conn-a|run-1']).toMatchObject({ connectionId: 'conn-a' })
+    expect($sessionKeyStates.get()['@conn-b|run-1']).toBeUndefined()
   })
 
   it('keeps the local connection’s keys bare, as they have always been', async () => {
@@ -100,7 +100,7 @@ describe('the draft binds at its create dispatch', () => {
 
     await ensureSession()
 
-    expect($sessionStates.get()['run-1']).toMatchObject({ connectionId: 'local', runtimeSessionId: 'run-1' })
+    expect($sessionKeyStates.get()['run-1']).toMatchObject({ connectionId: 'local', runtimeSessionId: 'run-1' })
   })
 
   it('binds to the local scope when the app names no connection at all', async () => {
@@ -110,6 +110,6 @@ describe('the draft binds at its create dispatch', () => {
 
     await ensureSession()
 
-    expect($sessionStates.get()['run-1']).toMatchObject({ connectionId: 'local' })
+    expect($sessionKeyStates.get()['run-1']).toMatchObject({ connectionId: 'local' })
   })
 })

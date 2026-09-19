@@ -10,7 +10,7 @@ import { requestGateway } from '@/store/gateway-client'
 import { notifyError } from '@/store/notifications'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
 import { requestForSession } from '@/store/session-route-dispatch'
-import { $sessionStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
+import { $sessionKeyStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
 
 // Attachment staging (Gc8/R7). Pick a file → read bytes → data-URL → file.attach
 // (which stages it server-side and returns a @file:/@image: ref) → the ref is
@@ -158,7 +158,7 @@ export async function attachToSession(
 
   try {
     const runtimeKey = runtimeKeyForStoredSession(storedSessionId)
-    const live = (runtimeKey ? $sessionStates.get()[runtimeKey]?.runtimeSessionId : null) ?? storedSessionId
+    const live = (runtimeKey ? $sessionKeyStates.get()[runtimeKey]?.runtimeSessionId : null) ?? storedSessionId
 
     const { result: res } = await withSessionNotFoundResume(live, storedSessionId, sessionId =>
       requestForSession<{ ref_text?: string }>(

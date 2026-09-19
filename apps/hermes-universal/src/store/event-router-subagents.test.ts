@@ -17,7 +17,7 @@ vi.mock('@/store/native-notifications', () => ({ dispatchNativeNotification: vi.
 vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undefined) }))
 
 import { routeGatewayEvent } from '@/store/event-router'
-import { $activeSessionKey, $sessionStates, ensureSessionSlice } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates, ensureSessionSlice } from '@/store/session-state-types'
 import { $subagentsBySession, allSubagents } from '@/store/subagents'
 
 /** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
@@ -41,7 +41,7 @@ const event = (type: string, payload: Record<string, unknown>, sid = 's1'): Gate
 describe('event-router → subagent spawn tree', () => {
   beforeEach(() => {
     $subagentsBySession.set({})
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     // The router fails closed on a key it has no slice for, so both sessions
     // have to exist before any of them can own a subagent.
     ensureSessionSlice(localSite('s1'))
@@ -98,10 +98,10 @@ describe('event-router → subagent spawn tree', () => {
   })
 
   it('moves a missed parent-turn steer to the tail of ITS session and says so', () => {
-    $sessionStates.set({
-      ...$sessionStates.get(),
+    $sessionKeyStates.set({
+      ...$sessionKeyStates.get(),
       s1: {
-        ...$sessionStates.get().s1,
+        ...$sessionKeyStates.get().s1,
         messages: [
           { id: 'u1', parts: [{ type: 'text', text: 'do the thing' }], role: 'user' },
           { id: 'c1', parts: [{ type: 'text', text: 'use Postgres' }], role: 'user' },
@@ -112,12 +112,12 @@ describe('event-router → subagent spawn tree', () => {
 
     routeGatewayEvent(event('steer.missed', { text: 'use Postgres' }))
 
-    const messages = $sessionStates.get().s1.messages
+    const messages = $sessionKeyStates.get().s1.messages
     expect(messages.map(message => message.id)).toEqual(['u1', 'a1', 'c1', messages[3].id])
     expect(messages[3].role).toBe('system')
     expect(messages[3].parts[0]).toMatchObject({ text: 'steer-missed:use Postgres' })
     // Scoped like every other frame: the other session is untouched.
-    expect($sessionStates.get()['other-session'].messages).toEqual([])
+    expect($sessionKeyStates.get()['other-session'].messages).toEqual([])
   })
 
   it('prunes only the session whose turn started', () => {

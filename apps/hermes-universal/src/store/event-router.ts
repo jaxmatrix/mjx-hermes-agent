@@ -86,7 +86,7 @@ import { EMPTY_USAGE, reduceSessionState } from '@/store/session-reducer'
 import { connectionEpoch, noteConnectionEpoch, noteReplaySeq } from '@/store/session-replay'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   ensureSessionSlice,
   runtimeKeyFor,
   runtimeKeyForStoredSession,
@@ -207,7 +207,7 @@ setStreamBatchSink((key, channel, text) => {
  * label. Best-effort — keep the prior value on failure.
  */
 async function refreshSessionUsage(key: string): Promise<void> {
-  const sessionId = $sessionStates.get()[key]?.runtimeSessionId
+  const sessionId = $sessionKeyStates.get()[key]?.runtimeSessionId
 
   if (!sessionId) {
     return
@@ -281,7 +281,7 @@ export function routeGatewayEvent(event: GatewayEvent): void {
   // connection's own owning client, through `addConnectionEventListener`.
   //
   // It used to be dropped here — rule 7, "another machine's session id must not
-  // reach `$sessionStates`, where ids can collide across backends". The ids no
+  // reach `$sessionKeyStates`, where ids can collide across backends". The ids no
   // longer collide: a session key carries its connection (MJXHRM-591), so the
   // frame can be routed instead of discarded, which is the whole point of a tab
   // bound to a background connection.
@@ -409,7 +409,7 @@ export function routeGatewayEvent(event: GatewayEvent): void {
 
   const isBlockingPrompt = BLOCKING_PROMPT_TYPES.has(event.type)
 
-  if (!(key in $sessionStates.get())) {
+  if (!(key in $sessionKeyStates.get())) {
     // Fail closed — except for a blocking prompt, whose agent is parked in
     // `_block` and would hang until timeout if we ignored it.
     if (!isBlockingPrompt) {

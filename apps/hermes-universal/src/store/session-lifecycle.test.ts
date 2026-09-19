@@ -78,7 +78,7 @@ import {
 import { $removedSessionIds } from '@/store/session-removal'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   hydratingKey,
   runtimeKeyForStoredSession,
   updateSession
@@ -300,8 +300,8 @@ describe('openSession — an abandoned hydrate', () => {
     release()
     await opening
 
-    expect($sessionStates.get()[hydratingKey('stored-9')]).toBeUndefined()
-    expect($sessionStates.get()['runtime-stored-9']).toMatchObject({
+    expect($sessionKeyStates.get()[hydratingKey('stored-9')]).toBeUndefined()
+    expect($sessionKeyStates.get()['runtime-stored-9']).toMatchObject({
       busy: false,
       runtimeSessionId: 'runtime-stored-9'
     })
@@ -321,7 +321,7 @@ describe('openSession — an abandoned hydrate', () => {
     release()
     await opening
 
-    expect($sessionStates.get()[hydratingKey('stored-9')]).toBeUndefined()
+    expect($sessionKeyStates.get()[hydratingKey('stored-9')]).toBeUndefined()
     expect($workingSessionIds.get().has('stored-9')).toBe(false)
   })
 })
@@ -355,7 +355,7 @@ describe('openSession — the model the pill paints', () => {
 
     // WHILE the resume is still in flight — the whole point is that the pill has
     // something to paint before the gateway answers.
-    expect($sessionStates.get()[hydratingKey('stored-m')]).toMatchObject({
+    expect($sessionKeyStates.get()[hydratingKey('stored-m')]).toMatchObject({
       model: 'anthropic/claude-opus-4'
     })
 
@@ -372,7 +372,7 @@ describe('openSession — the model the pill paints', () => {
 
     // Blank is the honest state here: the reducer's adopt is truthiness-gated,
     // so a real `session.info` still fills it.
-    expect($sessionStates.get()['runtime-none']?.model ?? '').toBe('')
+    expect($sessionKeyStates.get()['runtime-none']?.model ?? '').toBe('')
   })
 })
 
@@ -479,8 +479,8 @@ describe('reclaimSessionTransport', () => {
 
     await reclaimSessionTransport('stored-popped')
 
-    expect($sessionStates.get()['runtime-compacted']?.storedSessionId).toBe('stored-popped')
-    expect($sessionStates.get()['runtime-popped']).toBeUndefined()
+    expect($sessionKeyStates.get()['runtime-compacted']?.storedSessionId).toBe('stored-popped')
+    expect($sessionKeyStates.get()['runtime-popped']).toBeUndefined()
     // NOT the reclaimed session's new id — that is the bug this guards.
     expect($sessionId.get()).toBe('runtime-here')
   })
@@ -555,11 +555,11 @@ describe('reclaimSessionTransport', () => {
 
     // Deleted, evicted, or re-keyed by a hydrate that raced us. `rekeySession`
     // would move an EMPTY state onto the new runtime id and leave a ghost.
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     release()
     await reclaiming
 
-    expect($sessionStates.get()['runtime-compacted']).toBeUndefined()
+    expect($sessionKeyStates.get()['runtime-compacted']).toBeUndefined()
   })
 })
 
@@ -1084,7 +1084,7 @@ describe('branchCurrentSession', () => {
       branchCurrentSession('m2', {
         busy: false,
         cwd: '/tile/repo',
-        messages: $sessionStates.get()['runtime-tile'].messages,
+        messages: $sessionKeyStates.get()['runtime-tile'].messages,
         runtimeId: 'runtime-tile',
         storedId: 'stored-tile'
       })
@@ -1827,7 +1827,7 @@ describe('adoptLiveSession — a session created a moment ago', () => {
 
     expect($activeSessionKey.get()).toBe('run-1')
     expect($activeStoredSessionId.get()).toBe('stored-1')
-    expect($sessionStates.get()['run-1']).toMatchObject({
+    expect($sessionKeyStates.get()['run-1']).toMatchObject({
       busy: false,
       runtimeSessionId: 'run-1',
       storedSessionId: 'stored-1'
@@ -1864,7 +1864,7 @@ describe('openSession — a resume that fails never fakes a live binding', () =>
   const liveKeyOf = (storedId: string) => {
     const key = runtimeKeyForStoredSession(storedId)
 
-    return key ? ($sessionStates.get()[key]?.runtimeSessionId ?? null) : null
+    return key ? ($sessionKeyStates.get()[key]?.runtimeSessionId ?? null) : null
   }
 
   it('keeps the history on screen but leaves the session UNBOUND', async () => {
@@ -1966,6 +1966,6 @@ describe('adoptLiveSession — bound without activating', () => {
 
     const key = runtimeKeyForStoredSession('stored-tab')
 
-    expect(key ? $sessionStates.get()[key]?.runtimeSessionId : null).toBe('run-tab')
+    expect(key ? $sessionKeyStates.get()[key]?.runtimeSessionId : null).toBe('run-tab')
   })
 })

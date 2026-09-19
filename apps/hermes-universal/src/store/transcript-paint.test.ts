@@ -1,6 +1,6 @@
 /**
  * I1-I5: a painted row is pixels, never knowledge. The guard is structural — the
- * rows are not in `$sessionStates` — so these tests assert the STRUCTURE, not a
+ * rows are not in `$sessionKeyStates` — so these tests assert the STRUCTURE, not a
  * flag someone has to remember to check.
  */
 
@@ -11,7 +11,7 @@ import { __resetTranscriptTailCache, saveTranscriptTail } from '@/lib/transcript
 import { $messages, $paintedMessages, $paintedMessagesEmpty } from '@/store/chat'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   ensureSessionSlice,
   hydratingKey,
   hydratingKeyFor,
@@ -38,7 +38,7 @@ beforeEach(() => {
   localStorage.clear()
   __resetTranscriptTailCache()
   __resetTranscriptPaint()
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   $activeSessionKey.set('draft:test')
 })
 
@@ -55,7 +55,7 @@ describe('paintCachedTail', () => {
   // crash journal writes `state.messages` for every busy slice, and the voice
   // cursor narrates them. A painted row must be unreachable from all three, and
   // it is because it is not in the map they read.
-  it('never writes a row into $sessionStates', () => {
+  it('never writes a row into $sessionKeyStates', () => {
     saveTranscriptTail('stored-1', [row('m1', 'hello')])
 
     const key = hydratingKey('stored-1')
@@ -63,8 +63,8 @@ describe('paintCachedTail', () => {
     ensureSessionSlice(localSite(key), { busy: true, storedSessionId: 'stored-1' })
     paintCachedTail(key, 'stored-1')
 
-    expect($sessionStates.get()[key].messages).toEqual([])
-    expect(Object.values($sessionStates.get()).flatMap(state => state.messages)).toEqual([])
+    expect($sessionKeyStates.get()[key].messages).toEqual([])
+    expect(Object.values($sessionKeyStates.get()).flatMap(state => state.messages)).toEqual([])
   })
 
   // T15

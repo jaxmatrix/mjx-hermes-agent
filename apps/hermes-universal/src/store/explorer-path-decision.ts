@@ -21,7 +21,7 @@
 import { gatewayRpcErrorCode } from '@/gateway/rpc-error'
 
 /** What the caller must know about the focused session to decide. A subset of
- *  `ClientSessionState`, so a test can build one by hand. */
+ *  `SessionKeyState`, so a test can build one by hand. */
 export interface FocusedSessionFacts {
   /** A blocking prompt (clarify/approval) is parked in the backend's `_block`.
    *  The agent thread is still `running` there, so the RPC would refuse. */

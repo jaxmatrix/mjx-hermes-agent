@@ -21,7 +21,7 @@ import { $approvalModes, approvalModeForProfile } from '@/store/approval-mode'
 import { routeGatewayEvent } from '@/store/event-router'
 import { requestGateway } from '@/store/gateway-client'
 import { $activeProfile } from '@/store/profiles'
-import { $activeSessionKey, $sessionStates, ensureSessionSlice } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates, ensureSessionSlice } from '@/store/session-state-types'
 
 /** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
 const localSite = (runtimeId: string) => ({
@@ -43,7 +43,7 @@ const event = (type: string, payload: Record<string, unknown>, sessionId = 's1')
  */
 describe('event-router → unsolicited session pushes', () => {
   beforeEach(() => {
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
     ensureSessionSlice(localSite('s1'))
     $approvalModes.set({})
@@ -52,12 +52,12 @@ describe('event-router → unsolicited session pushes', () => {
     $activeProfile.set('work')
   })
 
-  const slice = (key = 's1') => $sessionStates.get()[key]
+  const slice = (key = 's1') => $sessionKeyStates.get()[key]
 
   describe('session.usage', () => {
     it('adopts a live tick mid-turn instead of dropping it', () => {
       // Turn-start values the client already has. The tick must replace them.
-      $sessionStates.set({
+      $sessionKeyStates.set({
         s1: { ...slice(), usage: { calls: 1, context_percent: 12, input: 100, output: 20, total: 120 } }
       })
 
@@ -81,7 +81,7 @@ describe('event-router → unsolicited session pushes', () => {
       // `_get_usage` populates context_* only from a REAL current-window
       // occupancy (#50421), so a tick during an external-context turn carries
       // counters and nothing else. Assigning would erase the meter.
-      $sessionStates.set({
+      $sessionKeyStates.set({
         s1: {
           ...slice(),
           usage: {
@@ -104,7 +104,7 @@ describe('event-router → unsolicited session pushes', () => {
     it('ignores a frame whose usage is missing or not an object', () => {
       const before = { calls: 3, input: 1, output: 2, total: 3 }
 
-      $sessionStates.set({ s1: { ...slice(), usage: before } })
+      $sessionKeyStates.set({ s1: { ...slice(), usage: before } })
 
       routeGatewayEvent(event('session.usage', {}))
       routeGatewayEvent(event('session.usage', { usage: 'nope' }))
@@ -115,7 +115,7 @@ describe('event-router → unsolicited session pushes', () => {
 
     it('folds a background tick into THAT session, not the visible one', () => {
       ensureSessionSlice(localSite('s2'))
-      $sessionStates.set({
+      $sessionKeyStates.set({
         s1: { ...slice(), usage: { calls: 1, input: 0, output: 0, total: 0 } },
         s2: { ...slice('s2'), usage: null }
       })
@@ -136,7 +136,7 @@ describe('event-router → unsolicited session pushes', () => {
       context_percent: 55,
       context_used: 110_000
     })
-    $sessionStates.set({
+    $sessionKeyStates.set({
       s1: { ...slice(), runtimeSessionId: 's1', usage: { calls: 9, input: 4200, output: 700, total: 4900 } }
     })
 
@@ -171,7 +171,7 @@ describe('event-router → unsolicited session pushes', () => {
     })
 
     it('adopts the effective yolo flag onto the session slice', () => {
-      $sessionStates.set({ s1: { ...slice(), yolo: false } })
+      $sessionKeyStates.set({ s1: { ...slice(), yolo: false } })
 
       routeGatewayEvent(event('session.info', { yolo: true }))
 
@@ -179,7 +179,7 @@ describe('event-router → unsolicited session pushes', () => {
     })
 
     it('adopts yolo:false back off again — false is a real state, not "unset"', () => {
-      $sessionStates.set({ s1: { ...slice(), yolo: true } })
+      $sessionKeyStates.set({ s1: { ...slice(), yolo: true } })
 
       routeGatewayEvent(event('session.info', { yolo: false }))
 

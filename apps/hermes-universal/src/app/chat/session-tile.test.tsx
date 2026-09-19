@@ -44,23 +44,23 @@ vi.mock('@/app/chat/chat-screen', () => ({
   }
 }))
 
-const { $sessionTiles, patchSessionTile } = await import('@/store/session-states')
+const { $sessionKeyTabs, patchSessionTile } = await import('@/store/session-states')
 
-const { $sessionStates, emptySessionState, publishSessionState, rekeySession } =
+const { $sessionKeyStates, emptySessionState, publishSessionState, rekeySession } =
   await import('@/store/session-state-types')
 
 const { setSessionClarify } = await import('@/store/prompts')
 const { SessionTilePane } = await import('./session-tile')
 
 beforeEach(() => {
-  $sessionStates.set({})
-  $sessionTiles.set([])
+  $sessionKeyStates.set({})
+  $sessionKeyTabs.set([])
 })
 
 describe('SessionTilePane composer scope', () => {
   it('sees a clarify raised after a recovery moved the slice', async () => {
     publishSessionState('runtime-1', { ...emptySessionState('stored-1'), runtimeSessionId: 'runtime-1' })
-    $sessionTiles.set([{ connectionId: 'local', profile: 'default', storedSessionId: 'stored-1', tileKey: 'stored-1' }])
+    $sessionKeyTabs.set([{ connectionId: 'local', profile: 'default', storedSessionId: 'stored-1', tileKey: 'stored-1' }])
     patchSessionTile('stored-1', { runtimeId: 'runtime-1' })
 
     render(<SessionTilePane storedSessionId="stored-1" />)
@@ -76,7 +76,7 @@ describe('SessionTilePane composer scope', () => {
 
     // The tile record still names the dead runtime; only the reverse index — and
     // therefore `tileRuntimeKey` — knows where the session went.
-    expect($sessionTiles.get()[0].runtimeId).toBe('runtime-1')
+    expect($sessionKeyTabs.get()[0].runtimeId).toBe('runtime-1')
     expect(screen.getByTestId('key').textContent).toBe('runtime-2')
 
     // The gateway parks the recovered turn on a question. Bound to the dead key

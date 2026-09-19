@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage } from '@/lib/chat-messages'
 import { __resetTranscriptTailCache, readTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
 import {
-  $sessionStates,
+  $sessionKeyStates,
   ensureSessionSlice,
   hydratingKey,
   rekeySession,
@@ -35,7 +35,7 @@ const flushSaves = async () => {
 beforeEach(() => {
   vi.useFakeTimers()
   localStorage.clear()
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   __resetTranscriptTailCache()
   __resetTranscriptPaint()
   __resetTranscriptCacheSync()

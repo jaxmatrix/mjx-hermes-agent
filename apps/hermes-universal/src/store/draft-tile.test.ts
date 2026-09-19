@@ -23,12 +23,12 @@ import { DRAFT_TILE_KEY, DRAFT_TILE_PANE_ID, sessionTilePaneId, WORKSPACE_PANE_I
 import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import {
   $activeSessionKey,
-  type ClientSessionState,
   emptySessionState,
-  publishSessionState
+  publishSessionState,
+  type SessionKeyState
 } from '@/store/session-state-types'
 import {
-  $sessionTiles,
+  $sessionKeyTabs,
   clearAllSessionStates,
   closeSessionTile,
   newSessionTab,
@@ -50,12 +50,12 @@ function seedTree(panes: string[], active = panes[0]) {
   $layoutTree.set(split('row', [group(['sessions']), group(panes, { active, id: CHAT_GROUP })]))
 }
 
-const seed = (key: string, patch: Partial<ClientSessionState> = {}) =>
+const seed = (key: string, patch: Partial<SessionKeyState> = {}) =>
   publishSessionState(key, { ...emptySessionState(patch.storedSessionId ?? key), runtimeSessionId: key, ...patch })
 
 beforeEach(() => {
   clearAllSessionStates()
-  $sessionTiles.set([])
+  $sessionKeyTabs.set([])
   $activeStoredSessionId.set(null)
   $activeSessionKey.set('draft:1')
 })
@@ -64,7 +64,7 @@ afterEach(() => {
   disposeTiles?.()
   disposeTiles = null
   $layoutTree.set(null)
-  $sessionTiles.set([])
+  $sessionKeyTabs.set([])
 })
 
 describe('newSessionTab', () => {
@@ -73,7 +73,7 @@ describe('newSessionTab', () => {
 
     newSessionTab()
 
-    expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual([DRAFT_TILE_KEY])
+    expect($sessionKeyTabs.get().map(t => t.storedSessionId)).toEqual([DRAFT_TILE_KEY])
   })
 
   it('leaves the chat that was already open exactly where it was', () => {
@@ -83,7 +83,7 @@ describe('newSessionTab', () => {
 
     newSessionTab()
 
-    expect($sessionTiles.get().map(t => t.storedSessionId)).not.toContain(EXISTING)
+    expect($sessionKeyTabs.get().map(t => t.storedSessionId)).not.toContain(EXISTING)
   })
 
   it('stacks the draft into the zone the chat was asked from', () => {
@@ -91,7 +91,7 @@ describe('newSessionTab', () => {
 
     newSessionTab()
 
-    expect($sessionTiles.get()[0]).toMatchObject({ anchor: WORKSPACE_PANE_ID, dir: 'center' })
+    expect($sessionKeyTabs.get()[0]).toMatchObject({ anchor: WORKSPACE_PANE_ID, dir: 'center' })
   })
 
   it('fronts the existing draft instead of opening a second one', () => {
@@ -100,7 +100,7 @@ describe('newSessionTab', () => {
     newSessionTab()
     newSessionTab()
 
-    expect($sessionTiles.get().filter(t => t.storedSessionId === DRAFT_TILE_KEY)).toHaveLength(1)
+    expect($sessionKeyTabs.get().filter(t => t.storedSessionId === DRAFT_TILE_KEY)).toHaveLength(1)
   })
 
   it('is never persisted — a draft names no session to restore', () => {
@@ -130,7 +130,7 @@ describe('tileRuntimeKey', () => {
 describe('the draft taking its issued id', () => {
   it('renames the tile in place, keeping its slot and its active flag', () => {
     seedTree([WORKSPACE_PANE_ID, DRAFT_TILE_PANE_ID], DRAFT_TILE_PANE_ID)
-    $sessionTiles.set([
+    $sessionKeyTabs.set([
       {
         anchor: WORKSPACE_PANE_ID,
         dir: 'center',
@@ -150,12 +150,12 @@ describe('the draft taking its issued id', () => {
     expect(zone?.id).toBe(CHAT_GROUP)
     expect(zone?.panes).toEqual([WORKSPACE_PANE_ID, sessionTilePaneId('sess-new')])
     expect(zone?.active).toBe(sessionTilePaneId('sess-new'))
-    expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual(['sess-new'])
+    expect($sessionKeyTabs.get().map(t => t.storedSessionId)).toEqual(['sess-new'])
   })
 
   it('drops the draft rather than duplicating a session that already has a tab', () => {
     seedTree([WORKSPACE_PANE_ID, DRAFT_TILE_PANE_ID])
-    $sessionTiles.set([
+    $sessionKeyTabs.set([
       { connectionId: 'local', profile: 'default', storedSessionId: EXISTING, tileKey: EXISTING },
       {
         anchor: WORKSPACE_PANE_ID,
@@ -170,29 +170,29 @@ describe('the draft taking its issued id', () => {
     seed('draft:1', { storedSessionId: null })
     seed('draft:1', { storedSessionId: EXISTING })
 
-    expect($sessionTiles.get().map(t => t.storedSessionId)).toEqual([EXISTING])
+    expect($sessionKeyTabs.get().map(t => t.storedSessionId)).toEqual([EXISTING])
   })
 
   it('does nothing when there is no draft tile open', () => {
     seedTree([WORKSPACE_PANE_ID])
-    $sessionTiles.set([])
+    $sessionKeyTabs.set([])
 
     seed('draft:1', { storedSessionId: null })
     seed('draft:1', { storedSessionId: 'sess-new' })
 
-    expect($sessionTiles.get()).toEqual([])
+    expect($sessionKeyTabs.get()).toEqual([])
   })
 })
 
 describe('closing the draft', () => {
   it('leaves no reopen entry — there is no chat to bring back', () => {
     seedTree([WORKSPACE_PANE_ID, DRAFT_TILE_PANE_ID])
-    $sessionTiles.set([
+    $sessionKeyTabs.set([
       { connectionId: 'local', profile: 'default', storedSessionId: DRAFT_TILE_KEY, tileKey: DRAFT_TILE_KEY }
     ])
 
     closeSessionTile(DRAFT_TILE_KEY)
 
-    expect($sessionTiles.get()).toEqual([])
+    expect($sessionKeyTabs.get()).toEqual([])
   })
 })

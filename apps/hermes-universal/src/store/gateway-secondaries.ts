@@ -21,7 +21,7 @@ import { TauriWebSocket } from '@/transport/tauri-websocket'
  *    receiving events for ids they have never seen;
  *  • every event is stamped with its `connectionId` and offered to
  *    `addConnectionEventListener`. Anything unclaimed is DROPPED (rule 7) — a
- *    foreign session id must not reach `$sessionStates` by accident;
+ *    foreign session id must not reach `$sessionKeyStates` by accident;
  *  • Rust never reconnects them (rule 6) and neither does this: a dropped
  *    secondary is re-opened by the next lease. A background retry ladder against
  *    four gateways is how you exhaust a gateway's descriptors.

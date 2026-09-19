@@ -54,7 +54,7 @@ vi.mock('@/store/session-states', async () => {
   // MJXHRM-591: the wipe drops only the LEAVING connection's unheld slices, and
   // hands its tabs to that connection's own client — so the switch needs both.
   return {
-    $sessionTiles: atom([
+    $sessionKeyTabs: atom([
       // One tab on the connection being left, one somewhere else.
       { connectionId: 'conn-old', profile: 'work', storedSessionId: 'abc12345', tileKey: 'k1' },
       { connectionId: 'conn-other', profile: 'default', storedSessionId: 'def67890', tileKey: 'k2' }

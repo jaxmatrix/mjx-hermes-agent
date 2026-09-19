@@ -23,7 +23,7 @@ import type { NotificationInput } from '@/store/notifications'
 import { notify } from '@/store/notifications'
 import { $activeGatewayProfile } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
-import { $sessionStates } from '@/store/session-state-types'
+import { $sessionKeyStates } from '@/store/session-state-types'
 import { resetSessionStates, seedActiveSession, seedSession } from '@/test-sessions'
 import type { ModelOptionsResponse } from '@/types/hermes'
 
@@ -68,7 +68,7 @@ describe('selectModel targeting', () => {
     expect($currentProvider.get()).toBe('zai')
     // The primary composer reads its live slice, so the optimistic paint has to
     // land there too — not only on the draft-default globals.
-    expect($sessionStates.get()['runtime-1']).toMatchObject({ model: 'glm-5', provider: 'zai' })
+    expect($sessionKeyStates.get()['runtime-1']).toMatchObject({ model: 'glm-5', provider: 'zai' })
   })
 
   // The composer's globals belong to the primary chat. Writing them for a tile
@@ -80,7 +80,7 @@ describe('selectModel targeting', () => {
     await expect(selectModel({ model: 'glm-5', provider: 'zai', sessionId: 'runtime-2' })).resolves.toBe(true)
 
     expect(requestGateway).toHaveBeenCalledWith('config.set', expect.objectContaining({ session_id: 'runtime-2' }))
-    expect($sessionStates.get()['runtime-2']).toMatchObject({ model: 'glm-5', provider: 'zai' })
+    expect($sessionKeyStates.get()['runtime-2']).toMatchObject({ model: 'glm-5', provider: 'zai' })
     expect($currentModel.get()).toBe('primary-model')
     expect($currentProvider.get()).toBe('primary-provider')
   })
@@ -92,7 +92,7 @@ describe('selectModel targeting', () => {
 
     await expect(selectModel({ model: 'glm-5', provider: 'zai', sessionId: 'runtime-2' })).resolves.toBe(false)
 
-    expect($sessionStates.get()['runtime-2']).toMatchObject({ model: 'old-model', provider: 'old-provider' })
+    expect($sessionKeyStates.get()['runtime-2']).toMatchObject({ model: 'old-model', provider: 'old-provider' })
     expect($currentModel.get()).toBe('primary-model')
   })
 
@@ -118,7 +118,7 @@ describe('selectModel targeting', () => {
     await expect(selectModel({ model: 'glm-5', provider: 'zai', sessionId: 'hydrating:stored-9' })).resolves.toBe(true)
 
     expect(requestGateway).toHaveBeenCalledWith('config.set', expect.objectContaining({ session_id: 'runtime-9' }))
-    expect($sessionStates.get()['hydrating:stored-9']).toMatchObject({ model: 'glm-5', provider: 'zai' })
+    expect($sessionKeyStates.get()['hydrating:stored-9']).toMatchObject({ model: 'glm-5', provider: 'zai' })
   })
 
   // No runtime yet = nothing to switch. It must NOT fall through to the
@@ -132,7 +132,7 @@ describe('selectModel targeting', () => {
     await expect(selectModel({ model: 'glm-5', provider: 'zai', sessionId: 'draft:2' })).resolves.toBe(true)
 
     expect(requestGateway).not.toHaveBeenCalled()
-    expect($sessionStates.get()['draft:2']).toMatchObject({ model: 'glm-5' })
+    expect($sessionKeyStates.get()['draft:2']).toMatchObject({ model: 'glm-5' })
     expect(cachedModel(null)).toBe('profile-model')
   })
 })

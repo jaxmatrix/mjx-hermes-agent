@@ -5,7 +5,7 @@ import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { clearSessionClarify, sessionApprovalRequest, sessionClarifyRequest, setSessionClarify } from '@/store/prompts'
 import {
   $activeSessionKey,
-  $sessionStates,
+  $sessionKeyStates,
   emptySessionState,
   publishSessionState,
   rekeySession
@@ -47,7 +47,7 @@ const remote = (patch: Partial<RemoteTurnSnapshot> = {}): RemoteTurnSnapshot => 
 
 beforeEach(() => {
   clearAllTurns()
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   $activeSessionKey.set('s1')
 })
 
@@ -477,7 +477,7 @@ describe('reconcileSessionTurn', () => {
 
     await lifecycle.reconcileSessionTurn('runtime-6')
 
-    expect(states.$sessionStates.get()['runtime-6']).toMatchObject({
+    expect(states.$sessionKeyStates.get()['runtime-6']).toMatchObject({
       awaitingResponse: false,
       busy: false,
       streamId: null,
@@ -519,8 +519,8 @@ describe('reconcileSessionTurn', () => {
 
     await lifecycle.reconcileSessionTurn('runtime-7')
 
-    expect(states.$sessionStates.get()['runtime-7'].busy).toBe(true)
-    expect(states.$sessionStates.get()['runtime-7'].turnStartedAt).not.toBeNull()
+    expect(states.$sessionKeyStates.get()['runtime-7'].busy).toBe(true)
+    expect(states.$sessionKeyStates.get()['runtime-7'].turnStartedAt).not.toBeNull()
 
     vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
@@ -568,7 +568,7 @@ describe('reconcileSessionTurn', () => {
 
     await lifecycle.reconcileSessionTurn('runtime-3')
 
-    const messages = states.$sessionStates.get()['runtime-3'].messages
+    const messages = states.$sessionKeyStates.get()['runtime-3'].messages
     const assistants = messages.filter(message => message.role === 'assistant')
 
     // ONE assistant row, not the local partial sandwiched beside the dump.
@@ -628,7 +628,7 @@ describe('reconcileSessionTurn', () => {
 
     await lifecycle.reconcileSessionTurn('runtime-8')
 
-    const messages = states.$sessionStates.get()['runtime-8'].messages
+    const messages = states.$sessionKeyStates.get()['runtime-8'].messages
     const assistants = messages.filter(message => message.role === 'assistant')
 
     expect(assistants).toHaveLength(1)
@@ -677,14 +677,14 @@ describe('reconcileSessionTurn', () => {
 
     expect(plan).toEqual({ action: 'fail', error: 'provider connection reset' })
 
-    const messages = states.$sessionStates.get()['runtime-9'].messages
+    const messages = states.$sessionKeyStates.get()['runtime-9'].messages
     const assistants = messages.filter(message => message.role === 'assistant')
 
     expect(assistants).toHaveLength(1)
     expect(assistants[0].error).toBe('provider connection reset')
     // Not left spinning behind an error nothing can clear.
     expect(assistants[0].pending).toBe(false)
-    expect(states.$sessionStates.get()['runtime-9'].busy).toBe(false)
+    expect(states.$sessionKeyStates.get()['runtime-9'].busy).toBe(false)
 
     vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
@@ -712,7 +712,7 @@ describe('reconcileSessionTurn', () => {
     await lifecycle.reconcileSessionTurn('runtime-4')
 
     expect(lifecycle.isTurnLive('runtime-4')).toBe(false)
-    expect(states.$sessionStates.get()['runtime-4'].messages).toBe(messages)
+    expect(states.$sessionKeyStates.get()['runtime-4'].messages).toBe(messages)
 
     vi.doUnmock('@/store/gateway-client')
     vi.resetModules()
@@ -751,7 +751,7 @@ describe('reconcileSessionTurn on a RESTARTED gateway', () => {
 
     await lifecycle.reconcileSessionTurn('runtime-5-old')
 
-    const map = states.$sessionStates.get()
+    const map = states.$sessionKeyStates.get()
 
     expect(Object.keys(map)).toEqual(['runtime-5-new'])
     expect(map['runtime-5-new'].runtimeSessionId).toBe('runtime-5-new')

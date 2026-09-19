@@ -19,7 +19,7 @@ vi.mock('@/lib/completion-sound', () => ({ playCompletionSound: vi.fn() }))
 
 import { routeGatewayEvent } from '@/store/event-router'
 import { $notifications, clearNotifications } from '@/store/notifications'
-import { $activeSessionKey, $sessionStates, ensureSessionSlice } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates, ensureSessionSlice } from '@/store/session-state-types'
 
 /** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
 const localSite = (runtimeId: string) => ({
@@ -52,7 +52,7 @@ const LEASE_TIMEOUT_WARNING =
 
 describe('event-router → agent warnings', () => {
   beforeEach(() => {
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
     ensureSessionSlice(localSite('s1'))
     ensureSessionSlice(localSite('background'))
@@ -133,6 +133,6 @@ describe('event-router → agent warnings', () => {
     routeGatewayEvent(event({ kind: 'status', text: 'thinking...' }))
     routeGatewayEvent(event({ kind: 'warn', text: OVERFLOW_WARNING }))
 
-    expect($sessionStates.get().s1?.statusLine).toBe(OVERFLOW_WARNING)
+    expect($sessionKeyStates.get().s1?.statusLine).toBe(OVERFLOW_WARNING)
   })
 })

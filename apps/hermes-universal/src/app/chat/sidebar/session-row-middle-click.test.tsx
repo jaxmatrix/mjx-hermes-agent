@@ -58,8 +58,8 @@ async function setup() {
   return { row: screen.getByText('Row under test').closest('button')!, states }
 }
 
-const tiled = (states: { $sessionTiles: { get: () => { storedSessionId: string }[] } }) =>
-  states.$sessionTiles.get().map(tile => tile.storedSessionId)
+const tiled = (states: { $sessionKeyTabs: { get: () => { storedSessionId: string }[] } }) =>
+  states.$sessionKeyTabs.get().map(tile => tile.storedSessionId)
 
 beforeEach(() => {
   window.localStorage.clear()

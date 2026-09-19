@@ -143,7 +143,7 @@ export async function resumeStoredRuntimeSession(storedSessionId: string): Promi
  * onto the returned `sessionId` — by the default `republishRecoveredSession`, or
  * by an explicit `onRecovered`, every one of which rekeys onto the same id. So
  * the returned `sessionId` is also the slice's new MAP KEY, and any key the
- * caller captured before the await is dead: `$sessionStates` no longer holds it,
+ * caller captured before the await is dead: `$sessionKeyStates` no longer holds it,
  * `store/prompts.ts` and `store/turn-lifecycle.ts` have moved their entries off
  * it, and `updateSession` on it resurrects an empty ghost slice rather than
  * failing. Callers that touch per-session state AFTER this call must address

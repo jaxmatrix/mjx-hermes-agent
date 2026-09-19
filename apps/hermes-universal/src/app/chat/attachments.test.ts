@@ -33,7 +33,7 @@ vi.mock('@/store/gateway-client', () => ({ requestGateway: vi.fn() }))
 // things). Only the draft path — no stored id yet — still goes direct.
 vi.mock('@/store/session-route-dispatch', () => ({ requestForSession: vi.fn() }))
 vi.mock('@/store/session-state-types', () => ({
-  $sessionStates: { get: () => ({ 'live-1': { runtimeSessionId: 'live-1', storedSessionId: 'stored-1' } }) },
+  $sessionKeyStates: { get: () => ({ 'live-1': { runtimeSessionId: 'live-1', storedSessionId: 'stored-1' } }) },
   runtimeKeyForStoredSession: (storedId: string) => (storedId === 'stored-1' ? 'live-1' : null)
 }))
 vi.mock('@/store/notifications', () => ({ notifyError: vi.fn() }))

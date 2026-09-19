@@ -33,7 +33,7 @@ import { group, split } from '@/components/pane-shell/tree/model'
 import { declareDefaultTree } from '@/components/pane-shell/tree/store'
 import { registry } from '@/contrib/registry'
 
-import { $sessionTiles, nextSessionTileForWorkspace, type SessionTile } from './session-states'
+import { $sessionKeyTabs, nextSessionTileForWorkspace, type SessionTile } from './session-states'
 
 const tile = (storedSessionId: string): SessionTile =>
   ({ connectionId: 'local', profile: 'default', storedSessionId, tileKey: storedSessionId }) as SessionTile
@@ -60,14 +60,14 @@ describe('nextSessionTileForWorkspace', () => {
     // Seeded to disagree with a naive "first tile in the group": `left` comes
     // first in the strip, but the tab that fills main's slot is the one after it.
     mainStrip(['session-tile:left', 'workspace', 'session-tile:right'])
-    $sessionTiles.set([tile('left'), tile('right')])
+    $sessionKeyTabs.set([tile('left'), tile('right')])
 
     expect(nextSessionTileForWorkspace()).toBe('right')
   })
 
   it('falls back to the left neighbour when nothing sits to the right', () => {
     mainStrip(['session-tile:left', 'workspace'])
-    $sessionTiles.set([tile('left')])
+    $sessionKeyTabs.set([tile('left')])
 
     expect(nextSessionTileForWorkspace()).toBe('left')
   })
@@ -75,7 +75,7 @@ describe('nextSessionTileForWorkspace', () => {
   it('skips a DETACHED tile and promotes the next real one instead', () => {
     // `right` is the natural pick — and it is being shown by another window.
     mainStrip(['session-tile:left', 'workspace', 'session-tile:right', 'session-tile:far'])
-    $sessionTiles.set([tile('left'), tile('right'), tile('far')])
+    $sessionKeyTabs.set([tile('left'), tile('right'), tile('far')])
     $detachedTiles.set(new Map([['session-tile:right', 'tile-session-tile-right']]))
 
     expect(nextSessionTileForWorkspace()).toBe('far')
@@ -83,7 +83,7 @@ describe('nextSessionTileForWorkspace', () => {
 
   it('drops to a fresh draft when every neighbour is detached', () => {
     mainStrip(['workspace', 'session-tile:right'])
-    $sessionTiles.set([tile('right')])
+    $sessionKeyTabs.set([tile('right')])
     $detachedTiles.set(new Map([['session-tile:right', 'tile-session-tile-right']]))
 
     expect(nextSessionTileForWorkspace()).toBeNull()
@@ -91,7 +91,7 @@ describe('nextSessionTileForWorkspace', () => {
 
   it('is null when main is the only chat in its zone', () => {
     mainStrip(['workspace'])
-    $sessionTiles.set([])
+    $sessionKeyTabs.set([])
 
     expect(nextSessionTileForWorkspace()).toBeNull()
   })

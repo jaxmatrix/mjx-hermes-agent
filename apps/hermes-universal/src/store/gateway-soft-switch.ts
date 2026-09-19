@@ -38,7 +38,7 @@ import {
   resetSessionsPaging
 } from '@/store/session-lifecycle'
 import { resetSessionPinMirror } from '@/store/session-pin-sync'
-import { $sessionTiles, dropUnheldSessionStates, heldSessionKeys } from '@/store/session-states'
+import { $sessionKeyTabs, dropUnheldSessionStates, heldSessionKeys } from '@/store/session-states'
 import { resetArchivedSessionsForBackendSwitch } from '@/store/sidebar-archive'
 import { disconnectSsh } from '@/store/ssh-backend'
 import { resetSystemStatusForBackendSwitch } from '@/store/system-status'
@@ -90,7 +90,7 @@ function handOverTabsToOwningClient(leaving: null | string): void {
     return
   }
 
-  if (!$sessionTiles.get().some(tile => tile.connectionId === leaving && !tile.unavailable)) {
+  if (!$sessionKeyTabs.get().some(tile => tile.connectionId === leaving && !tile.unavailable)) {
     return
   }
 

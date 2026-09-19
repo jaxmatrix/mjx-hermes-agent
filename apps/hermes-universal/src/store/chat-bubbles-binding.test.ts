@@ -33,7 +33,7 @@ import {
 } from '@/store/chat-bubbles'
 import { $activeProfile } from '@/store/profiles'
 import { $activeStoredSessionId } from '@/store/session-lifecycle'
-import { $sessionStates, emptySessionState, publishSessionState, runtimeKeyFor } from '@/store/session-state-types'
+import { $sessionKeyStates, emptySessionState, publishSessionState, runtimeKeyFor } from '@/store/session-state-types'
 import { setTabRefResolver, tabKeyFor } from '@/store/tab-ref'
 
 const BUBBLES_V1 = 'hermes.chatBubbles.v1'
@@ -50,7 +50,7 @@ beforeEach(() => {
   writeKey(BUBBLES_V1, null)
   writeKey(BUBBLES_V2, null)
   bubbleTesting.reset()
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   $activeStoredSessionId.set(null)
   $activeProfile.set('default')
   setTabRefResolver(storedSessionId => ({ connectionId: 'local', profile: 'default', storedSessionId }))

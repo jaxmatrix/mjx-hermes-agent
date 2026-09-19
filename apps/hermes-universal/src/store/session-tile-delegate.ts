@@ -4,7 +4,7 @@
  * at import (call site: app/contrib/controller.tsx). Universal has no desktop
  * `use-session-tile-delegate` hook / `use-prompt-actions` engine, so this is an
  * adapter over universal's primitives (`requestGateway`, the REST transcript,
- * `$sessionStates`).
+ * `$sessionKeyStates`).
  *
  * SCOPE: resume / submit / interrupt / the session verbs (archive, branch,
  * delete). Primary chat keeps its own path.
@@ -55,7 +55,7 @@ import {
 import { withSessionNotFoundResume } from '@/store/session-recovery'
 import { requestForConnection } from '@/store/session-route-dispatch'
 import {
-  $sessionStates,
+  $sessionKeyStates,
   DEFAULT_SESSION_PROFILE,
   dropSessionState,
   ensureSessionSlice,
@@ -69,7 +69,7 @@ import {
   type SessionRef
 } from '@/store/session-state-types'
 import {
-  $sessionTiles,
+  $sessionKeyTabs,
   closeSessionTile,
   noteTileBackendIdentity,
   openBranchTile,
@@ -87,13 +87,13 @@ import type { SessionResumeResponse } from '@/types/hermes'
  *  has to name. The slice carries it; without one there is nothing to recover to
  *  and the caller's error stands. */
 function storedIdOfSession(runtimeId: string): null | string {
-  return $sessionStates.get()[runtimeId]?.storedSessionId ?? null
+  return $sessionKeyStates.get()[runtimeId]?.storedSessionId ?? null
 }
 
 /** The connection and profile a slice lives on — what its RPCs route by. A
  *  slice with no scope of its own is the ambient chat's, on the active one. */
 function sessionScopeOf(key: string): { connectionId: string; profile: null | string } {
-  const slice = $sessionStates.get()[key]
+  const slice = $sessionKeyStates.get()[key]
   const parsed = parseSessionKey(key)
 
   return {
@@ -105,7 +105,7 @@ function sessionScopeOf(key: string): { connectionId: string; profile: null | st
 /** The id that goes ON THE WIRE for a session key: the gateway issued the bare
  *  runtime id, and the scope is this client's own bookkeeping. */
 function wireIdOf(key: string): string {
-  return $sessionStates.get()[key]?.runtimeSessionId ?? parseSessionKey(key).id
+  return $sessionKeyStates.get()[key]?.runtimeSessionId ?? parseSessionKey(key).id
 }
 
 function userMessage(text: string): ChatMessage {
@@ -131,7 +131,7 @@ async function resumeSessionToState(ref: SessionRef): Promise<string> {
   // A placeholder key is a hydrate still in flight (this one, or the main pane's
   // — both reserve `hydrating:<storedId>`). It is not an id a tile can be bound
   // to, because the rekey that follows would strand it.
-  if (warm && !isPlaceholderKey(warm) && $sessionStates.get()[warm]) {
+  if (warm && !isPlaceholderKey(warm) && $sessionKeyStates.get()[warm]) {
     return warm
   }
 
@@ -192,7 +192,7 @@ async function hydrateSessionToState(ref: SessionRef): Promise<string> {
 
   // BEFORE ANY I/O, per tile: a QUAD layout restored at boot paints each cold
   // tile's own cached tail rather than leaving four blank panes. Pixels, never
-  // knowledge — the lane lives outside `$sessionStates` (store/transcript-paint).
+  // knowledge — the lane lives outside `$sessionKeyStates` (store/transcript-paint).
   paintCachedTail(key, storedId)
 
   try {
@@ -371,7 +371,7 @@ async function submitTextToSession(runtimeId: string, text: string, displayText?
  */
 setConnectionClientTransport({
   rebind: async (sessionKey, _mode) => {
-    const slice = $sessionStates.get()[sessionKey]
+    const slice = $sessionKeyStates.get()[sessionKey]
 
     if (!slice?.storedSessionId) {
       return
@@ -404,7 +404,7 @@ setSessionTileDelegate({
    * request to route — its one verb is Close.
    */
   resumeTile: tileKey => {
-    const tile = $sessionTiles.get().find(open => open.tileKey === tileKey)
+    const tile = $sessionKeyTabs.get().find(open => open.tileKey === tileKey)
 
     if (tile?.unavailable) {
       return Promise.reject(new Error('this conversation belongs to a backend that is no longer there'))

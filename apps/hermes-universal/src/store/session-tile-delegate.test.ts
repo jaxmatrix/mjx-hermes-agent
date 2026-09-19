@@ -61,7 +61,7 @@ vi.mock('@/store/session-states', async () => {
     // MJXHRM-591: the delegate reads the tab it was asked to bind, and the
     // workspace computeds read the focused chat's cwd off this module.
     $focusedCwd: atom(''),
-    $sessionTiles: atom([]),
+    $sessionKeyTabs: atom([]),
     closeSessionTile: vi.fn(),
     // MJXHRM-591: the resume learns which backend answered. The real rule is
     // pinned in `session-tiles-binding.test.ts`; here it only has to say "yes".
@@ -94,7 +94,7 @@ vi.mock('@/store/session-lifecycle', async () => {
 
 await import('./session-tile-delegate')
 
-const { $sessionStates, addSessionKeyHooks, clearStoredIdIndex, emptySessionState, hydratingKey, publishSessionState } =
+const { $sessionKeyStates, addSessionKeyHooks, clearStoredIdIndex, emptySessionState, hydratingKey, publishSessionState } =
   await import('@/store/session-state-types')
 
 const { $inflightTurns, clearAllTurns, getInflightTurn } = await import('@/store/turn-lifecycle')
@@ -103,7 +103,7 @@ beforeEach(() => {
   requestGateway.mockReset()
   getSessionMessages.mockReset().mockResolvedValue({ messages: [] })
   notifyError.mockReset()
-  $sessionStates.set({})
+  $sessionKeyStates.set({})
   clearStoredIdIndex()
   clearAllTurns()
 })
@@ -141,8 +141,8 @@ describe('resumeTile', () => {
     }
 
     // And the placeholder is GONE, moved rather than left beside a second slice.
-    expect(Object.keys($sessionStates.get())).toEqual(['runtime-1'])
-    expect($sessionStates.get()['runtime-1']).toMatchObject({
+    expect(Object.keys($sessionKeyStates.get())).toEqual(['runtime-1'])
+    expect($sessionKeyStates.get()['runtime-1']).toMatchObject({
       runtimeSessionId: 'runtime-1',
       storedSessionId: 'stored-1'
     })
@@ -165,7 +165,7 @@ describe('resumeTile', () => {
     requestGateway.mockRejectedValue(new Error('gateway said no'))
 
     await expect(delegate.resumeTile('stored-1')).rejects.toThrow('gateway said no')
-    expect($sessionStates.get()).toEqual({})
+    expect($sessionKeyStates.get()).toEqual({})
   })
 
   it('adopts a warm slice without re-resuming', async () => {
@@ -190,7 +190,7 @@ describe('submitToSession', () => {
     expect(getInflightTurn('runtime-1')).toMatchObject({ prompt: 'hello', origin: 'local' })
     expect(requestGateway).toHaveBeenCalledWith('prompt.submit', { session_id: 'runtime-1', text: 'hello' })
 
-    const state = $sessionStates.get()['runtime-1']
+    const state = $sessionKeyStates.get()['runtime-1']
 
     expect(state).toMatchObject({ busy: true })
     expect(state?.turnStartedAt).not.toBeNull()
@@ -214,7 +214,7 @@ describe('submitToSession', () => {
       session_id: 'runtime-1',
       text: 'the continuation prompt'
     })
-    expect($sessionStates.get()['runtime-1']?.messages.at(-1)).toMatchObject({
+    expect($sessionKeyStates.get()['runtime-1']?.messages.at(-1)).toMatchObject({
       role: 'user',
       parts: [{ type: 'text', text: '/goal resume' }]
     })
@@ -242,8 +242,8 @@ describe('submitToSession', () => {
 
     await delegate.submitToSession('runtime-1', 'hello')
 
-    expect($sessionStates.get()['runtime-1']).toBeUndefined()
-    expect($sessionStates.get()['runtime-2']).toMatchObject({ busy: true, storedSessionId: 'stored-1' })
+    expect($sessionKeyStates.get()['runtime-1']).toBeUndefined()
+    expect($sessionKeyStates.get()['runtime-2']).toMatchObject({ busy: true, storedSessionId: 'stored-1' })
     // The open turn followed the slice, so a terminal frame can still settle it.
     expect(getInflightTurn('runtime-2')).toMatchObject({ prompt: 'hello' })
   })
@@ -254,7 +254,7 @@ describe('submitToSession', () => {
 
     await delegate.submitToSession('runtime-1', 'hello')
 
-    expect($sessionStates.get()['runtime-1']).toMatchObject({ busy: false, turnStartedAt: null })
+    expect($sessionKeyStates.get()['runtime-1']).toMatchObject({ busy: false, turnStartedAt: null })
     expect($inflightTurns.get()['runtime-1']?.phase).toBe('settled')
     expect(notifyError).toHaveBeenCalled()
   })
@@ -321,13 +321,13 @@ describe('a tab bound to a background connection', () => {
   let restoreRouter: (() => void) | null = null
 
   beforeEach(async () => {
-    const { $sessionTiles, tileKeyFor } = await import('@/store/session-states')
+    const { $sessionKeyTabs, tileKeyFor } = await import('@/store/session-states')
     const { setSessionRequestRouter } = await import('@/store/session-route-dispatch')
 
     routes = []
     getSessionMessages.mockClear()
 
-    $sessionTiles.set([{ ...TAB, tileKey: tileKeyFor(TAB) }] as never)
+    $sessionKeyTabs.set([{ ...TAB, tileKey: tileKeyFor(TAB) }] as never)
 
     // The app is pointed at ANOTHER connection for the whole test.
     restoreRouter = setSessionRequestRouter({
@@ -374,7 +374,7 @@ describe('a tab bound to a background connection', () => {
     // The slice is keyed by the connection that issued the runtime id, and
     // carries the scope its later requests route by.
     expect(key).toBe('@conn-a|runtime-a')
-    expect($sessionStates.get()[key]).toMatchObject({ connectionId: 'conn-a', profile: 'work' })
+    expect($sessionKeyStates.get()[key]).toMatchObject({ connectionId: 'conn-a', profile: 'work' })
   })
 
   it('submits on its own connection, still, after the app moved on', async () => {
@@ -388,10 +388,10 @@ describe('a tab bound to a background connection', () => {
   })
 
   it('refuses to resume a tab this device cannot host, before any dial', async () => {
-    const { $sessionTiles, tileKeyFor } = await import('@/store/session-states')
+    const { $sessionKeyTabs, tileKeyFor } = await import('@/store/session-states')
     const ref = { connectionId: 'cannot-host', profile: 'default', storedSessionId: 'abc12345' }
 
-    $sessionTiles.set([{ ...ref, tileKey: tileKeyFor(ref) }] as never)
+    $sessionKeyTabs.set([{ ...ref, tileKey: tileKeyFor(ref) }] as never)
 
     await expect(delegate.resumeTile(tileKeyFor(ref))).rejects.toThrow()
     expect(routes).toEqual([])
@@ -399,9 +399,9 @@ describe('a tab bound to a background connection', () => {
   })
 
   it('refuses to resume a tab whose backend changed under it', async () => {
-    const { $sessionTiles, tileKeyFor } = await import('@/store/session-states')
+    const { $sessionKeyTabs, tileKeyFor } = await import('@/store/session-states')
 
-    $sessionTiles.set([{ ...TAB, tileKey: tileKeyFor(TAB), unavailable: true }] as never)
+    $sessionKeyTabs.set([{ ...TAB, tileKey: tileKeyFor(TAB), unavailable: true }] as never)
 
     await expect(delegate.resumeTile(tileKeyFor(TAB))).rejects.toThrow()
     expect(routes).toEqual([])

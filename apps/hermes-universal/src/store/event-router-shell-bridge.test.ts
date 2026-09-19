@@ -34,7 +34,7 @@ vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undef
 vi.mock('@/lib/completion-sound', () => ({ playCompletionSound: vi.fn() }))
 
 import { routeGatewayEvent } from '@/store/event-router'
-import { $activeSessionKey, $sessionStates, ensureSessionSlice } from '@/store/session-state-types'
+import { $activeSessionKey, $sessionKeyStates, ensureSessionSlice } from '@/store/session-state-types'
 
 /** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
 const localSite = (runtimeId: string) => ({
@@ -47,7 +47,7 @@ const event = (type: string, payload: Record<string, unknown>, sessionId: string
 
 describe('event-router → shell bridge', () => {
   beforeEach(() => {
-    $sessionStates.set({})
+    $sessionKeyStates.set({})
     // The chat the user is looking at, and one running in the background. Both
     // are known sessions: the router fails closed on an unknown one, which
     // would make the gate below pass for the wrong reason.
