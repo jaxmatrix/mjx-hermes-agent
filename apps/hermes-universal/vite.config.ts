@@ -242,8 +242,9 @@ export default defineConfig(({ command }) => ({
       // The plugin SDK's public specifier. A bundled plugin writes
       // `import { host } from '@hermes/plugin-sdk'` and resolves here; a
       // runtime-loaded one gets the same object through sdk/runtime.ts's blob
-      // shims. Same alias desktop's vite.config.ts declares.
-      '@hermes/plugin-sdk': fileURLToPath(new URL('./src/sdk/index.ts', import.meta.url)),
+      // shims. Same alias desktop's vite.config.ts declares, one module further
+      // out: `sdk/universal.ts` is desktop's barrel plus universal's additions.
+      '@hermes/plugin-sdk': fileURLToPath(new URL('./src/sdk/universal.ts', import.meta.url)),
       // @hermes/shared is a workspace package whose exports map does not list
       // every module the ported desktop code imports (translucency is the one
       // that bit). Desktop resolves the package by ALIAS rather than through

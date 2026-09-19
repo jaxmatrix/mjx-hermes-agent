@@ -90,6 +90,12 @@ components/chat/connection-accent.*
 app/chat/use-tab-connection.*
 app/gateway/gateway-configurator.tsx
 hermes.ts
+# The public `@hermes/plugin-sdk` specifier resolves to universal-only
+# `sdk/universal.ts` (desktop's barrel plus universal's additions). Desktop's
+# runtime shim names its barrel by relative path, so it carries ONE changed
+# specifier here, or a runtime-loaded plugin would see a narrower SDK than a
+# bundled one. `sdk/index.ts` itself stays desktop's, verbatim.
+sdk/runtime.ts
 # The entry carries three universal lines desktop has no place for, in this order:
 # the persisted-tab migration (must be the first import), the hermesDesktop bridge
 # install (a side-effect import, second, so it precedes every module-scope
@@ -111,6 +117,12 @@ lib/safe-area.*
 lib/touch.*
 lib/resize-gesture.*
 lib/trackpad-gestures.*
+# Desktop's primitive plus one event: `pointercancel` ends the drag too. On touch
+# the platform can steal a pointer mid-gesture and deliver `pointercancel` INSTEAD
+# of `pointerup`, so desktop's two-event version leaks both listeners. Same
+# export, same signature — a superset desktop's callers cannot tell apart.
+lib/pointer-drag.ts
+lib/pointer-drag.test.ts
 # Universal asks the Tauri runtime which platform it is on and handles the iOS
 # webview boot race; desktop only sniffs navigator, and has no notion of mobile
 # at all. Desktop's three host-OS predicates are folded in at the bottom.

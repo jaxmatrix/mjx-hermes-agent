@@ -52,6 +52,17 @@ const REPO_ROOT = path.resolve(APP_DIR, '../..')
 const SRC = path.join(APP_DIR, 'src')
 const ENTRY = path.join(SRC, 'main.tsx')
 
+/**
+ * The one file whose `import()`s ARE boot edges. `app.tsx` picks the window's
+ * root and loads it as a chunk, so each root is fetched during the cold start of
+ * the window that mounts it — dynamic to the bundler, eager to the user, exactly
+ * the distinction this file exists for. Stopping there would let shiki ride into
+ * every desktop launch inside the root chunk with this guard still green, so the
+ * walk crosses these boundaries and no others: the graph below is the union of
+ * every window kind's cold start.
+ */
+const ROOT_PICKER = path.join(SRC, 'app.tsx')
+
 /** Package names that must not appear on the entry's static graph. */
 const FORBIDDEN = ['shiki', 'react-shiki', '@shikijs', '@streamdown/code', 'driver.js']
 
@@ -161,7 +172,7 @@ function resolveSpecifier(specifier: string, fromFile: string): string | null {
   }
 
   if (specifier === '@hermes/plugin-sdk') {
-    return resolveFile(path.join(SRC, 'sdk/index.ts'))
+    return resolveFile(path.join(SRC, 'sdk/universal.ts'))
   }
 
   if (specifier.startsWith('.')) {
@@ -248,8 +259,15 @@ function staticSpecifiers(file: string): string[] {
         found.push(specifier)
       }
     } else if (ts.isCallExpression(node)) {
-      // `import(...)` is the boundary we are asserting exists — never followed.
+      // `import(...)` is the boundary we are asserting exists — never followed,
+      // except out of the root picker, whose chunks load at boot (see above).
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        const specifier = file === ROOT_PICKER ? literal(node.arguments[0]) : null
+
+        if (specifier) {
+          found.push(specifier)
+        }
+
         return
       }
 
@@ -400,6 +418,9 @@ describe('entry import graph', () => {
     expect(graph.reached.size).toBeGreaterThan(1_000)
     expect([...graph.reached].some(file => file.endsWith('/src/app.tsx'))).toBe(true)
     expect([...graph.reached].some(file => file.includes('/node_modules/streamdown/'))).toBe(true)
+    // …and through the root picker's chunks, or the walk stopped at `app.tsx`.
+    expect([...graph.reached].some(file => file.endsWith('/src/app/index.tsx'))).toBe(true)
+    expect([...graph.reached].some(file => file.endsWith('/src/app/mobile-controller.tsx'))).toBe(true)
   })
 
   it('resolves every bare specifier it walks past, except the known-inert ones', () => {
