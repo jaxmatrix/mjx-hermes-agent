@@ -6,7 +6,7 @@
  * projects the active slice. Tests therefore seed SLICES.
  */
 
-import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import {
   $activeSessionKey,
   $sessionKeyStates,

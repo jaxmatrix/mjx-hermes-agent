@@ -56,7 +56,7 @@
  */
 
 import { LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
-import { sealOpenToolParts } from '@/lib/chat-messages'
+import { sealOpenToolParts } from '@/lib/session-key-messages'
 import { $activeConnectionId } from '@/store/active-connection'
 import { $gatewayState, requestGateway } from '@/store/gateway-client'
 import { clearLiveSessionStatuses, type LiveSessionStatus, setLiveSessionStatuses } from '@/store/live-session-registry'

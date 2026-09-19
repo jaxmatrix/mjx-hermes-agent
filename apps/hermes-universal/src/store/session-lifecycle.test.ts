@@ -33,7 +33,7 @@ vi.mock('@/store/gateway-client', async () => {
 import { GatewayRpcError } from '@/gateway/rpc-error'
 import { deleteSession, getSession, getSessionMessages, listAllProfileSessions, renameSession } from '@/hermes'
 import { ApiError } from '@/lib/api'
-import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import { __resetTranscriptTailCache, readTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
 import { $busy, $currentCwd, $messages, $sessionId } from '@/store/chat'
 import { confirm } from '@/store/confirm'

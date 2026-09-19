@@ -10,12 +10,12 @@ vi.mock('@/store/gateway-client', () => ({
 
 import '@/store/turn-hydration'
 
-import type { ChatMessage } from '@/lib/chat-messages'
 import {
   __resetInFlightTurnJournalCache,
   persistInFlightTurnState,
   readInFlightTurnJournal
 } from '@/lib/inflight-turn-journal'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import {
   $sessionKeyStates,
   ensureSessionSlice,

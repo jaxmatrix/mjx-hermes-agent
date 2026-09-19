@@ -1,7 +1,7 @@
 import { memo } from 'react'
 
 import { CompactMarkdown } from '@/components/chat/compact-markdown'
-import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import { cn } from '@/lib/utils'
 
 /**

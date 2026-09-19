@@ -1,3 +1,10 @@
+// LEGACY — universal's SESSION-KEY message model (was `lib/chat-messages.ts`,
+// which shadowed desktop's `lib/chat-messages/` directory; that module is now
+// desktop's, verbatim, and its `ChatMessage` is a DIFFERENT, wider type). Only the
+// old session-key fold and its views consume this one. Retires with the old fold
+// (MJXHRM-602 fold steps 6–8); its importer count may only shrink
+// (`legacy-session-fold.test.ts`). Do not mix the two models in one file.
+//
 // THE chat transcript model + its pure reducers — a LEAF module.
 //
 // Universal keeps ONE message type across the app: the `{ role, parts }`
@@ -12,7 +19,7 @@
 // Everything here is pure and side-effect free; `store/chat.ts` re-exports the
 // whole surface so existing import sites keep working.
 //
-// Ported from apps/desktop/src/lib/chat-messages.ts.
+// Ported from an older apps/desktop/src/lib/chat-messages.ts.
 
 import { renderMediaTags } from '@/lib/chat-media'
 import { dedupeGeneratedImageEchoesInParts } from '@/lib/generated-images'

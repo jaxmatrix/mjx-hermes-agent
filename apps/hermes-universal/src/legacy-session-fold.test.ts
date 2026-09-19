@@ -8,12 +8,18 @@ import { describe, expect, it } from 'vitest'
  * The old session fold may only SHRINK (MJXHRM-602).
  *
  * `store/session-states` is desktop's, verbatim. Universal's session-key fold
- * lives on beside it in three legacy modules until fold steps 6–8 retire it, and
+ * lives on beside it in four legacy modules until fold steps 6–8 retire it, and
  * until then nothing new may be built on them. Each number is the count of files
  * (tests included) that import the module today: it may only be LOWERED, and all
- * three must reach 0 when the old fold retires.
+ * four must reach 0 when the old fold retires.
+ *
+ * `lib/session-key-messages` is the fold's message model (was
+ * `lib/chat-messages.ts`, which shadowed desktop's `lib/chat-messages/`). Its
+ * `ChatMessage` is NOT desktop's: a file that needs desktop's imports
+ * `@/lib/chat-messages`, never both.
  */
 const CEILINGS: Record<string, number> = {
+  'lib/session-key-messages': 31,
   'store/session-key-states': 27,
   'store/session-route-dispatch': 14,
   'store/session-state-types': 64

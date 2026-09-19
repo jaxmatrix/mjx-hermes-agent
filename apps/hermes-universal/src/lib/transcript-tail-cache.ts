@@ -39,8 +39,8 @@
  * anything which can silently fail says what actually happened.
  */
 
-import { type ChatMessage, sealOpenToolParts } from '@/lib/chat-messages'
 import { isLiveTailRow } from '@/lib/live-tail'
+import { type ChatMessage, sealOpenToolParts } from '@/lib/session-key-messages'
 
 const STORAGE_PREFIX = 'hermes.universal.transcriptTail.v1:'
 const INDEX_KEY = 'hermes.universal.transcriptTail.v1-index'

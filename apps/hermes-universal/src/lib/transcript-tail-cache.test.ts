@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import {
   __resetTranscriptTailCache,
   __TAIL_CACHE_BOUNDS,

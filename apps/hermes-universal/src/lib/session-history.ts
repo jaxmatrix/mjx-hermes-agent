@@ -1,7 +1,7 @@
 import { renderMediaTags } from '@/lib/chat-media'
-import { dedupeRepeatedTextInParts } from '@/lib/chat-messages'
 import { dedupeGeneratedImageEchoesInParts } from '@/lib/generated-images'
 import { shouldProjectInflightDump, userTurnAlreadyPersisted } from '@/lib/live-tail'
+import { dedupeRepeatedTextInParts } from '@/lib/session-key-messages'
 import type { ChatMessage, ChatPart, ToolCallPart } from '@/store/chat'
 import type { MessageReaction, SessionMessage, SessionResumeResponse } from '@/types/hermes'
 

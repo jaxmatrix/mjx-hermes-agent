@@ -1,5 +1,5 @@
 import type { SessionView } from '@/app/chat/session-view'
-import { type ChatMessage, chatMessageText, collectUnspokenTurnSpeech } from '@/lib/chat-messages'
+import { type ChatMessage, chatMessageText, collectUnspokenTurnSpeech } from '@/lib/session-key-messages'
 
 // The shared "last spoken reply" cursor, dedupe between the voice-conversation
 // loop and `useAutoSpeakReplies` so a reply is never read aloud twice. Keyed per

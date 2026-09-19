@@ -18,7 +18,7 @@
 
 import { atom } from 'nanostores'
 
-import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import { flushDeltas } from '@/lib/stream-batch'
 import type { UsageStats } from '@/types/hermes'
 
