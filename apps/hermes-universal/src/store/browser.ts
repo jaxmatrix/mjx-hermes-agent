@@ -19,27 +19,66 @@ import { Codecs, persistentAtom } from '@/lib/persisted'
 import { $activeConnection } from '@/store/active-connection'
 import { atom, computed } from '@/store/atom'
 import { isLatched } from '@/store/connection-latches'
+import { $rightRailActiveTabId } from '@/store/layout'
 import { notifyError } from '@/store/notifications'
 import {
   $previewTabs,
-  BROWSER_TAB_PATH,
-  closePreviewTab,
-  isBrowserTab,
-  openBrowserPreviewTab
+  closeRightRailTab,
+  commitBrowserTabLocation,
+  forgetBrowserPage,
+  noteBrowserPage,
+  openBrowserTab,
+  openPreview,
+  type PreviewTab
 } from '@/store/preview'
 import { ownsPersistedAppState } from '@/store/windows'
 
 /**
- * The in-app browser's tab and live page state.
+ * The in-app browser's live page state, on desktop's tab model.
  *
- * The TAB is a layout-tree tile like every other preview tab (`paneMirror`
- * already mirrors `$previewTabs`), so the browser is draggable, splittable,
- * detachable and ⌘W-closable with no new pane engine. The PAGE is a native
- * guest webview owned by Rust; nothing here draws it, and everything here is
- * about telling Rust where to put it and what the bar should say.
+ * The TABS are desktop's (`store/preview`): a Browser is a url-kind `PreviewTab`
+ * — a vessel you navigate, minted by `openPreview` / the strip's "+", mirrored
+ * into the layout tree by `preview-tile` — so it is draggable, splittable and
+ * ⌘W-closable with no pane engine of its own. This module never edits the tab
+ * list except through desktop's own doors (`openPreview`, `closeRightRailTab`,
+ * `commitBrowserTabLocation`).
+ *
+ * The PAGE is a native guest webview owned by Rust; nothing here draws it, and
+ * everything here is about telling Rust where to go and what the bar should say.
+ *
+ * ONE LIVE GUEST. Desktop builds a `<webview>` per url tab. This layer drives a
+ * single guest (`BROWSER_GUEST_ID`): `$browserState`, the console, the reader
+ * and the actor are all one page's worth. So the invariant is:
+ *
+ *   - the guest is bound to at most one url tab, `$browserGuestTabId`;
+ *   - that is the FOCUSED url tab — focusing another Browser hands the guest
+ *     over: the tab it leaves gets its live location committed onto its target
+ *     (`commitBrowserTabLocation`, desktop's hand-off door), and the guest
+ *     navigates to the location the tab it joins was keeping;
+ *   - every other url tab is only a location. It holds no page, no history and
+ *     no lease, and says nothing to the strip until the guest comes back;
+ *   - a bound tab that leaves `$previewTabs` by ANY door takes the guest with it.
+ *
+ * Rust keys its guests by id and could hold several; the limit is here, and
+ * lifting it means per-tab state in this module, not a second tab model.
  */
 
-export { BROWSER_TAB_PATH, isBrowserTab } from '@/store/preview'
+const isBrowserTab = (tab: PreviewTab): boolean => tab.target.kind === 'url'
+
+function focusedBrowserTab(): null | PreviewTab {
+  const tab = $previewTabs.get().find(item => item.id === $rightRailActiveTabId.get())
+
+  return tab && isBrowserTab(tab) ? tab : null
+}
+
+/**
+ * The url tab the one live guest is bound to. Null: no Browser has the guest.
+ *
+ * A Browser restored IN FRONT starts bound but not loaded: the pane opens the
+ * guest blank and offers the page back (see `$browserRestoredTab`) instead of
+ * paying for it at launch.
+ */
+export const $browserGuestTabId = atom<null | string>(focusedBrowserTab()?.id ?? null)
 
 export interface BrowserPageState {
   url: string
@@ -114,11 +153,7 @@ export const $browserRestoredTab = persistentAtom<null | PersistedTab>('hermes.b
  * the user's logins and password manager, and an in-app browser that does not
  * is a downgrade for most links.
  */
-export const $openLinksInApp = persistentAtom(
-  'hermes.browser.openLinksInApp',
-  !matchesCoarsePointer(),
-  Codecs.bool
-)
+export const $openLinksInApp = persistentAtom('hermes.browser.openLinksInApp', !matchesCoarsePointer(), Codecs.bool)
 
 export const $browserConsoleOpen = persistentAtom('hermes.browser.consoleOpen', false, Codecs.bool)
 
@@ -196,18 +231,32 @@ export async function reachUrl(url: string): Promise<ReachOutcome> {
 export function forgetBrowserForGatewaySwitch(): void {
   void resetReach().catch(() => undefined)
 
-  // The tab AND the guest, and the guest UNCONDITIONALLY.
-  // `wipeSessionListsForGatewaySwitch` already ran `closeAllPreviewTabs()` by
-  // the time it calls this, so a tab-guarded close would be a no-op there and
-  // leave a live webview still showing the old machine's page — while
-  // `clearGatewayTarget`, the OTHER wipe door, sweeps no tabs at all.
-  closeInAppBrowser()
-  teardownGuest()
+  // EVERY Browser, not just the one holding the guest: a tab that is only a
+  // location still names the old machine, and would be reached through the NEW
+  // one's forward the moment it was focused.
+  handingOver = true
+
+  try {
+    for (const tab of $previewTabs.get().filter(isBrowserTab)) {
+      forgetBrowserPage(tab.id)
+      closeRightRailTab(tab.id)
+    }
+  } finally {
+    handingOver = false
+  }
+
+  // …and the guest UNCONDITIONALLY. A wipe door may already have swept the tabs
+  // by the time it calls this, so a tab-guarded teardown would be a no-op there
+  // and leave a live webview still showing the old machine's page.
+  $browserRestoredTab.set(null)
+  dropGuest()
 }
 
-function teardownGuest(): void {
+/** End the live page: the guest, its state and its binding. */
+function dropGuest(): void {
+  navigationSeq += 1
+  $browserGuestTabId.set(null)
   $browserState.set({ ...EMPTY_BROWSER_STATE })
-  $browserRestoredTab.set(null)
   void closeGuest().catch(() => undefined)
   guestIsOpen = false
   pendingNavigation = null
@@ -230,6 +279,23 @@ export function applyGuestState(state: GuestState): void {
 
   if (ownsPersistedAppState() && state.url && state.url !== 'about:blank') {
     $browserRestoredTab.set({ title: state.title, url: state.url })
+  }
+
+  publishPage()
+}
+
+/**
+ * Tell desktop's strip what the bound Browser is showing, so its tab renames
+ * itself (`$browserPages`, read by `preview-tile`'s label and its "open in the
+ * OS browser" row). NOT written into the tab's target: that is a hand-off, and
+ * happens once, when the guest leaves the tab.
+ */
+function publishPage(): void {
+  const tabId = $browserGuestTabId.get()
+  const page = $browserState.get()
+
+  if (tabId && page.url) {
+    noteBrowserPage(tabId, { title: page.title, url: page.url })
   }
 }
 
@@ -263,23 +329,130 @@ export async function openInAppBrowser(url: string, label?: string): Promise<boo
     url: address
   })
 
-  // The tab is labelled by the ORIGINAL address: `127.0.0.1:41234` is our
-  // plumbing and means nothing to anyone reading the strip.
-  openBrowserPreviewTab(label || hostPathLabel(address))
+  // Desktop's one way in. It navigates the Browser the user is looking at, else
+  // the one they used last, else mints one — so a chatty agent cannot stack
+  // twelve tabs onto the rail — and fronts it. The target carries the ORIGINAL
+  // address: `127.0.0.1:41234` is our plumbing, means nothing to anyone reading
+  // the strip, and is a port that will not exist after a relaunch.
+  handingOver = true
 
-  // The pane mounts, measures its box and only THEN opens the guest — a guest
-  // built before there is a rect flashes at 0×0 in the window's corner.
-  pendingNavigation = reach.url
+  try {
+    openPreview({ kind: 'url', label: label || hostPathLabel(address), source: address, url: address })
+  } finally {
+    handingOver = false
+  }
+
+  bindGuestTo($rightRailActiveTabId.get())
+  publishPage()
+
+  await loadInGuest(reach.url, address)
+
+  return true
+}
+
+/**
+ * Put `url` in the guest — now if it is live, else when the pane opens it.
+ *
+ * The pane mounts, measures its box and only THEN opens the guest: a guest built
+ * before there is a rect flashes at 0×0 in the window's corner.
+ */
+async function loadInGuest(url: string, display: string): Promise<void> {
+  pendingNavigation = url
 
   if (guestIsOpen) {
     // Consume the handoff: the guest is live, so the pane has nothing left to
     // open — and leaving it set would make a later remount load the page again.
     takePendingNavigation()
-    await navigateBrowser(reach.url, address)
+    await navigateBrowser(url, display)
+  }
+}
+
+// --- one guest, many tabs --------------------------------------------------
+
+/** True while THIS module is moving tabs, so `followFocus` does not answer a
+ *  change its caller is about to finish itself. */
+let handingOver = false
+
+/** Bumped by every hand-over and teardown, so a reach that resolves late cannot
+ *  navigate a guest that has since moved on. */
+let navigationSeq = 0
+
+/**
+ * Bind the guest to `tabId`, committing the page it was showing onto the tab it
+ * leaves. Binds FIRST: the commit writes `$previewTabs`, and `followFocus` must
+ * find the new binding already in place when that lands.
+ */
+function bindGuestTo(tabId: null | string): void {
+  const previous = $browserGuestTabId.get()
+
+  if (!tabId || previous === tabId) {
+    return
   }
 
-  return true
+  const page = $browserState.get()
+
+  navigationSeq += 1
+  $browserGuestTabId.set(tabId)
+
+  if (previous && page.url) {
+    commitBrowserTabLocation(previous, page.url, page.title || undefined)
+  }
 }
+
+/** Hand the guest to a Browser the user focused: bind, then load what it kept. */
+async function showBrowserTab(tab: PreviewTab): Promise<void> {
+  const address = normalizeBrowserAddress(tab.target.url) ?? 'about:blank'
+
+  bindGuestTo(tab.id)
+
+  const seq = navigationSeq
+
+  $browserState.set({ ...EMPTY_BROWSER_STATE, loading: guestIsOpen, url: address })
+
+  // No host, no guest to load into — and no forward worth leasing for one.
+  if ((await ensureBrowserCapabilities()).host === 'none' || seq !== navigationSeq) {
+    return
+  }
+
+  const reach = await reachUrl(address)
+
+  if (seq !== navigationSeq) {
+    return
+  }
+
+  $browserState.set({
+    ...$browserState.get(),
+    reach: { leased: reach.leased, localPort: reach.localPort, note: reach.note }
+  })
+
+  await loadInGuest(reach.url, address)
+}
+
+/**
+ * Keep the invariant whichever door moved a tab — desktop's strip, ⌘W, the "+",
+ * a restore — since none of them comes through this module.
+ */
+function followFocus(): void {
+  if (handingOver) {
+    return
+  }
+
+  const tabs = $previewTabs.get()
+  const bound = $browserGuestTabId.get()
+
+  if (bound && !tabs.some(tab => tab.id === bound)) {
+    dropGuest()
+  }
+
+  const focused = focusedBrowserTab()
+
+  if (focused && focused.id !== $browserGuestTabId.get()) {
+    void showBrowserTab(focused)
+  }
+}
+
+$previewTabs.listen(followFocus)
+$rightRailActiveTabId.listen(followFocus)
 
 /**
  * The address the pane should load when it mounts, taken once.
@@ -308,6 +481,7 @@ export async function navigateBrowser(url: string, display?: string): Promise<vo
 
     applyGuestState(state)
     $browserState.set({ ...$browserState.get(), error: null, url: display ?? state.url })
+    publishPage()
   } catch (error) {
     notifyError(browserErrorOf(error).message, 'Could not open that address')
   }
@@ -350,32 +524,45 @@ export const browserStop = (): Promise<void> => drive(guestStop)
 /**
  * ⌘⇧L: open the pane, or close it if it is already the tab in front.
  *
- * A fresh one lands on `about:blank`, where the address field is the invitation
- * — rather than restoring the last page, which is a cost the user did not ask
- * for (see `$browserRestoredTab`).
+ * A fresh one lands on `about:blank`, where the address field is the invitation.
  */
 export async function toggleInAppBrowser(): Promise<void> {
-  const open = $previewTabs.get().some(tab => isBrowserTab(tab.path))
+  const bound = $browserGuestTabId.get()
 
-  if (open) {
+  if (bound && bound === $rightRailActiveTabId.get()) {
     closeInAppBrowser()
 
     return
   }
 
-  await openInAppBrowser('about:blank')
-}
-
-export function closeInAppBrowser(): void {
-  if (!$previewTabs.get().some(tab => isBrowserTab(tab.path))) {
+  if ((await ensureBrowserCapabilities()).host === 'none') {
     return
   }
 
-  closePreviewTab(BROWSER_TAB_PATH)
-  $browserState.set({ ...EMPTY_BROWSER_STATE })
-  void closeGuest().catch(() => undefined)
-  guestIsOpen = false
-  pendingNavigation = null
+  // Desktop's verb: re-front the Browser you have — keeping its page — else a
+  // blank one. `followFocus` hands it the guest.
+  openBrowserTab()
+}
+
+/** Close the Browser the guest is in. With no Browser open it is a no-op, not a
+ *  stray guest close. */
+export function closeInAppBrowser(): void {
+  const tabId = $browserGuestTabId.get()
+
+  if (!tabId) {
+    return
+  }
+
+  // The same three steps desktop's tile closer takes (`preview-tile`), minus
+  // its console buffer, which universal does not write.
+  forgetBrowserPage(tabId)
+  closeRightRailTab(tabId)
+
+  // `followFocus` has already dropped the guest if the tab was there to close;
+  // this covers a binding whose tab a wipe door swept first.
+  if ($browserGuestTabId.get() === tabId) {
+    dropGuest()
+  }
 }
 
 /** Test seam: reset the module-level caches this store keeps. */
@@ -383,6 +570,9 @@ export function __resetBrowserStore(): void {
   capabilitiesProbe = null
   pendingNavigation = null
   guestIsOpen = false
+  handingOver = false
+  navigationSeq += 1
+  $browserGuestTabId.set(null)
   $browserCapabilities.set(null)
   $browserState.set({ ...EMPTY_BROWSER_STATE })
 }

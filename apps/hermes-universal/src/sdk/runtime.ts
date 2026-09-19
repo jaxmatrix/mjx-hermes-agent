@@ -11,7 +11,10 @@ import * as React from 'react'
 import * as jsxDevRuntime from 'react/jsx-dev-runtime'
 import * as jsxRuntime from 'react/jsx-runtime'
 
-import * as sdk from './index'
+// Universal's one line in desktop's file: the namespace a runtime plugin gets is
+// the module the `@hermes/plugin-sdk` alias resolves to (`./universal` — desktop's
+// barrel plus universal's additions), so it sees what a bundled plugin sees.
+import * as sdk from './universal'
 
 // Resolved LAZILY, never as a module-scope literal. This module sits in an
 // import cycle — `sdk/index` → `contrib/*` → `contrib/runtime-loader` →

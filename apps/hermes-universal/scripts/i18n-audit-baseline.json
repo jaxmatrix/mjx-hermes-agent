@@ -860,7 +860,6 @@
       "sidebar.row.actionsFor",
       "sidebar.row.moveToProject",
       "sidebar.row.openInBubble",
-      "sidebar.row.openInTile",
       "skills.archive",
       "skills.bulkUpdated",
       "skills.changesApplyNewSessions",
@@ -953,7 +952,6 @@
       "titlebar.close",
       "titlebar.maximize",
       "titlebar.minimize",
-      "titlebar.openKeybinds",
       "titlebar.restore",
       "ui.sidebar.toggle",
       "zones.detach",
@@ -1359,7 +1357,6 @@
       "sidebar.projects.reorder",
       "sidebar.projects.toggle",
       "sidebar.row.openInBubble",
-      "sidebar.row.openInTile",
       "skills.hub.actionFailed",
       "skills.hub.actionLog",
       "skills.hub.close",
@@ -1412,8 +1409,7 @@
       "starmap.sharePlaceholder",
       "starmap.shareTitle",
       "titlebar.enterHud",
-      "titlebar.exitHud",
-      "titlebar.openKeybinds"
+      "titlebar.exitHud"
     ],
     "zh": [
       "keybinds.actions.view.closeTerminal",
@@ -1816,7 +1812,6 @@
       "sidebar.projects.reorder",
       "sidebar.projects.toggle",
       "sidebar.row.openInBubble",
-      "sidebar.row.openInTile",
       "skills.hub.actionFailed",
       "skills.hub.actionLog",
       "skills.hub.close",
@@ -1869,8 +1864,7 @@
       "starmap.sharePlaceholder",
       "starmap.shareTitle",
       "titlebar.enterHud",
-      "titlebar.exitHud",
-      "titlebar.openKeybinds"
+      "titlebar.exitHud"
     ]
   }
 }

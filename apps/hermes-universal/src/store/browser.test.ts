@@ -16,17 +16,23 @@ const host = {
 vi.mock('@/lib/browser/host', () => host)
 
 const { $activeConnection } = await import('./active-connection')
-const { $activePreviewPath, $previewTabs } = await import('./preview')
+const { $rightRailActiveTabId, selectRightRailTab } = await import('./layout')
+
+const { $browserPages, $previewTabs, closeRightRail, closeRightRailTab, newBrowserTab, openPreview } =
+  await import('./preview')
 
 const {
+  $browserGuestTabId,
   $browserState,
-  BROWSER_TAB_PATH,
   __resetBrowserStore,
+  applyGuestState,
   closeInAppBrowser,
   forgetBrowserForGatewaySwitch,
-  isBrowserTab,
+  markGuestOpen,
   openInAppBrowser,
-  reachUrl
+  reachUrl,
+  takePendingNavigation,
+  toggleInAppBrowser
 } = await import('./browser')
 
 const CAPABLE = {
@@ -42,38 +48,55 @@ const CAPABLE = {
   platform: 'linux'
 }
 
+const guestAt = (url: string, title = '') => ({
+  canBack: false,
+  canForward: false,
+  historySource: 'estimated' as const,
+  id: 'browser',
+  loading: false,
+  title,
+  url,
+  visible: true
+})
+
+const browserTabs = () => $previewTabs.get().filter(tab => tab.target.kind === 'url')
+
+const FILE = { kind: 'file', label: 'a.ts', source: '/repo/a.ts', url: 'file:///repo/a.ts' } as const
+
 beforeEach(() => {
-  vi.clearAllMocks()
+  // Sweeping the rail takes a bound guest down with it, so the mocks are
+  // cleared AFTER — or the last test's teardown counts against this one.
+  closeRightRail()
   __resetBrowserStore()
-  $previewTabs.set([])
-  $activePreviewPath.set(null)
+  vi.clearAllMocks()
+  $browserPages.set({})
   $activeConnection.set(null)
   host.browserCapabilities.mockResolvedValue(CAPABLE)
   host.reachUrlNative.mockResolvedValue({ leased: false, url: 'unused' })
+  host.navigateGuest.mockImplementation((url: string) => Promise.resolve(guestAt(url)))
 })
 
 describe('the browser tab', () => {
-  it('is a SINGLETON — a second url swaps the target instead of adding a tab', async () => {
-    // Making BROWSER_TAB_PATH a function of the url turns this red. The tab
-    // names the SURFACE, not the page: a chatty agent must not be able to stack
-    // twelve tabs onto the rail.
+  it('navigates the Browser you have — a second url does not add a tab', async () => {
+    // Desktop's rule, and the reason a chatty agent cannot stack twelve tabs
+    // onto the rail: a url opens in the Browser in front, else the last one
+    // used. New tabs are something the USER asks for (the strip's "+").
     await openInAppBrowser('https://example.com')
     await openInAppBrowser('https://other.example')
 
-    const browserTabs = $previewTabs.get().filter(tab => isBrowserTab(tab.path))
-
-    expect(browserTabs).toHaveLength(1)
-    expect($activePreviewPath.get()).toBe(BROWSER_TAB_PATH)
+    expect(browserTabs()).toHaveLength(1)
+    expect(browserTabs()[0].target.url).toBe('https://other.example/')
+    expect($rightRailActiveTabId.get()).toBe(browserTabs()[0].id)
+    expect($browserGuestTabId.get()).toBe(browserTabs()[0].id)
   })
 
   it('re-fronts rather than duplicating when another tab is selected', async () => {
-    $previewTabs.set([{ name: 'a.ts', path: '/repo/a.ts' }])
-    $activePreviewPath.set('/repo/a.ts')
+    openPreview(FILE)
 
     await openInAppBrowser('https://example.com')
 
     expect($previewTabs.get()).toHaveLength(2)
-    expect($activePreviewPath.get()).toBe(BROWSER_TAB_PATH)
+    expect($rightRailActiveTabId.get()).toBe(browserTabs()[0].id)
   })
 
   it('refuses an address the policy would refuse, and says so by returning false', async () => {
@@ -86,9 +109,13 @@ describe('the browser tab', () => {
 
     expect(await openInAppBrowser('https://example.com')).toBe(false)
     expect($previewTabs.get()).toHaveLength(0)
+
+    await toggleInAppBrowser()
+
+    expect($previewTabs.get()).toHaveLength(0)
   })
 
-  it('shows the address the USER asked for, not the tunnel behind it', async () => {
+  it('shows — and keeps — the address the USER asked for, not the tunnel behind it', async () => {
     $activeConnection.set({
       connection: {} as never,
       connectionId: 'box-a',
@@ -104,24 +131,33 @@ describe('the browser tab', () => {
 
     expect($browserState.get().url).toBe('http://localhost:5173/')
     expect($browserState.get().reach).toEqual({ leased: true, localPort: 41000, note: undefined })
+    // The tab is persisted; a forwarded port is not an address anyone can come
+    // back to. The guest gets the tunnel, and only the guest.
+    expect(browserTabs()[0].target.url).toBe('http://localhost:5173/')
+    expect(takePendingNavigation()).toBe('http://127.0.0.1:41000/')
   })
 
-  it('closes the tab and drops every lease on a gateway switch', async () => {
+  it('closes EVERY Browser and drops every lease on a gateway switch, and nothing else', async () => {
+    openPreview(FILE)
     await openInAppBrowser('https://example.com')
+    newBrowserTab()
+
+    expect(browserTabs()).toHaveLength(2)
 
     forgetBrowserForGatewaySwitch()
 
     expect(host.resetReach).toHaveBeenCalledWith()
-    expect($previewTabs.get().some(tab => isBrowserTab(tab.path))).toBe(false)
+    expect(browserTabs()).toEqual([])
+    expect($previewTabs.get().map(tab => tab.target)).toEqual([FILE])
     expect($browserState.get().url).toBe('')
+    expect($browserGuestTabId.get()).toBeNull()
   })
 
-  it('kills the GUEST on a gateway switch even after the tab was already swept', async () => {
-    // `wipeSessionListsForGatewaySwitch` runs `closeAllPreviewTabs()` first, so
-    // a tab-guarded teardown would be a no-op here and leave a live webview
-    // still showing the old machine's page.
+  it('kills the GUEST on a gateway switch even after the tabs were already swept', async () => {
+    // A wipe door can sweep the rail first, so a tab-guarded teardown would be a
+    // no-op here and leave a live webview still showing the old machine's page.
     await openInAppBrowser('https://example.com')
-    $previewTabs.set([])
+    closeRightRail()
     host.closeGuest.mockClear()
 
     forgetBrowserForGatewaySwitch()
@@ -133,6 +169,115 @@ describe('the browser tab', () => {
     closeInAppBrowser()
 
     expect(host.closeGuest).not.toHaveBeenCalled()
+  })
+
+  it('tells the strip what the Browser is showing', async () => {
+    await openInAppBrowser('https://example.com')
+    applyGuestState(guestAt('https://example.com/docs', 'Docs'))
+
+    expect($browserPages.get()[browserTabs()[0].id]).toEqual({ title: 'Docs', url: 'https://example.com/docs' })
+  })
+})
+
+// ONE LIVE GUEST (see the module note). Desktop's tab model allows many Browsers;
+// this layer drives one page, so the rest are locations.
+describe('one guest, many Browsers', () => {
+  it('hands the guest to the Browser the user focuses, keeping the page it leaves', async () => {
+    await openInAppBrowser('https://example.com')
+    markGuestOpen(true)
+    applyGuestState(guestAt('https://example.com/docs', 'Docs'))
+
+    const first = browserTabs()[0].id
+
+    // The strip's "+": another Browser, in front. It did not come through this
+    // module, and the guest follows it anyway.
+    newBrowserTab()
+
+    const second = browserTabs()[1].id
+
+    expect($browserGuestTabId.get()).toBe(second)
+    // Desktop's hand-off door: where the guest WAS is written onto the tab it left.
+    expect(browserTabs()[0].target).toMatchObject({ label: 'Docs', url: 'https://example.com/docs' })
+    await vi.waitFor(() => expect(host.navigateGuest).toHaveBeenLastCalledWith('about:blank'))
+
+    selectRightRailTab(first)
+
+    expect($browserGuestTabId.get()).toBe(first)
+    await vi.waitFor(() => expect(host.navigateGuest).toHaveBeenLastCalledWith('https://example.com/docs'))
+    expect($browserState.get().url).toBe('https://example.com/docs')
+    // Still two tabs, still one guest: nothing was opened for the second one.
+    expect(browserTabs()).toHaveLength(2)
+  })
+
+  it('leaves the guest where it is while a file tab is in front', async () => {
+    await openInAppBrowser('https://example.com')
+
+    const browser = browserTabs()[0].id
+
+    openPreview(FILE)
+
+    expect($browserGuestTabId.get()).toBe(browser)
+    expect(host.closeGuest).not.toHaveBeenCalled()
+  })
+
+  it('takes the guest down with its Browser, whichever door closed it', async () => {
+    await openInAppBrowser('https://example.com')
+    markGuestOpen(true)
+
+    // Desktop's strip / ⌘W, not `closeInAppBrowser`.
+    closeRightRailTab(browserTabs()[0].id)
+
+    expect(host.closeGuest).toHaveBeenCalledTimes(1)
+    expect($browserGuestTabId.get()).toBeNull()
+    expect($browserState.get().url).toBe('')
+  })
+
+  it('a late reach cannot navigate a guest that has moved on', async () => {
+    await openInAppBrowser('https://example.com')
+    markGuestOpen(true)
+
+    const first = browserTabs()[0].id
+    let release: (value: { leased: boolean; url: string }) => void = () => undefined
+
+    $activeConnection.set({
+      connection: {} as never,
+      connectionId: 'box-a',
+      dialConnectionId: 'box-a',
+      kind: 'ssh',
+      label: 'box-a',
+      profile: 'work',
+      scopeKey: 'conn:box-a::work'
+    })
+    host.reachUrlNative.mockReturnValueOnce(new Promise(resolve => (release = resolve)))
+    host.reachUrlNative.mockResolvedValue({ leased: false, url: 'https://example.com/' })
+
+    // The second Browser's reach is still out when the user goes back to the first.
+    newBrowserTab()
+    await vi.waitFor(() => expect(host.reachUrlNative).toHaveBeenCalledTimes(1))
+    selectRightRailTab(first)
+    await vi.waitFor(() => expect(host.navigateGuest).toHaveBeenLastCalledWith('https://example.com/'))
+
+    release({ leased: false, url: 'about:blank' })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(host.navigateGuest).not.toHaveBeenCalledWith('about:blank')
+    expect($browserState.get().url).toBe('https://example.com/')
+  })
+
+  it('⌘⇧L closes the Browser in front, and otherwise re-fronts the one you have', async () => {
+    await openInAppBrowser('https://example.com')
+
+    const browser = browserTabs()[0].id
+
+    openPreview(FILE)
+    await toggleInAppBrowser()
+
+    expect($rightRailActiveTabId.get()).toBe(browser)
+    expect(browserTabs()).toHaveLength(1)
+
+    await toggleInAppBrowser()
+
+    expect(browserTabs()).toEqual([])
   })
 })
 

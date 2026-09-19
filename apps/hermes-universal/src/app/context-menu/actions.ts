@@ -1,6 +1,7 @@
 import { closeContextMenu } from '@/app/context-menu/store'
 import type { ContextMenuDomTarget } from '@/app/context-menu/target'
-import { readClipboardText, writeClipboardText } from '@/lib/clipboard'
+import { writeClipboardText } from '@/components/ui/copy-button'
+import { readClipboardText } from '@/lib/clipboard-tauri'
 import { gatewayMediaDataUrl, mediaMime, mediaName } from '@/lib/media'
 
 // The non-UI half of the menu: everything an item DOES, with no React and no

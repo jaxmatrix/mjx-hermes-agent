@@ -1,4 +1,4 @@
-import type { ChatPart, ToolCallPart } from '@/lib/chat-messages'
+import type { ChatPart, ToolCallPart } from '@/lib/session-key-messages'
 import { normalize } from '@/lib/text'
 import { parseTodos } from '@/lib/todos'
 

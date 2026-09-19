@@ -33,7 +33,7 @@
  * reconciles, journals, narrates, branches or submits reads `$messages`.
  */
 
-import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import { readTranscriptTail } from '@/lib/transcript-tail-cache'
 import { atom } from '@/store/atom'
 import { $sessionKeyStates, scopedStoredKey } from '@/store/session-state-types'

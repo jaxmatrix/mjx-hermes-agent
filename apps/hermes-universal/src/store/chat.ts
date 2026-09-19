@@ -19,7 +19,7 @@ import {
   type TextPart,
   type ToolCallPart,
   withActiveAssistant
-} from '@/lib/chat-messages'
+} from '@/lib/session-key-messages'
 import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { stopSpeaking } from '@/lib/tts'
 import {
@@ -78,7 +78,7 @@ import { beginTurn, getInflightTurn, recordTurnCorrection, settleTurn } from '@/
 import type { SessionCreateResponse, SessionRedirectResponse, UsageStats } from '@/types/hermes'
 
 // The chat transcript model and its pure reducers now live in the LEAF module
-// @/lib/chat-messages, so the unified session reducer can apply the exact same
+// @/lib/session-key-messages, so the unified session reducer can apply the exact same
 // logic to every session's slice without importing this store. Re-exported here
 // because ~10 modules and the tests import them from `@/store/chat`.
 //

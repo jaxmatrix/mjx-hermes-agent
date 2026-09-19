@@ -18,7 +18,7 @@ vi.mock('@/store/pet', async importActual => {
   return { ...actual, setPetActivity: vi.fn() }
 })
 
-import type { ToolCallPart } from '@/lib/chat-messages'
+import type { ToolCallPart } from '@/lib/session-key-messages'
 import { requestGateway } from '@/store/gateway-client'
 import {
   applyResumedMcpSetup,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
-import type { ToolCallPart } from '@/lib/chat-messages'
+import type { ToolCallPart } from '@/lib/session-key-messages'
 import { reduceSessionState } from '@/store/session-reducer'
 import { emptySessionState, type SessionKeyState } from '@/store/session-state-types'
 

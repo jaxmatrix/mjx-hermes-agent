@@ -16,6 +16,10 @@
  */
 
 import type { GatewayEvent } from '@/gateway'
+import { coerceThinkingText } from '@/lib/chat-runtime'
+import { type GatewayToolPayload, upsertToolPart } from '@/lib/chat-tool-parts'
+import { dedupeGeneratedImageEchoesInParts } from '@/lib/generated-images'
+import { isLiveTailRow } from '@/lib/live-tail'
 import {
   appendAssistantTextPart,
   appendSealedReasoning,
@@ -27,11 +31,7 @@ import {
   patchActive,
   sealOpenToolParts,
   withActiveAssistant
-} from '@/lib/chat-messages'
-import { coerceThinkingText } from '@/lib/chat-runtime'
-import { type GatewayToolPayload, upsertToolPart } from '@/lib/chat-tool-parts'
-import { dedupeGeneratedImageEchoesInParts } from '@/lib/generated-images'
-import { isLiveTailRow } from '@/lib/live-tail'
+} from '@/lib/session-key-messages'
 import { type SessionKeyState } from '@/store/session-state-types'
 import type { UsageStats } from '@/types/hermes'
 

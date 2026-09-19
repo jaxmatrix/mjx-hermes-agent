@@ -42,6 +42,7 @@ import { withSocketProfile } from '@/transport/gateway-profile'
 import { type GatewayMint, onGatewayRefused, recordGatewayMint } from '@/transport/gateway-socket'
 
 import { onConnectionApplied } from './connection-applied'
+import { windowChromeInsets } from './window-chrome'
 
 type Bridge = NonNullable<typeof window.hermesDesktop>
 
@@ -448,11 +449,12 @@ function descriptor(dial: Dial, profile: string, scope: Partial<HermesConnection
     isFullscreen: false,
     logs: [],
     mode: dial.kind === 'local' ? 'local' : 'remote',
-    nativeOverlayWidth: 0,
     ...(dial.kind !== 'local' && { remoteKind: dial.kind === 'remote' ? 'url' : dial.kind }),
     ...(dial.remoteHost && { remoteHost: dial.remoteHost }),
     token: '',
-    windowButtonPosition: null,
+    // Where universal's own min/max/close sit, so desktop's titlebar stands
+    // clear of them as it does of the OS buttons (`./window-chrome`).
+    ...windowChromeInsets(),
     wsUrl: profileWsUrl(dial, dial.wsUrl, profile),
     ...scope
   }

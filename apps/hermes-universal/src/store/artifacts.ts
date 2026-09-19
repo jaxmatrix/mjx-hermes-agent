@@ -5,7 +5,7 @@ import { IS_TAURI } from '@/lib/platform'
 import { atom } from '@/store/atom'
 import { LOCAL_SESSION_SCOPE, parseSessionKey } from '@/store/session-state-types'
 
-import { closeArtifactPreviewTabs, openArtifactPreviewTab } from './preview'
+import { closeArtifactPreviewTabs, openPreview, type PreviewTarget } from './preview'
 
 /**
  * ARTIFACT REGISTRY — substantial generated content (HTML pages, large SVGs,
@@ -204,7 +204,13 @@ export function upsertArtifact(
   return { artifactId: record.id, record, versionAdded: true }
 }
 
-/** Open an artifact in the right pane at `versionIndex` (default: newest).
+/** A rail tab for an artifact references the registry by id rather than
+ *  carrying content, so an open tab follows the artifact as it gains versions. */
+export function artifactPreviewTarget(record: ArtifactRecord): PreviewTarget {
+  return { kind: 'artifact', label: record.title, source: record.id, url: record.id }
+}
+
+/** Open an artifact in the right rail at `versionIndex` (default: newest).
  *  User-initiated only (card click) — never called from streaming, per the
  *  no-hijack rule. */
 export function openArtifact(artifactId: string, versionIndex?: number) {
@@ -215,7 +221,7 @@ export function openArtifact(artifactId: string, versionIndex?: number) {
   }
 
   selectArtifactVersion(artifactId, versionIndex ?? record.versions.length - 1)
-  openArtifactPreviewTab(record.id, record.title)
+  openPreview(artifactPreviewTarget(record))
 }
 
 export function selectArtifactVersion(artifactId: string, versionIndex: number) {

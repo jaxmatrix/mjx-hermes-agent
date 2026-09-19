@@ -10,7 +10,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { calls, platform, state } = vi.hoisted(() => ({
   calls: [] as string[],
   platform: { mobile: false, tauri: true },
-  state: { background: null as (() => void) | null, held: null as null | Promise<unknown>, owner: true }
+  state: {
+    background: null as (() => void) | null,
+    desktopRoot: true,
+    held: null as null | Promise<unknown>,
+    owner: true
+  }
 }))
 
 const lever = (name: string) => vi.fn(() => void calls.push(name))
@@ -23,6 +28,10 @@ vi.mock('./lib/platform', () => ({
     return platform.tauri
   }
 }))
+vi.mock('./app/right-pane/terminal/terminal-font-sync', () => ({ initTerminalFontSync: lever('initTerminalFontSync') }))
+vi.mock('./lib/hermes-desktop/window-chrome', () => ({ hostsWindowChrome: () => state.desktopRoot }))
+vi.mock('./lib/katex-fonts', () => ({ warmKatexFonts: lever('warmKatexFonts') }))
+vi.mock('./lib/native-context-menu', () => ({ installNativeContextMenuGuard: lever('installNativeContextMenuGuard') }))
 vi.mock('./lib/safe-area', () => ({ initSafeAreaInsets: lever('initSafeAreaInsets') }))
 vi.mock('./lib/session-persist', () => ({
   persistSessionCookies: vi.fn(async () => void calls.push('persistSessionCookies')),
@@ -42,12 +51,33 @@ vi.mock('./store/app-lifecycle', () => ({
     state.background = listener
   })
 }))
+vi.mock('./store/background-mode', () => ({ initBackgroundMode: lever('initBackgroundMode') }))
 vi.mock('./store/connection-tunnels', () => ({ openTunnelPage: lever('openTunnelPage') }))
 vi.mock('./store/connections', () => ({
   restoreLaunchConnection: vi.fn(async (owner: boolean) => void calls.push(`restoreLaunchConnection:${owner}`)),
   startConnectionsWatcher: lever('startConnectionsWatcher')
 }))
-vi.mock('./store/windows', () => ({ ownsPersistedAppState: () => state.owner }))
+vi.mock('./store/deep-link-builtins', () => ({ registerBuiltinDeepLinkRoutes: lever('registerBuiltinDeepLinkRoutes') }))
+vi.mock('./store/downloads', () => ({ initDownloadSync: lever('initDownloadSync') }))
+vi.mock('./store/plugin-notify-handlers', () => ({
+  installNotificationActivation: lever('installNotificationActivation')
+}))
+vi.mock('./store/windows', () => ({
+  installWindowCloseGuard: vi.fn(async () => void calls.push('installWindowCloseGuard')),
+  ownsPersistedAppState: () => state.owner,
+  sweepStaleSurfaceGrants: vi.fn(async () => void calls.push('sweepStaleSurfaceGrants'))
+}))
+
+/** What every window runs between the launch and the safe area. */
+const FOLLOWERS = [
+  'registerBuiltinDeepLinkRoutes',
+  'initDownloadSync',
+  'initTerminalFontSync',
+  'installNotificationActivation'
+]
+
+/** What only the window that owns the app's persisted state runs. */
+const OWNER = ['installWindowCloseGuard', 'initBackgroundMode', 'sweepStaleSurfaceGrants']
 
 async function boot(): Promise<void> {
   vi.resetModules()
@@ -59,13 +89,14 @@ beforeEach(() => {
   platform.mobile = false
   platform.tauri = true
   state.background = null
+  state.desktopRoot = true
   state.held = null
   state.owner = true
   document.documentElement.classList.remove('is-mobile')
 })
 
 describe('bootUniversal', () => {
-  it('runs the levers in order: tracing, lifecycle, cookies, tunnels, registry, launch, safe area', async () => {
+  it('runs the levers in order: tracing, lifecycle, cookies, tunnels, registry, launch, followers, window, safe area', async () => {
     await boot()
 
     expect(calls).toEqual([
@@ -77,8 +108,34 @@ describe('bootUniversal', () => {
       'startConnectionsWatcher',
       'restoreLaunchConnection:true',
       'holdForLaunch',
+      ...FOLLOWERS,
+      'installNativeContextMenuGuard',
+      ...OWNER,
+      'warmKatexFonts',
       'initSafeAreaInsets'
     ])
+  })
+
+  // The close guard is the one `close-requested` listener a window gets, and
+  // registering it is what makes Tauri route the close through this page's JS:
+  // inside a satellite that would put the summoner's teardown behind a page that
+  // may not have booted. The preference and the sweep are process-wide levers.
+  it('arms the close guard, background mode and the grant sweep only in the window that owns app state', async () => {
+    state.owner = false
+    await boot()
+
+    expect(calls.filter(name => OWNER.includes(name))).toEqual([])
+    expect(calls).toEqual(expect.arrayContaining(FOLLOWERS))
+  })
+
+  // Desktop's menu never cancels the gesture; universal's other roots bring a
+  // coordinator that does, and a second canceller would reach a Radix trigger
+  // before Radix's own `defaultPrevented` check.
+  it('guards the native context menu only in a window that renders desktop’s root', async () => {
+    state.desktopRoot = false
+    await boot()
+
+    expect(calls).not.toContain('installNativeContextMenuGuard')
   })
 
   // The launch identity comes from Rust, so it cannot land before the first
@@ -158,6 +215,10 @@ describe('bootUniversal', () => {
       'startConnectionsWatcher',
       'restoreLaunchConnection:true',
       'holdForLaunch',
+      ...FOLLOWERS,
+      'installNativeContextMenuGuard',
+      ...OWNER,
+      'warmKatexFonts',
       'initSafeAreaInsets'
     ])
     expect(document.documentElement.classList.contains('is-mobile')).toBe(true)
@@ -196,6 +257,7 @@ describe('bootUniversal', () => {
 
     expect(calls.filter(name => name.startsWith('restoreLaunchConnection'))).toEqual([])
     expect(calls).not.toContain('holdForLaunch')
+    expect(calls.filter(name => OWNER.includes(name))).toEqual([])
   })
 })
 
@@ -230,9 +292,9 @@ describe('the boot module', () => {
     // levers live here now, so the same rule follows them.
     const levers = imports
       .flatMap(entry => entry.names)
-      .filter(name => /^(?:init|install|open|start|load|restore|hold)[A-Z]/.test(name))
+      .filter(name => /^(?:init|install|open|start|load|restore|hold|register|sweep|warm)[A-Z]/.test(name))
 
-    expect(levers.length).toBeGreaterThan(5)
+    expect(levers.length).toBeGreaterThan(12)
 
     for (const name of levers) {
       expect([name, source.includes(`${name}(`)]).toEqual([name, true])

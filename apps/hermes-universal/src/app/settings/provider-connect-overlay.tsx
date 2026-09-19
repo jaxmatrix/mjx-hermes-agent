@@ -1,9 +1,9 @@
 import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { writeClipboardText } from '@/components/ui/copy-button'
 import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
-import { writeClipboardText } from '@/lib/clipboard'
 import { openExternalLink } from '@/lib/external-link'
 import { Loader2, X } from '@/lib/icons'
 import { useStore } from '@/store/atom'

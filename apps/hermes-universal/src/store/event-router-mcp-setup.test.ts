@@ -16,7 +16,7 @@ vi.mock('@/components/chat/vibe-hearts', () => ({ burstVibeHearts: vi.fn() }))
 vi.mock('@/store/native-notifications', () => ({ dispatchNativeNotification: vi.fn() }))
 vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undefined) }))
 
-import type { ToolCallPart } from '@/lib/chat-messages'
+import type { ToolCallPart } from '@/lib/session-key-messages'
 import { routeGatewayEvent } from '@/store/event-router'
 import { clearAllPrompts, sessionAwaitingInput, sessionMcpSetupRequest } from '@/store/prompts'
 import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'

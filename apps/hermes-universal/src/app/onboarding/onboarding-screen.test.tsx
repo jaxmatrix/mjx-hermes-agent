@@ -30,11 +30,14 @@ vi.mock('@/store/gateway-client', () => ({ requestGateway: vi.fn(async () => ({}
 // the sign-in flow (MJXHRM-415). Asserting on the seam is also what makes the
 // assertion synchronous: the real seam only reaches the web API after a dynamic
 // import has failed, two microtasks later than the click.
-vi.mock('@/lib/clipboard', () => ({ writeClipboardText: vi.fn(async () => {}) }))
+vi.mock('@/components/ui/copy-button', async importOriginal => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  writeClipboardText: vi.fn(async () => {})
+}))
 
+import { writeClipboardText } from '@/components/ui/copy-button'
 import { listOAuthProviders } from '@/hermes'
 import { I18nProvider } from '@/i18n'
-import { writeClipboardText } from '@/lib/clipboard'
 import { $onboarding } from '@/store/onboarding'
 
 import { OnboardingScreen } from './onboarding-screen'

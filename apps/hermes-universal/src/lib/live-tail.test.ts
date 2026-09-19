@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ChatMessage } from '@/lib/chat-messages'
 import {
   comparableText,
   hasStructuralParts,
@@ -16,6 +15,7 @@ import {
   userMessagesMatch,
   userTurnAlreadyPersisted
 } from '@/lib/live-tail'
+import type { ChatMessage } from '@/lib/session-key-messages'
 
 const user = (id: string, text: string): ChatMessage => ({ id, role: 'user', parts: [{ type: 'text', text }] })
 

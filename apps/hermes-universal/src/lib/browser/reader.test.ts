@@ -2,14 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const evalInGuest = vi.fn()
 
-vi.mock('@/lib/browser/host', () => ({ evalInGuest }))
+// The rest is the browser store's: it follows the rail, so opening a Browser tab
+// asks what the host can do, and sweeping one takes the (never-opened) guest down.
+vi.mock('@/lib/browser/host', () => ({
+  browserCapabilities: vi.fn(() => Promise.resolve({ host: 'none' })),
+  closeGuest: vi.fn(() => Promise.resolve()),
+  evalInGuest
+}))
 
-const { $activePreviewPath, $previewTabs, BROWSER_TAB_PATH } = await import('@/store/preview')
+const { closeRightRail, openPreview } = await import('@/store/preview')
 const { PREVIEW_READ_MAX_CHARS, readActiveBrowserPage, windowText } = await import('./reader')
 
 function openBrowserTab(): void {
-  $previewTabs.set([{ name: 'example.com', path: BROWSER_TAB_PATH }])
-  $activePreviewPath.set(BROWSER_TAB_PATH)
+  openPreview({ kind: 'url', label: 'example.com', source: 'https://example.com/', url: 'https://example.com/' })
 }
 
 /** The engine hands back a JSON *value*; ours is a JSON string of JSON. */
@@ -17,8 +22,7 @@ const doubled = (value: unknown) => JSON.stringify(JSON.stringify(value))
 
 beforeEach(() => {
   vi.clearAllMocks()
-  $previewTabs.set([])
-  $activePreviewPath.set(null)
+  closeRightRail()
 })
 
 describe('windowText', () => {
@@ -41,27 +45,24 @@ describe('readActiveBrowserPage', () => {
   })
 
   it('points a file tab at read_file instead of answering empty', async () => {
-    $previewTabs.set([{ name: 'a.ts', path: '/repo/a.ts' }])
-    $activePreviewPath.set('/repo/a.ts')
+    openPreview({ kind: 'file', label: 'a.ts', path: '/repo/a.ts', source: '/repo/a.ts', url: 'file:///repo/a.ts' })
 
     const answer = await readActiveBrowserPage()
 
     expect(answer?.kind).toBe('file')
+    expect(answer?.path).toBe('/repo/a.ts')
     expect(answer?.note).toContain('read_file')
   })
 
   it('points an artifact tab at the conversation that produced it', async () => {
-    $previewTabs.set([{ name: 'Chart', path: 'artifact:abc' }])
-    $activePreviewPath.set('artifact:abc')
+    openPreview({ kind: 'artifact', label: 'Chart', source: 'abc', url: 'abc' })
 
     expect((await readActiveBrowserPage())?.note).toContain('conversation')
   })
 
   it('reports the FULL length so the agent can page', async () => {
     openBrowserTab()
-    evalInGuest.mockResolvedValue(
-      doubled({ f: 100, n: 50_000, s: 'hello', ti: 'Example', u: 'https://example.com/' })
-    )
+    evalInGuest.mockResolvedValue(doubled({ f: 100, n: 50_000, s: 'hello', ti: 'Example', u: 'https://example.com/' }))
 
     expect(await readActiveBrowserPage({ count: 5, start: 100 })).toEqual({
       end: 105,

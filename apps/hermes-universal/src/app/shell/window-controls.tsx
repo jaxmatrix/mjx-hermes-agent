@@ -8,8 +8,12 @@ import { TitlebarButton } from './titlebar-button'
 
 // Custom minimize / maximize-restore / close for the frameless window. Desktop
 // (apps/desktop) leaves these to the OS; universal draws its own so the whole
-// chrome is ours. Only mounted on desktop Tauri (see Titlebar / IS_DESKTOP).
-export function WindowControls() {
+// chrome is ours. Desktop Tauri only. Mounted by the tile window's own header,
+// and by `WindowChrome` for the windows that render desktop's root.
+//
+// `leading` is the macOS order (close first, at the window's left corner);
+// the default is the Windows/Linux one (close last, at the right corner).
+export function WindowControls({ leading = false }: { leading?: boolean }) {
   const { t } = useI18n()
   const [maximized, setMaximized] = useState(false)
   const win = getCurrentWindow()
@@ -39,24 +43,38 @@ export function WindowControls() {
     }
   }, [win])
 
+  const minimize = (
+    <TitlebarButton key="minimize" label={t.titlebar.minimize} onClick={() => void win.minimize()}>
+      <Codicon name="chrome-minimize" />
+    </TitlebarButton>
+  )
+
+  const maximize = (
+    <TitlebarButton
+      key="maximize"
+      label={maximized ? t.titlebar.restore : t.titlebar.maximize}
+      onClick={() => void win.toggleMaximize()}
+    >
+      <Codicon name={maximized ? 'chrome-restore' : 'chrome-maximize'} />
+    </TitlebarButton>
+  )
+
+  // `close()` is a REQUEST: it goes through the window close guard
+  // (`store/windows`), which may park it behind the background-mode question.
+  const close = (
+    <TitlebarButton
+      className="hover:bg-destructive hover:text-destructive-foreground"
+      key="close"
+      label={t.titlebar.close}
+      onClick={() => void win.close()}
+    >
+      <Codicon name="chrome-close" />
+    </TitlebarButton>
+  )
+
   return (
     <div className="flex items-center gap-0.5">
-      <TitlebarButton label={t.titlebar.minimize} onClick={() => void win.minimize()}>
-        <Codicon name="chrome-minimize" />
-      </TitlebarButton>
-      <TitlebarButton
-        label={maximized ? t.titlebar.restore : t.titlebar.maximize}
-        onClick={() => void win.toggleMaximize()}
-      >
-        <Codicon name={maximized ? 'chrome-restore' : 'chrome-maximize'} />
-      </TitlebarButton>
-      <TitlebarButton
-        className="hover:bg-destructive hover:text-destructive-foreground"
-        label={t.titlebar.close}
-        onClick={() => void win.close()}
-      >
-        <Codicon name="chrome-close" />
-      </TitlebarButton>
+      {leading ? [close, minimize, maximize] : [minimize, maximize, close]}
     </div>
   )
 }

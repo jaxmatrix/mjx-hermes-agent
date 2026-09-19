@@ -4,7 +4,8 @@ const setGuestVisible = vi.fn(() => Promise.resolve(true))
 
 vi.mock('@/lib/browser/host', () => ({ setGuestVisible }))
 
-const { $guestOccluded, __resetGuestOcclusion, claimGuestOcclusion } = await import('./browser-occlusion')
+const { $guestOccluded, __resetGuestOcclusion, claimGuestOcclusion, watchGuestOccluders } =
+  await import('./browser-occlusion')
 
 describe('guest occlusion', () => {
   beforeEach(() => {
@@ -75,6 +76,79 @@ describe('guest occlusion', () => {
 
     other()
     vi.advanceTimersByTime(50)
+    expect($guestOccluded.get()).toBe(false)
+  })
+})
+
+// `components/ui/` is desktop's, verbatim, and desktop's `<webview>` needs no
+// claim — so the claim is read off what those primitives render.
+describe('guest occlusion from the DOM', () => {
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+
+  const mount = (html: string): HTMLElement => {
+    const portal = document.createElement('div')
+
+    portal.innerHTML = html
+    document.body.appendChild(portal)
+
+    return portal
+  }
+
+  let disarm: () => void
+
+  beforeEach(() => {
+    __resetGuestOcclusion()
+    setGuestVisible.mockClear()
+    disarm = watchGuestOccluders()
+  })
+
+  afterEach(() => {
+    disarm()
+    document.body.replaceChildren()
+  })
+
+  it.each([
+    ['a dialog', '<div role="dialog"></div>'],
+    ['an alert', '<div role="alertdialog"></div>'],
+    [
+      'a dropdown, a popover, a select or the context menu',
+      '<div data-radix-popper-content-wrapper><div role="menu"></div></div>'
+    ],
+    ['a route overlay', '<section data-overlay-surface=""></section>']
+  ])('hides the guest while %s is on screen, and shows it again after', async (_name, html) => {
+    const portal = mount(html)
+
+    await settle()
+    expect($guestOccluded.get()).toBe(true)
+    expect(setGuestVisible).toHaveBeenCalledWith(false)
+
+    portal.remove()
+    await settle()
+    expect($guestOccluded.get()).toBe(false)
+  })
+
+  it('leaves the page up for a tooltip, and for the composer’s completion drawer beside it', async () => {
+    mount('<div data-radix-popper-content-wrapper><div role="tooltip">Reload</div></div>')
+    mount('<div role="listbox"></div>')
+
+    await settle()
+    expect($guestOccluded.get()).toBe(false)
+    expect(setGuestVisible).not.toHaveBeenCalled()
+  })
+
+  it('sees a surface that was already up when the pane mounted', () => {
+    disarm()
+    mount('<div role="dialog"></div>')
+    disarm = watchGuestOccluders()
+
+    expect($guestOccluded.get()).toBe(true)
+  })
+
+  it('gives the space back when the pane goes away under an open dialog', async () => {
+    mount('<div role="dialog"></div>')
+    await settle()
+
+    disarm()
     expect($guestOccluded.get()).toBe(false)
   })
 })

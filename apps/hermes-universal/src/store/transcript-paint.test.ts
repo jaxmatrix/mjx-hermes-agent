@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import { __resetTranscriptTailCache, saveTranscriptTail } from '@/lib/transcript-tail-cache'
 import { $messages, $paintedMessages, $paintedMessagesEmpty } from '@/store/chat'
 import {

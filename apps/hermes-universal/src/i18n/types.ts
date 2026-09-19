@@ -390,7 +390,6 @@ export interface Translations {
     layoutEditor: string
     layoutEditorTitle: (modifier: string) => string;
     swapSidebarSidesTitle: string
-    openKeybinds: string
     minimize: string
     maximize: string
     restore: string
@@ -2846,7 +2845,6 @@ export interface Translations {
       ageDay: string
       ageHour: string
       ageMin: string;
-      openInTile: string
       toolCallCount: (count: number) => string
       openInTerminalFailed: string
       openInBubble: string

@@ -12,7 +12,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const clipboard = { readClipboardText: vi.fn(async () => ''), writeClipboardText: vi.fn(async () => undefined) }
 
-vi.mock('@/lib/clipboard', () => clipboard)
+vi.mock('@/lib/clipboard-tauri', () => ({ readClipboardText: clipboard.readClipboardText }))
+vi.mock('@/components/ui/copy-button', async importOriginal => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  writeClipboardText: clipboard.writeClipboardText
+}))
 
 const { editableCommand, editableSelectionText, imageFileName, noteComposition, selectAllInEditable, withEditableFocus } =
   await import('./actions')

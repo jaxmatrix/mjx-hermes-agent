@@ -31,9 +31,9 @@
 import { atom } from 'nanostores'
 
 import type { GatewayEvent } from '@/gateway'
-import type { ChatMessage } from '@/lib/chat-messages'
 import { isLiveTailRow, reconcileLiveTail } from '@/lib/live-tail'
 import { appendLiveSessionProjection } from '@/lib/session-history'
+import type { ChatMessage } from '@/lib/session-key-messages'
 import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { applyResumedApproval } from '@/store/approvals'
 import { applyResumedClarify } from '@/store/clarify'
