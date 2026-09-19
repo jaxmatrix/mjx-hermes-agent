@@ -40,7 +40,7 @@ function deliver(payload: unknown): void {
 
 /** The origin stamped on this WebView's own broadcasts. */
 function ownOrigin(): string {
-  broadcastGatewaySwitch('remote', target)
+  broadcastGatewaySwitch('remote', target, 1)
 
   return (emit.mock.calls.at(-1)?.[1] as { origin: string }).origin
 }
@@ -48,13 +48,13 @@ function ownOrigin(): string {
 beforeEach(() => vi.clearAllMocks())
 
 describe('gateway switch sync', () => {
-  it('broadcasts the mode and target of a switch', () => {
-    broadcastGatewaySwitch('cloud', target)
+  it('broadcasts the mode, the target and the commit stamp of a switch', () => {
+    broadcastGatewaySwitch('cloud', target, 1234)
 
     expect(emit).toHaveBeenCalledOnce()
     const [name, payload] = emit.mock.calls[0]
     expect(name).toBe('gateway://switched')
-    expect(payload).toMatchObject({ mode: 'cloud', target })
+    expect(payload).toMatchObject({ at: 1234, mode: 'cloud', target })
     expect((payload as { origin: string }).origin).toBeTruthy()
   })
 
@@ -64,23 +64,26 @@ describe('gateway switch sync', () => {
     const origin = ownOrigin()
     vi.clearAllMocks()
 
-    deliver({ origin, mode: 'cloud', target })
+    deliver({ at: 1, origin, mode: 'cloud', target })
 
     expect(followConnection).not.toHaveBeenCalled()
   })
 
   // The payload's source, not whatever this WebView last remembered — and through
-  // the follow, which neither prompts nor re-broadcasts.
-  it('re-homes onto the source another WebView switched to', () => {
-    deliver({ origin: 'some-other-webview', mode: 'cloud', target })
+  // the follow, which neither prompts nor re-broadcasts. The stamp goes with it:
+  // it is what decides two crossed switches (`SwitchCommit`).
+  it('re-homes onto the source another WebView switched to, with the stamp of that commit', () => {
+    deliver({ at: 1234, origin: 'some-other-webview', mode: 'cloud', target })
 
-    expect(followConnection).toHaveBeenCalledExactlyOnceWith('studio')
+    expect(followConnection).toHaveBeenCalledExactlyOnceWith('studio', { at: 1234, origin: 'some-other-webview' })
   })
 
   it('ignores a malformed event rather than re-homing onto nothing', () => {
     deliver(null)
     deliver({ mode: 'cloud' })
-    deliver({ origin: 'elsewhere', mode: 'cloud', target: { mode: 'cloud' } })
+    deliver({ at: 1, origin: 'elsewhere', mode: 'cloud', target: { mode: 'cloud' } })
+    // No stamp: it cannot be ordered against this window's own commits.
+    deliver({ origin: 'elsewhere', mode: 'cloud', target })
 
     expect(followConnection).not.toHaveBeenCalled()
   })
@@ -98,7 +101,7 @@ describe('gateway switch sync', () => {
   it('never lets a failed re-home reject into the event handler', async () => {
     vi.mocked(followConnection).mockRejectedValueOnce(new Error('follower re-home failed'))
 
-    expect(() => deliver({ origin: 'elsewhere', mode: 'remote', target })).not.toThrow()
+    expect(() => deliver({ at: 1, origin: 'elsewhere', mode: 'remote', target })).not.toThrow()
     await Promise.resolve()
   })
 })

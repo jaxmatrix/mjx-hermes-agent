@@ -1,11 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
-// `vi.hoisted` because the factory runs before module-scope `const`s initialise
-// (the trap `app.test.tsx` documents).
-const { setApiRequestProfile } = vi.hoisted(() => ({ setApiRequestProfile: vi.fn() }))
-
-vi.mock('@/hermes', () => ({ setApiRequestProfile }))
-
+import { profileScoped, setApiRequestProfile } from '@/api/client'
 import { LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
 import type { Connection } from '@/store/gateway-config'
 
@@ -24,7 +19,7 @@ import { $gatewayMode } from './gateway-mode'
 const REMOTE: Connection = { authMode: 'none', baseUrl: 'https://gw.test', mode: 'remote' }
 
 beforeEach(() => {
-  setApiRequestProfile.mockClear()
+  setApiRequestProfile(null)
   takePendingConnectionHint()
   publishActiveConnection(null)
 })
@@ -67,18 +62,22 @@ describe('publishActiveConnection', () => {
     expect(seen).toEqual([{ baseUrl: 'https://other.test', id: 'box-2', mode: 'cloud' }])
   })
 
-  it('moves the REST scope with the identity, and leaves it alone on a disconnect', () => {
-    publishActiveConnection(describeConnection({ ...REMOTE, profile: 'work' }))
-    expect(setApiRequestProfile).toHaveBeenCalledWith('work')
+  // `_apiProfile` mirrors `$activeGatewayProfile`, and desktop's subscriber in
+  // `store/profile.ts` is its one owner. A second writer here pulled it back to
+  // the identity's profile on every mid-life republish — a rename, a tunnel's
+  // new base — and sent config/skills/env writes to `default` under a rail that
+  // said `work`.
+  it('never touches the REST profile: the fold owns it', () => {
+    const active = describeConnection(REMOTE, { connectionId: 'box-2', dialConnectionId: 'box-2', label: 'Box' })
 
-    publishActiveConnection(describeConnection(REMOTE))
-    expect(setApiRequestProfile).toHaveBeenLastCalledWith(null)
+    publishActiveConnection(active)
+    // The hook adopted the primary's profile, then the user moved to `work`.
+    setApiRequestProfile('work')
 
-    setApiRequestProfile.mockClear()
-    publishActiveConnection(null)
-    // A disconnect is not a profile change: resetting the scope here would
-    // diverge from the persisted `$activeProfile` that store/profiles.ts owns.
-    expect(setApiRequestProfile).not.toHaveBeenCalled()
+    publishActiveConnection({ ...active, label: 'Renamed' })
+    publishActiveConnection({ ...active, connection: { ...active.connection, baseUrl: 'http://127.0.0.1:4100' } })
+
+    expect(profileScoped()).toEqual({ profile: 'work' })
   })
 })
 

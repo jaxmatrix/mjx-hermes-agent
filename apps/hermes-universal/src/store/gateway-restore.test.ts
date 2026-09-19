@@ -105,7 +105,11 @@ describe('mobile oauth resume', () => {
     await autoRestoreConnection()
 
     expect(connect).toHaveBeenCalledWith({ url: 'https://gw.b', username: 'admin' })
-    expect(broadcastGatewaySwitch).toHaveBeenCalledWith('remote', expect.objectContaining({ url: 'https://gw.b' }))
+    expect(broadcastGatewaySwitch).toHaveBeenCalledWith(
+      'remote',
+      expect.objectContaining({ url: 'https://gw.b' }),
+      expect.any(Number)
+    )
     expect($restoring.get()).toBe(false)
   })
 
@@ -134,7 +138,11 @@ describe('mobile oauth resume', () => {
     await autoRestoreConnection()
 
     expect(connect).toHaveBeenCalledWith({ url: 'https://gw.b', username: 'admin' })
-    expect(broadcastGatewaySwitch).toHaveBeenCalledWith('remote', expect.objectContaining({ url: 'https://gw.b' }))
+    expect(broadcastGatewaySwitch).toHaveBeenCalledWith(
+      'remote',
+      expect.objectContaining({ url: 'https://gw.b' }),
+      expect.any(Number)
+    )
     expect($restoring.get()).toBe(false)
   })
 

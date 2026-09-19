@@ -133,6 +133,40 @@ describe('bootUniversal', () => {
     expect(calls).toContain('restoreLaunchConnection:false')
   })
 
+  // `main.tsx` calls this before `createRoot`: a lever that threw past it was a
+  // white screen.
+  it('lets one lever fail without stopping the rest, and says which — never what it said', async () => {
+    const { installObservability } = await import('./observability/install')
+    const { openTunnelPage } = await import('./store/connection-tunnels')
+    const reported = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    vi.mocked(installObservability).mockImplementationOnce(() => {
+      throw new TypeError('no such exporter')
+    })
+    vi.mocked(openTunnelPage).mockImplementationOnce(() => {
+      throw new Error('could not reach https://gw.example.com')
+    })
+    platform.mobile = true
+
+    await expect(boot()).resolves.toBeUndefined()
+
+    expect(calls).toEqual([
+      'initAppLifecycle',
+      'onBackground',
+      'sessionCookiesRestored',
+      'startConnectionsWatcher',
+      'restoreLaunchConnection:true',
+      'holdForLaunch',
+      'initSafeAreaInsets'
+    ])
+    expect(document.documentElement.classList.contains('is-mobile')).toBe(true)
+    expect(reported.mock.calls).toEqual([
+      ['[boot] observability failed', 'TypeError'],
+      ['[boot] tunnel page failed', 'Error']
+    ])
+    reported.mockRestore()
+  })
+
   it('asks Rust for nothing outside a Tauri shell', async () => {
     platform.tauri = false
     await boot()

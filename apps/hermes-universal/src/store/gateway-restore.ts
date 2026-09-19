@@ -332,7 +332,8 @@ export async function autoRestoreConnection(): Promise<void> {
           // from this module, and a static import would close that cycle.
           const { selectConnection } = await import('@/store/connections')
 
-          await selectConnection(pending.connectionId)
+          // Nobody clicked: the resume must never open a second login page.
+          await selectConnection(pending.connectionId, { allowInteractive: false })
         } finally {
           $restoring.set(false)
         }
@@ -353,7 +354,7 @@ export async function autoRestoreConnection(): Promise<void> {
         const target = loadGatewayTarget()
 
         if (target) {
-          broadcastGatewaySwitch('remote', target)
+          broadcastGatewaySwitch('remote', target, Date.now())
         }
       } catch {
         // connect() already set $connectionError + phase; connect screen surfaces it.

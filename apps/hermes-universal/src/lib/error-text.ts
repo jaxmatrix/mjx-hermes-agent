@@ -40,3 +40,13 @@ export function errorText(error: unknown): string {
 
   return String(error)
 }
+
+/**
+ * Only an `Error` is this app's own words. Anything else crossed from Rust — a
+ * rejected `invoke` is a bare string or object, and a transport failure quotes
+ * the URL it could not reach — so it is replaced by `copy` before it can reach a
+ * toast, a boot error or a descriptor. Typed errors pass through untouched.
+ */
+export function ownWords(error: unknown, copy: string): Error {
+  return error instanceof Error ? error : new Error(copy)
+}

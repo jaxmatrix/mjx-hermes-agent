@@ -42,11 +42,12 @@ export function initGatewaySwitchSync(): void {
     // move this WebView nowhere in particular.
     const connectionId = payload.target?.connectionId
 
-    if (!connectionId) {
+    if (!connectionId || !Number.isFinite(payload.at)) {
       return
     }
 
-    void followConnection(connectionId).catch(() => {
+    // The stamp decides a crossed pair: see `SwitchCommit`.
+    void followConnection(connectionId, { at: payload.at, origin: payload.origin }).catch(() => {
       // The initiator owns the user-facing error; this window stays where it is.
     })
   })

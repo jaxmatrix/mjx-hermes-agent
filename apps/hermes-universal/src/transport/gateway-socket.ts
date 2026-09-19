@@ -34,8 +34,11 @@ const mints = new Map<string, GatewayMint>()
  * records it — the connection descriptor's `wsUrl` as much as a fresh re-mint.
  *
  * An entry leaves only as the oldest past {@link MINT_LIMIT}, Electron's rule.
- * Not on dial: two profiles of one connection mint the SAME URL, and the first
- * dial taking the entry would open the second with no credentials.
+ * Not on dial: a URL is dialled again — a reconnect re-dials the descriptor's
+ * own `wsUrl`, and the launch profile's URL is its connection's bare one, which
+ * every window on it mints alike — and a dial that took the entry would open
+ * the next with no credentials. (Another profile mints a URL of its own:
+ * `withSocketProfile`.)
  */
 export function recordGatewayMint(wsUrl: string, mint: GatewayMint): void {
   mints.delete(wsUrl)
@@ -84,6 +87,19 @@ type SocketListener = (event: SocketEvent) => void
  * before it dials until it ends — a server close, an error, a local `close()`,
  * a connect that never opened — and lets go exactly once.
  *
+ * An ERROR ends it in two steps, in this order:
+ *
+ *  1. the inner `error` is forwarded and the lease is let go, at once — a broken
+ *     socket holds no tunnel. No `close` is said yet.
+ *  2. the transport's own `close` is forwarded WITH ITS CODE. It always follows:
+ *     `TauriWebSocket` dispatches it synchronously after a failed open, and
+ *     Rust's read loop emits exactly one after an error (`pump_reader`). Saying
+ *     a code-less `close` at step 1 would swallow it, and `HermesGateway`'s
+ *     `lastCloseCode` is how the supervisor tells a refused credential
+ *     (4401/4403) from a drop.
+ *
+ * A local `close()` between the two says the one `close` itself, code-less.
+ *
  * The tunnel moving to a later generation, or no longer serving the lease, ends
  * the socket (`gateway-secondaries.ts`'s rule): the owner's next dial re-mints.
  */
@@ -97,6 +113,7 @@ class TunnelGatewaySocket {
 
   private inner: null | TauriWebSocket = null
   private lease: null | TunnelLease = null
+  private released = false
   private ended = false
   private sendQueue: string[] = []
   private unsubscribe: (() => void)[] = []
@@ -162,13 +179,33 @@ class TunnelGatewaySocket {
     inner.addEventListener('message', event => this.dispatch(event))
     inner.addEventListener('error', event => {
       this.dispatch(event)
-      this.end()
+
+      if (!this.ended) {
+        this.readyState = this.CLOSING
+        this.letGo()
+      }
     })
     inner.addEventListener('close', event => this.end(event))
 
     for (const text of this.sendQueue.splice(0)) {
       inner.send(text)
     }
+  }
+
+  /** Let go of the tunnel: once, at whichever ending comes first. */
+  private letGo(): void {
+    if (this.released) {
+      return
+    }
+
+    this.released = true
+
+    for (const off of this.unsubscribe.splice(0)) {
+      off()
+    }
+
+    this.lease?.release()
+    this.lease = null
   }
 
   /** The one way out: closes the socket, releases the lease, says `close`. */
@@ -179,14 +216,8 @@ class TunnelGatewaySocket {
 
     this.ended = true
     this.readyState = this.CLOSED
-
-    for (const off of this.unsubscribe.splice(0)) {
-      off()
-    }
-
+    this.letGo()
     this.inner?.close()
-    this.lease?.release()
-    this.lease = null
     this.dispatch(event)
   }
 

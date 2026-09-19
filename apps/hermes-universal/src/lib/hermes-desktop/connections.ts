@@ -17,7 +17,7 @@
  * The socket itself has no profile, so a URL minted for any other profile says
  * so (`withSocketProfile`) and `HermesGateway` names it per RPC: a secondary on
  * another connection, a window opened on a profile of its own, or a primary
- * whose connection was last used on another profile (`primaryProfile`).
+ * whose identity names another profile (`primaryProfile`).
  *
  * No descriptor carries a token. A URL a gateway may dial is recorded with
  * `recordGatewayMint`, and Rust attaches the credential on `ws_open`.
@@ -31,7 +31,7 @@ import { isGatewayReauthRequired } from '@/gateway'
 import type { DesktopBootProgress, HermesConnection } from '@/global'
 import { TRANSLATIONS } from '@/i18n/catalog'
 import { getRuntimeI18nLocale } from '@/i18n/runtime'
-import { errorText } from '@/lib/error-text'
+import { errorText, ownWords } from '@/lib/error-text'
 import { IS_MOBILE } from '@/lib/platform'
 import { sessionCookiesRestored } from '@/lib/session-persist'
 import type { ActiveConnection } from '@/store/active-connection'
@@ -74,6 +74,42 @@ interface Dial {
 
 /** A primary dial failure the boot hook may retry on its own (#82679). */
 class RetryableDialError extends Error {}
+
+/**
+ * The boot cookie restore is still behind the OS unlock prompt
+ * (`secure-store.ts` → `secrets_unlock`, which no platform but Apple's bounds).
+ * A locked keyring a person must open is legitimate; a dial that says nothing
+ * while it waits is not. Not retryable: a retry cannot answer the prompt, and
+ * the hook's Retry is what a person presses once they have.
+ */
+export class NeedsUnlockError extends Error {
+  override name = 'NeedsUnlockError'
+}
+
+/** Under the hook's 45 s boot budget (`BACKEND_BOOT_WAIT_TIMEOUT_MS`), so what a
+ *  person reads is why, not "timed out". */
+const COOKIE_RESTORE_WAIT_MS = 30_000
+
+/**
+ * The boot cookie restore, waited on for a bounded time. The restore itself is
+ * never abandoned: it lands when the person unlocks, and every later call
+ * proceeds at once.
+ */
+async function cookieJarRestored(): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  const waited = new Promise<'waiting'>(resolve => {
+    timer = setTimeout(() => resolve('waiting'), COOKIE_RESTORE_WAIT_MS)
+  })
+
+  try {
+    if ((await Promise.race([sessionCookiesRestored(), waited])) === 'waiting') {
+      throw new NeedsUnlockError(TRANSLATIONS[getRuntimeI18nLocale()].boot.errors.needsUnlock)
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 function profileKey(profile: null | string | undefined): string {
   return (profile ?? '').trim() || LAUNCH_PROFILE
@@ -156,7 +192,7 @@ async function liveDial(connectionId: string, live: Connection): Promise<Dial> {
 
 async function resolveDial(connectionId: string, live?: Connection): Promise<Dial> {
   // The boot hook's first dial races the cookie restore `boot.ts` started.
-  await sessionCookiesRestored()
+  await cookieJarRestored()
 
   let row: ResolvedRow
 
@@ -201,9 +237,9 @@ async function resolveDial(connectionId: string, live?: Connection): Promise<Dia
 }
 
 /**
- * `wsUrl` as `profile`'s socket dials it. The launch profile's is as minted: an
- * RPC naming no profile is already its own. Recorded again, because the ledger
- * is keyed by URL.
+ * `wsUrl` as `profile`'s socket dials it, recorded: the ledger is keyed by URL,
+ * and this is the one a gateway dials. The launch profile's is as minted — an
+ * RPC naming no profile is already its own — and `resolveDial` recorded that.
  */
 function profileWsUrl(dial: Dial, wsUrl: string, profile: string): string {
   if (profile === LAUNCH_PROFILE) {
@@ -227,7 +263,11 @@ async function freshWsUrl(dial: Dial, profile: string): Promise<string> {
   // bare string that can name the host — into an Error like any other.
   const wsUrl = await ticketMintDeps(dial.baseUrl).getGatewayWsUrl()
 
-  recordGatewayMint(wsUrl, dial.mint)
+  // ONE entry, under the URL that is dialled: the bare ticketed URL is only
+  // dialled as the launch profile's.
+  if (profile === LAUNCH_PROFILE) {
+    recordGatewayMint(wsUrl, dial.mint)
+  }
 
   return profileWsUrl(dial, wsUrl, profile)
 }
@@ -241,8 +281,7 @@ async function wsUrlResult(dial: Promise<Dial>, profile: string): Promise<Gatewa
       return { error: SIGN_IN_REQUIRED, needsOauthLogin: true, ok: false }
     }
 
-    // Only an Error is this app's own words.
-    return { error: error instanceof Error ? error.message : MINT_FAILED, ok: false }
+    return { error: ownWords(error, MINT_FAILED).message, ok: false }
   }
 }
 
@@ -376,7 +415,7 @@ async function watchPrimaryTunnel(): Promise<() => void> {
 let primaryTunnelWatch: null | Promise<() => void> = null
 
 async function activeConnection() {
-  // Dynamic: `store/active-connection.ts` imports `@/hermes`.
+  // Dynamic: the bridge installs before the stores evaluate (`main.tsx`).
   const { $activeConnection, launchSettled } = await import('@/store/active-connection')
 
   // The boot hook's first ask races the launch identity `boot.ts` is publishing.
@@ -402,7 +441,7 @@ async function followTunnelBase(active: ActiveConnection, dial: Dial): Promise<v
     return
   }
 
-  // Dynamic: `store/active-connection.ts` imports `@/hermes`.
+  // Dynamic: the bridge installs before the stores evaluate (`main.tsx`).
   const { $activeConnection, publishActiveConnection } = await import('@/store/active-connection')
 
   // Re-homed while the tunnel dialled: the base belongs to the one that left.
@@ -411,10 +450,10 @@ async function followTunnelBase(active: ActiveConnection, dial: Dial): Promise<v
   }
 }
 
-async function primaryDial(): Promise<Dial> {
+/** Dial the primary `active` names — read ONCE by the caller, so the dial and
+ *  the profile it is served under describe the same connection. */
+async function primaryDial(active: ActiveConnection | null): Promise<Dial> {
   try {
-    const active = await activeConnection()
-
     if (!active) {
       throw new Error('Not connected to a Hermes backend')
     }
@@ -441,41 +480,27 @@ async function primaryDial(): Promise<Dial> {
 }
 
 /**
- * The profile the primary socket serves, held for the primary's life — what
- * Electron's `primaryProfilePin` holds. The registry files the primary under the
- * profile the hook adopted (`profile.get`) and sends that profile's RPCs with no
- * `profile`, so the socket has to be the one that names it: the primary's URL
- * carries the same profile the hook adopts. A profile remembered mid-life must
- * not re-scope a socket the registry still files under the old one, so only a
- * re-home reads the preference again.
+ * The profile the primary socket serves: the window's own, else the one its
+ * IDENTITY names — what Electron's `primaryProfilePin` holds. The registry files
+ * the primary under the profile the hook adopted (`profile.get`) and sends that
+ * profile's RPCs with no `profile`, so the socket has to be the one that names
+ * it: the primary's URL carries the same profile the hook adopts.
+ *
+ * Derived nowhere else. The identity is built with the profile the connection
+ * was last used on (`resolveConnection`, store/connections) and lives as long
+ * as the primary does, so a profile remembered mid-life cannot re-scope a socket
+ * the registry still files under the old one; a re-home publishes a new one.
  */
-let primaryPin: null | { connectionId: string; profile: string } = null
-
-onConnectionApplied(() => void (primaryPin = null))
-
-/** The window's own profile, else the one this connection was last used on. */
-async function primaryProfile(): Promise<string> {
-  const connectionId = (await activeConnection())?.connectionId
-
-  if (!connectionId) {
-    return LAUNCH_PROFILE
-  }
-
-  if (primaryPin?.connectionId !== connectionId) {
-    // Dynamic: the registry store imports `@/hermes`.
-    const [override, { lastProfileFor }] = await Promise.all([windowProfile(), import('@/store/connections')])
-
-    primaryPin = { connectionId, profile: profileKey(override ?? lastProfileFor(connectionId)) }
-  }
-
-  return primaryPin.profile
+async function primaryProfile(active: ActiveConnection | null): Promise<string> {
+  return active ? profileKey((await windowProfile()) ?? active.profile) : LAUNCH_PROFILE
 }
 
 /** An empty id, or the primary's own, is the primary (Electron's `|| registry.primary`). */
 async function dialFor(connectionId: null | string | undefined): Promise<Dial> {
   const id = (connectionId ?? '').trim()
+  const active = await activeConnection()
 
-  return !id || id === (await activeConnection())?.connectionId ? primaryDial() : resolveDial(id)
+  return !id || id === active?.connectionId ? primaryDial(active) : resolveDial(id)
 }
 
 /**
@@ -494,7 +519,7 @@ export async function restScope(
   const id = (connectionId ?? '').trim()
 
   // A cookie-backed REST call needs the jar as much as a dial does.
-  await sessionCookiesRestored()
+  await cookieJarRestored()
 
   const active = await activeConnection()
   const primary = !id || id === active?.connectionId
@@ -532,8 +557,11 @@ export const connectionBridge: Pick<
   getBootProgress: async () => boot,
 
   getConnection: async profile => {
-    const dial = await primaryDial()
-    const own = await primaryProfile()
+    // Read once: a re-home between two reads is one connection's dial under
+    // another's profile.
+    const active = await activeConnection()
+    const dial = await primaryDial(active)
+    const own = await primaryProfile(active)
     // Naming none asks for this window's own primary (the boot hook's boot,
     // soft switch and wake reconnect).
     const key = profile?.trim() ? profileKey(profile) : own
@@ -555,9 +583,10 @@ export const connectionBridge: Pick<
   },
 
   getGatewayWsUrl: async profile => {
-    const key = profile?.trim() ? profileKey(profile) : await primaryProfile()
+    const active = await activeConnection()
+    const key = profile?.trim() ? profileKey(profile) : await primaryProfile(active)
 
-    return wsUrlResult(primaryDial(), key)
+    return wsUrlResult(primaryDial(active), key)
   },
 
   getGatewayWsUrlFor: ({ connectionId, profile }) => wsUrlResult(dialFor(connectionId), profileKey(profile)),
@@ -569,7 +598,18 @@ export const connectionBridge: Pick<
 
   onBootProgress: callback => {
     bootListeners.add(callback)
-    primaryTunnelWatch ??= watchPrimaryTunnel()
+
+    if (!primaryTunnelWatch) {
+      const watch = watchPrimaryTunnel()
+
+      primaryTunnelWatch = watch
+      // A failed start is forgotten, so the next listener starts the watch again.
+      watch.catch(() => {
+        if (primaryTunnelWatch === watch) {
+          primaryTunnelWatch = null
+        }
+      })
+    }
 
     return () => {
       bootListeners.delete(callback)
@@ -589,7 +629,7 @@ export const connectionBridge: Pick<
   ...(IS_MOBILE && { onPowerResume: (callback: () => void) => onForeground(callback) }),
 
   profile: {
-    get: async () => ({ profile: await primaryProfile() }),
+    get: async () => ({ profile: await primaryProfile(await activeConnection()) }),
 
     // Electron's one preference file is, here, the registry store's per-source
     // memory: the primary is whichever connection the window is on.

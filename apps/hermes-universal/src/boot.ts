@@ -25,6 +25,22 @@ import { ownsPersistedAppState } from './store/windows'
 
 let booted = false
 
+/**
+ * One lever. A throw is reported and the rest go on — and so does the render:
+ * `main.tsx` calls this module before `createRoot`, so a lever that threw past
+ * here was a white screen.
+ *
+ * Reported by name and error KIND, never its text: levers reach Rust, whose
+ * messages can name the gateway.
+ */
+function lever(name: string, run: () => void): void {
+  try {
+    run()
+  } catch (error) {
+    console.error(`[boot] ${name} failed`, error instanceof Error ? error.name : typeof error)
+  }
+}
+
 /** Once, from `main.tsx`, before the first render. The order is load-bearing. */
 export function bootUniversal(): void {
   if (booted) {
@@ -35,29 +51,31 @@ export function bootUniversal(): void {
 
   // Span tracing FIRST, so boot-time work falls inside the trace rather than
   // before it. Recording is off by default, so this is a no-op until asked for.
-  installObservability()
+  lever('observability', () => installObservability())
 
   // Foreground/background, before anything that wants the first edge after
   // launch: the bridge's `onPowerResume` is this signal on a phone, where the
   // socket always dies while the app is away.
-  initAppLifecycle()
-  // Going away snapshots the cookie jar while there is still a process to do
-  // it — the rotation it holds is what the next cold launch needs.
-  onBackground(() => void persistSessionCookies())
+  lever('app lifecycle', () => {
+    initAppLifecycle()
+    // Going away snapshots the cookie jar while there is still a process to do
+    // it — the rotation it holds is what the next cold launch needs.
+    onBackground(() => void persistSessionCookies())
+  })
 
   // Rehydrate the persisted gateway/cloud session into the Rust cookie jar.
   // Started here and awaited by the bridge ahead of every dial and REST call,
   // so a cookie-backed login re-dials without an interactive sign-in.
-  void sessionCookiesRestored()
+  lever('session cookies', () => void sessionCookiesRestored())
 
   // The page declares its start to the tunnel book before anything can acquire
   // (MJXHRM-592): a reloaded WebView ends the previous page's holds here, not
   // at its first acquire, which may never come.
-  openTunnelPage()
+  lever('tunnel page', () => openTunnelPage())
 
   // Every window follows the registry: a rename made in a settings Activity has
   // to reach the shell painting the source chip.
-  startConnectionsWatcher()
+  lever('connections watcher', () => void startConnectionsWatcher())
 
   // …and every window publishes where it launches, because each runs its own
   // fold over its own bridge: the owner of the app's persisted state seeds the
@@ -66,12 +84,12 @@ export function bootUniversal(): void {
   // a switch made later reaches them all as a broadcast. Identity only — the
   // bridge holds its first answer for this, and the boot hook does the dialling.
   if (IS_TAURI) {
-    holdForLaunch(restoreLaunchConnection(ownsPersistedAppState()))
+    lever('launch connection', () => holdForLaunch(restoreLaunchConnection(ownsPersistedAppState())))
   }
 
   // Deterministic `--safe-area-inset-*` vars and `html.is-mobile`, both before
   // the first paint: env() reports 0 for a few frames (see lib/safe-area), and
   // every mobile-only rule in styles.css keys off the class.
-  initSafeAreaInsets()
+  lever('safe area', () => initSafeAreaInsets())
   document.documentElement.classList.toggle('is-mobile', IS_MOBILE)
 }

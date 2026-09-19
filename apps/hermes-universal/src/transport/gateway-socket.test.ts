@@ -116,7 +116,7 @@ describe('the mint ledger', () => {
     expect(await opened()).toEqual([expect.objectContaining({ connectionId: null, url: REMOTE })])
   })
 
-  it('keeps an entry across dials: two profiles of one connection mint the same URL', async () => {
+  it('keeps an entry across dials: a reconnect re-dials the URL it was given', async () => {
     recordGatewayMint(REMOTE, { connectionId: 'conn-a' })
     recordGatewayMint(REMOTE, { connectionId: 'conn-a' })
     openGatewaySocket(REMOTE)
@@ -211,7 +211,8 @@ describe('a tunnelled socket', () => {
     expect(leases[0].release).toHaveBeenCalledTimes(1)
   })
 
-  it('releases once on an error, without waiting for the close that follows', async () => {
+  // The supervisor tells a refused credential from a drop by `lastCloseCode`.
+  it('releases at once on an error, and lets the close that follows keep its code', async () => {
     const socket = openGatewaySocket(TUNNEL)
     const codes = closeCodes(socket)
     const errors = vi.fn()
@@ -222,11 +223,28 @@ describe('a tunnelled socket', () => {
 
     emit(args.id, 'error', 'connection reset')
 
+    // A broken socket holds no tunnel — and has not said `close` yet.
     expect(leases[0].release).toHaveBeenCalledTimes(1)
+    expect(codes).toEqual([])
 
-    emit(args.id, 'close', { code: 1006 })
+    emit(args.id, 'close', { code: 4401, reason: 'unauthorized' })
+    socket.close()
 
     expect(errors).toHaveBeenCalledTimes(1)
+    expect(codes).toEqual([4401])
+    expect(socket.readyState).toBe(3)
+    expect(leases[0].release).toHaveBeenCalledTimes(1)
+  })
+
+  it('says one code-less close when it is closed between an error and its close', async () => {
+    const socket = openGatewaySocket(TUNNEL)
+    const codes = closeCodes(socket)
+    const [args] = await opened()
+
+    emit(args.id, 'error', 'connection reset')
+    socket.close()
+    emit(args.id, 'close', { code: 4401 })
+
     expect(codes).toEqual([undefined])
     expect(leases[0].release).toHaveBeenCalledTimes(1)
   })

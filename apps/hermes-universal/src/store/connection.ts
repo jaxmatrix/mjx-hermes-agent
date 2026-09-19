@@ -1,4 +1,5 @@
 import { GatewaySignInBusyError, GatewaySignInRequiredError, isGatewayReauthRequired } from '@/gateway'
+import { translateNow } from '@/i18n/runtime'
 import {
   fetchAuthProviders,
   oauthLogin,
@@ -109,10 +110,11 @@ export interface ConnectInput {
    * **Defaults to false, and that default is the point.** An interactive sign-in
    * is a one-way door on mobile — it navigates the app's only webview away — and
    * an unrequested window on desktop. It must only ever happen because a person
-   * pressed something, so the single caller that passes `true` is the gateway
-   * configurator's connect button. Everything else (boot restore, the reconnect
-   * supervisor, a peer's gateway-switch broadcast) leaves it false and gets a
-   * {@link GatewaySignInRequiredError} it can surface as a CTA instead.
+   * pressed something: `selectConnection` passes `true` for a click (its own
+   * default, desktop's contract) and `false` for anything else. Every other
+   * caller (boot restore, the reconnect supervisor, a post-sign-in resume)
+   * leaves it false and gets a {@link GatewaySignInRequiredError} it can surface
+   * as a CTA instead.
    */
   allowInteractive?: boolean
   /** The registry row being signed in to. Parked in the mobile resume marker,
@@ -255,12 +257,13 @@ function unknownOauthStatus(): OauthStatus {
  * retryable — a missing credential does not come back on its own, so spinning on
  * it only delays the CTA the user actually needs.
  */
-function requireInteractive(input: ConnectInput, base: string): void {
+function requireInteractive(input: ConnectInput): void {
   if (input.allowInteractive) {
     return
   }
 
-  throw new GatewaySignInRequiredError(`Sign in to ${base} to continue`)
+  // Copy, never the base: this message reaches a toast (`notifyError`).
+  throw new GatewaySignInRequiredError(translateNow('settings.connections.tunnelSignInMessage'))
 }
 
 /** How `input`'s gateway authenticates, with a session held for it. */
@@ -307,12 +310,14 @@ async function negotiate(input: ConnectInput): Promise<{ conn: Connection; provi
   // what sent users with perfectly good sessions to a login page whenever
   // the network wobbled. Fail as a network fault so the caller's retry
   // ladder handles it.
+  // Not `live.error`: that is Rust's text, which names the host, and this
+  // message reaches a toast through `selectConnection`'s preflight.
   if (oauthStatusIsUnknown(live)) {
-    throw new Error(live.error || 'Could not reach the gateway')
+    throw new Error(translateNow('settings.connections.verdict', 'unreachable'))
   }
 
   if (!live.signedIn) {
-    requireInteractive(input, base)
+    requireInteractive(input)
     // On mobile this navigates the app away and never returns here — the reload
     // resumes via the pending marker (see beginOAuthLogin / restoreLaunchConnection).
     await beginOAuthLogin(base, choice.provider, input.username, input.connectionId)
@@ -370,7 +375,7 @@ export async function connect(input: ConnectInput): Promise<void> {
       // honours `allowInteractive` too: the expiry is real either way, but only a
       // user-driven connect may answer it by opening a login page.
       if (conn.authMode === 'oauth' && isGatewayReauthRequired(err)) {
-        requireInteractive(input, base)
+        requireInteractive(input)
         await beginOAuthLogin(base, oauthProvider, input.username)
         await dial(conn)
       } else {

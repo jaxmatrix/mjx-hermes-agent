@@ -437,6 +437,17 @@ export function GatewayConfigurator({
     onConnected?.()
   }
 
+  /** The remote row this form names — for Connect and for "Save for next
+   *  restart" alike: a gated row saved without its `authMode` launches ungated
+   *  and is refused (4401). */
+  const remoteConnectionTarget = (): ConnectionTarget => ({
+    authMode: authRequired ? 'oauth' : remoteToken.trim() ? 'token' : undefined,
+    kind: 'remote',
+    // Write-only, and only what was typed: omitted leaves a stored token alone.
+    token: authRequired ? undefined : remoteToken.trim() || undefined,
+    url: trimmedUrl
+  })
+
   const doConnectRemote = async () => {
     if (!trimmedUrl) {
       notify({ kind: 'warning', title: g.incompleteTitle, message: g.enterUrlFirst })
@@ -449,13 +460,7 @@ export function GatewayConfigurator({
 
     try {
       rememberLastUrl(trimmedUrl)
-      await runConnect({
-        authMode: authRequired ? 'oauth' : remoteToken.trim() ? 'token' : undefined,
-        kind: 'remote',
-        // Write-only, and only what was typed: omitted leaves a stored token alone.
-        token: authRequired ? undefined : remoteToken.trim() || undefined,
-        url: trimmedUrl
-      })
+      await runConnect(remoteConnectionTarget())
       setRemoteToken('')
 
       if (isSettings) {
@@ -691,7 +696,7 @@ export function GatewayConfigurator({
         await saveLaunchTarget({ kind: 'local' })
       } else if (pendingMode === 'remote') {
         rememberLastUrl(trimmedUrl)
-        await saveLaunchTarget({ kind: 'remote', token: remoteToken.trim() || undefined, url: trimmedUrl })
+        await saveLaunchTarget(remoteConnectionTarget())
       } else if (pendingMode === 'ssh') {
         await persistSshSecrets()
         await saveLaunchTarget(sshConnectionTarget())

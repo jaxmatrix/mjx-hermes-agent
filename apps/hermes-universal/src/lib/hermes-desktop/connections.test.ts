@@ -28,7 +28,11 @@ const { acquireMock, active, apiMock, invokeMock, leases, mintTicketMock, rows, 
         wsUrl: () => 'ws://127.0.0.1:4100/api/ws'
       }
     }),
-    active: { current: null as null | { connection: Record<string, unknown>; connectionId: string } },
+    active: {
+      current: null as null | { connection: Record<string, unknown>; connectionId: string; profile: string },
+      /** Runs after each read of the active connection: a re-home mid-answer. */
+      afterRead: null as (() => void) | null
+    },
     invokeMock: vi.fn(async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
       if (command !== 'connections_resolve') {
         return undefined
@@ -63,7 +67,15 @@ vi.mock('@/lib/api', () => ({ api: apiMock }))
 vi.mock('@/lib/auth', () => ({ mintWsTicket: mintTicketMock }))
 vi.mock('@/lib/session-persist', () => ({ sessionCookiesRestored: () => cookies.restored }))
 vi.mock('@/store/active-connection', () => ({
-  $activeConnection: { get: () => active.current },
+  $activeConnection: {
+    get: () => {
+      const read = active.current
+
+      active.afterRead?.()
+
+      return read
+    }
+  },
   launchSettled: () => launch.settled,
   publishActiveConnection: (next: typeof active.current) => void (active.current = next)
 }))
@@ -72,17 +84,12 @@ vi.mock('@/store/connection-tunnels', async () => ({
   acquireTunnel: acquireMock
 }))
 // The registry store's rows are `connections_resolve`'s, with the id and a `url`,
-// and its per-source profile memory, where `default` is not remembered.
+// and its per-source profile memory.
 vi.mock('@/store/connections', () => ({
   connectionById: (id: string) => {
     const row = rows.get(id)
 
     return row && { ...row, id, url: row.baseUrl }
-  },
-  lastProfileFor: (id: string) => {
-    const held = lastProfiles.get(id)
-
-    return held && held !== 'default' ? held : null
   },
   rememberProfile: (id: string, profile: string) => void lastProfiles.set(id, profile)
 }))
@@ -96,7 +103,7 @@ import { profileScoped, socketProfile } from '@/transport/gateway-profile'
 import { recordGatewayMint } from '@/transport/gateway-socket'
 
 import { emitConnectionApplied } from './connection-applied'
-import { connectionBridge as bridge, tunnelBootProgress } from './connections'
+import { connectionBridge as bridge, NeedsUnlockError, tunnelBootProgress } from './connections'
 
 import { installHermesDesktopBridge } from '.'
 
@@ -106,8 +113,13 @@ function mintedFor(wsUrl: string) {
   return recorded.mock.calls.find(([url]) => url === wsUrl)?.[1]
 }
 
-function activate(connectionId: string, connection: Record<string, unknown> = {}): void {
-  active.current = { connection: { authMode: 'none', baseUrl: 'https://live.test', ...connection }, connectionId }
+/** The identity the store published: the profile is the one it was BUILT with. */
+function activate(connectionId: string, connection: Record<string, unknown> = {}, profile = 'default'): void {
+  active.current = {
+    connection: { authMode: 'none', baseUrl: 'https://live.test', ...connection },
+    connectionId,
+    profile
+  }
 }
 
 beforeEach(() => {
@@ -117,13 +129,12 @@ beforeEach(() => {
   leases.length = 0
   rows.clear()
   active.current = null
+  active.afterRead = null
   cookies.restored = Promise.resolve()
   launch.settled = Promise.resolve()
   windowProfile.current = null
   lastProfiles.clear()
   $tunnelStatus.set({})
-  // A re-home: the primary's profile is read again.
-  emitConnectionApplied()
 
   rows.set('home', { authMode: 'token', baseUrl: 'https://home.test', kind: 'remote', label: 'Home' })
   rows.set('cloud', { authMode: 'oauth', baseUrl: 'https://cloud.test', kind: 'cloud', label: 'Cloud' })
@@ -203,13 +214,10 @@ describe("the primary's profile", () => {
   // `session.create` declares `profile` in the wire contract.
   const stamped = (wsUrl: string) => profileScoped('session.create', {}, socketProfile(wsUrl))
 
-  it('is the one its connection was last used on, remembered per connection', async () => {
-    activate('home')
-
-    expect(await bridge.profile.remember('work')).toEqual({ profile: 'work' })
-    expect(lastProfiles.get('home')).toBe('work')
-
-    emitConnectionApplied()
+  // ONE derivation: the store builds the identity with the profile the
+  // connection was last used on, and the bridge reads the identity.
+  it("is the one the window's identity names, and nothing else", async () => {
+    activate('home', {}, 'work')
 
     expect(await bridge.profile.get()).toEqual({ profile: 'work' })
 
@@ -218,12 +226,18 @@ describe("the primary's profile", () => {
     expect(await bridge.profile.get()).toEqual({ profile: 'default' })
   })
 
+  it('remembers a profile in the per-connection memory the next identity is built from', async () => {
+    activate('home')
+
+    expect(await bridge.profile.remember('work')).toEqual({ profile: 'work' })
+    expect(lastProfiles.get('home')).toBe('work')
+  })
+
   // The registry files the primary under the adopted profile and sends that
   // profile's RPCs bare (`gatewayForProfile` → `scopeProfile: false`), so the
   // socket the hook dials has to name it, or they would run as `default`.
   it('is what the socket the boot hook dials stamps on a bare RPC', async () => {
-    lastProfiles.set('home', 'work')
-    activate('home')
+    activate('home', {}, 'work')
 
     const { profile } = await bridge.profile.get()
     const conn = await bridge.getConnection()
@@ -238,15 +252,13 @@ describe("the primary's profile", () => {
   })
 
   it("serves 'default' as a request scope on a primary that serves another", async () => {
-    lastProfiles.set('home', 'work')
-    activate('home')
+    activate('home', {}, 'work')
 
     expect(await bridge.getConnection('default')).toMatchObject({ profile: 'default', sharedPrimary: true })
   })
 
-  it('holds for the life of the primary, and is read again on a re-home', async () => {
-    lastProfiles.set('home', 'work')
-    activate('home')
+  it('holds for the life of the identity, and moves when a re-home publishes another', async () => {
+    activate('home', {}, 'work')
     await bridge.getConnection()
 
     // The rail moved on mid-life: the wake reconnect still dials what the
@@ -255,18 +267,28 @@ describe("the primary's profile", () => {
 
     expect(socketProfile((await bridge.getConnection()).wsUrl)).toBe('work')
 
+    activate('home', {}, 'play')
     emitConnectionApplied()
 
     expect(socketProfile((await bridge.getConnection()).wsUrl)).toBe('play')
   })
 
   it('gives way to the profile a window was opened on', async () => {
-    lastProfiles.set('home', 'work')
     windowProfile.current = 'pinned'
-    activate('home')
+    activate('home', {}, 'work')
 
     expect(await bridge.profile.get()).toEqual({ profile: 'pinned' })
     expect(stamped((await bridge.getConnection()).wsUrl)).toEqual({ profile: 'pinned' })
+  })
+
+  // A re-home between two reads of the active connection was one connection's
+  // dial under another's profile.
+  it("reads the window's connection once, so a dial is never served under another's profile", async () => {
+    activate('home', {}, 'work')
+    // The window re-homes right after the bridge's first read.
+    active.afterRead = () => activate('cloud', {}, 'play')
+
+    expect(await bridge.getConnection()).toMatchObject({ baseUrl: 'https://home.test', profile: 'work' })
   })
 })
 
@@ -373,6 +395,29 @@ describe('boot progress', () => {
 
     off()
     await vi.waitFor(() => expect($tunnelStatus.lc).toBe(0))
+  })
+
+  it('starts the watch again for the next listener when it failed to start', async () => {
+    activate('box')
+
+    const listen = vi.spyOn($tunnelStatus, 'listen').mockImplementationOnce(() => {
+      throw new Error('store failed to load')
+    })
+
+    const off = bridge.onBootProgress(vi.fn())
+
+    await vi.waitFor(() => expect(listen).toHaveBeenCalledTimes(1))
+    // The rejection is handled, and forgotten — with the first listener still on.
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    const offAgain = bridge.onBootProgress(vi.fn())
+
+    await vi.waitFor(() => expect($tunnelStatus.lc).toBe(1))
+
+    off()
+    offAgain()
+    await vi.waitFor(() => expect($tunnelStatus.lc).toBe(0))
+    listen.mockRestore()
   })
 
   // Rust refuses the background dial of a tunnel that needs a person with the
@@ -567,6 +612,9 @@ describe('a fresh WebSocket URL', () => {
       wsUrl: 'wss://cloud.test/api/ws?ticket=TICKET&profile=work'
     })
     expect(mintedFor('wss://cloud.test/api/ws?ticket=TICKET&profile=work')).toEqual({ connectionId: 'cloud' })
+    // ONE entry per mint, under the URL that is dialled: the bare ticketed URL
+    // is never dialled for another profile.
+    expect(mintedFor('wss://cloud.test/api/ws?ticket=TICKET')).toBeUndefined()
   })
 
   it('carries a single-use ticket for a gated connection, recorded like any other', async () => {
@@ -706,6 +754,43 @@ describe('the boot cookie restore', () => {
 
     await expect(dial).resolves.toMatchObject({ connectionId: 'home' })
     await expect(rest).resolves.toEqual({ ok: true })
+  })
+
+  // `secrets_unlock` has no bound of its own off Apple's platforms, and every
+  // dial waits on the restore behind it. Before the resync the boot waited on it
+  // just as silently (`restoreSessionCookies().finally(autoRestoreConnection)`).
+  it('says a person must unlock after a bounded wait, never retries it, and proceeds once the restore lands', async () => {
+    vi.useFakeTimers()
+
+    try {
+      let land: () => void = () => {}
+
+      cookies.restored = new Promise<void>(resolve => {
+        land = resolve
+      })
+      activate('home')
+
+      const dial = bridge.getConnection().catch((error: unknown) => error)
+
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      const failure = (await dial) as Error
+
+      expect(failure).toBeInstanceOf(NeedsUnlockError)
+      expect(failure.message).toBe(TRANSLATIONS.en.boot.errors.needsUnlock)
+      expect(await bridge.getBootProgress()).toMatchObject({
+        error: TRANSLATIONS.en.boot.errors.needsUnlock,
+        phase: 'backend.error',
+        retryable: false
+      })
+
+      // The restore was never abandoned: unlocked, the next ask goes through.
+      land()
+
+      expect(await bridge.getConnection()).toMatchObject({ baseUrl: 'https://home.test' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
