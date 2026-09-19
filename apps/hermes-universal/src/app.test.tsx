@@ -19,7 +19,7 @@
  */
 
 import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/app/index', () => ({ default: () => <div>desktop</div> }))
 vi.mock('@/app/activity-screen', () => ({ ActivityScreenRoot: () => <div>activity</div> }))
@@ -99,6 +99,13 @@ import { WAKE_INDICATOR_SURFACE } from '@/store/windows'
 
 import { App } from './app'
 
+// The hosts' chunk holds the real context-menu coordinator, whose graph takes
+// longer to transform on first import than `findBy*` waits. A window pays that
+// once at boot; here it is paid before the first test instead of inside one.
+beforeAll(async () => {
+  await import('@/app/window-hosts')
+})
+
 beforeEach(() => {
   root.activity = false
   root.mobile = false
@@ -116,10 +123,10 @@ const ROOTS: [name: string, arrange: () => void, marker: string][] = [
 ]
 
 describe('App', () => {
-  it('renders desktop’s own root in the desktop main window, without doubling what its wiring mounts', () => {
+  it('renders desktop’s own root in the desktop main window, without doubling what its wiring mounts', async () => {
     render(<App />)
 
-    expect(screen.getByText('desktop')).toBeInTheDocument()
+    expect(await screen.findByText('desktop')).toBeInTheDocument()
     expect(screen.queryByText('shell')).not.toBeInTheDocument()
     expect(screen.queryByTestId('find-bar')).not.toBeInTheDocument()
     expect(screen.queryByTestId('remote-picker')).not.toBeInTheDocument()
@@ -145,24 +152,43 @@ describe('App', () => {
     }
   })
 
-  it('keeps a tile window universal’s even on a desktop', () => {
+  it('keeps a tile window universal’s even on a desktop', async () => {
     root.tile = true
     render(<App />)
 
-    expect(screen.getByText('tile')).toBeInTheDocument()
+    expect(await screen.findByText('tile')).toBeInTheDocument()
     expect(screen.queryByText('desktop')).not.toBeInTheDocument()
   })
 
-  it.each(ROOTS)('mounts the find bar, the folder picker and the two gates in %s', (_name, arrange, marker) => {
+  it.each(ROOTS)('mounts the find bar, the folder picker and the two gates in %s', async (_name, arrange, marker) => {
     arrange()
 
     render(<App />)
 
-    expect(screen.getByText(marker)).toBeInTheDocument()
+    // The root and its hosts are two chunks under ONE boundary: they arrive together.
+    expect(await screen.findByText(marker)).toBeInTheDocument()
     expect(screen.getByTestId('find-bar')).toBeInTheDocument()
     expect(screen.getByTestId('remote-picker')).toBeInTheDocument()
     expect(screen.getByTestId('close-confirm')).toBeInTheDocument()
     expect(screen.getByTestId('explorer-path-dialog')).toBeInTheDocument()
+  })
+
+  it('loads a window’s own root and no other', async () => {
+    // Each root is a chunk: a phone must not parse desktop's shell, and under the
+    // dev server a root that does not link must not blank a window that never
+    // mounts it. A static import of any root from `app.tsx` undoes both.
+    const source = await import('node:fs').then(fs => fs.readFileSync('src/app.tsx', 'utf8'))
+    const statics = [...source.matchAll(/^import (?!type )[^'"]*['"]([^'"]+)['"]/gm)].map(match => match[1])
+
+    expect(statics.sort()).toEqual([
+      '@/app/background-close-dialog',
+      '@/app/gateway/ssh-prompt-dialog',
+      '@/app/wake-indicator-overlay',
+      '@/lib/platform',
+      '@/store/deep-link',
+      '@/store/windows',
+      'react'
+    ])
   })
 
   // MJXHRM-592: a switch or a tunnel's Connect can ask for a credential from
@@ -186,9 +212,10 @@ describe('App', () => {
     }
   })
 
-  it.each(ROOTS)('owns the right-click gesture in %s', (_name, arrange) => {
+  it.each(ROOTS)('owns the right-click gesture in %s', async (_name, arrange, marker) => {
     arrange()
     render(<App />)
+    await screen.findByText(marker)
 
     const link = document.createElement('a')
 

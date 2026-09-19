@@ -17,9 +17,19 @@
  *   node scripts/link-edges.mjs --serve            # dev-server aliases, not build
  *   node scripts/link-edges.mjs --max-edges 120    # ratchet: exit 1 above N
  *   node scripts/link-edges.mjs --without src/app.tsx   # what if this file were gone (repeatable)
+ *   node scripts/link-edges.mjs --static           # the first load only: `import()` is a boundary
  *
  * It is a meter: exit code 0 whatever it finds, unless `--max-edges` is passed
  * and exceeded.
+ *
+ * TWO READINGS. A production build links every chunk, so the full reading walks
+ * `import()` and lazy `import.meta.glob` like any other request. The dev server
+ * serves native ESM on demand: a window links only what its entry reaches
+ * through STATIC requests (imports, re-exports, eager globs), and a missing name
+ * behind an `import()` rejects that one promise instead of blanking the page.
+ * That second reading — what a first load must satisfy — is printed beside the
+ * full one, and `--static` (alias `--dev-entry`) makes it the whole report.
+ * Point `--entry` at a lazy root to read the chunk that root loads.
  *
  * THE ERASURE RULE. The app transforms each file in isolation (oxc, with
  * `isolatedModules` and no `verbatimModuleSyntax`), which is TypeScript's own
@@ -76,6 +86,7 @@ const option = name => {
 
 const asJson = flag('--json')
 const serve = flag('--serve')
+const staticOnly = flag('--static') || flag('--dev-entry')
 const providerFilter = option('--provider')
 const maxEdges = option('--max-edges') === undefined ? undefined : Number(option('--max-edges'))
 const top = option('--top') === undefined ? Infinity : Number(option('--top'))
@@ -518,10 +529,12 @@ function parseModule(file) {
         const patterns = first && ts.isArrayLiteralExpression(first) ? first.elements.map(literal) : [literal(first)]
         const options = node.arguments[1]
         let query = ''
+        let eager = false
         if (options && ts.isObjectLiteralExpression(options)) {
           for (const prop of options.properties) {
-            if (ts.isPropertyAssignment(prop) && prop.name.getText(sf) === 'query')
-              query = literal(prop.initializer) ?? ''
+            if (!ts.isPropertyAssignment(prop)) continue
+            if (prop.name.getText(sf) === 'query') query = literal(prop.initializer) ?? ''
+            if (prop.name.getText(sf) === 'eager') eager = prop.initializer.kind === ts.SyntaxKind.TrueKeyword
           }
         }
         requests.push({
@@ -530,7 +543,8 @@ function parseModule(file) {
           names: [],
           line: lineOf(node),
           patterns: patterns.filter(p => p !== null),
-          query
+          query,
+          eager
         })
       }
     } else if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'URL') {
@@ -660,7 +674,12 @@ function expandGlob(request, importer) {
   return [...out].sort(byString)
 }
 
-function walk(entries) {
+/**
+ * @param {string[]} entries
+ * @param {boolean} [firstLoadOnly] follow static requests only — `import()`, a
+ *   lazy glob and a `new URL()` worker are boundaries the first load never crosses.
+ */
+function walk(entries, firstLoadOnly = false) {
   const edges = [] // missing names
   const unresolved = [] // missing files
   const builtins = []
@@ -689,9 +708,16 @@ function walk(entries) {
     for (const line of mod.dynamicUnknown) dynamicUnknown.push({ importer: rel(file), line })
 
     for (const request of mod.requests) {
+      const isStatic =
+        request.kind === 'static' ||
+        request.kind === 'reexport' ||
+        request.kind === 'star' ||
+        (request.kind === 'glob' && request.eager)
+      if (firstLoadOnly && !isStatic) continue
+
       if (request.kind === 'glob') {
         const leaf = QUERY_LEAF.test(request.query.replace(/^\?/, ''))
-        for (const hit of expandGlob(request, file)) if (!leaf && CODE.test(hit)) enqueue(file, hit, false)
+        for (const hit of expandGlob(request, file)) if (!leaf && CODE.test(hit)) enqueue(file, hit, request.eager)
         continue
       }
 
@@ -719,7 +745,7 @@ function walk(entries) {
 
       const external = isExternal(target.file)
       if (!target.leaf && !external) {
-        enqueue(file, target.file, request.kind === 'static' || request.kind === 'reexport' || request.kind === 'star')
+        enqueue(file, target.file, isStatic)
       }
       if (target.leaf) continue
 
@@ -933,19 +959,30 @@ async function main() {
   const entries = entryOption ? [path.resolve(APP, entryOption)] : htmlEntries()
   if (!entries.length) entries.push(path.join(SRC, 'main.tsx'))
 
-  const result = walk(entries)
+  const result = walk(entries, staticOnly)
 
   // One edge per (importer, provider, symbol); the bundler repeats an error per
   // import statement, so `occurrences` is the number it prints.
   const occurrences = result.edges.length
-  const distinct = new Map()
-  for (const edge of result.edges) {
-    const key = `${edge.importer}\0${edge.provider}\0${edge.symbol}`
-    if (!distinct.has(key)) distinct.set(key, edge)
+  const distinctEdges = list => {
+    const distinct = new Map()
+    for (const edge of list) {
+      const key = `${edge.importer}\0${edge.provider}\0${edge.symbol}`
+      if (!distinct.has(key)) distinct.set(key, edge)
+    }
+    return [...distinct.values()].sort(
+      (a, b) => byString(a.provider, b.provider) || byString(a.symbol, b.symbol) || byString(a.importer, b.importer)
+    )
   }
-  const edges = [...distinct.values()].sort(
-    (a, b) => byString(a.provider, b.provider) || byString(a.symbol, b.symbol) || byString(a.importer, b.importer)
-  )
+  const edges = distinctEdges(result.edges)
+
+  // The first-load reading, beside the full one (it IS the report under `--static`).
+  const firstLoadWalk = staticOnly ? result : walk(entries, true)
+  const firstLoad = {
+    modules: firstLoadWalk.fullGraph.size,
+    summary: summarise(distinctEdges(firstLoadWalk.edges)),
+    unresolved: firstLoadWalk.unresolved.length
+  }
 
   // Legacy: the modules, their direct importers (the island), and what only they reach.
   const matchers = legacyMatchers()
@@ -977,6 +1014,8 @@ async function main() {
   const report = {
     entry: entries.map(rel),
     mode: serve ? 'serve' : 'build',
+    reading: staticOnly ? 'static' : 'full',
+    firstLoad,
     without: without.map(rel),
     modules: result.fullGraph.size,
     // Every module the walk reached, for before/after reachability diffs.
@@ -1024,7 +1063,15 @@ async function main() {
     }
   } else {
     console.log(`link-edges: ${report.entry.join(', ')} (${report.mode} aliases), ${report.modules} modules reachable`)
-    console.log(summaryLine(report.summary))
+    console.log(
+      `${staticOnly ? 'static first load (import() is a boundary)' : 'full (every chunk)'}: ${summaryLine(report.summary)}`
+    )
+    if (!staticOnly) {
+      console.log(
+        `static first load (import() is a boundary): ${summaryLine(firstLoad.summary)}, ` +
+          `${firstLoad.modules} modules, unresolved ${firstLoad.unresolved}`
+      )
+    }
     console.log(`non-legacy: ${summaryLine(report.nonLegacy)}`)
     console.log(
       `legacy: ${Object.entries(report.legacy.edgesByTag)
