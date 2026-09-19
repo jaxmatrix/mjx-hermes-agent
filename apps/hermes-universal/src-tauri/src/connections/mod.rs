@@ -731,6 +731,10 @@ pub async fn connections_save(
 
     publish_auth(&app, &registry, &connection);
 
+    // A save is a person acting: a tunnel that stopped on a missing credential
+    // may dial in the background again, whether or not a dial field changed.
+    crate::tunnels::person_acted(&app, &connection.id);
+
     // A background tunnel into the OLD target must not outlive the edit
     // (MJXHRM-592). A slot the active connection holds stays with it.
     if changed {

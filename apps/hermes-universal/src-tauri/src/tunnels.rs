@@ -114,6 +114,17 @@ impl FailureKind {
         !matches!(self, Self::Transient)
     }
 
+    /// The terminal failures only a person can fix: an unlock, a credential, a
+    /// host key to verify. Asking again in the background burns the server's
+    /// auth attempts and raises the same warning, so the book allows one such
+    /// dial (`SlotBook::needs_person`).
+    pub fn needs_person(self) -> bool {
+        matches!(
+            self,
+            Self::Locked | Self::CredentialsNeeded | Self::HostKeyChanged
+        )
+    }
+
     pub fn from_ssh(kind: SshErrorKind) -> Self {
         match kind {
             SshErrorKind::AuthFailed => Self::CredentialsNeeded,
@@ -302,6 +313,22 @@ pub enum Action {
     /// The result belongs to a dial the slot no longer waits on: install
     /// nothing, and drop only what that dial built.
     Stale,
+    /// A background request for a connection whose last dial needs a person:
+    /// dial nothing, hold nothing, and fail as that dial did.
+    Refuse {
+        kind: FailureKind,
+    },
+}
+
+/// A dial that ended on something only a person can fix.
+#[derive(Debug, Clone)]
+pub struct NeedsPerson {
+    pub kind: FailureKind,
+    /// The target that dial was for. Another target has not failed yet.
+    pub fingerprint: String,
+    /// The error and the status that dial published, which a refusal repeats
+    /// word for word. The runtime's to fill: the book decides on the kind alone.
+    pub published: Option<(TunnelError, TunnelStatus)>,
 }
 
 #[derive(Debug, Default)]
@@ -319,6 +346,32 @@ pub struct SlotBook {
     /// Serials are unique across the book, so a recreated slot can never
     /// credit a dial that belonged to its predecessor.
     serial: u64,
+    /// The background budget: ONE dial per (connection, target) that ends on
+    /// something only a person can fix (`FailureKind::needs_person`). By
+    /// connection id and OUTSIDE the slots, because the slot such a dial fails
+    /// in usually leaves with it (`on_dial_result`, `release_primary`).
+    ///
+    ///  * Set by a CREDITED result alone, so once per dial: a joiner waits on
+    ///    that dial's outcome and settles nothing, and a stale or superseded
+    ///    dial's result is not the slot's to record.
+    ///  * While it stands, a background request that would DIAL is refused
+    ///    (`Action::Refuse`) and writes nothing — no slot, no holder, no primary
+    ///    hold, no serial — so the refcount, the linger, the reaper and the
+    ///    generation never see it. One that dials nothing is served as ever
+    ///    (`Reuse`, `Join`).
+    ///  * A person's DIAL ends it, by its result. An interactive request is
+    ///    never refused and clears nothing: it dials, and a background request
+    ///    arriving meanwhile joins that dial. Landing ends the budget; needing a
+    ///    person again records the new failure over the old; anything else — a
+    ///    dismissed prompt, a network blip — leaves it standing, so it costs no
+    ///    further background attempt.
+    ///  * A person changing something ends it outright: a restart, a save of
+    ///    the connection, a request for a different fingerprint, a dropped
+    ///    connection.
+    ///  * A transient failure never sets it, and Rust's own redial loop never
+    ///    meets it: nothing turns `Retrying` while it stands.
+    ///  * In memory only: a new process has a new budget.
+    needs_person: HashMap<String, NeedsPerson>,
 }
 
 impl SlotBook {
@@ -352,6 +405,62 @@ impl SlotBook {
                 .0
                 .clone(),
         )
+    }
+
+    /// What stops background dials of `connection_id`, if anything does.
+    pub fn needs_person(&self, connection_id: &str) -> Option<&NeedsPerson> {
+        self.needs_person.get(connection_id)
+    }
+
+    /// A person acted on `connection_id` outside a dial — they saved it — so
+    /// the next background dial is one they asked for.
+    pub fn person_acted(&mut self, connection_id: &str) {
+        self.needs_person.remove(connection_id);
+    }
+
+    /// What the runtime published for the failure `on_dial_result` just
+    /// recorded. Once: a later result that records nothing changes nothing.
+    pub fn publish_needs_person(
+        &mut self,
+        connection_id: &str,
+        error: &TunnelError,
+        status: TunnelStatus,
+    ) {
+        if let Some(entry) = self.needs_person.get_mut(connection_id) {
+            entry
+                .published
+                .get_or_insert_with(|| (error.clone(), status));
+        }
+    }
+
+    /// A request for a target other than the one that failed ends the budget:
+    /// the connection was edited.
+    fn admit(&mut self, spec: &SlotSpec) {
+        let ended = self
+            .needs_person
+            .get(&spec.connection_id)
+            .is_some_and(|entry| entry.fingerprint != spec.fingerprint);
+
+        if ended {
+            self.needs_person.remove(&spec.connection_id);
+        }
+    }
+
+    /// The refusal a BACKGROUND request that would dial gets instead; a person
+    /// asking is never refused. Asked after `admit`, so whatever still stands is
+    /// this target's.
+    fn refuse(&self, connection_id: &str, interactive: bool) -> Option<Action> {
+        self.needs_person
+            .get(connection_id)
+            .filter(|_| !interactive)
+            .map(|entry| Action::Refuse { kind: entry.kind })
+    }
+
+    /// Whether the budget stands over `spec`, so nothing may dial it unasked.
+    fn stands(ledger: &HashMap<String, NeedsPerson>, spec: &SlotSpec) -> bool {
+        ledger
+            .get(&spec.connection_id)
+            .is_some_and(|entry| entry.fingerprint == spec.fingerprint)
     }
 
     fn begin(&mut self, key: &str, interactive: bool, attempt_id: &str, primary: bool) -> u64 {
@@ -465,11 +574,16 @@ impl SlotBook {
         attempt_id: &str,
         primary: bool,
     ) -> Action {
+        let refuse = self.refuse(&spec.connection_id, interactive);
         let slot = self.slots.get_mut(key).expect("a requested slot exists");
 
         // A different target at the same key is a different backend: never
         // reuse it, and end the leases that were riding the old one.
         if slot.spec.fingerprint != spec.fingerprint {
+            if let Some(refuse) = refuse {
+                return refuse;
+            }
+
             let previous = Self::supersede(slot);
 
             slot.spec = spec;
@@ -509,9 +623,9 @@ impl SlotBook {
                 }
                 _ => Action::Join,
             },
-            _ => Action::Dial {
+            _ => refuse.unwrap_or_else(|| Action::Dial {
                 serial: self.begin(key, interactive, attempt_id, primary),
-            },
+            }),
         }
     }
 
@@ -533,12 +647,16 @@ impl SlotBook {
             return None;
         }
 
+        self.admit(&spec);
+
         let key = self
             .key_for(&spec.connection_id)
             .unwrap_or_else(|| key.to_string());
 
         let action = if self.slots.contains_key(&key) {
             self.request(&key, spec, true, interactive, attempt_id, false)
+        } else if let Some(refuse) = self.refuse(&spec.connection_id, interactive) {
+            refuse
         } else {
             self.slots.insert(key.clone(), Slot::new(spec));
 
@@ -546,6 +664,11 @@ impl SlotBook {
                 serial: self.begin(&key, interactive, attempt_id, false),
             }
         };
+
+        // A refusal holds nothing.
+        if matches!(action, Action::Refuse { .. }) {
+            return Some((key, action));
+        }
 
         let slot = self.slots.get_mut(&key).expect("the acquired slot exists");
 
@@ -571,12 +694,16 @@ impl SlotBook {
             return None;
         }
 
+        self.admit(&spec);
+
         let key = self
             .key_for(&spec.connection_id)
             .unwrap_or_else(|| key.to_string());
 
         let action = if self.slots.contains_key(&key) {
             self.request(&key, spec, alive, interactive, attempt_id, true)
+        } else if let Some(refuse) = self.refuse(&spec.connection_id, interactive) {
+            refuse
         } else {
             self.slots.insert(key.clone(), Slot::new(spec));
 
@@ -584,6 +711,11 @@ impl SlotBook {
                 serial: self.begin(&key, interactive, attempt_id, true),
             }
         };
+
+        // A refusal holds nothing.
+        if matches!(action, Action::Refuse { .. }) {
+            return Some((key, action));
+        }
 
         let slot = self.slots.get_mut(&key).expect("the held slot exists");
 
@@ -613,8 +745,13 @@ impl SlotBook {
         }
 
         // The primary owned the retries while it held the slot. Hand a dead,
-        // retryable slot to the Rust loop now that leases are all that is left.
-        if slot.phase == Phase::Failed && !slot.failure.is_some_and(FailureKind::is_terminal) {
+        // retryable slot to the Rust loop now that leases are all that is left —
+        // unless it needs a person, whose dial failing on the network changed
+        // nothing about that.
+        if slot.phase == Phase::Failed
+            && !slot.failure.is_some_and(FailureKind::is_terminal)
+            && !Self::stands(&self.needs_person, &slot.spec)
+        {
             slot.attempt += 1;
             slot.phase = Phase::Retrying;
 
@@ -784,6 +921,7 @@ impl SlotBook {
                 slot.attempt = 0;
                 slot.failure = None;
                 slot.base_url = Some(base_url.to_string());
+                self.needs_person.remove(&slot.spec.connection_id);
 
                 Action::Ready {
                     generation: slot.generation,
@@ -793,6 +931,20 @@ impl SlotBook {
             Err(kind) => {
                 slot.failure = Some(kind);
 
+                // Recorded before the slot can leave with its spec. Any other
+                // failure leaves a standing budget as it was: a dismissed
+                // prompt or a network blip answered nothing.
+                if kind.needs_person() {
+                    self.needs_person.insert(
+                        slot.spec.connection_id.clone(),
+                        NeedsPerson {
+                            kind,
+                            fingerprint: slot.spec.fingerprint.clone(),
+                            published: None,
+                        },
+                    );
+                }
+
                 // A lease whose FIRST dial fails gets the error, not a retry
                 // loop it never saw succeed.
                 if slot.unheld() || (slot.generation == 0 && !slot.primary) {
@@ -801,7 +953,12 @@ impl SlotBook {
                     return Action::Teardown;
                 }
 
-                if slot.primary || kind.is_terminal() {
+                // The redial loop is a background dial too: it stays out of a
+                // slot that still needs a person.
+                if slot.primary
+                    || kind.is_terminal()
+                    || Self::stands(&self.needs_person, &slot.spec)
+                {
                     slot.phase = Phase::Failed;
 
                     return Action::None;
@@ -843,6 +1000,10 @@ impl SlotBook {
 
         let primary = slot.primary;
         let previous = Self::supersede(slot);
+
+        // A person asked for it.
+        self.needs_person.remove(&slot.spec.connection_id);
+
         let serial = self.begin(key, true, attempt_id, primary);
 
         match previous {
@@ -855,10 +1016,12 @@ impl SlotBook {
         }
     }
 
-    /// A connection was edited (dial fields) or removed. Its leases end; a slot
-    /// the primary still holds stays until the primary lets it go or redials a
-    /// new target.
+    /// A connection was edited (dial fields) or removed. Its leases end, and so
+    /// does its background budget; a slot the primary still holds stays until
+    /// the primary lets it go or redials a new target.
     pub fn drop_connection(&mut self, connection_id: &str) -> Vec<(String, Action)> {
+        self.needs_person.remove(connection_id);
+
         self.slots_for(connection_id)
             .into_iter()
             .map(|key| {
@@ -1143,6 +1306,20 @@ fn phase_of(slot: &Slot) -> StatusPhase {
     }
 }
 
+/// The status a dial's failure is published as, whether its slot stays or
+/// leaves — and the one a refusal repeats (`SlotBook::needs_person`).
+fn failed_status(spec: &SlotSpec, generation: u64, error: &TunnelError) -> TunnelStatus {
+    TunnelStatus {
+        connection_id: spec.connection_id.clone(),
+        phase: StatusPhase::Failed,
+        error_kind: Some(error.kind),
+        message: Some(error.message.clone()),
+        terminal: error.terminal,
+        generation,
+        instance_key: spec.instance_key.clone(),
+    }
+}
+
 fn emit_status(app: &AppHandle, status: &TunnelStatus) {
     let _ = app.emit(&format!("tunnel://{}/status", status.connection_id), status);
 }
@@ -1204,8 +1381,14 @@ fn begun(
 }
 
 /// Turn a book request for `key` into what the caller does. Under the lock.
-fn hold_for(app: &AppHandle, inner: &mut Inner, key: String, action: Action) -> Hold {
-    match action {
+fn hold_for(
+    app: &AppHandle,
+    inner: &mut Inner,
+    key: String,
+    connection_id: &str,
+    action: Action,
+) -> Result<Hold, TunnelError> {
+    Ok(match action {
         Action::Reuse => Hold::Reuse(key),
         Action::Dial { serial } => Hold::Dial(begun(app, inner, key, serial, None, false)),
         Action::Supersede {
@@ -1213,12 +1396,42 @@ fn hold_for(app: &AppHandle, inner: &mut Inner, key: String, action: Action) -> 
             previous,
             retarget,
         } => Hold::Dial(begun(app, inner, key, serial, previous, retarget)),
+        Action::Refuse { kind } => {
+            let (error, status) = refused(inner, connection_id, kind);
+
+            if let Some(status) = &status {
+                emit_status(app, status);
+            }
+
+            return Err(error);
+        }
         _ => {
             let rx = signal(inner, &key).subscribe();
 
             Hold::Join(key, rx)
         }
-    }
+    })
+}
+
+/// A background request the book refused fails as the dial it stands in for
+/// did: that dial's error, and that dial's status for the UI that raises the
+/// sign-in and host-key warnings from it. Nothing that dial did not publish.
+fn refused(
+    inner: &Inner,
+    connection_id: &str,
+    kind: FailureKind,
+) -> (TunnelError, Option<TunnelStatus>) {
+    inner
+        .book
+        .needs_person(connection_id)
+        .and_then(|entry| entry.published.clone())
+        .map(|(error, status)| (error, Some(status)))
+        .unwrap_or_else(|| {
+            (
+                TunnelError::new(kind, "this connection needs a person"),
+                None,
+            )
+        })
 }
 
 /// Wait out a superseded dial, and drop a retargeted slot's old resources,
@@ -1333,14 +1546,10 @@ fn closed(
 ) -> Effect {
     settle_closed(inner, key, error);
 
-    let mut status = status_of(before, StatusPhase::Closed, None);
-
-    if let Some(error) = error {
-        status.phase = StatusPhase::Failed;
-        status.error_kind = Some(error.kind);
-        status.message = Some(error.message.clone());
-        status.terminal = error.terminal;
-    }
+    let status = match error {
+        Some(error) => failed_status(&before.spec, before.generation, error),
+        None => status_of(before, StatusPhase::Closed, None),
+    };
 
     emit_status(app, &status);
 
@@ -1428,13 +1637,19 @@ pub(crate) fn hold_primary(
     attempt_id: &str,
 ) -> Result<Hold, TunnelError> {
     locked(app, |inner| {
+        let connection_id = spec.connection_id.clone();
         let (key, action) = inner
             .book
             .hold_primary(key, spec, alive, interactive, attempt_id)
             .ok_or_else(quitting)?;
 
-        Ok(hold_for(app, inner, key, action))
+        hold_for(app, inner, key, &connection_id, action)
     })
+}
+
+/// A connection was saved: a person acted on it, whatever they changed.
+pub(crate) fn person_acted(app: &AppHandle, connection_id: &str) {
+    locked(app, |inner| inner.book.person_acted(connection_id));
 }
 
 fn quitting() -> TunnelError {
@@ -1463,6 +1678,20 @@ pub(crate) fn finish_dial(
             inner
                 .book
                 .on_dial_result(key, serial, result.as_deref().map_err(|error| error.kind));
+
+        if let (Some(slot), Err(error)) = (&before, &result) {
+            if action != Action::Stale && error.kind.needs_person() {
+                log::info!(
+                    "[tunnel] {} needs a person; background dials wait for one",
+                    slot.spec.connection_id
+                );
+                inner.book.publish_needs_person(
+                    &slot.spec.connection_id,
+                    error,
+                    failed_status(&slot.spec, slot.generation, error),
+                );
+            }
+        }
 
         match (action, &result) {
             (Action::Stale, _) => vec![],
@@ -1903,23 +2132,28 @@ pub async fn tunnel_acquire(
             inner
                 .book
                 .acquire(&key, spec, holder, interactive, &attempt_id, page_epoch?)?;
-        let spec = inner
-            .book
-            .slot(&key)
-            .expect("an acquired slot exists")
-            .spec
-            .clone();
-        let hold = hold_for(&app, inner, key, action);
 
-        Some((hold, spec, inner.installation_id.clone()))
+        Some(
+            hold_for(&app, inner, key.clone(), &connection_id, action).map(|hold| {
+                let spec = inner
+                    .book
+                    .slot(&key)
+                    .expect("an acquired slot exists")
+                    .spec
+                    .clone();
+
+                (hold, spec, inner.installation_id.clone())
+            }),
+        )
     });
 
-    let Some((hold, spec, installation_id)) = acquired else {
+    let Some(acquired) = acquired else {
         return Err(TunnelError::new(
             FailureKind::Unavailable,
             "this page no longer holds tunnels",
         ));
     };
+    let (hold, spec, installation_id) = acquired?;
 
     let rx = match hold {
         Hold::Reuse(key) => {
@@ -3250,7 +3484,25 @@ mod tests {
             );
             assert_eq!(book.slot(&key).map(|slot| slot.phase), Some(Phase::Failed));
 
-            // Asking again is what retries a terminal failure.
+            // Asking again is what retries a terminal failure, and one that
+            // needs a person is retried by a person's asking alone: the loop
+            // comes back once that dial has landed.
+            if kind.needs_person() {
+                assert_eq!(
+                    acquire(&mut book, &key, ssh("a"), lease("l1")).1,
+                    Action::Refuse { kind }
+                );
+
+                let (_, connect) = book
+                    .acquire(&key, ssh("a"), lease("l1"), true, "t", 1)
+                    .expect("a live page acquires");
+
+                ready(&mut book, &key, &connect);
+                assert_eq!(book.on_dead(&key), Action::Redial { attempt: 1 });
+
+                continue;
+            }
+
             let (_, again) = acquire(&mut book, &key, ssh("a"), lease("l1"));
 
             assert!(matches!(again, Action::Dial { .. }));
@@ -3405,5 +3657,474 @@ mod tests {
             Action::Teardown
         );
         assert!(book.slot(&key).is_none());
+    }
+
+    const NEEDS_PERSON: [FailureKind; 3] = [
+        FailureKind::Locked,
+        FailureKind::CredentialsNeeded,
+        FailureKind::HostKeyChanged,
+    ];
+
+    /// A background lease on `id` whose first dial ends on `kind`.
+    fn fail_first_dial(book: &mut SlotBook, id: &str, kind: FailureKind) -> String {
+        let (key, dial) = acquire(book, &format!("conn:{id}::default"), ssh(id), lease("l1"));
+
+        assert_eq!(
+            book.on_dial_result(&key, serial_of(&dial), Err(kind)),
+            Action::Teardown
+        );
+
+        key
+    }
+
+    fn json(value: &impl Serialize) -> serde_json::Value {
+        serde_json::to_value(value).unwrap()
+    }
+
+    #[test]
+    fn np1_a_failure_that_needs_a_person_refuses_the_next_background_dial() {
+        for kind in NEEDS_PERSON {
+            let mut book = pages();
+            let key = fail_first_dial(&mut book, "a", kind);
+            let dials = book.serial;
+
+            // The slot left with its failure; the budget did not.
+            assert!(book.slot(&key).is_none());
+            assert_eq!(book.needs_person("a").map(|entry| entry.kind), Some(kind));
+
+            // A lease, then the primary: refused, and nothing is written.
+            assert_eq!(
+                acquire(&mut book, &key, ssh("a"), lease("l2")),
+                (key.clone(), Action::Refuse { kind })
+            );
+            assert_eq!(
+                book.hold_primary(&key, ssh("a"), false, false, "p"),
+                Some((key.clone(), Action::Refuse { kind }))
+            );
+            assert_eq!(book.serial, dials, "{kind:?}: no dial began");
+            assert!(book.slot(&key).is_none(), "{kind:?}: no slot, no holder");
+            assert_model(&book);
+        }
+
+        // A slot that stays — it had landed once — is refused the same way, and
+        // keeps what it had.
+        let mut book = pages();
+        let (key, dial) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
+
+        ready(&mut book, &key, &dial);
+        assert_eq!(book.on_dead(&key), Action::Redial { attempt: 1 });
+
+        let serial = book.begin_redial(&key, 1, "t").unwrap();
+
+        assert_eq!(
+            book.on_dial_result(&key, serial, Err(FailureKind::Locked)),
+            Action::None
+        );
+
+        let dials = book.serial;
+        let (_, action) = acquire(&mut book, &key, ssh("a"), lease("l2"));
+        let slot = book.slot(&key).unwrap();
+
+        assert_eq!(
+            action,
+            Action::Refuse {
+                kind: FailureKind::Locked
+            }
+        );
+        assert_eq!(book.serial, dials);
+        assert_eq!((slot.phase, slot.dial.is_some()), (Phase::Failed, false));
+        assert!(
+            !slot.holders.contains(&lease("l2")),
+            "a refusal holds nothing"
+        );
+        assert!(slot.holders.contains(&lease("l1")));
+        assert_model(&book);
+    }
+
+    #[test]
+    fn np2_a_person_asking_dials_and_the_result_decides_the_budget() {
+        let mut book = pages();
+        let key = fail_first_dial(&mut book, "a", FailureKind::CredentialsNeeded);
+
+        let (_, connect) = book
+            .acquire(&key, ssh("a"), lease("l2"), true, "connect", 1)
+            .expect("a live page acquires");
+
+        assert!(matches!(connect, Action::Dial { .. }), "{connect:?}");
+        assert_eq!(
+            book.needs_person("a").map(|entry| entry.kind),
+            Some(FailureKind::CredentialsNeeded),
+            "asking clears nothing"
+        );
+
+        // A background request arriving meanwhile joins the person's dial: it
+        // would dial nothing, so there is nothing to refuse.
+        assert_eq!(
+            acquire(&mut book, &key, ssh("a"), lease("l3")).1,
+            Action::Join
+        );
+
+        // That dial needing a person again records the new failure.
+        book.on_dial_result(&key, serial_of(&connect), Err(FailureKind::HostKeyChanged));
+
+        assert_eq!(
+            acquire(&mut book, &key, ssh("a"), lease("l3")).1,
+            Action::Refuse {
+                kind: FailureKind::HostKeyChanged
+            }
+        );
+
+        // The primary's interactive dial is never refused either, and the one
+        // that lands ends the budget.
+        let (_, primary) = book.hold_primary(&key, ssh("a"), false, true, "p").unwrap();
+
+        assert!(matches!(primary, Action::Dial { .. }), "{primary:?}");
+        assert!(book.needs_person("a").is_some());
+
+        ready(&mut book, &key, &primary);
+        assert!(book.needs_person("a").is_none());
+
+        // A restart is a person changing something: it ends the budget outright.
+        book.on_dead(&key);
+
+        let (_, redial) = book
+            .hold_primary(&key, ssh("a"), false, true, "p2")
+            .unwrap();
+
+        book.on_dial_result(&key, serial_of(&redial), Err(FailureKind::Locked));
+        assert!(book.needs_person("a").is_some());
+        assert!(matches!(book.restart(&key, "restart"), Action::Dial { .. }));
+        assert!(book.needs_person("a").is_none());
+        assert_model(&book);
+    }
+
+    #[test]
+    fn np3_a_different_target_ends_the_budget() {
+        let mut book = pages();
+        let key = fail_first_dial(&mut book, "a", FailureKind::HostKeyChanged);
+        let mut moved = ssh("a");
+
+        moved.fingerprint = ssh_fingerprint("deploy", "box2", 22, None, None);
+
+        let (_, dial) = acquire(&mut book, &key, moved.clone(), lease("l2"));
+
+        assert!(matches!(dial, Action::Dial { .. }), "{dial:?}");
+        assert!(book.needs_person("a").is_none());
+
+        // The new target's failure is the new target's budget.
+        book.on_dial_result(&key, serial_of(&dial), Err(FailureKind::Locked));
+
+        assert_eq!(
+            book.needs_person("a")
+                .map(|entry| entry.fingerprint.clone()),
+            Some(moved.fingerprint.clone())
+        );
+        assert!(matches!(
+            acquire(&mut book, &key, ssh("a"), lease("l3")).1,
+            Action::Dial { .. }
+        ));
+    }
+
+    #[test]
+    fn np4_a_dial_that_lands_ends_the_budget() {
+        let mut book = pages();
+        let key = fail_first_dial(&mut book, "a", FailureKind::Locked);
+        let (_, connect) = book
+            .acquire(&key, ssh("a"), lease("l2"), true, "connect", 1)
+            .expect("a live page acquires");
+
+        assert!(book.needs_person("a").is_some(), "it stands over the dial");
+
+        ready(&mut book, &key, &connect);
+
+        assert!(book.needs_person("a").is_none());
+
+        // Signed in: once that tunnel is gone, the background dials again.
+        book.release("a", &lease("l2"), 0);
+        book.expire(LINGER_MS);
+
+        assert!(matches!(
+            acquire(&mut book, &key, ssh("a"), lease("l3")).1,
+            Action::Dial { .. }
+        ));
+    }
+
+    #[test]
+    fn np5_a_dropped_or_saved_connection_ends_the_budget() {
+        let mut book = pages();
+        let key = fail_first_dial(&mut book, "a", FailureKind::CredentialsNeeded);
+
+        fail_first_dial(&mut book, "b", FailureKind::CredentialsNeeded);
+
+        // Edited or removed.
+        assert!(book.drop_connection("a").is_empty());
+        assert!(book.needs_person("a").is_none());
+        assert!(book.needs_person("b").is_some(), "b's budget is b's");
+        assert!(matches!(
+            acquire(&mut book, &key, ssh("a"), lease("l2")).1,
+            Action::Dial { .. }
+        ));
+
+        // Saved with nothing the dial reads changed: a new credential, say.
+        book.person_acted("b");
+
+        assert!(matches!(
+            acquire(&mut book, "conn:b::default", ssh("b"), lease("l2")).1,
+            Action::Dial { .. }
+        ));
+    }
+
+    #[test]
+    fn np6_only_a_failure_that_needs_a_person_is_budgeted() {
+        for kind in [
+            FailureKind::Transient,
+            FailureKind::Cancelled,
+            FailureKind::HermesNotFound,
+            FailureKind::UpdateRequired,
+            FailureKind::UnsupportedPlatform,
+            FailureKind::Unavailable,
+        ] {
+            let mut book = pages();
+            let key = fail_first_dial(&mut book, "a", kind);
+
+            assert!(!kind.needs_person());
+            assert!(book.needs_person("a").is_none(), "{kind:?}");
+            assert!(
+                matches!(
+                    acquire(&mut book, &key, ssh("a"), lease("l1")).1,
+                    Action::Dial { .. }
+                ),
+                "{kind:?} dials again"
+            );
+        }
+    }
+
+    #[test]
+    fn np7_a_joiner_gets_the_dials_failure_and_the_budget_is_set_once() {
+        let mut inner = Inner {
+            book: pages(),
+            ..Inner::default()
+        };
+        let (key, dial) = acquire(&mut inner.book, "conn:a::default", ssh("a"), lease("l1"));
+        let (_, joined) = acquire(&mut inner.book, &key, ssh("a"), lease("l2"));
+
+        assert_eq!(joined, Action::Join);
+
+        let joiner = signal(&mut inner, &key).subscribe();
+        let error = TunnelError::from_ssh(&crate::ssh::error::SshError::new(
+            SshErrorKind::AuthFailed,
+            "Permission denied",
+        ));
+        let before = inner.book.slot(&key).unwrap().clone();
+
+        assert_eq!(
+            inner
+                .book
+                .on_dial_result(&key, serial_of(&dial), Err(error.kind)),
+            Action::Teardown
+        );
+        inner.book.publish_needs_person(
+            "a",
+            &error,
+            failed_status(&before.spec, before.generation, &error),
+        );
+        settle_closed(&mut inner, &key, Some(&error));
+
+        assert!(
+            matches!(&*joiner.borrow(), Outcome::Failed(failed) if failed.terminal && failed.kind == FailureKind::CredentialsNeeded),
+            "the joiner fails as the dial did"
+        );
+
+        // Nothing else records: not that dial's result again, and not a second
+        // publish over the first.
+        let late = TunnelError::new(FailureKind::Locked, "late");
+
+        assert_eq!(
+            inner
+                .book
+                .on_dial_result(&key, serial_of(&dial), Err(late.kind)),
+            Action::Stale
+        );
+        inner.book.publish_needs_person(
+            "a",
+            &late,
+            failed_status(&before.spec, before.generation, &late),
+        );
+
+        let entry = inner.book.needs_person("a").expect("set");
+
+        assert_eq!(entry.kind, FailureKind::CredentialsNeeded);
+        assert_eq!(
+            entry.published.as_ref().map(|(error, _)| json(error)),
+            Some(json(&error))
+        );
+    }
+
+    #[test]
+    fn np8_a_refusal_repeats_what_the_failed_dial_published() {
+        let error = TunnelError::from_ssh(&crate::ssh::error::SshError::new(
+            SshErrorKind::HostKeyChanged,
+            "The host key changed. Run ssh-keygen -R box.",
+        ));
+
+        // A lease's first dial: its slot leaves, and `closed` publishes this.
+        let mut inner = Inner {
+            book: pages(),
+            ..Inner::default()
+        };
+        let (key, dial) = acquire(&mut inner.book, "conn:a::default", ssh("a"), lease("l1"));
+        let before = inner.book.slot(&key).unwrap().clone();
+        let published = failed_status(&before.spec, before.generation, &error);
+
+        inner
+            .book
+            .on_dial_result(&key, serial_of(&dial), Err(error.kind));
+        inner
+            .book
+            .publish_needs_person("a", &error, published.clone());
+
+        let (_, action) = acquire(&mut inner.book, &key, ssh("a"), lease("l1"));
+        let Action::Refuse { kind } = action else {
+            panic!("not refused: {action:?}");
+        };
+        let (refused_error, refused_status) = refused(&inner, "a", kind);
+
+        assert_eq!(json(&refused_error), json(&error));
+        assert_eq!(
+            json(&refused_error),
+            serde_json::json!({
+                "kind": "host-key-changed",
+                "message": "The host key changed. Run ssh-keygen -R box.",
+                "terminal": true,
+                "sshKind": "host-key-changed"
+            })
+        );
+        assert_eq!(refused_status.as_ref().map(json), Some(json(&published)));
+
+        // The primary's dial: its slot stays `Failed`, and `finish_dial`
+        // publishes that slot's status — the same one.
+        let mut book = pages();
+        let (key, dial) = book
+            .hold_primary("conn:a::default", ssh("a"), false, false, "p")
+            .unwrap();
+
+        book.on_dial_result(&key, serial_of(&dial), Err(error.kind));
+
+        let slot = book.slot(&key).unwrap();
+
+        assert_eq!(
+            json(&status_of(
+                slot,
+                phase_of(slot),
+                Some(error.message.clone())
+            )),
+            json(&failed_status(&slot.spec, slot.generation, &error))
+        );
+    }
+
+    #[test]
+    fn np9_a_dismissed_prompt_leaves_the_budget_standing() {
+        let error = TunnelError::from_ssh(&crate::ssh::error::SshError::new(
+            SshErrorKind::AuthFailed,
+            "Permission denied",
+        ));
+        let mut inner = Inner {
+            book: pages(),
+            ..Inner::default()
+        };
+        let (key, dial) = acquire(&mut inner.book, "conn:a::default", ssh("a"), lease("l1"));
+        let before = inner.book.slot(&key).unwrap().clone();
+        let published = failed_status(&before.spec, before.generation, &error);
+
+        inner
+            .book
+            .on_dial_result(&key, serial_of(&dial), Err(error.kind));
+        inner
+            .book
+            .publish_needs_person("a", &error, published.clone());
+
+        // Connect, and the person dismisses the question; then a blip.
+        for dismissed in [FailureKind::Cancelled, FailureKind::Transient] {
+            let (_, connect) = inner
+                .book
+                .acquire(&key, ssh("a"), lease("l2"), true, "connect", 1)
+                .expect("a live page acquires");
+            let late = TunnelError::new(dismissed, "not this one");
+
+            assert_eq!(
+                inner
+                    .book
+                    .on_dial_result(&key, serial_of(&connect), Err(dismissed)),
+                Action::Teardown
+            );
+            inner.book.publish_needs_person(
+                "a",
+                &late,
+                failed_status(&before.spec, before.generation, &late),
+            );
+
+            // The next background acquire: the ORIGINAL failure, and no dial.
+            let dials = inner.book.serial;
+            let (_, action) = acquire(&mut inner.book, &key, ssh("a"), lease("l3"));
+
+            assert_eq!(
+                action,
+                Action::Refuse {
+                    kind: FailureKind::CredentialsNeeded
+                },
+                "{dismissed:?}"
+            );
+            assert_eq!(inner.book.serial, dials, "{dismissed:?}: no dial began");
+            assert!(inner.book.slot(&key).is_none());
+
+            let (refused_error, refused_status) =
+                refused(&inner, "a", FailureKind::CredentialsNeeded);
+
+            assert_eq!(json(&refused_error), json(&error));
+            assert_eq!(refused_status.as_ref().map(json), Some(json(&published)));
+        }
+
+        assert_model(&inner.book);
+    }
+
+    #[test]
+    fn np10_the_redial_loop_stays_out_of_a_slot_that_needs_a_person() {
+        // A leased slot that had landed, died, and then needed a person.
+        let mut book = pages();
+        let (key, dial) = acquire(&mut book, "conn:a::default", ssh("a"), lease("l1"));
+
+        ready(&mut book, &key, &dial);
+        book.on_dead(&key);
+
+        let serial = book.begin_redial(&key, 1, "t").unwrap();
+
+        book.on_dial_result(&key, serial, Err(FailureKind::Locked));
+
+        // The person's dial fails on the network: no timer is armed, because
+        // the redial it would run is a background dial like any other.
+        let (_, connect) = book
+            .acquire(&key, ssh("a"), lease("l1"), true, "connect", 1)
+            .expect("a live page acquires");
+
+        assert_eq!(
+            book.on_dial_result(&key, serial_of(&connect), Err(FailureKind::Transient)),
+            Action::None
+        );
+        assert_eq!(book.slot(&key).map(|slot| slot.phase), Some(Phase::Failed));
+
+        // Nor when the primary hands such a slot back to its leases.
+        let (_, primary) = book.hold_primary(&key, ssh("a"), false, true, "p").unwrap();
+
+        book.on_dial_result(&key, serial_of(&primary), Err(FailureKind::Transient));
+
+        assert_eq!(book.release_primary(&key), Some(Action::None));
+        assert_eq!(book.slot(&key).map(|slot| slot.phase), Some(Phase::Failed));
+        assert_eq!(
+            acquire(&mut book, &key, ssh("a"), lease("l1")).1,
+            Action::Refuse {
+                kind: FailureKind::Locked
+            }
+        );
+        assert_model(&book);
     }
 }
