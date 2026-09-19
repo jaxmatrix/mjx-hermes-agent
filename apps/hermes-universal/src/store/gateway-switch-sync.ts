@@ -1,37 +1,32 @@
 import { IS_TAURI } from '@/lib/platform'
 import { onPeerBroadcast } from '@/lib/webview-broadcast'
-import { selectConnection } from '@/store/connections'
-import { dialSavedTarget } from '@/store/gateway-restore'
-import { softSwitchGateway } from '@/store/gateway-soft-switch'
+import { followConnection } from '@/store/connections'
 import { type GatewaySwitchedPayload, SWITCH_EVENT } from '@/store/gateway-switch-broadcast'
 
 // Cross-WebView gateway switching.
 //
 // Every WebView the app opens — the main shell, an Android native activity screen
 // (`?win=activity`), a desktop pop-out (`?win=secondary`) — boots src/main.tsx and
-// builds its OWN JsonRpcGatewayClient over its own Rust-backed socket (see
-// store/gateway.ts, where `client` is module-local). $gatewaySwitching is an
-// in-memory atom, so it is per-WebView too. Without this module a switch driven
-// from one surface leaves every other surface quietly talking to the OLD backend.
+// runs its OWN fold over its own primary socket, answered by its own bridge from
+// its own `$activeConnection`. Without this module a switch driven from one
+// surface leaves every other surface quietly talking to the OLD backend.
 //
-// So the initiator broadcasts (store/gateway-switch-broadcast.ts — the send half lives
-// in its own leaf module so gateway-restore can broadcast without an import cycle), and
-// every other WebView re-homes onto the same gateway here. The event name follows the
-// `ssh://…` convention in store/ssh-backend.ts, and the listener is wired by a
-// side-effect import in main.tsx exactly like store/event-router.
+// So the initiator broadcasts (store/gateway-switch-broadcast.ts — the send half
+// lives in its own leaf module), and every other WebView re-homes onto the same
+// source here. The listener is wired by a side-effect import in boot.ts.
 
 let started = false
 
 /**
- * Listen for another WebView's switch and re-home this one onto the same gateway.
+ * Listen for another WebView's switch and re-home this one onto the same source.
  *
- * Idempotent — main.tsx imports this for its side effect, and a re-import (HMR,
+ * Idempotent — boot.ts imports this for its side effect, and a re-import (HMR,
  * a test) must not stack listeners.
  *
- * The re-home runs through `softSwitchGateway`, so it inherits the whole
- * machinery: the session/chat/cron/tile wipe, the $gatewaySwitching gate that keeps
- * this WebView's shell mounted instead of bouncing to the picker, the reconnect
- * supervisor stand-down, and the rollback if the follower's own dial fails.
+ * The re-home is `followConnection`: this window's identity moves and its own
+ * boot hook soft-switches — the wipe, the `$gatewaySwitching` gate that keeps
+ * the shell mounted, and the re-dial through the bridge. Never interactive: the
+ * user answered any prompt on the initiating surface.
  */
 export function initGatewaySwitchSync(): void {
   if (started || !IS_TAURI) {
@@ -42,29 +37,17 @@ export function initGatewaySwitchSync(): void {
 
   // `onPeerBroadcast` has already dropped our own echo (`emit` is global).
   onPeerBroadcast<GatewaySwitchedPayload>(SWITCH_EVENT, payload => {
-    // Anything malformed goes too. The shape check is not paranoia: acting on a
-    // payload with no target would tear this WebView's connection down and then
-    // dial nothing, which is strictly worse than ignoring the event.
-    if (!payload.mode || !payload.target) {
+    // Anything without a source goes. Every switch names its registry row
+    // (MJXHRM-446); a payload that does not is malformed, and acting on it would
+    // move this WebView nowhere in particular.
+    const connectionId = payload.target?.connectionId
+
+    if (!connectionId) {
       return
     }
 
-    // Re-home onto the SAME SOURCE, not merely the same mode. The payload's
-    // `connectionId` (MJXHRM-446) is what makes a follower land on the machine
-    // the initiator moved to rather than on whatever `hermes.connection.last`
-    // happens to say — which after a switch is a different host. Absent on a
-    // payload from a pre-registry build, and then this is exactly what it was.
-    if (payload.target.connectionId) {
-      void selectConnection(payload.target.connectionId).catch(() => {})
-
-      return
-    }
-
-    // Non-interactive by construction (dialSavedTarget's default): the user answered
-    // any SSH prompt on the initiating surface; a follower must not raise its own.
-    void softSwitchGateway(payload.mode, () => dialSavedTarget(payload.target)).catch(() => {
-      // softSwitchGateway has already rolled this WebView back or dropped it to the
-      // connect screen, and the initiator owns the user-facing error.
+    void followConnection(connectionId).catch(() => {
+      // The initiator owns the user-facing error; this window stays where it is.
     })
   })
 }

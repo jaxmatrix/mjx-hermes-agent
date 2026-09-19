@@ -19,7 +19,7 @@ import {
   withFailOpenDescriptor
 } from './active-connection'
 import { $connection } from './connection-atoms'
-import { $gatewayMode } from './gateway-switch'
+import { $gatewayMode } from './gateway-mode'
 
 const REMOTE: Connection = { authMode: 'none', baseUrl: 'https://gw.test', mode: 'remote' }
 

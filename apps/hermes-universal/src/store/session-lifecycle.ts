@@ -858,6 +858,16 @@ export function isSessionPinned(session: SessionInfo): boolean {
 }
 
 /**
+ * True when `storedSessionId` is absent from the session list currently loaded.
+ *
+ * Call only once the new gateway's list has landed — an empty list mid-refresh
+ * would read as "everything is missing".
+ */
+export function sessionMissingFromCurrentGateway(storedSessionId: string): boolean {
+  return !$sessions.get().some(session => sessionMatchesStoredId(session, storedSessionId))
+}
+
+/**
  * Do two stored ids name the SAME conversation?
  *
  * The mirror of `sessionMatchesStoredId`: that one asks whether an id names a

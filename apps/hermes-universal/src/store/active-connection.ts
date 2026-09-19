@@ -3,7 +3,7 @@ import { backendScopeKey, connectionIdOf } from '@/lib/backend-scope'
 import { atom, batch, computed } from '@/store/atom'
 import { $connection } from '@/store/connection-atoms'
 import type { Connection, GatewayMode } from '@/store/gateway-config'
-import { $gatewayMode } from '@/store/gateway-switch'
+import { $gatewayMode } from '@/store/gateway-mode'
 
 /**
  * WHICH SOURCE THE APP IS ON — published as ONE value, in ONE notification.
@@ -161,6 +161,26 @@ export function publishActiveConnection(next: ActiveConnection | null): void {
       setApiRequestProfile(next.profile === 'default' ? null : next.profile)
     }
   })
+}
+
+/**
+ * Boot is still choosing where this window launches (`restoreLaunchConnection`
+ * reads the registry from Rust, so it cannot finish before the first effects
+ * run). The bridge waits on this ahead of every answer, as it waits on the
+ * cookie jar, so the boot hook's first `getConnection()` sees the launch
+ * identity rather than the null before it.
+ */
+let launch: Promise<void> = Promise.resolve()
+
+export function holdForLaunch(pending: Promise<unknown>): void {
+  launch = pending.then(
+    () => {},
+    () => {}
+  )
+}
+
+export function launchSettled(): Promise<void> {
+  return launch
 }
 
 /**

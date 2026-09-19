@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { calls, platform, state } = vi.hoisted(() => ({
   calls: [] as string[],
   platform: { mobile: false, tauri: true },
-  state: { background: null as (() => void) | null, owner: true }
+  state: { background: null as (() => void) | null, held: null as null | Promise<unknown>, owner: true }
 }))
 
 const lever = (name: string) => vi.fn(() => void calls.push(name))
@@ -30,6 +30,12 @@ vi.mock('./lib/session-persist', () => ({
   sessionCookiesRestored: vi.fn(async () => void calls.push('sessionCookiesRestored'))
 }))
 vi.mock('./observability/install', () => ({ installObservability: lever('installObservability') }))
+vi.mock('./store/active-connection', () => ({
+  holdForLaunch: vi.fn((pending: Promise<unknown>) => {
+    calls.push('holdForLaunch')
+    state.held = pending
+  })
+}))
 vi.mock('./store/app-lifecycle', () => ({
   initAppLifecycle: lever('initAppLifecycle'),
   onBackground: vi.fn((listener: () => void) => {
@@ -39,7 +45,7 @@ vi.mock('./store/app-lifecycle', () => ({
 }))
 vi.mock('./store/connection-tunnels', () => ({ openTunnelPage: lever('openTunnelPage') }))
 vi.mock('./store/connections', () => ({
-  loadConnectionsRegistry: vi.fn(async () => void calls.push('loadConnectionsRegistry')),
+  restoreLaunchConnection: vi.fn(async (owner: boolean) => void calls.push(`restoreLaunchConnection:${owner}`)),
   startConnectionsWatcher: lever('startConnectionsWatcher')
 }))
 vi.mock('./store/windows', () => ({ ownsPersistedAppState: () => state.owner }))
@@ -54,12 +60,13 @@ beforeEach(() => {
   platform.mobile = false
   platform.tauri = true
   state.background = null
+  state.held = null
   state.owner = true
   document.documentElement.classList.remove('is-mobile')
 })
 
 describe('bootUniversal', () => {
-  it('runs the levers in order: tracing, lifecycle, cookies, tunnels, registry, safe area', async () => {
+  it('runs the levers in order: tracing, lifecycle, cookies, tunnels, registry, launch, safe area', async () => {
     await boot()
 
     expect(calls).toEqual([
@@ -69,9 +76,18 @@ describe('bootUniversal', () => {
       'sessionCookiesRestored',
       'openTunnelPage',
       'startConnectionsWatcher',
-      'loadConnectionsRegistry',
+      'restoreLaunchConnection:true',
+      'holdForLaunch',
       'initSafeAreaInsets'
     ])
+  })
+
+  // The launch identity comes from Rust, so it cannot land before the first
+  // effects run: the bridge's first answer waits on exactly this promise.
+  it('holds the bridge on the launch identity it is publishing', async () => {
+    await boot()
+
+    await expect(state.held).resolves.toBeUndefined()
   })
 
   it('runs them once, however often the entry is evaluated', async () => {
@@ -107,19 +123,22 @@ describe('bootUniversal', () => {
     expect(calls).toEqual(['persistSessionCookies'])
   })
 
-  it('follows the registry in every window, and seeds it only from the one that owns app state', async () => {
+  // Each window runs its own fold over its own bridge, so each publishes where
+  // it launches; only the owner of app state seeds the registry doing it.
+  it('publishes a launch identity in every window, as the owner only in the one that owns app state', async () => {
     state.owner = false
     await boot()
 
     expect(calls).toContain('startConnectionsWatcher')
-    expect(calls).not.toContain('loadConnectionsRegistry')
+    expect(calls).toContain('restoreLaunchConnection:false')
   })
 
   it('asks Rust for nothing outside a Tauri shell', async () => {
     platform.tauri = false
     await boot()
 
-    expect(calls).not.toContain('loadConnectionsRegistry')
+    expect(calls.filter(name => name.startsWith('restoreLaunchConnection'))).toEqual([])
+    expect(calls).not.toContain('holdForLaunch')
   })
 })
 
@@ -154,7 +173,7 @@ describe('the boot module', () => {
     // levers live here now, so the same rule follows them.
     const levers = imports
       .flatMap(entry => entry.names)
-      .filter(name => /^(?:init|install|open|start|load)[A-Z]/.test(name))
+      .filter(name => /^(?:init|install|open|start|load|restore|hold)[A-Z]/.test(name))
 
     expect(levers.length).toBeGreaterThan(5)
 

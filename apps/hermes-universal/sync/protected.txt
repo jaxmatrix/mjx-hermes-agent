@@ -60,7 +60,6 @@ store/event-router*.*
 # lands verbatim as an AUTO file and only the wire half is protected.
 store/gateway-client.*
 store/gateway-secondaries.*
-store/gateway-soft-switch.*
 store/live-session-status.*
 store/session-replay.*
 # LEGACY — universal's session-key route dispatch (was `store/session-request-router`,

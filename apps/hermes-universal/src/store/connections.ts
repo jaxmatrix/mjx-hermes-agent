@@ -1,10 +1,15 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
+import { tunnelErrorMessage } from '@/app/gateway/ssh-copy'
 import { translateNow } from '@/i18n'
+import { TRANSLATIONS } from '@/i18n/catalog'
+import { getRuntimeI18nLocale } from '@/i18n/runtime'
 import { setConnectionBaseResolver } from '@/lib/api'
+import { oauthStatus, oauthStatusIsUnknown, portalAgentSignIn } from '@/lib/auth'
 import { LOCAL_CONNECTION_ID, setConnectionIdResolver } from '@/lib/backend-scope'
 import { errorText } from '@/lib/error-text'
+import { emitConnectionApplied } from '@/lib/hermes-desktop/connection-applied'
 import { statusSupportsNativeFlow } from '@/lib/native-auth-decisions'
 import { loadString, saveString } from '@/lib/persist'
 import { IS_TAURI } from '@/lib/platform'
@@ -12,18 +17,26 @@ import { mergeSshSecrets } from '@/lib/secure-store'
 import {
   $activeConnection,
   type ConnectionDescriptorHint,
-  publishActiveConnection,
-  setPendingConnectionHint
+  describeConnection,
+  publishActiveConnection
 } from '@/store/active-connection'
 import { atom, computed } from '@/store/atom'
-import { connect, connectCloud, connectLocal, connectSsh } from '@/store/connection'
+import { authenticate, keepSession } from '@/store/connection'
 import { isLatched, releaseLatch } from '@/store/connection-latches'
-import { connectionBase, setTunnelAnswerSaver } from '@/store/connection-tunnels'
+import {
+  acquireTunnel,
+  connectionBase,
+  liveTunnelBase,
+  setTunnelAnswerSaver,
+  type TunnelLease
+} from '@/store/connection-tunnels'
+import { disposeSecondariesForConnection } from '@/store/gateway'
 import type { AuthMode, Connection, GatewayMode } from '@/store/gateway-config'
-import { loadGatewayTarget } from '@/store/gateway-restore'
-import { softSwitchGateway } from '@/store/gateway-soft-switch'
+import { $restoring, loadGatewayTarget, takePendingOAuth } from '@/store/gateway-restore'
 import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
-import { notify, notifyError } from '@/store/notifications'
+import { notify } from '@/store/notifications'
+import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
+import { $connection as $desktopConnection } from '@/store/session'
 import type { KeptSshAnswer } from '@/store/ssh-answers'
 
 /**
@@ -183,6 +196,17 @@ export const $hasMultipleConnections = computed(
   registry => registry.connections.length > 1
 )
 
+/**
+ * Desktop's: the source the FOLD is on — the identity of the descriptor the boot
+ * hook last published, not a guess from `primary`. Null until it has published
+ * one. (`store/active-connection`'s atom of the same name is the pointer the
+ * bridge answers from, which leads this one by a dial.)
+ */
+export const $activeConnectionId = computed($desktopConnection, connection => connection?.connectionId ?? null)
+
+/** Desktop's: the source a switch is preflighting, for the switcher's spinner. */
+export const $pendingConnectionId = atom<null | string>(null)
+
 const LAST_PROFILE_KEY = 'hermes.connections.lastProfileByConnection'
 const LAST_PROFILE_MAX = 64
 
@@ -220,6 +244,33 @@ export function rememberProfile(connectionId: string, profile: string): void {
     // silence in this system.
   }
 }
+
+/**
+ * The store is read once per WebView, and every window of the origin writes it:
+ * a peer re-homing on another window's switch reads the profile that window
+ * just remembered, not the one this page loaded with.
+ */
+export function reloadLastProfiles(): void {
+  $lastProfileByConnection.set(loadLastProfiles())
+}
+
+// Desktop's writer (`apps/desktop/src/store/connections.ts`): remember one
+// profile per source, so switching machines is a re-home rather than a reset to
+// `default`. Only once the descriptor confirms the profile the rail names —
+// which rejects the startup window where the profile atom still carries the
+// previous run's. Desktop's `registryScoped` guard is for its v1 per-profile
+// aliases; here every descriptor's id comes from the Rust registry.
+computed([$activeConnectionId, $activeGatewayProfile, $desktopConnection], (connectionId, profile, connection) => ({
+  connectionId,
+  descriptorProfile: normalizeProfileKey(connection?.profile),
+  profile: normalizeProfileKey(profile)
+})).subscribe(({ connectionId, descriptorProfile, profile }) => {
+  if (!connectionId || descriptorProfile !== profile || $lastProfileByConnection.get()[connectionId] === profile) {
+    return
+  }
+
+  rememberProfile(connectionId, profile)
+})
 
 export function lastProfileFor(connectionId: string): null | string {
   const held = $lastProfileByConnection.get()[connectionId]
@@ -385,9 +436,7 @@ let degradedNoticed = false
 
 /**
  * Seed the registry (once, from the pre-registry target) and publish the roster.
- *
- * The half of boot that dials nothing, so `boot.ts` runs it on its own: the
- * re-point below goes through `selectConnection`, which dials.
+ * Dials nothing and publishes no identity: `restoreLaunchConnection` does that.
  */
 export async function loadConnectionsRegistry(): Promise<RegistryView> {
   // Rust cannot read `localStorage`, so the webview hands over the one
@@ -410,44 +459,22 @@ export async function loadConnectionsRegistry(): Promise<RegistryView> {
   return registry
 }
 
-/**
- * Read (and, once, seed) the registry.
- *
- * Deliberately NOT on the critical path to the first paint: `$restoring` is
- * still seeded synchronously from `hermes.connection.last`, so the connecting
- * screen renders on frame one with no `invoke` in front of it. And the boot
- * restore stays the boot restore — `autoRestoreConnection()` has already dialled
- * the saved target, so this only RE-POINTS it when the launch mode disagrees.
- * Desktop fires its own dial here, which is how you get two sockets and a
- * flickering picker at launch.
- */
-export async function initializeConnectionsRegistry(): Promise<void> {
-  if (restoreAttempted || !IS_TAURI) {
-    return
-  }
+/** Desktop's names for the same two things. */
+export const refreshConnectionsRegistry = refreshConnections
 
-  restoreAttempted = true
-
-  try {
-    const registry = await loadConnectionsRegistry()
-    const target = registry.launchMode === 'last-used' ? registry.lastUsed : registry.primary
-    const active = $activeConnection.get()
-
-    if (!target || active?.connectionId === target) {
-      return
-    }
-
-    // The saved dial landed somewhere else (or nowhere): re-point it, once.
-    await selectConnection(target)
-  } catch (error) {
-    // A registry that cannot be read must not stop the app connecting — the
-    // pre-registry restore has already run and stands on its own.
-    console.warn('[connections] registry unavailable', error)
-  }
+export function setConnectionsRegistry(registry: RegistryView): void {
+  $connectionsRegistry.set(registry)
 }
 
-/** A newer click owns the final refresh. Bumped before every dial. */
-let switchRevision = 0
+/**
+ * Desktop's switcher calls this on mount to load the roster and restore the
+ * launch source. Here the launch source is `boot.ts`'s, published before the
+ * fold's first dial, so by the time a switcher exists there is nothing left to
+ * restore — and a second restore would re-home a window the user already moved.
+ */
+export async function initializeConnectionsRegistry(): Promise<RegistryView | null> {
+  return IS_TAURI ? refreshConnections() : null
+}
 
 function hintFor(resolved: ResolvedDial): ConnectionDescriptorHint {
   return {
@@ -457,73 +484,245 @@ function hintFor(resolved: ResolvedDial): ConnectionDescriptorHint {
   }
 }
 
-async function dialResolved(resolved: ResolvedDial, allowInteractive: boolean): Promise<void> {
+/**
+ * The identity of a resolved row, dialling nothing. A local or SSH row has no
+ * address of its own: `baseUrl` is its live tunnel in this window, and empty
+ * until the fold's first dial finds one (the bridge's `followTunnelBase`).
+ */
+function identityOf(resolved: ResolvedDial, connection?: Connection) {
   const profile = resolved.profile ?? null
+  const tunnelled = resolved.mode === 'local' || resolved.mode === 'ssh'
 
-  setPendingConnectionHint(hintFor(resolved))
-
-  switch (resolved.mode) {
-    case 'local':
-      return connectLocal(profile)
-    case 'ssh': {
-      const row = connectionById(resolved.connectionId)
-
-      // Only the ssh TARGET fields — never the whole view. Every secret is read
-      // by Rust from this connection's own keyring accounts (rule 4), and the
-      // non-target fields (`id`, `label`, `hasToken`) have no business on the
-      // wire.
-      // A click may answer a passphrase or host-key question; a background
-      // re-home may not (MJXHRM-592).
-      return connectSsh(
-        {
-          host: row?.host ?? resolved.remoteHost ?? '',
-          keyPath: row?.keyPath,
-          port: row?.port,
+  return describeConnection(
+    connection
+      ? { ...connection, mode: resolved.mode, profile }
+      : {
+          // A tunnel's token never leaves Rust, which attaches it by base.
+          authMode: tunnelled ? 'token' : resolved.mode === 'cloud' ? 'oauth' : (resolved.authMode ?? 'none'),
+          baseUrl: resolved.baseUrl ?? liveTunnelBase(resolved.connectionId) ?? '',
+          mode: resolved.mode,
           profile,
-          remoteHermesPath: row?.remoteHermesPath,
-          user: row?.user
+          ...(resolved.remoteHost && { remoteHost: resolved.remoteHost })
         },
-        { interactive: allowInteractive }
-      )
-    }
+    hintFor(resolved)
+  )
+}
 
-    case 'cloud':
-      return connectCloud(resolved.baseUrl ?? '', profile)
+function resolveConnection(connectionId: string, profile: null | string): Promise<ResolvedDial> {
+  return call<ResolvedDial>('connections_resolve', { connectionId, profile })
+}
 
-    default:
-      return connect({ url: resolved.baseUrl ?? '', allowInteractive })
-  }
+/** The row a registry names for launch, if it still has it. */
+function launchTarget(registry: RegistryView, owner: boolean): null | string {
+  const has = (id: string) => registry.connections.some(row => row.id === id)
+  const lastUsed = has(registry.lastUsed) ? registry.lastUsed : registry.primary
+  // The launch mode is the OWNER's question. Every other window opens onto the
+  // source the app is on, which is the last one a switch remembered.
+  const target = owner && registry.launchMode === 'primary' ? registry.primary : lastUsed
+
+  return has(target) ? target : null
 }
 
 /**
- * Switch the app onto another source.
+ * A mobile sign-in navigated this WebView away and back (`beginOAuthLogin`):
+ * finish the switch it interrupted. The session outlived the reload, so the
+ * preflight passes without a login page — and a cancelled or expired one falls
+ * through to the ordinary launch instead of navigating again.
+ */
+async function resumePendingSignIn(registry: RegistryView): Promise<boolean> {
+  const pending = takePendingOAuth()
+
+  if (!pending) {
+    return false
+  }
+
+  const row = registry.connections.find(entry =>
+    pending.connectionId ? entry.id === pending.connectionId : entry.url === pending.base
+  )
+
+  if (!row || !(await oauthStatus(pending.base).catch(() => null))?.signedIn) {
+    return false
+  }
+
+  // A failure here is the ordinary launch's to recover from.
+  await selectConnection(row.id).catch(() => {})
+
+  return $activeConnection.get()?.connectionId === row.id
+}
+
+/**
+ * Publish where this window launches — and dial nothing (MJXHRM-602).
  *
- * The ordering is the design's §8.3 and every line of it is load-bearing:
- * a re-click is a no-op except for `lastUsed`; a LATCHED source refuses with its
- * reason rather than re-entering a retry loop; the descriptor lookup and the
- * dial resolve CONCURRENTLY so nothing awaits between activation and
- * publication; a stale revision drops out before publishing; and
+ * The identity is all desktop's fold needs: its boot hook dials through the
+ * bridge, which answers from `$activeConnection`. A phone with nothing
+ * configured has no row to name, publishes nothing, and stays on the connect
+ * screen.
+ *
+ * `owner` is the window that owns the app's persisted state: it alone seeds the
+ * registry and honours the launch mode. `boot.ts` holds the bridge on this
+ * (`holdForLaunch`), so it must always settle.
+ */
+export async function restoreLaunchConnection(owner: boolean): Promise<void> {
+  if (restoreAttempted || !IS_TAURI) {
+    return
+  }
+
+  restoreAttempted = true
+
+  try {
+    const registry = await (owner ? loadConnectionsRegistry() : refreshConnections())
+
+    if ($activeConnection.get() || (await resumePendingSignIn(registry))) {
+      return
+    }
+
+    const target = launchTarget(registry, owner)
+
+    if (!target) {
+      return
+    }
+
+    const resolved = await resolveConnection(target, lastProfileFor(target))
+
+    // A person got there first while the registry was being read.
+    if ($activeConnection.get()) {
+      return
+    }
+
+    publishActiveConnection(identityOf(resolved))
+
+    if (owner) {
+      // Desktop's restore remembers the source it lands on, which is also what
+      // every later window launches onto. Swallowed: see the command's own note.
+      void call('connections_set_last_used', { connectionId: target }).catch(() => {})
+    }
+  } catch {
+    // Unconfigured is a state the app can stand in; a thrown boot is not. The
+    // reason is not logged: Rust's text can name the gateway.
+    console.warn('[connections] launch connection unavailable')
+  } finally {
+    $restoring.set(false)
+  }
+}
+
+/** A tunnel failure as copy: Rust's own message can name the host. */
+function tunnelFailure(error: unknown): Error {
+  return new Error(tunnelErrorMessage(error, TRANSLATIONS[getRuntimeI18nLocale()].settings.gateway), { cause: error })
+}
+
+/**
+ * PHASE 1 of a switch: prove the target without activating it. Whatever the
+ * window is on stays bound and painted, so a dead target costs nothing.
+ *
+ *  • local / SSH — hold its tunnel. The lease is kept through the publish and
+ *    then let go: Rust lingers an unheld slot, so the fold's own acquire finds
+ *    it warm.
+ *  • cloud — the agent session, renewed by the SILENT portal cascade.
+ *  • a URL — the status probe and whatever sign-in it asks for.
+ */
+async function preflight(
+  resolved: ResolvedDial,
+  options: { attemptId?: string; interactive: boolean }
+): Promise<{ connection: Connection; lease: null | TunnelLease }> {
+  if (resolved.mode === 'local' || resolved.mode === 'ssh') {
+    const lease = await acquireTunnel(resolved.connectionId, {
+      attemptId: options.attemptId,
+      interactive: options.interactive,
+      label: resolved.label
+    }).catch(error => {
+      throw tunnelFailure(error)
+    })
+
+    return {
+      connection: {
+        authMode: 'token',
+        baseUrl: lease.baseUrl(),
+        mode: resolved.mode,
+        ...(resolved.remoteHost && { remoteHost: resolved.remoteHost })
+      },
+      lease
+    }
+  }
+
+  const baseUrl = resolved.baseUrl ?? ''
+
+  if (resolved.mode === 'cloud') {
+    const live = await oauthStatus(baseUrl)
+
+    // "Could not tell" is not "signed out" (see `authenticate`).
+    if (oauthStatusIsUnknown(live)) {
+      throw new Error(live.error || 'Could not reach the gateway')
+    }
+
+    if (!live.signedIn && !(await portalAgentSignIn(baseUrl)).connected) {
+      throw new Error('Could not sign in to this agent')
+    }
+
+    return { connection: { authMode: 'oauth', baseUrl, mode: 'cloud' }, lease: null }
+  }
+
+  return {
+    connection: await authenticate({
+      allowInteractive: options.interactive,
+      connectionId: resolved.connectionId,
+      url: baseUrl
+    }),
+    lease: null
+  }
+}
+
+/** A newer click owns the outcome. Bumped before every preflight. */
+let switchRevision = 0
+
+export interface SelectConnectionOptions {
+  /**
+   * Is a person asking? False by default, because most switches are not: the
+   * post-sign-in resume and a peer window's re-home come through here too. Only
+   * a click (the switcher, the command palette, a Connect button) passes `true`,
+   * and only then may the preflight put a question on screen — an SSH
+   * passphrase or host key, or a login page, which on a phone is a one-way door
+   * (`authenticate`). Anything else surfaces the failure instead.
+   */
+  allowInteractive?: boolean
+  /** The SSH attempt the caller follows progress on. Interactive only. */
+  attemptId?: string
+  /** Desktop's: land on this profile of the source instead of the one last used
+   *  there. The fleet profile rail passes the exact square the user clicked. */
+  profile?: null | string
+  /** Run the switch even onto the source the window is on: its row was just
+   *  saved (`applyConnection`), so its address or its credential may be new. */
+  reapply?: boolean
+}
+
+/**
+ * Switch this window onto another source — in two phases (MJXHRM-602), the
+ * contract desktop's `selectConnection` has: a dead target costs nothing.
+ *
+ *  1. PREFLIGHT, activating nothing (`preflight`). A failure throws with the
+ *     window still on the source it came from.
+ *  2. COMMIT, synchronously: publish the identity → remember it → drop the
+ *     registry secondaries on that id (it is the primary now) → tell the peer
+ *     windows → `emitConnectionApplied()`, which is what makes the boot hook
+ *     soft-switch: wipe, then re-dial the primary through the bridge.
+ *
+ * Desktop's select opens a registry SECONDARY and never moves the primary.
+ * Re-homing the primary is universal's, for mobile: a phone has no launch
+ * backend, so the primary has to be the source the window is on.
+ *
+ * A re-click is a no-op except for `lastUsed`; a LATCHED source refuses with its
+ * reason; a stale revision drops out before publishing; and
  * `connections_set_last_used` is swallowed, because a full disk must not turn a
  * successful switch into a failed one.
  */
-export interface SelectConnectionOptions {
-  /**
-   * May this switch hand the user to a login page?
-   *
-   * False by default, like `connect`'s own flag, because most switches are not a
-   * person asking: the post-sign-in resume, a peer window's switch broadcast and
-   * the boot re-point all come through here. Only a click on a source (the
-   * switcher, the command palette, the editor's Connect button) passes `true`, so
-   * picking a signed-out source still opens its sign-in while a background re-home
-   * surfaces a Sign in prompt instead of hijacking the webview.
-   */
-  allowInteractive?: boolean
-}
-
 export async function selectConnection(connectionId: string, options: SelectConnectionOptions = {}): Promise<void> {
-  const active = $activeConnection.get()
+  const explicitProfile = (options.profile ?? '').trim()
+  const profile = explicitProfile ? normalizeProfileKey(explicitProfile) : lastProfileFor(connectionId)
 
-  if (active?.connectionId === connectionId) {
+  if (
+    !options.reapply &&
+    $activeConnection.get()?.connectionId === connectionId &&
+    (!explicitProfile || profile === normalizeProfileKey(lastProfileFor(connectionId)))
+  ) {
     // Already here. Remember it (the launch mode may read it) and stop — a
     // re-dial would drop a live socket for nothing.
     void call('connections_set_last_used', { connectionId }).catch(() => {})
@@ -544,58 +743,179 @@ export async function selectConnection(connectionId: string, options: SelectConn
   }
 
   const revision = ++switchRevision
-  const profile = lastProfileFor(connectionId)
+  let lease: null | TunnelLease = null
 
-  let resolved: ResolvedDial
-
-  try {
-    resolved = await call<ResolvedDial>('connections_resolve', { connectionId, profile })
-  } catch (error) {
-    notifyError(error, translateNow('settings.connections.switchFailed'))
-
-    return
-  }
+  $pendingConnectionId.set(connectionId)
 
   try {
-    await softSwitchGateway(resolved.mode, () => dialResolved(resolved, options.allowInteractive === true))
-  } catch {
-    // `softSwitchGateway` already rolled back onto the previous source and
-    // surfaced the failure; a failed switch is never remembered.
-    return
-  }
+    const resolved = await resolveConnection(connectionId, profile)
 
-  if (revision !== switchRevision) {
-    // A later click owns the outcome. Publishing here would re-home the app onto
-    // a source the user has already navigated away from.
-    return
-  }
-
-  const published = $activeConnection.get()
-
-  if (!published || published.connectionId !== resolved.connectionId) {
-    // FAIL OPEN (§8.2). The dial completed but the identity did not land — the
-    // source was edited or removed mid-dial. Everything stays on what we have,
-    // and we say so rather than going quiet (the #89622 lesson).
-    console.warn('[connections] descriptor lookup failed mid-dial; keeping the previous source')
-    notify({
-      kind: 'warning',
-      message: translateNow('settings.connections.midDialMessage', resolved.label),
-      title: translateNow('settings.connections.midDialTitle')
+    const proven = await preflight(resolved, {
+      attemptId: options.attemptId,
+      interactive: options.allowInteractive === true
     })
 
+    lease = proven.lease
+
+    if (revision !== switchRevision) {
+      // A later click owns the outcome. Publishing here would re-home the app
+      // onto a source the user has already navigated away from.
+      return
+    }
+
+    const next = identityOf(resolved, proven.connection)
+
+    publishActiveConnection(next)
+    rememberProfile(connectionId, next.profile)
+    releaseLatch(connectionId)
+    // Swallowed ON PURPOSE: see the command's own note.
+    void call('connections_set_last_used', { connectionId }).catch(() => {})
+    // The registry may hold this source as a secondary (a tab, a relay). It is
+    // the primary's now, and one id must not be both.
+    disposeSecondariesForConnection(connectionId)
+    broadcastGatewaySwitch(resolved.mode, { connectionId, mode: resolved.mode })
+    emitConnectionApplied()
+    // A deliberate connect's session is the user's to keep, sign-out latch or not.
+    void keepSession().catch(() => {})
+  } finally {
+    lease?.release()
+
+    if (revision === switchRevision) {
+      $pendingConnectionId.set(null)
+    }
+  }
+}
+
+/**
+ * A PEER window switched (`store/gateway-switch-sync.ts`): put this window on
+ * the same source. The initiator has already proven it, so there is no
+ * preflight, nothing is remembered or re-broadcast, and nothing may prompt —
+ * the fold's own dial surfaces whatever this window still lacks.
+ */
+export async function followConnection(connectionId: string): Promise<void> {
+  if ($activeConnection.get()?.connectionId === connectionId) {
     return
   }
 
-  rememberProfile(connectionId, published.profile)
-  releaseLatch(connectionId)
-  // Swallowed ON PURPOSE: see the command's own note.
-  void call('connections_set_last_used', { connectionId }).catch(() => {})
+  const revision = ++switchRevision
 
-  const target = loadGatewayTarget()
+  reloadLastProfiles()
 
-  if (target) {
-    broadcastGatewaySwitch(resolved.mode, { ...target, connectionId })
+  const resolved = await resolveConnection(connectionId, lastProfileFor(connectionId))
+
+  if (revision !== switchRevision) {
+    return
   }
+
+  publishActiveConnection(identityOf(resolved))
+  disposeSecondariesForConnection(connectionId)
+  emitConnectionApplied()
+}
+
+/** What a connect form names: a row's dial fields and its write-only secrets. */
+export type ConnectionTarget = Omit<ConnectionSaveInput, 'id' | 'label'> & { label?: string }
+
+/** `user@host:port`, as Rust's `split_ssh_host` reads it. */
+function sshParts(target: ConnectionTarget): { host: string; port: number; user: string } {
+  const raw = (target.host ?? '').trim()
+  const at = raw.indexOf('@')
+  const rest = at > 0 ? raw.slice(at + 1) : raw
+  const colon = rest.lastIndexOf(':')
+  const typedPort = colon > 0 ? Number(rest.slice(colon + 1)) : NaN
+
+  return {
+    host: Number.isInteger(typedPort) ? rest.slice(0, colon) : rest,
+    port: Number.isInteger(typedPort) ? typedPort : (target.port ?? 22),
+    user: at > 0 ? raw.slice(0, at).trim() : (target.user ?? '')
+  }
+}
+
+/** The row that already points where `target` does (Rust's `dial_identity`). */
+function rowFor(target: ConnectionTarget, registry: RegistryView): ConnectionView | undefined {
+  if (target.kind === 'local') {
+    return registry.connections.find(row => row.kind === 'local')
+  }
+
+  if (target.kind === 'ssh') {
+    const wanted = sshParts(target)
+
+    return registry.connections.find(
+      row =>
+        row.kind === 'ssh' &&
+        row.host === wanted.host &&
+        (row.user ?? '') === wanted.user &&
+        (row.port ?? 22) === wanted.port &&
+        (row.remoteProfile ?? '') === (target.remoteProfile ?? '')
+    )
+  }
+
+  const url = (target.url ?? '').trim().replace(/\/+$/, '')
+  const withScheme = /^https?:\/\//i.test(url) ? url : `http://${url}`
+
+  return registry.connections.find(row => (row.kind === 'remote' || row.kind === 'cloud') && row.url === withScheme)
+}
+
+function labelFor(target: ConnectionTarget, registry: RegistryView): string {
+  const parts = target.kind === 'ssh' ? sshParts(target) : null
+
+  const base =
+    target.label?.trim() ||
+    (parts
+      ? parts.user
+        ? `${parts.user}@${parts.host}`
+        : parts.host
+      : (target.url ?? '').trim().replace(/^https?:\/\//i, ''))
+
+  const taken = new Set(registry.connections.map(row => row.label.trim().toLowerCase()))
+  let label = base
+
+  for (let n = 2; taken.has(label.toLowerCase()); n++) {
+    label = `${base} (${n})`
+  }
+
+  return label
+}
+
+/**
+ * Save the source a connect form names — onto the row that already points
+ * there, else a new one. Rust keeps the credentials, under that row's own
+ * accounts; nothing the form typed stays in the webview.
+ */
+export async function saveConnectionTarget(target: ConnectionTarget): Promise<string> {
+  const registry = await refreshConnections()
+  const row = rowFor(target, registry)
+
+  // This device's own backend has nothing to save.
+  if (row?.kind === 'local') {
+    return row.id
+  }
+
+  return (await saveConnection({ ...target, id: row?.id, label: row?.label ?? labelFor(target, registry) }))
+    .connectionId
+}
+
+/** "Save for next restart": the saved source is where the next launch lands. */
+export async function saveLaunchTarget(target: ConnectionTarget): Promise<void> {
+  const connectionId = await saveConnectionTarget(target)
+
+  $connectionsRegistry.set(await call<RegistryView>('connections_set_last_used', { connectionId }))
+}
+
+/**
+ * A connect form's Connect: desktop's `applyConnectionConfig` — save, then
+ * switch onto it. Saved BEFORE the switch, like desktop's: on a phone the
+ * sign-in navigates this WebView away, and the post-reload resume needs a row
+ * to land on.
+ */
+export async function applyConnection(
+  target: ConnectionTarget,
+  options: Pick<SelectConnectionOptions, 'allowInteractive' | 'attemptId'> = {}
+): Promise<string> {
+  const connectionId = await saveConnectionTarget(target)
+
+  await selectConnection(connectionId, { ...options, reapply: true })
+
+  return connectionId
 }
 
 /** Re-publish the live descriptor against a freshly saved row (a rename must be
@@ -645,7 +965,11 @@ export const __testing = {
     switchRevision = 0
     $connectionsRegistry.set(EMPTY)
     $lastProfileByConnection.set({})
+    $pendingConnectionId.set(null)
   }
 }
+
+/** Desktop's name for the same reset. */
+export const _resetConnectionsForTests = __testing.reset
 
 export type { AuthMode, Connection }

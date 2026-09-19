@@ -9,17 +9,18 @@
  */
 
 // Side-effect import: every WebView must be listening for another WebView's
-// gateway switch before it dials, or it keeps serving the gateway the user just
-// moved off.
+// gateway switch before its fold dials, or it keeps serving the gateway the user
+// just moved off.
 import './store/gateway-switch-sync'
 
 import { IS_MOBILE, IS_TAURI } from './lib/platform'
 import { initSafeAreaInsets } from './lib/safe-area'
 import { persistSessionCookies, sessionCookiesRestored } from './lib/session-persist'
 import { installObservability } from './observability/install'
+import { holdForLaunch } from './store/active-connection'
 import { initAppLifecycle, onBackground } from './store/app-lifecycle'
 import { openTunnelPage } from './store/connection-tunnels'
-import { loadConnectionsRegistry, startConnectionsWatcher } from './store/connections'
+import { restoreLaunchConnection, startConnectionsWatcher } from './store/connections'
 import { ownsPersistedAppState } from './store/windows'
 
 let booted = false
@@ -55,12 +56,17 @@ export function bootUniversal(): void {
   openTunnelPage()
 
   // Every window follows the registry: a rename made in a settings Activity has
-  // to reach the shell painting the source chip. Following is not restoring, so
-  // only the window that owns the app's persisted state seeds and reads it.
+  // to reach the shell painting the source chip.
   startConnectionsWatcher()
 
-  if (IS_TAURI && ownsPersistedAppState()) {
-    void loadConnectionsRegistry().catch(error => console.warn('[connections] registry unavailable', error))
+  // …and every window publishes where it launches, because each runs its own
+  // fold over its own bridge: the owner of the app's persisted state seeds the
+  // registry and honours the launch mode; a tile, an activity screen or the HUD
+  // opens onto the source the app is on. No window's URL names a connection, and
+  // a switch made later reaches them all as a broadcast. Identity only — the
+  // bridge holds its first answer for this, and the boot hook does the dialling.
+  if (IS_TAURI) {
+    holdForLaunch(restoreLaunchConnection(ownsPersistedAppState()))
   }
 
   // Deterministic `--safe-area-inset-*` vars and `html.is-mobile`, both before

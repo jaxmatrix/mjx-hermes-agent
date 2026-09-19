@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest'
  * three must reach 0 when the old fold retires.
  */
 const CEILINGS: Record<string, number> = {
-  'store/session-key-states': 29,
+  'store/session-key-states': 27,
   'store/session-route-dispatch': 14,
   'store/session-state-types': 64
 }

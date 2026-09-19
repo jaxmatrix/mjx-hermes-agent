@@ -34,6 +34,7 @@ import { getRuntimeI18nLocale } from '@/i18n/runtime'
 import { errorText } from '@/lib/error-text'
 import { IS_MOBILE } from '@/lib/platform'
 import { sessionCookiesRestored } from '@/lib/session-persist'
+import type { ActiveConnection } from '@/store/active-connection'
 import { onForeground } from '@/store/app-lifecycle'
 import type { TunnelStatus } from '@/store/connection-tunnels'
 import { type Connection, type GatewayMode, resolveWsUrl, ticketMintDeps } from '@/store/gateway-config'
@@ -376,7 +377,10 @@ let primaryTunnelWatch: null | Promise<() => void> = null
 
 async function activeConnection() {
   // Dynamic: `store/active-connection.ts` imports `@/hermes`.
-  const { $activeConnection } = await import('@/store/active-connection')
+  const { $activeConnection, launchSettled } = await import('@/store/active-connection')
+
+  // The boot hook's first ask races the launch identity `boot.ts` is publishing.
+  await launchSettled()
 
   return $activeConnection.get()
 }
@@ -388,6 +392,25 @@ async function windowProfile(): Promise<null | string> {
   return windowProfileOverride()
 }
 
+/**
+ * A tunnelled primary's base is a loopback port that exists only once dialled,
+ * and moves on a redial. The identity is published without one at launch, and
+ * REST on the active path reads `$connection`'s base, so it follows the dial.
+ */
+async function followTunnelBase(active: ActiveConnection, dial: Dial): Promise<void> {
+  if (!dial.mint.tunnel || active.connection.baseUrl === dial.baseUrl) {
+    return
+  }
+
+  // Dynamic: `store/active-connection.ts` imports `@/hermes`.
+  const { $activeConnection, publishActiveConnection } = await import('@/store/active-connection')
+
+  // Re-homed while the tunnel dialled: the base belongs to the one that left.
+  if ($activeConnection.get() === active) {
+    publishActiveConnection({ ...active, connection: { ...active.connection, baseUrl: dial.baseUrl } })
+  }
+}
+
 async function primaryDial(): Promise<Dial> {
   try {
     const active = await activeConnection()
@@ -397,6 +420,8 @@ async function primaryDial(): Promise<Dial> {
     }
 
     const dial = await resolveDial(active.connectionId, active.connection)
+
+    await followTunnelBase(active, dial)
 
     publishBoot(bootProgress(BACKEND_READY))
 
@@ -460,7 +485,8 @@ async function dialFor(connectionId: null | string | undefined): Promise<Dial> {
  * lease this window holds. So the primary's id is dropped — the call takes the
  * active path, `$connection`'s base, which needs no lease — and another local or
  * SSH connection is held for the length of the call (`tunnelDial`'s rule: the
- * slot lingers, so the next call finds it warm).
+ * slot lingers, so the next call finds it warm). So is a tunnelled primary whose
+ * base is not known yet: a launch publishes it undialled (`followTunnelBase`).
  */
 export async function restScope(
   connectionId: null | string | undefined
@@ -470,25 +496,30 @@ export async function restScope(
   // A cookie-backed REST call needs the jar as much as a dial does.
   await sessionCookiesRestored()
 
-  if (!id || id === (await activeConnection())?.connectionId) {
+  const active = await activeConnection()
+  const primary = !id || id === active?.connectionId
+
+  if (primary && (!active || active.connection.baseUrl)) {
     return { release: () => {} }
   }
 
+  const target = primary && active ? active.connectionId : id
+
   // Dynamic: the registry store imports `@/hermes`.
   const { connectionById } = await import('@/store/connections')
-  const row = connectionById(id)
+  const row = connectionById(target)
 
   if (!row || row.url || (row.kind !== 'local' && row.kind !== 'ssh')) {
-    return { connectionId: id, release: () => {} }
+    return { connectionId: target, release: () => {} }
   }
 
   const { acquireTunnel } = await import('@/store/connection-tunnels')
 
-  const lease = await acquireTunnel(id, { label: row.label }).catch(error => {
+  const lease = await acquireTunnel(target, { label: row.label }).catch(error => {
     throw tunnelFailure(error)
   })
 
-  return { connectionId: id, release: () => lease.release() }
+  return { connectionId: target, release: () => lease.release() }
 }
 
 export const connectionBridge: Pick<

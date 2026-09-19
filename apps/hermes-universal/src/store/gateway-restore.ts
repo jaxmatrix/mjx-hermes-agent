@@ -14,7 +14,7 @@ import {
   type SshTarget
 } from '@/store/connection'
 import type { GatewayMode } from '@/store/gateway-config'
-import { $gatewayMode } from '@/store/gateway-switch'
+import { $gatewayMode } from '@/store/gateway-mode'
 import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
 
 // Auto-connect on restart (D8). The live connection ($connection/$connectionPhase)

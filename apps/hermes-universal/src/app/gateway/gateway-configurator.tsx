@@ -32,9 +32,10 @@ import {
   Terminal
 } from '@/lib/icons'
 import { LOCAL_MODE_SUPPORTED } from '@/lib/platform'
-import { loadSshSecrets, mergeSshSecrets, saveSecrets } from '@/lib/secure-store'
+import { loadSshSecrets, mergeSshSecrets } from '@/lib/secure-store'
 import { selectableCardClass } from '@/lib/selectable-card'
 import { cn } from '@/lib/utils'
+import { $activeConnection } from '@/store/active-connection'
 import { useStore } from '@/store/atom'
 import {
   $cloudAgents,
@@ -57,20 +58,17 @@ import {
 import {
   $connection,
   $connectionPhase,
-  connect,
-  connectLocal,
-  connectSsh,
   lastUrl,
   loadSavedLogin,
   normalizeBaseUrl,
   probeStatus,
+  rememberLastUrl,
   signOut
 } from '@/store/connection'
+import { applyConnection, connectionById, type ConnectionTarget, saveLaunchTarget } from '@/store/connections'
 import { type Connection, type GatewayMode } from '@/store/gateway-config'
-import { loadGatewayTarget, saveGatewayTarget } from '@/store/gateway-restore'
-import { softSwitchGateway } from '@/store/gateway-soft-switch'
-import { $gatewayMode, setGatewayMode } from '@/store/gateway-switch'
-import { broadcastGatewaySwitch } from '@/store/gateway-switch-broadcast'
+import { $gatewayMode, setGatewayMode } from '@/store/gateway-mode'
+import { loadGatewayTarget } from '@/store/gateway-restore'
 import { stepBackInLocalInstall } from '@/store/local-install'
 import { notify, notifyError } from '@/store/notifications'
 import { keptSshAnswer } from '@/store/ssh-answers'
@@ -78,7 +76,6 @@ import {
   addSshPromptAnswerListener,
   attachSshPrompts,
   isQuietSshError,
-  isSshError,
   newAttemptId,
   onSshProgress,
   type SshPromptEvent,
@@ -238,10 +235,11 @@ export function GatewayConfigurator({
   const [remoteToken, setRemoteToken] = useState('')
 
   // SSH form + the live-connect surfaces (progress, prompts, host-key trust).
-  // Seeded from the saved target so reopening Settings shows what you connected
-  // with, not a blank form.
+  // Seeded from the source the window is on (else the pre-registry target) so
+  // reopening Settings shows what you connected with, not a blank form.
   const [sshForm, setSshForm] = useState<SshFormState>(() => {
-    const saved = loadGatewayTarget()?.ssh
+    const row = connectionById($activeConnection.get()?.connectionId ?? null)
+    const saved = row?.kind === 'ssh' ? row : loadGatewayTarget()?.ssh
 
     return saved
       ? {
@@ -428,24 +426,14 @@ export function GatewayConfigurator({
         ? 'token'
         : null
 
-  // Every connect from here is a SOFT switch: commit the pending mode, wipe the old
-  // gateway's session state, drop the socket and re-dial in place — no disconnect(),
-  // so $hasConnected stays latched and the shell / Settings / the host popover stay
-  // mounted throughout. Re-throws for the caller's failure toast.
-  const runConnect = async (fn: () => Promise<void>): Promise<void> => {
-    await softSwitchGateway(pendingMode, fn)
-
-    // This is the ONLY surface that initiates a switch, so it is also the only one
-    // that broadcasts it — every other WebView (an Android activity screen, a desktop
-    // pop-out) holds its own socket and would otherwise keep serving the gateway we
-    // just left. Read the target back rather than rebuilding it: the connect helper
-    // persisted it on success, so this is exactly what was dialled.
-    const target = loadGatewayTarget()
-
-    if (target) {
-      broadcastGatewaySwitch(pendingMode, target)
-    }
-
+  // Every connect from here is desktop's apply: save the source the form names,
+  // then the two-phase switch (`selectConnection`) — preflight with the current
+  // source untouched, publish, and the boot hook soft-switches in place, so the
+  // shell / Settings / the host popover stay mounted throughout. The one place a
+  // person presses Connect, so the preflight may ask (a passphrase, a host key, a
+  // login page). Re-throws for the caller's failure toast.
+  const runConnect = async (target: ConnectionTarget, attemptId?: string): Promise<void> => {
+    await applyConnection(target, { allowInteractive: true, attemptId })
     onConnected?.()
   }
 
@@ -460,16 +448,14 @@ export function GatewayConfigurator({
     setLastTest(null)
 
     try {
-      await runConnect(() =>
-        connect({
-          url: trimmedUrl,
-          token: authRequired ? undefined : remoteToken.trim() || undefined,
-          // The one place in the app allowed to open a login page: a person just
-          // pressed Connect. Every other caller leaves this false and surfaces a
-          // Sign in CTA instead of hijacking the webview.
-          allowInteractive: true
-        })
-      )
+      rememberLastUrl(trimmedUrl)
+      await runConnect({
+        authMode: authRequired ? 'oauth' : remoteToken.trim() ? 'token' : undefined,
+        kind: 'remote',
+        // Write-only, and only what was typed: omitted leaves a stored token alone.
+        token: authRequired ? undefined : remoteToken.trim() || undefined,
+        url: trimmedUrl
+      })
       setRemoteToken('')
 
       if (isSettings) {
@@ -486,7 +472,7 @@ export function GatewayConfigurator({
     setBusy(true)
 
     try {
-      await runConnect(() => connectLocal())
+      await runConnect({ kind: 'local' })
 
       if (isSettings) {
         notify({ kind: 'success', title: g.restartingTitle, message: g.restartingMessage })
@@ -503,7 +489,8 @@ export function GatewayConfigurator({
   // the panel renders inline.
   const connectAgent = async (agent: CloudAgent): Promise<void> => {
     try {
-      await runConnect(() => connectCloudAgent(agent))
+      await connectCloudAgent(agent)
+      onConnected?.()
     } catch (err) {
       notifyError(err, g.applyFailed)
     }
@@ -518,13 +505,14 @@ export function GatewayConfigurator({
    * early step — or worse, a passphrase prompt — emitted before the listener
    * exists is simply lost, and the connect then stalls with nothing on screen.
    */
-  const runSsh = async <T,>(operation: (attemptId: string) => Promise<T>): Promise<T> => {
+  const runSsh = async <T,>(operation: (attemptId: string) => Promise<T>, prompts = true): Promise<T> => {
     const attemptId = newAttemptId()
     setSshProgress(null)
 
     const unlisten = await Promise.all([
       onSshProgress(attemptId, progress => setSshProgress(sshStepLabel(progress.step, g))),
-      attachSshPrompts(attemptId)
+      // A Connect's questions are the tunnel's to put on screen (`acquireTunnel`).
+      ...(prompts ? [attachSshPrompts(attemptId)] : [])
     ])
 
     try {
@@ -543,6 +531,13 @@ export function GatewayConfigurator({
   // therefore means "there is none", not "we did not look". Getting that
   // backwards silently wiped a stored key or password every time Connect, Test
   // or "Save for next restart" ran against a freshly opened form.
+  /** The SSH form as a registry row: its dial fields and its write-only secrets. */
+  const sshConnectionTarget = (): ConnectionTarget => {
+    const { port, ...target } = sshTargetFromForm(sshForm)
+
+    return { ...target, ...sshSecretsFromForm(sshForm), kind: 'ssh', port: port ?? undefined }
+  }
+
   const persistSshSecrets = () =>
     mergeSshSecrets({
       passphrase: sshForm.passphrase,
@@ -606,30 +601,27 @@ export function GatewayConfigurator({
 
     try {
       await persistSshSecrets()
-      // Through runConnect like every other mode: an SSH dial is a soft switch too,
-      // so the previous gateway's session rows are wiped rather than left on screen
-      // while the tunnel comes up. runConnect commits pendingMode ('ssh' here).
-      await runConnect(() =>
-        runSsh(attemptId => connectSsh(sshTargetFromForm(sshForm), { attemptId, interactive: true }))
-      )
+      // Through runConnect like every other mode. The tunnel is held before
+      // anything moves, so a dial that fails leaves the current gateway on screen.
+      await runSsh(attemptId => runConnect(sshConnectionTarget(), attemptId), false)
       notify({ kind: 'success', title: g.savedTitle, message: g.savedMessage })
     } catch (err) {
-      // A newer PRIMARY attempt owns this connection and publishes its own
-      // result (MJXHRM-592): nothing here failed, so nothing is said. The quiet
-      // flag says so, not the kind — `superseded` is also a real failure of this
-      // caller's own, and swallowing that one leaves Save silently dead.
-      if (isQuietSshError(err)) {
+      // What the tunnel said, under the copy `selectConnection` threw.
+      const cause = (err as { cause?: { kind?: string; sshKind?: string } } | null)?.cause
+
+      // The person dismissed the question: nothing failed, so nothing is said.
+      if (cause?.kind === 'cancelled') {
         return
       }
 
       // A remote with no Hermes is the one SSH failure we can actually fix, and
       // the user is already authenticated to that machine. Offer the install
       // instead of only reporting the dead end.
-      if (isSshError(err) && err.kind === 'hermes-not-found') {
+      if (cause?.sshKind === 'hermes-not-found' || cause?.kind === 'hermes-not-found') {
         offerSshInstall(trimmedSshHost)
       }
 
-      notifyError(sshErrorMessage(err, g), g.saveFailed)
+      notifyError(err, g.saveFailed)
     } finally {
       setBusy(false)
     }
@@ -696,17 +688,13 @@ export function GatewayConfigurator({
       setGatewayMode(pendingMode)
 
       if (pendingMode === 'local') {
-        saveGatewayTarget({ mode: 'local', profile: null })
+        await saveLaunchTarget({ kind: 'local' })
       } else if (pendingMode === 'remote') {
-        saveGatewayTarget({ mode: 'remote', url: trimmedUrl })
-        const token = remoteToken.trim()
-
-        if (token) {
-          await saveSecrets({ token })
-        }
+        rememberLastUrl(trimmedUrl)
+        await saveLaunchTarget({ kind: 'remote', token: remoteToken.trim() || undefined, url: trimmedUrl })
       } else if (pendingMode === 'ssh') {
-        saveGatewayTarget({ mode: 'ssh', profile: null, ssh: sshTargetFromForm(sshForm) })
         await persistSshSecrets()
+        await saveLaunchTarget(sshConnectionTarget())
       }
 
       notify({ kind: 'success', title: g.savedTitle, message: g.savedMessage })

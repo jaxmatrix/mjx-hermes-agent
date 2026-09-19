@@ -54,12 +54,19 @@ const lastProfiles = vi.hoisted(() => new Map<string, string>())
 // The boot cookie restore, as the bridge waits on it.
 const cookies = vi.hoisted(() => ({ restored: Promise.resolve() }))
 
+// The launch identity `boot.ts` is publishing, likewise.
+const launch = vi.hoisted(() => ({ settled: Promise.resolve() }))
+
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/plugin-os', () => ({ platform: () => 'linux' }))
 vi.mock('@/lib/api', () => ({ api: apiMock }))
 vi.mock('@/lib/auth', () => ({ mintWsTicket: mintTicketMock }))
 vi.mock('@/lib/session-persist', () => ({ sessionCookiesRestored: () => cookies.restored }))
-vi.mock('@/store/active-connection', () => ({ $activeConnection: { get: () => active.current } }))
+vi.mock('@/store/active-connection', () => ({
+  $activeConnection: { get: () => active.current },
+  launchSettled: () => launch.settled,
+  publishActiveConnection: (next: typeof active.current) => void (active.current = next)
+}))
 vi.mock('@/store/connection-tunnels', async () => ({
   $tunnelStatus: (await import('nanostores')).map({}),
   acquireTunnel: acquireMock
@@ -111,6 +118,7 @@ beforeEach(() => {
   rows.clear()
   active.current = null
   cookies.restored = Promise.resolve()
+  launch.settled = Promise.resolve()
   windowProfile.current = null
   lastProfiles.clear()
   $tunnelStatus.set({})
@@ -490,6 +498,38 @@ describe('a local or SSH connection', () => {
     expect(await bridge.getConnection()).toMatchObject({ connectionId: 'local', mode: 'local' })
   })
 
+  // A launch publishes a tunnelled primary undialled: its base is a loopback
+  // port that exists only once the tunnel does, and REST on the active path
+  // reads it off the identity.
+  it("gives the primary's identity the base its tunnel dialled", async () => {
+    activate('box', { authMode: 'token', baseUrl: '', mode: 'ssh' })
+
+    await bridge.getConnection()
+
+    expect(active.current).toMatchObject({
+      connection: { authMode: 'token', baseUrl: 'http://127.0.0.1:4100', mode: 'ssh' },
+      connectionId: 'box'
+    })
+  })
+
+  it('leaves the identity alone when the window re-homed while the tunnel dialled', async () => {
+    activate('box', { baseUrl: '', mode: 'ssh' })
+    acquireMock.mockImplementationOnce(async (connectionId: string) => {
+      activate('home')
+
+      return {
+        baseUrl: () => 'http://127.0.0.1:4100',
+        connectionId,
+        release: vi.fn(),
+        wsUrl: () => 'ws://127.0.0.1:4100/api/ws'
+      }
+    })
+
+    await bridge.getConnection()
+
+    expect(active.current).toMatchObject({ connection: { baseUrl: 'https://live.test' }, connectionId: 'home' })
+  })
+
   it('reports a tunnel failure as copy, never as the text Rust gave', async () => {
     activate('box')
     acquireMock.mockRejectedValueOnce({ kind: 'credentials-needed', message: 'me@box.internal refused', terminal: true })
@@ -593,6 +633,16 @@ describe('a REST call', () => {
     expect(acquireMock).not.toHaveBeenCalled()
   })
 
+  it("holds the primary's own tunnel while its base is not known yet", async () => {
+    activate('box', { baseUrl: '', mode: 'ssh' })
+
+    await call(null)
+
+    expect(acquireMock).toHaveBeenCalledWith('box', { label: 'Box' })
+    expect(apiMock).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'box' }))
+    expect(leases[0].release).toHaveBeenCalledTimes(1)
+  })
+
   it('names another connection that has a URL of its own', async () => {
     activate('box')
 
@@ -656,6 +706,24 @@ describe('the boot cookie restore', () => {
 
     await expect(dial).resolves.toMatchObject({ connectionId: 'home' })
     await expect(rest).resolves.toEqual({ ok: true })
+  })
+})
+
+describe('the launch identity', () => {
+  it('is waited on, so the boot hook\'s first ask does not meet the null before it', async () => {
+    let finish = (): void => {}
+
+    launch.settled = new Promise<void>(resolve => (finish = resolve))
+
+    const dial = bridge.getConnection()
+
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(invokeMock).not.toHaveBeenCalled()
+
+    activate('home')
+    finish()
+
+    await expect(dial).resolves.toMatchObject({ connectionId: 'home' })
   })
 })
 

@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { confirm, connectLocal, notify, requestGateway, restartLocalBackend } = vi.hoisted(() => ({
+const { confirm, notify, requestGateway, restartLocalBackend } = vi.hoisted(() => ({
   confirm: vi.fn(),
-  connectLocal: vi.fn(async () => {}),
   notify: vi.fn(),
   requestGateway: vi.fn(),
   restartLocalBackend: vi.fn(async () => ({}))
@@ -12,18 +11,18 @@ vi.mock('@/store/confirm', () => ({ confirm }))
 vi.mock('@/store/connection', async () => {
   const { atom } = await import('@/store/atom')
 
-  return { $connection: atom<unknown>({ baseUrl: 'http://127.0.0.1:1', mode: 'local' }), connectLocal }
+  return { $connection: atom<unknown>({ baseUrl: 'http://127.0.0.1:1', mode: 'local' }) }
 })
 vi.mock('@/store/gateway-client', () => ({ requestGateway }))
 vi.mock('@/store/local-backend', () => ({ restartLocalBackend }))
 vi.mock('@/store/notifications', () => ({ notify }))
 
-import { $gatewayMode } from '@/store/gateway-switch'
+import { $gatewayMode } from '@/store/gateway-mode'
 
 import { announceProfileChatScope, restartLocalBackendConfirmed } from './profile-chat-scope'
 
 beforeEach(() => {
-  for (const spy of [confirm, connectLocal, notify, requestGateway, restartLocalBackend]) {
+  for (const spy of [confirm, notify, requestGateway, restartLocalBackend]) {
     spy.mockClear()
   }
 })
@@ -60,7 +59,7 @@ describe('Restart backend', () => {
     })
     confirm.mockResolvedValue(false)
 
-    await expect(restartLocalBackendConfirmed('work')).resolves.toBe(false)
+    await expect(restartLocalBackendConfirmed()).resolves.toBe(false)
 
     expect(requestGateway).toHaveBeenCalledWith('session.active_list', {})
     expect(confirm).toHaveBeenCalledTimes(1)
@@ -69,20 +68,20 @@ describe('Restart backend', () => {
     expect(restartLocalBackend).not.toHaveBeenCalled()
   })
 
-  it('restarts and reconnects once confirmed', async () => {
+  // No reconnect of its own: the fold's primary socket follows its tunnel lease.
+  it('restarts once confirmed', async () => {
     requestGateway.mockResolvedValue({ sessions: [{ status: 'working', title: 'Release notes' }] })
     confirm.mockResolvedValue(true)
 
-    await expect(restartLocalBackendConfirmed('work')).resolves.toBe(true)
+    await expect(restartLocalBackendConfirmed()).resolves.toBe(true)
 
     expect(restartLocalBackend).toHaveBeenCalledTimes(1)
-    expect(connectLocal).toHaveBeenCalledWith('work')
   })
 
   it('restarts without asking when nothing is live', async () => {
     requestGateway.mockResolvedValue({ sessions: [{ status: 'idle', title: 'Old chat' }] })
 
-    await restartLocalBackendConfirmed(null)
+    await restartLocalBackendConfirmed()
 
     expect(confirm).not.toHaveBeenCalled()
     expect(restartLocalBackend).toHaveBeenCalledTimes(1)
