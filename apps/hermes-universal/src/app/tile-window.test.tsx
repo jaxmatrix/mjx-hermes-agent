@@ -30,7 +30,6 @@ vi.mock('@/store/notifications', async importActual => ({
   ...(await importActual<typeof NotificationsModule>()),
   notify: vi.fn()
 }))
-vi.mock('@/store/gateway-soft-switch', () => ({ sessionMissingFromCurrentGateway: vi.fn() }))
 // Stubbed: the real viewer drags in shiki, DOMPurify and the copy button, none of
 // which this file is about. What IS about this file is whether an artifact surface
 // is MOUNTED here at all — the overlay wiring around the stub stays real.
@@ -44,16 +43,16 @@ vi.mock('@/store/session-lifecycle', async importActual => ({
   ...(await importActual<typeof SessionModule>()),
   newSession: vi.fn(),
   openSession: vi.fn().mockResolvedValue(undefined),
-  refreshSessions: vi.fn().mockResolvedValue(undefined)
+  refreshSessions: vi.fn().mockResolvedValue(undefined),
+  sessionMissingFromCurrentGateway: vi.fn()
 }))
 
 import { clearArtifactRegistry, openArtifact, upsertArtifact } from '@/store/artifacts'
 import { $connectionPhase } from '@/store/connection'
-import { sessionMissingFromCurrentGateway } from '@/store/gateway-soft-switch'
 import { $gatewaySwitching } from '@/store/gateway-switch'
 import { notify } from '@/store/notifications'
 import { $activePreviewPath, $previewTabs, closePreviewTab, setPreviewTarget } from '@/store/preview'
-import { newSession, openSession } from '@/store/session-lifecycle'
+import { newSession, openSession, sessionMissingFromCurrentGateway } from '@/store/session-lifecycle'
 
 import { TileWindowRoot } from './tile-window'
 

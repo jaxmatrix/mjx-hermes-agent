@@ -126,7 +126,7 @@ describe('the gateway picker step', () => {
 
     expect(screen.getByText('Hermes Cloud')).toBeInTheDocument()
     expect(screen.getByText('Remote gateway')).toBeInTheDocument()
-    expect(screen.getByText('SSH')).toBeInTheDocument()
+    expect(screen.getByText('Connect via SSH')).toBeInTheDocument()
     // Nothing is configured until a gateway is picked.
     expect(screen.queryByRole('button', { name: 'Save and reconnect' })).not.toBeInTheDocument()
   })
@@ -166,14 +166,14 @@ describe('the configure step', () => {
   it('goes back to the picker with the selection intact', async () => {
     await renderAtPicker()
 
-    fireEvent.click(pickGateway('SSH'))
+    fireEvent.click(pickGateway('Connect via SSH'))
     fireEvent.click(screen.getByRole('button', { name: 'Back' }))
 
     expect(await screen.findByText('Choose a gateway')).toBeInTheDocument()
 
     // Back rewinds the wizard only — the pending selection survives, so
     // returning lands on SSH rather than resetting to the persisted default.
-    fireEvent.click(pickGateway('SSH'))
+    fireEvent.click(pickGateway('Connect via SSH'))
     expect(screen.getByText('Host')).toBeInTheDocument()
   })
 })

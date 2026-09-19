@@ -28,7 +28,16 @@ const { acquireMock, active, apiMock, invokeMock, leases, mintTicketMock, rows, 
         wsUrl: () => 'ws://127.0.0.1:4100/api/ws'
       }
     }),
-    active: { current: null as null | { connection: Record<string, unknown>; connectionId: string } },
+    active: {
+      current: null as null | {
+        connection: Record<string, unknown>
+        connectionId: string
+        kind?: string
+        profile: string
+      },
+      /** Runs after each read of the active connection: a re-home mid-answer. */
+      afterRead: null as (() => void) | null
+    },
     invokeMock: vi.fn(async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
       if (command !== 'connections_resolve') {
         return undefined
@@ -48,28 +57,72 @@ const { acquireMock, active, apiMock, invokeMock, leases, mintTicketMock, rows, 
   }
 })
 
+// The registry store's per-connection profile memory.
+const lastProfiles = vi.hoisted(() => new Map<string, string>())
+
+// The boot cookie restore, as the bridge waits on it.
+const cookies = vi.hoisted(() => ({ restored: Promise.resolve() }))
+
+// The launch identity `boot.ts` is publishing, likewise.
+const launch = vi.hoisted(() => ({ settled: Promise.resolve() }))
+
+// A gateway's public status probe, the write-back of what it proved, and the
+// socket seam's word that a gateway refused a connection's socket.
+const gate = vi.hoisted(() => ({
+  correct: vi.fn(async (_connectionId: string, _authMode: string): Promise<boolean> => true),
+  probe: vi.fn(async (_base: string): Promise<{ auth_required?: boolean }> => ({ auth_required: false })),
+  refused: [] as ((connectionId: string) => void)[]
+}))
+
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/plugin-os', () => ({ platform: () => 'linux' }))
 vi.mock('@/lib/api', () => ({ api: apiMock }))
 vi.mock('@/lib/auth', () => ({ mintWsTicket: mintTicketMock }))
-vi.mock('@/store/active-connection', () => ({ $activeConnection: { get: () => active.current } }))
-vi.mock('@/store/connection-tunnels', () => ({ acquireTunnel: acquireMock }))
-// The registry store's rows are `connections_resolve`'s, with the id and a `url`.
+vi.mock('@/lib/session-persist', () => ({ sessionCookiesRestored: () => cookies.restored }))
+vi.mock('@/store/active-connection', () => ({
+  $activeConnection: {
+    get: () => {
+      const read = active.current
+
+      active.afterRead?.()
+
+      return read
+    }
+  },
+  launchSettled: () => launch.settled,
+  publishActiveConnection: (next: typeof active.current) => void (active.current = next)
+}))
+vi.mock('@/store/connection', () => ({ probeStatus: gate.probe }))
+vi.mock('@/store/connection-tunnels', async () => ({
+  $tunnelStatus: (await import('nanostores')).map({}),
+  acquireTunnel: acquireMock
+}))
+// The registry store's rows are `connections_resolve`'s, with the id and a `url`,
+// and its per-source profile memory.
 vi.mock('@/store/connections', () => ({
   connectionById: (id: string) => {
     const row = rows.get(id)
 
-    return row && { ...row, id, url: row.baseUrl }
-  }
+    return row && { ...row, hasToken: row.tokenAttached === true, id, url: row.baseUrl }
+  },
+  correctAuthMode: gate.correct,
+  rememberProfile: (id: string, profile: string) => void lastProfiles.set(id, profile)
 }))
 vi.mock('@/store/windows', () => ({ windowProfileOverride: () => windowProfile.current }))
-vi.mock('@/transport/gateway-socket', () => ({ recordGatewayMint: vi.fn() }))
+vi.mock('@/transport/gateway-socket', () => ({
+  onGatewayRefused: (listener: (connectionId: string) => void) => void gate.refused.push(listener),
+  recordGatewayMint: vi.fn()
+}))
 
 import { GatewayReauthRequiredError } from '@/gateway'
 import { TRANSLATIONS } from '@/i18n/catalog'
+import { $tunnelStatus, type TunnelStatus } from '@/store/connection-tunnels'
+import { deferred } from '@/test/deferred'
+import { profileScoped, socketProfile } from '@/transport/gateway-profile'
 import { recordGatewayMint } from '@/transport/gateway-socket'
 
-import { connectionBridge as bridge } from './connections'
+import { emitConnectionApplied } from './connection-applied'
+import { __testing, connectionBridge as bridge, NeedsUnlockError, tunnelBootProgress } from './connections'
 
 import { installHermesDesktopBridge } from '.'
 
@@ -79,18 +132,37 @@ function mintedFor(wsUrl: string) {
   return recorded.mock.calls.find(([url]) => url === wsUrl)?.[1]
 }
 
-function activate(connectionId: string, connection: Record<string, unknown> = {}): void {
-  active.current = { connection: { authMode: 'none', baseUrl: 'https://live.test', ...connection }, connectionId }
+/** The identity the store published: the profile is the one it was BUILT with. */
+function activate(connectionId: string, connection: Record<string, unknown> = {}, profile = 'default'): void {
+  active.current = {
+    connection: { authMode: 'none', baseUrl: 'https://live.test', ...connection },
+    connectionId,
+    profile
+  }
+}
+
+/** On the gated cloud row: the one kind of session that IS a cookie. */
+function activateCloud(): void {
+  activate('cloud', { authMode: 'oauth', baseUrl: 'https://cloud.test', mode: 'cloud' })
+  active.current = active.current && { ...active.current, kind: 'cloud' }
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  __testing.reset()
   acquireMock.mockReset()
   mintTicketMock.mockReset()
   leases.length = 0
   rows.clear()
   active.current = null
+  active.afterRead = null
+  cookies.restored = Promise.resolve()
+  launch.settled = Promise.resolve()
   windowProfile.current = null
+  lastProfiles.clear()
+  $tunnelStatus.set({})
+  gate.probe.mockImplementation(async () => ({ auth_required: false }))
+  gate.correct.mockImplementation(async () => true)
 
   rows.set('home', { authMode: 'token', baseUrl: 'https://home.test', kind: 'remote', label: 'Home' })
   rows.set('cloud', { authMode: 'oauth', baseUrl: 'https://cloud.test', kind: 'cloud', label: 'Cloud' })
@@ -121,7 +193,11 @@ describe('the primary', () => {
   it("serves another profile on its own socket: 'sharedPrimary', never a second dial", async () => {
     activate('home')
 
-    expect(await bridge.getConnection('work')).toMatchObject({ connectionId: 'home', profile: 'work', sharedPrimary: true })
+    expect(await bridge.getConnection('work')).toMatchObject({
+      connectionId: 'home',
+      profile: 'work',
+      sharedPrimary: true
+    })
     expect((await bridge.getConnection('default')).sharedPrimary).toBeUndefined()
   })
 
@@ -138,11 +214,18 @@ describe('the primary', () => {
 
   it("launches as 'default', so an RPC naming no profile is already correct", async () => {
     expect(await bridge.profile.get()).toEqual({ profile: 'default' })
+
+    activate('home')
+
+    expect(await bridge.profile.get()).toEqual({ profile: 'default' })
   })
 
   it('rejects when the window is on no connection', async () => {
     await expect(bridge.getConnection()).rejects.toThrow('Not connected to a Hermes backend')
-    expect(await bridge.getBootProgress()).toMatchObject({ error: 'Not connected to a Hermes backend', retryable: false })
+    expect(await bridge.getBootProgress()).toMatchObject({
+      error: 'Not connected to a Hermes backend',
+      retryable: false
+    })
   })
 
   it('dials its live descriptor while the registry has no row for it yet', async () => {
@@ -159,6 +242,247 @@ describe('the primary', () => {
     await bridge.getConnection()
 
     expect(await bridge.getBootProgress()).toMatchObject({ error: null, phase: 'backend.ready', running: true })
+  })
+})
+
+describe("the primary's profile", () => {
+  // `session.create` declares `profile` in the wire contract.
+  const stamped = (wsUrl: string) => profileScoped('session.create', {}, socketProfile(wsUrl))
+
+  // ONE derivation: the store builds the identity with the profile the
+  // connection was last used on, and the bridge reads the identity.
+  it("is the one the window's identity names, and nothing else", async () => {
+    activate('home', {}, 'work')
+
+    expect(await bridge.profile.get()).toEqual({ profile: 'work' })
+
+    activate('cloud')
+
+    expect(await bridge.profile.get()).toEqual({ profile: 'default' })
+  })
+
+  it('remembers a profile in the per-connection memory the next identity is built from', async () => {
+    activate('home')
+
+    expect(await bridge.profile.remember('work')).toEqual({ profile: 'work' })
+    expect(lastProfiles.get('home')).toBe('work')
+  })
+
+  // The registry files the primary under the adopted profile and sends that
+  // profile's RPCs bare (`gatewayForProfile` → `scopeProfile: false`), so the
+  // socket the hook dials has to name it, or they would run as `default`.
+  it('is what the socket the boot hook dials stamps on a bare RPC', async () => {
+    activate('home', {}, 'work')
+
+    const { profile } = await bridge.profile.get()
+    const conn = await bridge.getConnection()
+    const wsUrl = await resolveGatewayWsUrl(bridge, conn)
+
+    expect(profile).toBe('work')
+    expect(conn).toMatchObject({ profile: 'work', sharedPrimary: true, wsUrl: 'wss://home.test/api/ws?profile=work' })
+    expect(wsUrl).toBe(conn.wsUrl)
+    expect(stamped(wsUrl)).toEqual({ profile })
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl })
+    expect(mintedFor(wsUrl)).toEqual({ connectionId: 'home' })
+  })
+
+  it("serves 'default' as a request scope on a primary that serves another", async () => {
+    activate('home', {}, 'work')
+
+    expect(await bridge.getConnection('default')).toMatchObject({ profile: 'default', sharedPrimary: true })
+  })
+
+  it('holds for the life of the identity, and moves when a re-home publishes another', async () => {
+    activate('home', {}, 'work')
+    await bridge.getConnection()
+
+    // The rail moved on mid-life: the wake reconnect still dials what the
+    // registry filed the primary under.
+    await bridge.profile.remember('play')
+
+    expect(socketProfile((await bridge.getConnection()).wsUrl)).toBe('work')
+
+    activate('home', {}, 'play')
+    emitConnectionApplied()
+
+    expect(socketProfile((await bridge.getConnection()).wsUrl)).toBe('play')
+  })
+
+  it('gives way to the profile a window was opened on', async () => {
+    windowProfile.current = 'pinned'
+    activate('home', {}, 'work')
+
+    expect(await bridge.profile.get()).toEqual({ profile: 'pinned' })
+    expect(stamped((await bridge.getConnection()).wsUrl)).toEqual({ profile: 'pinned' })
+  })
+
+  // A re-home between two reads of the active connection was one connection's
+  // dial under another's profile.
+  it("reads the window's connection once, so a dial is never served under another's profile", async () => {
+    activate('home', {}, 'work')
+    // The window re-homes right after the bridge's first read.
+    active.afterRead = () => activate('cloud', {}, 'play')
+
+    expect(await bridge.getConnection()).toMatchObject({ baseUrl: 'https://home.test', profile: 'work' })
+  })
+})
+
+describe('a connection apply', () => {
+  it('reaches its subscribers with no payload, until they leave', () => {
+    const callback = vi.fn()
+    const off = bridge.onConnectionApplied(callback)
+
+    emitConnectionApplied()
+
+    expect(callback.mock.calls).toEqual([[]])
+
+    off()
+    emitConnectionApplied()
+
+    expect(callback).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('boot progress', () => {
+  const status = (partial: Partial<TunnelStatus>): TunnelStatus => ({
+    connectionId: 'box',
+    generation: 0,
+    phase: 'connecting',
+    terminal: false,
+    ...partial
+  })
+
+  const gateway = TRANSLATIONS.en.settings.gateway
+  const steps = TRANSLATIONS.en.boot.steps
+
+  it.each([
+    [
+      'a dial that has not said where it is',
+      status({}),
+      { error: null, message: steps.startingDesktopConnection, phase: 'backend.resolve', progress: 4, running: true }
+    ],
+    [
+      'an SSH step',
+      status({ fraction: 0.15, step: 'authenticating' }),
+      { error: null, message: gateway.sshStepAuthenticating, phase: 'backend.resolve', progress: 18, running: true }
+    ],
+    [
+      'the last SSH step, still short of ready',
+      status({ fraction: 0.95, step: 'verifying' }),
+      { error: null, message: gateway.sshStepVerifying, phase: 'backend.resolve', progress: 90, running: true }
+    ],
+    [
+      'a redial',
+      status({ phase: 'retrying' }),
+      { error: null, message: steps.retryingRemoteBackend, phase: 'backend.resolve', progress: 4, running: true }
+    ],
+    [
+      'a tunnel that is up',
+      status({ phase: 'ready' }),
+      { error: null, phase: 'backend.ready', progress: 94, running: true }
+    ],
+    [
+      'a failure retrying can fix',
+      status({ errorKind: 'transient', message: 'box:22 unreachable', phase: 'failed' }),
+      { error: gateway.sshErrUnknown, phase: 'backend.error', retryable: true, running: false }
+    ],
+    [
+      'a changed host key',
+      status({ errorKind: 'host-key-changed', message: 'ssh-keygen -R box', phase: 'failed', terminal: true }),
+      { error: gateway.sshErrHostKey, phase: 'backend.error', retryable: false, running: false }
+    ],
+    [
+      'a credential only a person has',
+      status({ errorKind: 'credentials-needed', phase: 'failed', terminal: true }),
+      { error: gateway.sshErrAuth, phase: 'backend.error', retryable: false, running: false }
+    ],
+    [
+      'a locked device',
+      status({ errorKind: 'locked', phase: 'failed', terminal: true }),
+      { error: gateway.sshErrLocked, phase: 'backend.error', retryable: false, running: false }
+    ]
+  ])('maps %s', (_name, from, to) => {
+    expect(tunnelBootProgress(from)).toMatchObject({ fakeMode: false, ...to })
+  })
+
+  it('has nothing to say about a slot that left', () => {
+    expect(tunnelBootProgress(status({ phase: 'closed' }))).toBeNull()
+  })
+
+  it("pushes the active connection's tunnel, and nobody else's, until the hook leaves", async () => {
+    const callback = vi.fn()
+
+    activate('box')
+
+    const off = bridge.onBootProgress(callback)
+
+    // The watch attaches behind two dynamic imports.
+    await vi.waitFor(() => expect($tunnelStatus.lc).toBe(1))
+
+    $tunnelStatus.setKey('local', status({ connectionId: 'local' }))
+
+    expect(callback).not.toHaveBeenCalled()
+
+    $tunnelStatus.setKey('box', status({ fraction: 0.05, step: 'connecting' }))
+
+    expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'backend.resolve', progress: 9 }))
+    expect(await bridge.getBootProgress()).toBe(callback.mock.lastCall?.[0])
+
+    off()
+    await vi.waitFor(() => expect($tunnelStatus.lc).toBe(0))
+  })
+
+  it('starts the watch again for the next listener when it failed to start', async () => {
+    activate('box')
+
+    const listen = vi.spyOn($tunnelStatus, 'listen').mockImplementationOnce(() => {
+      throw new Error('store failed to load')
+    })
+
+    const off = bridge.onBootProgress(vi.fn())
+
+    await vi.waitFor(() => expect(listen).toHaveBeenCalledTimes(1))
+    // The rejection is handled, and forgotten — with the first listener still on.
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    const offAgain = bridge.onBootProgress(vi.fn())
+
+    await vi.waitFor(() => expect($tunnelStatus.lc).toBe(1))
+
+    off()
+    offAgain()
+    await vi.waitFor(() => expect($tunnelStatus.lc).toBe(0))
+    listen.mockRestore()
+  })
+
+  // Rust refuses the background dial of a tunnel that needs a person with the
+  // error and the status of the dial that failed. Either way the hook reads a
+  // boot error it must not retry.
+  it('never lets the boot hook retry a tunnel that needs a person', async () => {
+    const callback = vi.fn()
+    const refused = { kind: 'host-key-changed', message: 'ssh-keygen -R box', terminal: true }
+
+    activate('box')
+    bridge.onBootProgress(callback)
+    await vi.waitFor(() => expect($tunnelStatus.lc).toBe(1))
+
+    acquireMock.mockImplementation(async () => {
+      $tunnelStatus.setKey(
+        'box',
+        status({ errorKind: refused.kind, message: refused.message, phase: 'failed', terminal: true })
+      )
+
+      throw refused
+    })
+
+    await expect(bridge.getConnection()).rejects.toThrow(gateway.sshErrHostKey)
+
+    for (const [pushed] of callback.mock.calls) {
+      expect(pushed).toMatchObject({ error: gateway.sshErrHostKey, retryable: false, running: false })
+    }
+
+    expect(callback).toHaveBeenCalledTimes(2)
+    expect(await bridge.getBootProgress()).toMatchObject({ retryable: false })
   })
 })
 
@@ -254,9 +578,45 @@ describe('a local or SSH connection', () => {
     expect(await bridge.getConnection()).toMatchObject({ connectionId: 'local', mode: 'local' })
   })
 
+  // A launch publishes a tunnelled primary undialled: its base is a loopback
+  // port that exists only once the tunnel does, and REST on the active path
+  // reads it off the identity.
+  it("gives the primary's identity the base its tunnel dialled", async () => {
+    activate('box', { authMode: 'token', baseUrl: '', mode: 'ssh' })
+
+    await bridge.getConnection()
+
+    expect(active.current).toMatchObject({
+      connection: { authMode: 'token', baseUrl: 'http://127.0.0.1:4100', mode: 'ssh' },
+      connectionId: 'box'
+    })
+  })
+
+  it('leaves the identity alone when the window re-homed while the tunnel dialled', async () => {
+    activate('box', { baseUrl: '', mode: 'ssh' })
+    acquireMock.mockImplementationOnce(async (connectionId: string) => {
+      activate('home')
+
+      return {
+        baseUrl: () => 'http://127.0.0.1:4100',
+        connectionId,
+        release: vi.fn(),
+        wsUrl: () => 'ws://127.0.0.1:4100/api/ws'
+      }
+    })
+
+    await bridge.getConnection()
+
+    expect(active.current).toMatchObject({ connection: { baseUrl: 'https://live.test' }, connectionId: 'home' })
+  })
+
   it('reports a tunnel failure as copy, never as the text Rust gave', async () => {
     activate('box')
-    acquireMock.mockRejectedValueOnce({ kind: 'credentials-needed', message: 'me@box.internal refused', terminal: true })
+    acquireMock.mockRejectedValueOnce({
+      kind: 'credentials-needed',
+      message: 'me@box.internal refused',
+      terminal: true
+    })
 
     await expect(bridge.getConnection()).rejects.toThrow(TRANSLATIONS.en.settings.gateway.sshErrAuth)
     expect(await bridge.getBootProgress()).toMatchObject({ retryable: false })
@@ -291,6 +651,9 @@ describe('a fresh WebSocket URL', () => {
       wsUrl: 'wss://cloud.test/api/ws?ticket=TICKET&profile=work'
     })
     expect(mintedFor('wss://cloud.test/api/ws?ticket=TICKET&profile=work')).toEqual({ connectionId: 'cloud' })
+    // ONE entry per mint, under the URL that is dialled: the bare ticketed URL
+    // is never dialled for another profile.
+    expect(mintedFor('wss://cloud.test/api/ws?ticket=TICKET')).toBeUndefined()
   })
 
   it('carries a single-use ticket for a gated connection, recorded like any other', async () => {
@@ -327,7 +690,10 @@ describe('a fresh WebSocket URL', () => {
     activate('cloud')
     mintTicketMock.mockRejectedValue('error sending request for url (https://cloud.test/api/auth/ws-ticket)')
 
-    expect(await bridge.getGatewayWsUrl()).toEqual({ error: 'Could not refresh the gateway WebSocket ticket', ok: false })
+    expect(await bridge.getGatewayWsUrl()).toEqual({
+      error: 'Could not refresh the gateway WebSocket ticket',
+      ok: false
+    })
   })
 
   it('answers a removed connection rather than rejecting', async () => {
@@ -337,6 +703,134 @@ describe('a fresh WebSocket URL', () => {
       error: 'No connection with id "gone"',
       ok: false
     })
+  })
+})
+
+// A row seeded from the pre-registry target is stamped `none` whatever its
+// gateway is, and the launch no longer negotiates: a gated gateway's upgraded
+// user was dialled ungated, straight into a 4401.
+describe("a URL row whose 'none' is only a stamp", () => {
+  const legacy = (facts: Record<string, unknown> = {}) =>
+    rows.set('legacy', { authMode: 'none', baseUrl: 'https://legacy.test', kind: 'remote', label: 'Legacy', ...facts })
+
+  /** What the correction does in Rust: the row says so from then on. */
+  const restamping = () =>
+    gate.correct.mockImplementation(async (id, authMode) => {
+      rows.set(id, { ...rows.get(id), authMode })
+
+      return true
+    })
+
+  beforeEach(() => {
+    legacy()
+    activate('legacy', { baseUrl: 'https://legacy.test' })
+    active.current = active.current && { ...active.current, kind: 'remote' }
+  })
+
+  it('asks the gateway, and mints a ticket when it turns out to be gated and a session is held', async () => {
+    gate.probe.mockResolvedValue({ auth_required: true })
+    restamping()
+
+    expect((await bridge.getConnection()).authMode).toBe('oauth')
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl: 'wss://legacy.test/api/ws?ticket=TICKET' })
+    expect(gate.probe).toHaveBeenCalledExactlyOnceWith('https://legacy.test')
+  })
+
+  it("answers 'needsOauthLogin' when it is gated and no session is held", async () => {
+    gate.probe.mockResolvedValue({ auth_required: true })
+    mintTicketMock.mockRejectedValue(new GatewayReauthRequiredError('Session expired — sign in again'))
+
+    expect(await bridge.getGatewayWsUrl()).toMatchObject({ needsOauthLogin: true, ok: false })
+    // …as the typed error desktop's hook turns into its sign-in surface.
+    const failure = await resolveGatewayWsUrl(bridge, await bridge.getConnection()).catch((error: unknown) => error)
+
+    expect(isGatewayReauthRequired(failure)).toBe(true)
+  })
+
+  it('re-stamps the row ONCE, and the re-dial that causes asks nothing and saves nothing', async () => {
+    gate.probe.mockResolvedValue({ auth_required: true })
+    restamping()
+
+    // Two dials at once (the hook's descriptor and its mint) share one probe.
+    // Started a turn apart: two dynamic imports of a mocked module racing each
+    // other can hand one of them the REAL module, here and in every test after.
+    const probed = deferred<{ auth_required: boolean }>()
+    const turn = () => new Promise(resolve => setTimeout(resolve, 0))
+
+    gate.probe.mockReturnValue(probed.promise)
+
+    const descriptor = bridge.getConnection()
+
+    await turn()
+
+    const minted = bridge.getGatewayWsUrl()
+
+    await turn()
+    probed.resolve({ auth_required: true })
+
+    expect((await descriptor).authMode).toBe('oauth')
+    expect(await minted).toEqual({ ok: true, wsUrl: 'wss://legacy.test/api/ws?ticket=TICKET' })
+    expect(gate.correct).toHaveBeenCalledExactlyOnceWith('legacy', 'oauth')
+
+    // `authMode` is a dial field: the save re-dials every window on the row.
+    emitConnectionApplied()
+    await bridge.getConnection()
+    await bridge.getGatewayWsUrl()
+
+    expect(gate.probe).toHaveBeenCalledTimes(1)
+    expect(gate.correct).toHaveBeenCalledTimes(1)
+  })
+
+  it('still dials gated when the list could not be written, without trying again', async () => {
+    gate.probe.mockResolvedValue({ auth_required: true })
+    gate.correct.mockRejectedValue(new Error('this gateway list was written by a newer version of Hermes'))
+
+    expect((await bridge.getConnection()).authMode).toBe('oauth')
+    expect((await bridge.getConnection()).authMode).toBe('oauth')
+    expect(gate.probe).toHaveBeenCalledTimes(1)
+    expect(gate.correct).toHaveBeenCalledTimes(1)
+  })
+
+  it('dials an open gateway as the row says, asks once, and saves nothing', async () => {
+    expect((await bridge.getConnection()).authMode).toBe('token')
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl: 'wss://legacy.test/api/ws' })
+    expect(gate.probe).toHaveBeenCalledTimes(1)
+    expect(gate.correct).not.toHaveBeenCalled()
+    expect(mintTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('lets the dial proceed when the probe fails, and does not remember offline as open', async () => {
+    gate.probe.mockRejectedValueOnce('error sending request for url (https://legacy.test/api/status)')
+
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl: 'wss://legacy.test/api/ws' })
+
+    gate.probe.mockResolvedValue({ auth_required: true })
+
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl: 'wss://legacy.test/api/ws?ticket=TICKET' })
+    expect(gate.probe).toHaveBeenCalledTimes(2)
+  })
+
+  it('asks again after the gateway refuses a socket it had proven open', async () => {
+    await bridge.getConnection()
+    await bridge.getConnection()
+    expect(gate.probe).toHaveBeenCalledTimes(1)
+
+    // The operator turned the gate on: the ungated socket closes 4401.
+    gate.probe.mockResolvedValue({ auth_required: true })
+    gate.refused.forEach(listener => listener('legacy'))
+
+    expect(await bridge.getGatewayWsUrl()).toEqual({ ok: true, wsUrl: 'wss://legacy.test/api/ws?ticket=TICKET' })
+    expect(gate.correct).toHaveBeenCalledExactlyOnceWith('legacy', 'oauth')
+  })
+
+  it('takes a row that names a token, or holds one, at its word', async () => {
+    legacy({ tokenAttached: true })
+    await bridge.getConnection()
+
+    activate('home')
+    await bridge.getConnection()
+
+    expect(gate.probe).not.toHaveBeenCalled()
   })
 })
 
@@ -355,6 +849,16 @@ describe('a REST call', () => {
     expect(apiMock.mock.calls.map(([request]) => request.connectionId)).toEqual([undefined, undefined])
     expect(apiMock).toHaveBeenCalledWith(expect.objectContaining({ path: '/api/status', profile: 'work' }))
     expect(acquireMock).not.toHaveBeenCalled()
+  })
+
+  it("holds the primary's own tunnel while its base is not known yet", async () => {
+    activate('box', { baseUrl: '', mode: 'ssh' })
+
+    await call(null)
+
+    expect(acquireMock).toHaveBeenCalledWith('box', { label: 'Box' })
+    expect(apiMock).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'box' }))
+    expect(leases[0].release).toHaveBeenCalledTimes(1)
   })
 
   it('names another connection that has a URL of its own', async () => {
@@ -400,11 +904,195 @@ describe('a REST call', () => {
   })
 })
 
+describe('the boot cookie restore', () => {
+  it('is waited on by a dial and by a REST call of a cookie-backed connection, so neither meets an empty jar', async () => {
+    let finish = (): void => {}
+    let dialled = false
+
+    cookies.restored = new Promise<void>(resolve => (finish = resolve))
+    activateCloud()
+
+    installHermesDesktopBridge()
+
+    const dial = bridge.getConnection()
+    const rest = window.hermesDesktop.api({ path: '/api/status' })
+    const other = window.hermesDesktop.api({ connectionId: 'cloud-2', path: '/api/status' })
+
+    rows.set('cloud-2', { authMode: 'oauth', baseUrl: 'https://cloud-2.test', kind: 'remote', label: 'Gated' })
+    void dial.then(() => (dialled = true))
+
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(dialled).toBe(false)
+    expect(apiMock).not.toHaveBeenCalled()
+
+    finish()
+
+    await expect(dial).resolves.toMatchObject({ connectionId: 'cloud' })
+    await expect(rest).resolves.toEqual({ ok: true })
+    await expect(other).resolves.toEqual({ ok: true })
+  })
+
+  // N3: a locked store must not stand between a person and a connection that
+  // carries no cookie — a tunnel, an open gateway, a token Rust attaches itself.
+  it('is not waited on by a connection that needs no cookie', async () => {
+    cookies.restored = new Promise<void>(() => {})
+    rows.set('open', { authMode: 'none', baseUrl: 'https://open.test', kind: 'remote', label: 'Open' })
+    installHermesDesktopBridge()
+
+    for (const id of ['home', 'open', 'box', 'local']) {
+      activate(id, { authMode: id === 'open' ? 'none' : 'token', baseUrl: id === 'box' || id === 'local' ? '' : 'x' })
+
+      await expect(bridge.getConnection()).resolves.toMatchObject({ connectionId: id })
+      await expect(window.hermesDesktop.api({ path: '/api/status' })).resolves.toEqual({ ok: true })
+    }
+
+    activateCloud()
+
+    await expect(bridge.getConnectionFor({ connectionId: 'home', profile: null })).resolves.toMatchObject({
+      connectionId: 'home'
+    })
+    await expect(window.hermesDesktop.api({ connectionId: 'box', path: '/api/status' })).resolves.toEqual({ ok: true })
+  })
+
+  // …but a URL row whose `none` is only a stamp may yet turn out to want the
+  // cookie, so it waits like a gated one until its gateway has been asked.
+  it('is waited on by a URL row that names neither a gate nor a token, until it is proven open', async () => {
+    let finish = (): void => {}
+
+    cookies.restored = new Promise<void>(resolve => (finish = resolve))
+    rows.set('legacy', { authMode: 'none', baseUrl: 'https://legacy.test', kind: 'remote', label: 'Legacy' })
+    rows.set('held', {
+      authMode: 'none',
+      baseUrl: 'https://held.test',
+      kind: 'remote',
+      label: 'Held',
+      tokenAttached: true
+    })
+    activate('home')
+    installHermesDesktopBridge()
+
+    const asked: Promise<unknown>[] = []
+
+    const settledSoon = async (pending: Promise<unknown>): Promise<unknown> => {
+      asked.push(pending)
+
+      return Promise.race([pending, new Promise(resolve => setTimeout(() => resolve('waiting'), 5))])
+    }
+
+    // Another connection's REST: nothing has asked its gateway yet.
+    expect(await settledSoon(window.hermesDesktop.api({ connectionId: 'legacy', path: '/api/status' }))).toBe('waiting')
+    // A token Rust holds is a credential that is not a cookie.
+    expect(await settledSoon(window.hermesDesktop.api({ connectionId: 'held', path: '/api/status' }))).toEqual({
+      ok: true
+    })
+
+    // The probe fails: unproven still, so the dial waits for the jar too.
+    gate.probe.mockRejectedValueOnce(new Error('offline'))
+    expect(await settledSoon(bridge.getConnectionFor({ connectionId: 'legacy', profile: null }))).toBe('waiting')
+
+    // Proven open: neither waits any more.
+    expect(await settledSoon(bridge.getConnectionFor({ connectionId: 'legacy', profile: null }))).toMatchObject({
+      connectionId: 'legacy'
+    })
+    expect(await settledSoon(window.hermesDesktop.api({ connectionId: 'legacy', path: '/api/status' }))).toEqual({
+      ok: true
+    })
+
+    // The window's own, by the same rule.
+    rows.set('own', { authMode: 'none', baseUrl: 'https://own.test', kind: 'remote', label: 'Own' })
+    activate('own', { baseUrl: 'https://own.test' })
+    active.current = active.current && { ...active.current, kind: 'remote' }
+    expect(await settledSoon(window.hermesDesktop.api({ path: '/api/status' }))).toBe('waiting')
+
+    // Nothing is left waiting for the next test to find.
+    finish()
+    await Promise.all(asked)
+  })
+
+  // `secrets_unlock` has no bound of its own off Apple's platforms, and every
+  // dial waits on the restore behind it. Before the resync the boot waited on it
+  // just as silently (`restoreSessionCookies().finally(autoRestoreConnection)`).
+  it('says a person must unlock after ONE bounded wait, never retries it, and proceeds once the restore lands', async () => {
+    vi.useFakeTimers()
+
+    try {
+      let land: () => void = () => {}
+
+      cookies.restored = new Promise<void>(resolve => {
+        land = resolve
+      })
+      activateCloud()
+      installHermesDesktopBridge()
+
+      const dial = bridge.getConnection().catch((error: unknown) => error)
+
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      const failure = (await dial) as Error
+
+      expect(failure).toBeInstanceOf(NeedsUnlockError)
+      expect(failure.message).toBe(TRANSLATIONS.en.boot.errors.needsUnlock)
+      // Neutral: a desktop keyring is unlocked with a password, not the device.
+      expect(failure.message).not.toMatch(/unlock this device/i)
+      expect(await bridge.getBootProgress()).toMatchObject({
+        error: TRANSLATIONS.en.boot.errors.needsUnlock,
+        phase: 'backend.error',
+        retryable: false
+      })
+
+      // N3: latched. The next dial and the next REST call fail at once instead
+      // of each spending its own 30 s behind the same prompt. (One after the
+      // other: two concurrent dynamic imports never settle under fake timers.)
+      const soon = async (pending: Promise<unknown>): Promise<unknown> => {
+        const outcome = pending.catch((error: unknown) => error)
+
+        await vi.advanceTimersByTimeAsync(10)
+
+        return Promise.race([outcome, 'still waiting'])
+      }
+
+      expect(await soon(bridge.getConnection())).toBeInstanceOf(NeedsUnlockError)
+      expect(await soon(window.hermesDesktop.api({ path: '/api/status' }))).toBeInstanceOf(NeedsUnlockError)
+      expect(apiMock).not.toHaveBeenCalled()
+      // …while a connection that needs no cookie is not held up by the latch.
+      await expect(window.hermesDesktop.api({ connectionId: 'home', path: '/api/status' })).resolves.toEqual({
+        ok: true
+      })
+
+      // The restore was never abandoned: unlocked, the next ask goes through.
+      land()
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(await bridge.getConnection()).toMatchObject({ baseUrl: 'https://cloud.test' })
+      await expect(window.hermesDesktop.api({ path: '/api/status' })).resolves.toEqual({ ok: true })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('the launch identity', () => {
+  it("is waited on, so the boot hook's first ask does not meet the null before it", async () => {
+    let finish = (): void => {}
+
+    launch.settled = new Promise<void>(resolve => (finish = resolve))
+
+    const dial = bridge.getConnection()
+
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(invokeMock).not.toHaveBeenCalled()
+
+    activate('home')
+    finish()
+
+    await expect(dial).resolves.toMatchObject({ connectionId: 'home' })
+  })
+})
+
 describe('signals with no universal source', () => {
   it('subscribe and never fire', () => {
     const callback = vi.fn()
 
-    bridge.onBootProgress(callback)()
     bridge.onBackendExit(callback)()
 
     expect(callback).not.toHaveBeenCalled()
@@ -421,12 +1109,21 @@ describe('the installed bridge', () => {
 
     const installed = window.hermesDesktop as unknown as Record<string, unknown>
 
-    for (const member of ['getConnection', 'getConnectionFor', 'getGatewayWsUrl', 'getGatewayWsUrlFor', 'getBootProgress']) {
+    for (const member of [
+      'getBootProgress',
+      'getConnection',
+      'getConnectionFor',
+      'getGatewayWsUrl',
+      'getGatewayWsUrlFor',
+      'onBootProgress',
+      'onConnectionApplied',
+      'profile'
+    ]) {
       expect(installed[member]).toBe((bridge as Record<string, unknown>)[member])
     }
 
     // Feature-detected by the boot hook and the registry; a fake would be believed.
-    for (const member of ['connections', 'onConnectionApplied', 'revalidateConnection', 'setActiveConnectionRoute']) {
+    for (const member of ['connections', 'revalidateConnection', 'setActiveConnectionRoute']) {
       expect(installed[member]).toBeUndefined()
     }
   })

@@ -18,7 +18,7 @@ import {
   onSshProgress,
   type SshStep
 } from '@/store/ssh-backend'
-import { isActivityWindow, isSatelliteWindow } from '@/store/windows'
+import { isHudWindow, isSatelliteWindow } from '@/store/windows'
 
 /**
  * Tunnels to local and SSH connections that are not the active one (MJXHRM-592).
@@ -51,8 +51,9 @@ export interface TunnelStatus {
   terminal: boolean
   generation: number
   instanceKey?: string
-  /** The SSH step a background dial is on. */
+  /** The SSH step a background dial is on, and how far along that is (0–1). */
   step?: SshStep
+  fraction?: number
 }
 
 export interface TunnelError {
@@ -155,10 +156,21 @@ function subscribe(connectionId: string, entry: Held): Promise<UnlistenFn[]> {
       const current = $tunnelStatus.get()[connectionId]
 
       if (current) {
-        $tunnelStatus.setKey(connectionId, { ...current, step: progress.step })
+        $tunnelStatus.setKey(connectionId, { ...current, fraction: progress.fraction, step: progress.step })
       }
     })
   ]).catch(() => [])
+}
+
+/**
+ * Whether this window dials at all. Every dial is a lease, the primary's
+ * included, so a window with a gateway of its own holds tunnels: the shells,
+ * a tile, the HUD and a mobile activity screen — Rust reaps a destroyed
+ * window's leases by its label, whatever kind it is. Quick Entry, the wake
+ * indicator and the other satellites hand off to a window that does.
+ */
+function holdsTunnels(): boolean {
+  return !isSatelliteWindow() || isHudWindow()
 }
 
 let pageOpen: null | Promise<number> = null
@@ -194,12 +206,12 @@ function ensurePageOpen(): Promise<number> {
 /**
  * Window boot: the page declares its start before anything else can acquire,
  * so a reloaded or recreated page ends the previous page's holds even if it
- * never takes one of its own. The HUD, Quick Entry, the wake indicator and the
- * mobile activity screens hold no tunnels, so they never open one. A failure
- * here is retried by the first acquire, which awaits the same open.
+ * never takes one of its own. A window that holds no tunnels (`holdsTunnels`)
+ * never opens one. A failure here is retried by the first acquire, which awaits
+ * the same open.
  */
 export function openTunnelPage(): void {
-  if (!IS_TAURI || isSatelliteWindow() || isActivityWindow()) {
+  if (!IS_TAURI || !holdsTunnels()) {
     return
   }
 
@@ -314,13 +326,49 @@ export function setTunnelAnswerSaver(saver: TunnelAnswerSaver): () => void {
 }
 
 /**
+ * Keep what a person answers on ONE interactive dial of `connectionId`
+ * (MJXHRM-592): a passphrase or a password, never a one-time code
+ * (`keptSshAnswer`), written where that connection's dials read it (the
+ * registered saver). Every dial a person drives keeps its answer this way — a
+ * tunnel's own Connect and a switch's preflight alike — because Rust lingers an
+ * unheld tunnel only briefly, and its next background redial cannot ask.
+ *
+ * The answer is matched by attempt, so another dial's prompt is not this one's
+ * to keep. `stop()` when the dial settles.
+ */
+export function keepTunnelAnswers(
+  connectionId: string,
+  attemptId: string = newAttemptId()
+): { attemptId: string; stop: () => void } {
+  const stop = addSshPromptAnswerListener((prompt, answer) => {
+    const kept = prompt.attemptId === attemptId ? keptSshAnswer(prompt.kind, answer) : null
+
+    if (kept && answerSaver) {
+      void answerSaver(connectionId, kept).catch(() => {})
+    }
+  })
+
+  return { attemptId, stop }
+}
+
+function hostKeyNotificationId(connectionId: string): string {
+  return `tunnel-hostkey:${connectionId}`
+}
+
+/**
  * A changed host key: no policy accepts one, so there is nothing to Connect.
- * Says what the configurator says, with Rust's `ssh-keygen -R` guidance.
+ * Says what the configurator says, with Rust's `ssh-keygen -R` guidance. The
+ * fix happens outside the app and Rust dials this connection in the background
+ * no more until a person asks, so Retry is that ask: the interactive dial.
  */
 function notifyHostKeyChanged(connectionId: string, label: string, error: unknown): void {
   notify({
+    action: {
+      label: translateNow('common.retry'),
+      onClick: () => void connectTunnel(connectionId, label)
+    },
     detail: (error as Partial<TunnelError>).message,
-    id: `tunnel-hostkey:${connectionId}`,
+    id: hostKeyNotificationId(connectionId),
     kind: 'error',
     message: tunnelErrorMessage(error, gatewayCopy()),
     title: label
@@ -342,24 +390,17 @@ function notifyBackgroundFailure(connectionId: string, label: string, error: unk
  * Runs the interactive dial and only connects: the action that failed is not
  * re-run, because a rename, a delete or a Bot Mode send must never be replayed
  * on the user's behalf. A passphrase or password answered on THIS dial is kept
- * (the configurator's rules), so the next background dial authenticates.
+ * (`keepTunnelAnswers`), so the next background dial authenticates.
  */
 export async function connectTunnel(connectionId: string, label: string): Promise<void> {
-  const attemptId = newAttemptId()
-
-  const keep = addSshPromptAnswerListener((prompt, answer) => {
-    const kept = prompt.attemptId === attemptId ? keptSshAnswer(prompt.kind, answer) : null
-
-    if (kept && answerSaver) {
-      void answerSaver(connectionId, kept).catch(() => {})
-    }
-  })
+  const { attemptId, stop: keep } = keepTunnelAnswers(connectionId)
 
   try {
     const lease = await acquireTunnel(connectionId, { attemptId, interactive: true, label })
 
-    // Signed in: the warning has done its job.
+    // Connected: whichever warning asked for this has done its job.
     dismissNotification(signInNotificationId(connectionId))
+    dismissNotification(hostKeyNotificationId(connectionId))
     lease.release()
   } catch (error) {
     const kind = errorKind(error)
@@ -414,8 +455,7 @@ export async function acquireTunnel(
     throw tunnelError('unsupported-platform', 'unsupported_platform')
   }
 
-  // The HUD and the mobile activity screens hold no connections of their own.
-  if (isSatelliteWindow() || isActivityWindow()) {
+  if (!holdsTunnels()) {
     throw tunnelError('unavailable', 'this window does not hold tunnels')
   }
 

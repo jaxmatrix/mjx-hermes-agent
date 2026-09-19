@@ -988,8 +988,13 @@ pub async fn ssh_connect(
         config.interactive,
         &attempt_id,
     )
-    .map_err(|e| SshError::new(SshErrorKind::Cancelled, e.message))?
-    {
+    // Quitting is a cancel. A refusal fails as the dial it stands in for did.
+    .map_err(|e| match e.kind {
+        crate::tunnels::FailureKind::Unavailable => {
+            SshError::new(SshErrorKind::Cancelled, e.message)
+        }
+        kind => SshError::new(ssh_kind_of(kind), e.message),
+    })? {
         Hold::Reuse(key) => return live_connection(&state, &key).await,
         Hold::Join(key, rx) => {
             crate::tunnels::wait(rx)

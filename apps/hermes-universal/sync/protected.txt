@@ -60,7 +60,6 @@ store/event-router*.*
 # lands verbatim as an AUTO file and only the wire half is protected.
 store/gateway-client.*
 store/gateway-secondaries.*
-store/gateway-soft-switch.*
 store/live-session-status.*
 store/session-replay.*
 # LEGACY — universal's session-key route dispatch (was `store/session-request-router`,
@@ -91,8 +90,10 @@ components/chat/connection-accent.*
 app/chat/use-tab-connection.*
 app/gateway/gateway-configurator.tsx
 hermes.ts
-# The entry carries two universal lines desktop has no place for: the persisted-tab
-# migration (must be the first import) and the hermesDesktop bridge install.
+# The entry carries three universal lines desktop has no place for, in this order:
+# the persisted-tab migration (must be the first import), the hermesDesktop bridge
+# install (a side-effect import, second, so it precedes every module-scope
+# `window.hermesDesktop` read), and the `bootUniversal()` call.
 main.tsx
 
 # ---------------------------------------------------------------------------

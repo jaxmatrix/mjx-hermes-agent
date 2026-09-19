@@ -64,7 +64,7 @@ vi.mock('@/store/connection-tunnels', () => ({ acquireTunnel: acquireMock }))
 import { HermesGateway as DesktopGateway } from '@/api/client'
 import { HermesGateway } from '@/hermes'
 
-import { __testing, openGatewaySocket, recordGatewayMint } from './gateway-socket'
+import { __testing, onGatewayRefused, openGatewaySocket, recordGatewayMint } from './gateway-socket'
 
 const REMOTE = 'wss://gw.test/api/ws'
 const TUNNEL = 'ws://127.0.0.1:4100/api/ws'
@@ -116,7 +116,7 @@ describe('the mint ledger', () => {
     expect(await opened()).toEqual([expect.objectContaining({ connectionId: null, url: REMOTE })])
   })
 
-  it('keeps an entry across dials: two profiles of one connection mint the same URL', async () => {
+  it('keeps an entry across dials: a reconnect re-dials the URL it was given', async () => {
     recordGatewayMint(REMOTE, { connectionId: 'conn-a' })
     recordGatewayMint(REMOTE, { connectionId: 'conn-a' })
     openGatewaySocket(REMOTE)
@@ -124,6 +124,29 @@ describe('the mint ledger', () => {
 
     expect((await opened(2)).map(args => args.connectionId)).toEqual(['conn-a', 'conn-a'])
     expect(__testing.mintCount()).toBe(1)
+  })
+
+  // Only this seam knows which connection a refused socket was minted for.
+  it('says which connection a gateway refused, and nothing for a drop', async () => {
+    const refused: string[] = []
+    const off = onGatewayRefused(connectionId => void refused.push(connectionId))
+
+    recordGatewayMint(REMOTE, { connectionId: 'conn-a' })
+    openGatewaySocket(REMOTE)
+    openGatewaySocket(REMOTE)
+    openGatewaySocket(REMOTE)
+
+    const [first, second, third] = await opened(3)
+
+    emit(first.id, 'close', { code: 1006 })
+    expect(refused).toEqual([])
+
+    emit(second.id, 'close', { code: 4401, reason: 'unauthorized' })
+    expect(refused).toEqual(['conn-a'])
+
+    off()
+    emit(third.id, 'close', { code: 4403 })
+    expect(refused).toEqual(['conn-a'])
   })
 
   it('lets the latest mint of a URL win', async () => {
@@ -211,7 +234,8 @@ describe('a tunnelled socket', () => {
     expect(leases[0].release).toHaveBeenCalledTimes(1)
   })
 
-  it('releases once on an error, without waiting for the close that follows', async () => {
+  // The supervisor tells a refused credential from a drop by `lastCloseCode`.
+  it('releases at once on an error, and lets the close that follows keep its code', async () => {
     const socket = openGatewaySocket(TUNNEL)
     const codes = closeCodes(socket)
     const errors = vi.fn()
@@ -222,13 +246,81 @@ describe('a tunnelled socket', () => {
 
     emit(args.id, 'error', 'connection reset')
 
+    // A broken socket holds no tunnel — and has not said `close` yet.
     expect(leases[0].release).toHaveBeenCalledTimes(1)
+    expect(codes).toEqual([])
 
-    emit(args.id, 'close', { code: 1006 })
+    emit(args.id, 'close', { code: 4401, reason: 'unauthorized' })
+    socket.close()
 
     expect(errors).toHaveBeenCalledTimes(1)
+    expect(codes).toEqual([4401])
+    expect(socket.readyState).toBe(3)
+    expect(leases[0].release).toHaveBeenCalledTimes(1)
+  })
+
+  it('says one code-less close when it is closed between an error and its close', async () => {
+    const socket = openGatewaySocket(TUNNEL)
+    const codes = closeCodes(socket)
+    const [args] = await opened()
+
+    emit(args.id, 'error', 'connection reset')
+    socket.close()
+    emit(args.id, 'close', { code: 4401 })
+
     expect(codes).toEqual([undefined])
     expect(leases[0].release).toHaveBeenCalledTimes(1)
+  })
+
+  // The shared client learns of a death from `close` alone (`json-rpc-gateway`):
+  // a transport `close` that never follows its `error` would strand it.
+  it("says the one code-less close itself when the transport's never follows its error", async () => {
+    const socket = openGatewaySocket(TUNNEL)
+    const codes = closeCodes(socket)
+    const [args] = await opened()
+
+    vi.useFakeTimers()
+
+    try {
+      emit(args.id, 'error', 'connection reset')
+      vi.advanceTimersByTime(1_999)
+
+      expect(codes).toEqual([])
+      expect(invokeMock).not.toHaveBeenCalledWith('ws_close', expect.anything())
+
+      vi.advanceTimersByTime(1)
+
+      expect(codes).toEqual([undefined])
+      expect(socket.readyState).toBe(3)
+      expect(invokeMock).toHaveBeenCalledWith('ws_close', { id: args.id })
+
+      // Late, and nobody's any more: one close, one release.
+      emit(args.id, 'close', { code: 4401 })
+      vi.advanceTimersByTime(10_000)
+
+      expect(codes).toEqual([undefined])
+      expect(leases[0].release).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not say a second close once the real one arrived in time', async () => {
+    const socket = openGatewaySocket(TUNNEL)
+    const codes = closeCodes(socket)
+    const [args] = await opened()
+
+    vi.useFakeTimers()
+
+    try {
+      emit(args.id, 'error', 'connection reset')
+      emit(args.id, 'close', { code: 4401 })
+      vi.advanceTimersByTime(10_000)
+
+      expect(codes).toEqual([4401])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('releases once when the connect never opens', async () => {

@@ -19,10 +19,9 @@ import { useI18n } from '@/i18n'
 import { isChatPaneId } from '@/lib/pane-ids'
 import { useStore } from '@/store/atom'
 import { $connectionPhase } from '@/store/connection'
-import { sessionMissingFromCurrentGateway } from '@/store/gateway-soft-switch'
 import { $gatewaySwitching } from '@/store/gateway-switch'
 import { notify } from '@/store/notifications'
-import { newSession, openSession, refreshSessions } from '@/store/session-lifecycle'
+import { newSession, openSession, refreshSessions, sessionMissingFromCurrentGateway } from '@/store/session-lifecycle'
 import { detachedTileId } from '@/store/windows'
 
 import { NEW_CHAT_ROUTE, routeSessionId } from './routes'
@@ -47,7 +46,7 @@ function ChatTileHost() {
   const navigate = useNavigate()
   const { t } = useI18n()
   const phase = useStore($connectionPhase)
-  // This window re-homes when another WebView switches gateway (store/gateway-switch-sync).
+  // This window re-homes when another WebView switches gateway (`applySource`, store/connections).
   // Hold the chat across that window rather than blanking to an empty pane for the
   // second the socket is down — the same tolerance the other two roots carry.
   const switching = useStore($gatewaySwitching)

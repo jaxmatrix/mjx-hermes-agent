@@ -34,8 +34,11 @@ const mints = new Map<string, GatewayMint>()
  * records it — the connection descriptor's `wsUrl` as much as a fresh re-mint.
  *
  * An entry leaves only as the oldest past {@link MINT_LIMIT}, Electron's rule.
- * Not on dial: two profiles of one connection mint the SAME URL, and the first
- * dial taking the entry would open the second with no credentials.
+ * Not on dial: a URL is dialled again — a reconnect re-dials the descriptor's
+ * own `wsUrl`, and the launch profile's URL is its connection's bare one, which
+ * every window on it mints alike — and a dial that took the entry would open
+ * the next with no credentials. (Another profile mints a URL of its own:
+ * `withSocketProfile`.)
  */
 export function recordGatewayMint(wsUrl: string, mint: GatewayMint): void {
   mints.delete(wsUrl)
@@ -58,6 +61,23 @@ function mintFor(wsUrl: string): GatewayMint | undefined {
   return mint
 }
 
+/** The gateway refused the credential (4401) or the peer (4403) at the upgrade. */
+const REFUSED_CLOSE_CODES = new Set([4401, 4403])
+
+const refusedListeners = new Set<(connectionId: string) => void>()
+
+/**
+ * Hear a connection's socket being REFUSED. `HermesGateway.lastCloseCode` tells
+ * its owner the same thing, but only this seam knows which connection a socket
+ * was minted for — and the bridge, which minted it, is who has to stop trusting
+ * what it believed about that gateway's gate.
+ */
+export function onGatewayRefused(listener: (connectionId: string) => void): () => void {
+  refusedListeners.add(listener)
+
+  return () => void refusedListeners.delete(listener)
+}
+
 /**
  * `HermesGateway`'s `socketFactory`. A URL nothing minted opens as it always
  * has: whatever auth it carries is in the URL itself.
@@ -70,7 +90,17 @@ export function openGatewaySocket(wsUrl: string): WebSocketLike {
   }
 
   if (!mint.tunnel) {
-    return new TauriWebSocket(wsUrl, { connectionId: mint.connectionId }) as unknown as WebSocketLike
+    const socket = new TauriWebSocket(wsUrl, { connectionId: mint.connectionId })
+
+    socket.addEventListener('close', event => {
+      if (REFUSED_CLOSE_CODES.has((event as { code?: number }).code ?? 0)) {
+        for (const listener of [...refusedListeners]) {
+          listener(mint.connectionId)
+        }
+      }
+    })
+
+    return socket as unknown as WebSocketLike
   }
 
   return new TunnelGatewaySocket(wsUrl, mint) as unknown as WebSocketLike
@@ -84,9 +114,29 @@ type SocketListener = (event: SocketEvent) => void
  * before it dials until it ends — a server close, an error, a local `close()`,
  * a connect that never opened — and lets go exactly once.
  *
+ * An ERROR ends it in two steps, in this order:
+ *
+ *  1. the inner `error` is forwarded and the lease is let go, at once — a broken
+ *     socket holds no tunnel. No `close` is said yet.
+ *  2. the transport's own `close` is forwarded WITH ITS CODE. It always follows:
+ *     `TauriWebSocket` dispatches it synchronously after a failed open, and
+ *     Rust's read loop emits exactly one after an error (`pump_reader`). Saying
+ *     a code-less `close` at step 1 would swallow it, and `HermesGateway`'s
+ *     `lastCloseCode` is how the supervisor tells a refused credential
+ *     (4401/4403) from a drop.
+ *
+ * A local `close()` between the two says the one `close` itself, code-less —
+ * and so does `CLOSE_AFTER_ERROR_MS` running out. "Always follows" is the
+ * transport's promise, not this socket's: the shared client learns of a death
+ * from `close` alone, and one that never came would leave it never reconnecting.
+ *
  * The tunnel moving to a later generation, or no longer serving the lease, ends
  * the socket (`gateway-secondaries.ts`'s rule): the owner's next dial re-mints.
  */
+/** How long the transport's `close` may trail its `error`. It is dispatched in
+ *  the same turn or the next event; this is only the bound on never. */
+const CLOSE_AFTER_ERROR_MS = 2_000
+
 class TunnelGatewaySocket {
   readonly CONNECTING = 0
   readonly OPEN = 1
@@ -97,7 +147,9 @@ class TunnelGatewaySocket {
 
   private inner: null | TauriWebSocket = null
   private lease: null | TunnelLease = null
+  private released = false
   private ended = false
+  private closeOverdue: ReturnType<typeof setTimeout> | undefined
   private sendQueue: string[] = []
   private unsubscribe: (() => void)[] = []
   private readonly listeners = new Map<string, Set<SocketListener>>()
@@ -162,13 +214,34 @@ class TunnelGatewaySocket {
     inner.addEventListener('message', event => this.dispatch(event))
     inner.addEventListener('error', event => {
       this.dispatch(event)
-      this.end()
+
+      if (!this.ended) {
+        this.readyState = this.CLOSING
+        this.letGo()
+        this.closeOverdue ??= setTimeout(() => this.end(), CLOSE_AFTER_ERROR_MS)
+      }
     })
     inner.addEventListener('close', event => this.end(event))
 
     for (const text of this.sendQueue.splice(0)) {
       inner.send(text)
     }
+  }
+
+  /** Let go of the tunnel: once, at whichever ending comes first. */
+  private letGo(): void {
+    if (this.released) {
+      return
+    }
+
+    this.released = true
+
+    for (const off of this.unsubscribe.splice(0)) {
+      off()
+    }
+
+    this.lease?.release()
+    this.lease = null
   }
 
   /** The one way out: closes the socket, releases the lease, says `close`. */
@@ -179,14 +252,9 @@ class TunnelGatewaySocket {
 
     this.ended = true
     this.readyState = this.CLOSED
-
-    for (const off of this.unsubscribe.splice(0)) {
-      off()
-    }
-
+    clearTimeout(this.closeOverdue)
+    this.letGo()
     this.inner?.close()
-    this.lease?.release()
-    this.lease = null
     this.dispatch(event)
   }
 

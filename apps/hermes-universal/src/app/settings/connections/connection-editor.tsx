@@ -30,10 +30,9 @@ import { notify, notifyError } from '@/store/notifications'
  * is "dial it now". Fusing them would put registry semantics through 1200 lines
  * that own the app's front door, for fields this form states in forty.
  *
- * The connect path is unchanged: pressing Connect runs `selectConnection`, which
- * routes through the SAME `connect*` helpers the configurator drives, so the SSH
- * prompts, host-key trust and progress steps all still happen where they always
- * did.
+ * Pressing Connect runs `selectConnection` — the same two-phase switch the
+ * configurator's Connect ends in — as a person's click, so the SSH prompts,
+ * host-key trust and the sign-in page may all be raised.
  *
  * NOTHING HERE EVER HOLDS A SECRET. A stored token is `hasToken` plus four
  * characters; typing a new one sends it once, write-only, and it is never echoed
@@ -221,7 +220,7 @@ export function ConnectionEditor({
               <Codicon name="pulse" size="0.9rem" />
               {c.test}
             </Button>
-            <Button disabled={busy} onClick={() => void selectConnection(connection.id, { allowInteractive: true })} size="sm" variant="secondary">
+            <Button disabled={busy} onClick={() => void selectConnection(connection.id, { allowInteractive: true }).catch(error => notifyError(error, c.switchFailed))} size="sm" variant="secondary">
               {c.connect}
             </Button>
             {registry.primary !== connection.id && (

@@ -3,21 +3,25 @@
 //! Rust owns the registry because Rust owns everything it depends on: the
 //! network (rule 2), the credentials (rule 4) and a durable place to put a
 //! document that must survive a webview data reset (`app_state.rs`'s reasoning,
-//! one layer up). The webview owns which connection is ACTIVE, and nothing here
-//! knows or cares which one that is — rule 3 survives, because what Rust holds
-//! is a table of base URL → credential, not an active-gateway object.
+//! one layer up). Each webview still dials for itself, and what Rust holds for
+//! a dial is a table of base URL → credential, not an active-gateway object —
+//! rule 3 survives. WHICH row the app is on is another matter: every window has
+//! to agree on it, so it is serialised here (`source.rs`), as Electron's main
+//! process serialises it for desktop.
 //!
-//! The document itself is guarded by a `std::sync::Mutex` with no `await` held
-//! across it. Tauri commands are NOT serialised by default, so this lock is what
-//! replaces the accidental ordering Electron got for free from `ipcMain.handle`;
-//! two saves racing would otherwise interleave read → mutate → write and lose
-//! one of them.
+//! Tauri commands are NOT serialised by default, so two `std::sync::Mutex`es,
+//! neither held across an `await`, replace the accidental ordering Electron got
+//! for free from `ipcMain.handle`: `writer` makes read → mutate → write of the
+//! document one step (two saves racing would otherwise lose one of them), and
+//! `source` orders every change of the source — a commit, the removal of its
+//! row, the first seed. Taken in that order: `source`, then `writer`.
 
 pub mod error;
 pub mod probe;
 pub mod registry;
 pub mod roster;
 pub mod secrets;
+pub mod source;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -37,6 +41,7 @@ use registry::{
 };
 use roster::RosterCache;
 use secrets::{ConnectionScope, ConnectionSecret};
+use source::{CurrentSource, SourceBook};
 
 const FILE_NAME: &str = "connections.json";
 const BACKUP_NAME: &str = "connections.json.bak";
@@ -57,6 +62,10 @@ pub struct ConnectionsState {
     /// True when the document on disk was written by a NEWER build. Read-only:
     /// a downgrade must not be able to destroy a newer install's sources.
     read_only: std::sync::Mutex<bool>,
+    /// Held for the whole of one read → mutate → write.
+    writer: std::sync::Mutex<()>,
+    /// The source the app is on, and the order of its changes (`source.rs`).
+    source: std::sync::Mutex<SourceBook>,
     roster: Arc<RosterCache>,
 }
 
@@ -134,6 +143,10 @@ pub struct SaveOutcome {
     /// Header names that were refused by the allowlist, so the editor can say
     /// which — a silently dropped header is an unexplained failure later.
     pub dropped_headers: Vec<String>,
+    /// Present when the save edited the dial fields of the row the app is on:
+    /// the re-commit every window is also told (`source.rs`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<CurrentSource>,
 }
 
 /// What a dial needs, with no credential in it.
@@ -289,7 +302,7 @@ impl ConnectionsState {
         self.read_only.lock().map(|held| *held).unwrap_or(false)
     }
 
-    /// Read → mutate → write the WHOLE file, under the lock. The
+    /// Read → mutate → write the WHOLE file, under the `writer` lock. The
     /// sibling-preserving pattern of `app_state.rs:64`, one document up: two
     /// mutations in either order both survive.
     fn mutate<T>(
@@ -297,6 +310,11 @@ impl ConnectionsState {
         app: &AppHandle,
         change: impl FnOnce(&mut Registry) -> Result<T, ConnectionsError>,
     ) -> Result<T, ConnectionsError> {
+        let _writer = self
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
         if self.read_only() {
             return Err(ConnectionsError::new(
                 ConnectionsErrorKind::FutureVersion,
@@ -323,6 +341,94 @@ impl ConnectionsState {
         }
 
         Ok(outcome)
+    }
+
+    /// The seed of `connections_migrate`, under its locks. Written FIRST, as
+    /// `mutate` writes: a failed write leaves the registry unseeded in memory
+    /// too, so the next migrate seeds it again and launch is asked again with
+    /// it — rather than a seeded registry whose source was never re-asked.
+    fn seed(
+        &self,
+        book: &mut SourceBook,
+        path: Option<&Path>,
+        migrated: &Registry,
+    ) -> Result<Option<CurrentSource>, ConnectionsError> {
+        if let Some(path) = path {
+            write_document(path, migrated)?;
+        }
+
+        if let Ok(mut slot) = self.document.lock() {
+            *slot = Some(migrated.clone());
+        }
+
+        Ok(book.reseeded(migrated))
+    }
+
+    fn book(&self) -> std::sync::MutexGuard<'_, SourceBook> {
+        self.source
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Where the app is — deciding launch if nobody has asked yet.
+    fn current_source(&self, app: &AppHandle) -> CurrentSource {
+        let mut book = self.book();
+        let registry = self.load(app);
+
+        let (source, decided) = book.launch(&registry);
+
+        // Desktop's restore remembers where it lands. Only into a document that
+        // exists: `connections_migrate` reads a missing file as "not seeded
+        // yet", and this must not be what creates it. Swallowed, like a commit's.
+        let landed = source
+            .connection_id
+            .as_deref()
+            .filter(|id| decided && *id != registry.last_used)
+            .filter(|_| registry_path(app).is_some_and(|path| path.exists()));
+
+        if let Some(id) = landed {
+            let _ = self.remember_last_used(app, id);
+        }
+
+        source
+    }
+
+    fn remember_last_used(&self, app: &AppHandle, id: &str) -> Result<(), ConnectionsError> {
+        self.mutate(app, |registry| {
+            find(registry, id)?;
+            registry.last_used = id.to_string();
+
+            Ok(())
+        })
+    }
+
+    /// A window's switch, in one step: the row exists → `last_used` → the next
+    /// `seq` → every window told. Announced under the lock, so the announcements
+    /// leave in `seq` order.
+    fn commit_source(&self, app: &AppHandle, id: &str) -> Result<CurrentSource, ConnectionsError> {
+        let mut book = self.book();
+        let registry = self.load(app);
+        let source = book.commit(&registry, id)?;
+
+        // Swallowed: a full disk must not turn a successful switch into a failed
+        // one (desktop's read-only-userData lesson). The source has moved.
+        if registry.last_used != id {
+            let _ = self.remember_last_used(app, id);
+        }
+
+        announce(app, &source);
+
+        Ok(source)
+    }
+
+    /// The dial fields of `id` were edited: re-commit it if the app is on it.
+    fn redial_source(&self, app: &AppHandle, id: &str) -> Option<CurrentSource> {
+        let mut book = self.book();
+        let source = book.row_edited(id)?;
+
+        announce(app, &source);
+
+        Some(source)
     }
 }
 
@@ -441,6 +547,21 @@ fn notify_changed(app: &AppHandle, reason: &str, connection_id: Option<&str>) {
     let _ = app.emit(
         CHANGED_EVENT,
         serde_json::json!({ "reason": reason, "connectionId": connection_id }),
+    );
+}
+
+/// The ONE cross-window signal for the source the app is on. It rides the
+/// registry's event with its own reason, so a webview that does not know it
+/// refreshes its roster and nothing else.
+fn announce(app: &AppHandle, source: &CurrentSource) {
+    let _ = app.emit(
+        CHANGED_EVENT,
+        serde_json::json!({
+            "reason": "source",
+            "connectionId": source.connection_id,
+            "seq": source.seq,
+            "dialSeq": source.dial_seq,
+        }),
     );
 }
 
@@ -612,21 +733,33 @@ pub async fn connections_migrate(
     state: State<'_, ConnectionsState>,
     legacy_target: Option<serde_json::Value>,
 ) -> Result<RegistryView, ConnectionsError> {
-    let existing = registry_path(&app).is_some_and(|path| path.exists());
+    // One step against every other writer, and against the source: a window
+    // that asked where the app is BEFORE the seed was answered from an empty
+    // registry, and is told where launch really lands.
+    let seeded = {
+        let mut book = state.book();
+        let _writer = state
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    if existing || state.read_only() {
+        if registry_path(&app).is_some_and(|path| path.exists()) || state.read_only() {
+            None
+        } else {
+            let migrated = migrate_from_v1_target(legacy_target.as_ref(), local_supported());
+            let path = registry_path(&app);
+
+            if let Some(source) = state.seed(&mut book, path.as_deref(), &migrated)? {
+                announce(&app, &source);
+            }
+
+            Some(migrated)
+        }
+    };
+
+    let Some(migrated) = seeded else {
         return connections_list(app, state).await;
-    }
-
-    let migrated = migrate_from_v1_target(legacy_target.as_ref(), local_supported());
-
-    if let Ok(mut slot) = state.document.lock() {
-        *slot = Some(migrated.clone());
-    }
-
-    if let Some(path) = registry_path(&app) {
-        write_document(&path, &migrated)?;
-    }
+    };
 
     for connection in &migrated.connections {
         publish_auth(&app, &migrated, connection);
@@ -731,11 +864,21 @@ pub async fn connections_save(
 
     publish_auth(&app, &registry, &connection);
 
+    // A save is a person acting: a tunnel that stopped on a missing credential
+    // may dial in the background again, whether or not a dial field changed.
+    crate::tunnels::person_acted(&app, &connection.id);
+
     // A background tunnel into the OLD target must not outlive the edit
     // (MJXHRM-592). A slot the active connection holds stays with it.
     if changed {
         crate::tunnels::drop_connection(&app, &connection.id).await;
     }
+
+    // Desktop's `updated` push: a window on this row is talking to the OLD
+    // target. After the tunnel drop, so the re-dial opens a new one.
+    let source = changed
+        .then(|| state.redial_source(&app, &connection.id))
+        .flatten();
 
     notify_changed(&app, "saved", Some(&connection.id));
 
@@ -744,6 +887,7 @@ pub async fn connections_save(
         dial_fields_changed: changed,
         dropped_headers: dropped,
         registry: to_registry_view(&state, &registry),
+        source,
     })
 }
 
@@ -753,25 +897,37 @@ pub async fn connections_remove(
     state: State<'_, ConnectionsState>,
     connection_id: String,
 ) -> Result<RegistryView, ConnectionsError> {
-    let removed = state.mutate(&app, |registry| {
-        let connection = find(registry, &connection_id)?.clone();
+    // Under the source lock: a commit must not land between the row going and
+    // the source leaving it.
+    let (connection, scope, registry) = {
+        let mut book = state.book();
 
-        if connection.kind == ConnectionKind::Local && local_supported() {
-            return Err(ConnectionsError::new(
-                ConnectionsErrorKind::LocalNotRemovable,
-                "this device's own backend can't be removed",
-            ));
+        let (connection, scope) = state.mutate(&app, |registry| {
+            let connection = find(registry, &connection_id)?.clone();
+
+            if connection.kind == ConnectionKind::Local && local_supported() {
+                return Err(ConnectionsError::new(
+                    ConnectionsErrorKind::LocalNotRemovable,
+                    "this device's own backend can't be removed",
+                ));
+            }
+
+            let scope = scope_for(registry, &connection);
+
+            registry.connections.retain(|row| row.id != connection_id);
+
+            Ok((connection, scope))
+        })?;
+
+        let registry = state.load(&app);
+
+        // The app was on it: every window follows to the primary (`source.rs`).
+        if let Some(source) = book.row_removed(&registry) {
+            announce(&app, &source);
         }
 
-        let scope = scope_for(registry, &connection);
-
-        registry.connections.retain(|row| row.id != connection_id);
-
-        Ok((connection, scope))
-    })?;
-
-    let (connection, scope) = removed;
-    let registry = state.load(&app);
+        (connection, scope, registry)
+    };
 
     let _ = secrets::sweep(&connection, &scope);
 
@@ -853,6 +1009,37 @@ pub async fn connections_set_last_used(
     })?;
 
     Ok(to_registry_view(&state, &state.load(&app)))
+}
+
+/// The source the app is on. The first call of a process decides launch; every
+/// window reads it at boot, and none decides for itself (`source.rs`).
+#[tauri::command]
+pub async fn connections_current_source(
+    app: AppHandle,
+    state: State<'_, ConnectionsState>,
+) -> Result<CurrentSource, ConnectionsError> {
+    Ok(state.current_source(&app))
+}
+
+/// Commit a switch a window has already proven (its preflight passed). The
+/// caller applies the returned source itself; every window is told the same.
+#[tauri::command]
+pub async fn connections_commit_source(
+    app: AppHandle,
+    state: State<'_, ConnectionsState>,
+    connection_id: String,
+) -> Result<CurrentSource, ConnectionsError> {
+    state.commit_source(&app, &connection_id)
+}
+
+/// A sign-in that navigated a WebView away left a marker every booting window
+/// can read. The first to claim it finishes the switch; the rest launch normally.
+#[tauri::command]
+pub async fn connections_claim_resume(
+    state: State<'_, ConnectionsState>,
+    marker: String,
+) -> Result<bool, ConnectionsError> {
+    Ok(state.book().claim_resume(&marker))
 }
 
 /// What a dial needs. NEVER carries a token — `token_attached` reports that one
@@ -1199,6 +1386,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         dir.join(FILE_NAME)
+    }
+
+    #[test]
+    fn a_seed_that_cannot_be_written_seeds_nothing_and_a_later_one_asks_launch_again() {
+        let dir = std::env::temp_dir().join("hermes-connections-seed");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+
+        // A FILE where the data dir should be: `create_dir_all` fails under it.
+        let blocked = dir.join("not-a-dir");
+        std::fs::write(&blocked, b"").expect("blocker");
+
+        let state = ConnectionsState::default();
+        let migrated = registry::migrate_from_v1_target(
+            Some(&serde_json::json!({ "mode": "remote", "url": "https://studio.test" })),
+            false,
+        );
+        let seeded_id = migrated.last_used.clone();
+        let mut book = SourceBook::default();
+
+        // A window asked where the app is before the seed: nowhere yet.
+        book.launch(&Registry::default());
+
+        let refused = state
+            .seed(&mut book, Some(&blocked.join(FILE_NAME)), &migrated)
+            .expect_err("the write fails");
+
+        assert_eq!(refused.kind, ConnectionsErrorKind::WriteFailed);
+        assert!(state.document.lock().expect("document").is_none());
+        assert_eq!(book.current().map(|held| held.seq), Some(1));
+
+        // The retry writes, seeds, and only then re-asks launch.
+        let source = state
+            .seed(&mut book, Some(&dir.join(FILE_NAME)), &migrated)
+            .expect("the write lands")
+            .expect("launch moves to the seeded row");
+
+        assert_eq!(source.connection_id.as_deref(), Some(seeded_id.as_str()));
+        assert_eq!(source.seq, 2);
+        assert_eq!(
+            state.document.lock().expect("document").as_ref(),
+            Some(&migrated)
+        );
     }
 
     #[test]

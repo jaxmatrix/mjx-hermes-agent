@@ -25,9 +25,9 @@ import { $terminalFontFamily, setTerminalFontFamilyFromConfig } from './terminal
 // So the writer announces and every other WebView adopts — the same shape, and
 // the same reasoning, as themes/appearance-sync.ts (a `storage` listener is a
 // Chromium-renderer trick universal cannot use; the Tauri event bus is the
-// portable equivalent already proven here and in store/gateway-switch-sync.ts).
+// portable equivalent already proven there).
 //
-// Wired by a side-effect import in main.tsx, like the two syncs it mirrors.
+// Wired by a side-effect import in main.tsx, like the sync it mirrors.
 
 export const TERMINAL_FONT_EVENT = 'terminal-font://changed'
 

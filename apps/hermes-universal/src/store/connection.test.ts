@@ -169,7 +169,9 @@ describe('connect — gated auth path selection', () => {
     const err = await connect({ url: 'gw.example.com' }).catch(e => e)
 
     expect(err.needsInteractiveSignIn).toBeUndefined()
-    expect(String(err)).toContain('host is down')
+    // As copy: Rust's reason can name the host, and this reaches a toast.
+    expect(String(err)).toContain('Could not reach this gateway.')
+    expect(String(err)).not.toContain('host is down')
     expect(mockOauthLogin).not.toHaveBeenCalled()
   })
 

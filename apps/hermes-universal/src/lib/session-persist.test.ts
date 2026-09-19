@@ -5,7 +5,12 @@ vi.mock('@/lib/platform', () => ({ IS_TAURI: true }))
 
 import { invoke } from '@tauri-apps/api/core'
 
-import { forgetPersistedSessionCookies, persistSessionCookies, restoreSessionCookies } from './session-persist'
+import {
+  forgetPersistedSessionCookies,
+  persistSessionCookies,
+  restoreSessionCookies,
+  sessionCookiesRestored
+} from './session-persist'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -80,6 +85,24 @@ describe('session-persist', () => {
     await restoreSessionCookies()
 
     expect(mockInvoke).not.toHaveBeenCalledWith('cookies_import', expect.anything())
+  })
+
+  it('runs the boot restore once, however many callers wait on it', async () => {
+    setImpl(cmd => {
+      if (cmd === 'secrets_status') {
+        return Promise.resolve({ available: true, gateAvailable: false, gateEnforced: false, unlocked: false })
+      }
+
+      return Promise.resolve(cmd === 'secrets_get' ? null : undefined)
+    })
+
+    const first = sessionCookiesRestored()
+
+    expect(sessionCookiesRestored()).toBe(first)
+    await first
+    await sessionCookiesRestored()
+
+    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === 'secrets_get')).toHaveLength(1)
   })
 
   it('persist skips the keyring write when the jar has not changed', async () => {

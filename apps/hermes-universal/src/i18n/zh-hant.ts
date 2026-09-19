@@ -132,6 +132,7 @@ export const zhHant = defineLocale({
       gatewayConnectionLostDetail:
         'Still retrying in the background. You can keep reading and drafting — open Gateway settings if this persists.',
       gatewaySignInRequired: '需要閘道登入',
+      needsUnlock: '在此裝置的憑證儲存區解鎖之前，Hermes 無法讀取已儲存的登入資訊。請先將其解鎖，然後重試。',
       ipcBridgeUnavailable: '桌面 IPC 橋接器不可用。'
     },
     failure: {

@@ -1,9 +1,9 @@
 import { translateNow } from '@/i18n'
 import { activeWorkFromLiveSessions, MAX_LISTED, mergeActiveWork } from '@/lib/active-work'
 import { confirm } from '@/store/confirm'
-import { $connection, connectLocal } from '@/store/connection'
+import { $connection } from '@/store/connection'
 import { requestGateway } from '@/store/gateway-client'
-import { $gatewayMode } from '@/store/gateway-switch'
+import { $gatewayMode } from '@/store/gateway-mode'
 import { restartLocalBackend } from '@/store/local-backend'
 import { notify } from '@/store/notifications'
 
@@ -39,7 +39,7 @@ export function announceProfileChatScope(target: null | string): void {
     notify({
       action: {
         label: translateNow('settings.connections.profileRestartAction'),
-        onClick: () => void restartLocalBackendConfirmed(target)
+        onClick: () => void restartLocalBackendConfirmed()
       },
       kind: 'info',
       message: translateNow('settings.connections.profileRestartMessage', target ?? 'default')
@@ -55,14 +55,14 @@ export function announceProfileChatScope(target: null | string): void {
 }
 
 /**
- * "Restart backend": respawn the local child, then reconnect to it.
+ * "Restart backend": respawn the local child.
  *
  * Asks first when the backend is working — naming what, from its own
  * `session.active_list` (background sessions and Bot Mode rooms alike) — and
  * restarts silently when nothing is live, like upstream desktop's
  * `confirmSharedGatewayRestart`. Resolves whether the restart ran.
  */
-export async function restartLocalBackendConfirmed(profile: null | string): Promise<boolean> {
+export async function restartLocalBackendConfirmed(): Promise<boolean> {
   const listed = await requestGateway<{ sessions?: { status?: string; title?: string }[] }>(
     'session.active_list',
     {}
@@ -86,8 +86,9 @@ export async function restartLocalBackendConfirmed(profile: null | string): Prom
     }
   }
 
+  // The child respawns in place and its tunnel leases move with it: the fold's
+  // primary socket follows its lease, so there is nothing to reconnect here.
   await restartLocalBackend()
-  await connectLocal(profile)
 
   return true
 }
