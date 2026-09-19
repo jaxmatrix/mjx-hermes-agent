@@ -11,7 +11,7 @@ const runtimeKeyForStoredSession = vi.fn<(id: null | string) => null | string>((
 
 vi.mock('@/store/gateway-client', () => ({
   // `$gatewayState` too: `store/connection.ts` subscribes to it at module scope,
-  // and the session-request-router's dispatch reads it as the "is there a socket"
+  // and the session-route-dispatch's dispatch reads it as the "is there a socket"
   // half of the route check.
   $gatewayState: atom('open'),
   requestGateway: (...args: unknown[]) => requestGateway(...args)
@@ -29,7 +29,7 @@ vi.mock('@/store/session-state-types', () => ({
   runtimeKeyForStoredSession: (id: null | string) => runtimeKeyForStoredSession(id)
 }))
 
-const { setSessionOwnerResolver } = await import('./session-request-router')
+const { setSessionOwnerResolver } = await import('./session-route-dispatch')
 const { isSessionNotFoundError, SessionRecoveryAborted, withSessionNotFoundResume } = await import('./session-recovery')
 
 // The owning-profile lookup is a hook the real `store/session` registers at

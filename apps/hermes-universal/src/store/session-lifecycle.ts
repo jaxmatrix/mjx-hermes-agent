@@ -3,7 +3,7 @@
  * tombstones, branching, archiving, opening, messaging sources and profile
  * resolution — built natively on universal's connection scoping
  * (`store/active-connection`, `store/event-router`, `store/live-session-registry`,
- * `store/session-request-router`, `lib/backend-scope`).
+ * `store/session-route-dispatch`, `lib/backend-scope`).
  *
  * Separate from `store/session.ts` on purpose. That file is DESKTOP's session
  * STATE store (`$activeSessionId`, `$messages`, `$currentModel`, `$busy`, their
@@ -79,7 +79,7 @@ import {
   tombstoneSessions,
   untombstoneSessions
 } from '@/store/session-removal'
-import { requestForSession, SessionRouteError, setSessionOwnerResolver } from '@/store/session-request-router'
+import { requestForSession, SessionRouteError, setSessionOwnerResolver } from '@/store/session-route-dispatch'
 import {
   $activeSessionKey,
   $sessionStates,
@@ -397,7 +397,7 @@ export async function resolveSessionProfile(storedSessionId: null | string): Pro
 }
 
 // The router asks THIS module which profile owns a session — a hook, because
-// `session-request-router.ts` is imported from here and the edge has to point
+// `session-route-dispatch.ts` is imported from here and the edge has to point
 // one way (recipe 6.4). Registered at module init, so every `requestForSession`
 // in the app routes even when the caller never touched `store/session`: that is
 // what makes `reconcileSessionTurn`'s resume — the one site that used to send no

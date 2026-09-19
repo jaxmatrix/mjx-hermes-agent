@@ -322,7 +322,7 @@ describe('a tab bound to a background connection', () => {
 
   beforeEach(async () => {
     const { $sessionTiles, tileKeyFor } = await import('@/store/session-states')
-    const { setSessionRequestRouter } = await import('@/store/session-request-router')
+    const { setSessionRequestRouter } = await import('@/store/session-route-dispatch')
 
     routes = []
     getSessionMessages.mockClear()

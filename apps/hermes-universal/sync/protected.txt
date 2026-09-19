@@ -63,7 +63,10 @@ store/gateway-secondaries.*
 store/gateway-soft-switch.*
 store/live-session-status.*
 store/session-replay.*
-store/session-request-router.*
+# LEGACY — universal's session-key route dispatch (was `store/session-request-router`,
+# which is now desktop's, verbatim). Universal-only, imported only by the old
+# fold's island; retires with it (MJXHRM-602 fold step 6).
+store/session-route-dispatch.*
 store/session-state-types.*
 store/session-states.*
 store/session-tile-delegate.*

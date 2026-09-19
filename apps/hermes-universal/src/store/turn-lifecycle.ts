@@ -39,7 +39,7 @@ import { applyResumedApproval } from '@/store/approvals'
 import { applyResumedClarify } from '@/store/clarify'
 import { $gatewayState } from '@/store/gateway-client'
 import { applyResumedMcpSetup } from '@/store/mcp-setup'
-import { requestForSession } from '@/store/session-request-router'
+import { requestForSession } from '@/store/session-route-dispatch'
 import {
   $sessionStates,
   addSessionKeyHooks,

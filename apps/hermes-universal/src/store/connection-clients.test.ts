@@ -34,7 +34,7 @@ vi.mock('@/store/connection-tunnels', () => ({
   isTunnelSignInError: (error: unknown) => (error as { kind?: string })?.kind === 'credentials-needed',
   needsInteraction: () => false
 }))
-vi.mock('@/store/session-request-router', async importActual => ({
+vi.mock('@/store/session-route-dispatch', async importActual => ({
   ...(await importActual<Record<string, unknown>>()),
   SessionRouteError: class extends Error {
     constructor(

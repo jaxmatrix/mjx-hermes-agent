@@ -1,65 +1,20 @@
-/**
- * WHICH BACKEND SERVES THIS SESSION'S RPC — decided at DISPATCH time.
- *
- * Every session-scoped call resolves its owning profile first, and that
- * resolution can await (`resolveSessionProfile` probes each backend by id). The
- * ambient route is a moving target across that await: `softSwitchGateway` wipes
- * the session lists, closes the socket and re-dials with no coordination
- * (`store/gateway-soft-switch.ts`), so a resume dispatched on the route that was
- * live BEFORE the await either rejects with a bare "Hermes gateway is not
- * connected" or — once there is more than one connection (MJXHRM-446) — lands on
- * a backend that never heard of the session.
- *
- * So the route is a value re-read immediately before the send, never a variable
- * captured before an await. That is the whole idea, and the five `session.resume`
- * call sites go through `requestForSession` rather than `requestGateway` to get
- * it.
- *
- * SHAPE, deliberately: `SessionRequestRouter` is an interface with a
- * registration hook because MJXHRM-446 replaces the implementation wholesale —
- * its `dispatch` leases the registry's socket for `route.connectionId` instead
- * of using the single ambient one, and its `resolve` looks the owner up in the
- * registry. Nothing at the five call sites changes when it does.
- *
- * NOT here: connection descriptors, credentials, health probes, a second socket
- * (MJXHRM-446), and any notion of "warming" a route — activation is 446's, and
- * folding it in would give this module an unbounded await it has no budget for.
- */
+import { requestGatewayForAgent, requestGatewayForProfile, retainGatewayForSessionTurn } from '@/store/gateway'
 
-import type { ReadableAtom } from 'nanostores'
-
-import { backendScopeKey, LOCAL_CONNECTION_ID } from '@/lib/backend-scope'
-import { atom, computed } from '@/store/atom'
-import { $gatewayState, requestGateway } from '@/store/gateway-client'
-import { $gatewaySwitching } from '@/store/gateway-switch'
-import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
-
-export interface SessionRoute {
-  /** Registry connection id. Today always `LOCAL_CONNECTION_ID` — there is one
-   *  connection, whatever its gateway MODE (a phone has no local spawn and is
-   *  still the primary connection). MJXHRM-446 mints the others. */
-  connectionId: string
-  /** Bare profile key, `normalizeProfileKey`d ('default' when unset). */
-  profile: string
-  /**
-   * Whether this route's profile came from the session's OWNER rather than from
-   * the ambient backend — i.e. whether `profile` may be pinned into the params
-   * at all. Re-checked against the LIVE ambient route at dispatch, because an
-   * owner that matched the ambient profile when the route was resolved may not
-   * still match when the send happens.
-   */
-  scopeProfile: boolean
-  /** `backendScopeKey(connectionId, profile)`. The pool/identity key the rest of
-   *  Loop 3 keys on; for the primary connection it is the BARE profile, so a
-   *  single-source user's keys stay byte-identical. */
-  scopeKey: string
-}
+import { resetBackgroundPollingGuardAfterRebind } from './session-gone-latch'
 
 /**
- * Desktop's owner-route surface, verbatim, so its ported callers resolve. The
- * exact owner of a session: the connection whose socket minted the runtime plus
- * the profile that selects it. A `SessionTile` (`connectionId` + `profile`)
- * already satisfies the shape.
+ * The ONE authoritative exact owner of a session: the registry connection whose
+ * socket minted (or resumed) the runtime, plus the Desktop profile that selects
+ * that route. `targetProfile` is the backend profile the route serves when it
+ * differs from the Desktop-side name (remote overrides); `mode` is informative.
+ *
+ * Captured ONCE at the new-chat intent / send linearization point
+ * (store/profile resolveNewChatOwnerRoute) and carried through session.create,
+ * the owner hint, the optimistic row, the runtime binding, the foreground hold
+ * and every later session-scoped RPC. Never re-derived from ambient state after
+ * an asynchronous activation: connection/profile EQUALITY is not enough — the
+ * runtime lives on one concrete WebSocket, and only this route names the
+ * registry entry that holds it.
  */
 export interface SessionOwnerRoute {
   connectionId: string
@@ -73,8 +28,11 @@ export type SessionProfileRoute = SessionOwnerRoute
 
 export type SessionOwnerScope = undefined | null | string | SessionOwnerRoute
 
-/** Exact owner from a connection-tagged session row. A row without a connection
- *  tag yields undefined — a bare profile is not an exact owner. */
+/** Exact owner reconstructed from a CONNECTION-TAGGED session row (the
+ *  Electron unified-list splice tags foreign registry rows; an optimistic row
+ *  carries the create route's connection; mergeSessionPage carries the tag
+ *  across refreshes). A row without a connection tag yields undefined — a bare
+ *  profile is not an exact owner. */
 export function sessionOwnerRouteFromRow(
   row: { connection_id?: null | string; profile?: null | string } | null | undefined
 ): SessionOwnerRoute | undefined {
@@ -87,265 +45,181 @@ export function sessionOwnerRouteFromRow(
   return { connectionId, profile: String(row?.profile ?? '').trim() || 'default' }
 }
 
+// ── Session-scoped RPC routing (the #89206 class) ───────────────────────────
+// A session-scoped RPC (session.resume / session.activate / session.usage /
+// prompt.submit) only means anything on the backend that OWNS the session's
+// profile. A session's profile is a PROPERTY OF THE SESSION, not of whatever
+// the window is currently showing. The "active gateway" is a moving target
+// (a concurrent switch, an idle-reap eviction, a failed dial, or a connection
+// edit re-points it) AND, for a hidden/unlisted session, it is simply the
+// WRONG backend — one that never owned the session. Dispatching there 404s or
+// times out while the session's own backend is healthy (blank Bot Chats, dead
+// wake-ups; local pool and SSH alike).
+//
+// So: a KNOWN owner is always routed to its own profile's socket — there is no
+// "same as active, so use ambient" shortcut, because "active" carries no
+// routing authority. Only a genuinely UNKNOWN owner (a fresh draft with no
+// session yet, or truly global chrome) falls to the ambient dispatcher, and
+// callers are expected to resolve the owner (cross-profile probe) before they
+// reach that case for a real session.
+
+const normKey = (profile: null | string | undefined): string => (profile ?? '').trim() || 'default'
+
 export const isSessionOwnerRoute = (owner: SessionOwnerScope): owner is SessionOwnerRoute =>
   Boolean(owner && typeof owner === 'object' && 'connectionId' in owner)
 
-/** `needs-sign-in`: the route's tunnel stopped on something only a person can
- *  answer; the sign-in notification is already on screen (MJXHRM-592). */
-export type SessionRouteErrorKind = 'needs-sign-in' | 'no-gateway' | 'route-moved' | 'switching'
+const isRoute = isSessionOwnerRoute
 
-/**
- * The route could not be honoured — as opposed to the session being broken.
- *
- * Carries only the scope key, never a base URL: a gateway URL is credential
- * material and this error reaches toasts and spans (rule 34).
- */
-export class SessionRouteError extends Error {
-  readonly kind: SessionRouteErrorKind
-  readonly scopeKey: string
-
-  constructor(kind: SessionRouteErrorKind, scopeKey: string) {
-    super(`session route unavailable (${kind})`)
-    this.name = 'SessionRouteError'
-    this.kind = kind
-    this.scopeKey = scopeKey
+function routeParams(route: SessionProfileRoute, params: Record<string, unknown>): Record<string, unknown> {
+  if (!route.targetProfile || !Object.prototype.hasOwnProperty.call(params, 'profile')) {
+    return params
   }
+
+  return { ...params, profile: route.targetProfile }
 }
 
-export interface SessionRequestRouter {
-  /** The route the live socket currently serves. Cheap and synchronous — it is
-   *  called on every dispatch, and being called there IS the re-read. */
-  active(): SessionRoute
-  /** The atoms whose change can move `active()`. `$activeSessionRoute` is
-   *  derived over exactly these, so a router with more inputs than the ambient
-   *  profile stays correctly subscribed without anyone adding a setter. */
-  activeInputs?: readonly ReadableAtom<unknown>[]
-  /** Which route should serve this session. Synchronous: the caller has already
-   *  resolved the owning profile. */
-  resolve(input: { ownerProfile?: null | string; storedSessionId: null | string }): SessionRoute
-  /** The route to a NAMED connection and profile, for a caller that already
-   *  knows where its work belongs — a bound tab (MJXHRM-591, invariant 29).
-   *  Optional: the single-gateway router has one route and answers with it. */
-  resolveRef?(ref: { connectionId: string; profile: null | string }): SessionRoute
-  /** Send. Throws `SessionRouteError` when the route cannot be honoured. */
-  dispatch<T>(route: SessionRoute, method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<T>
+function promptSessionId(method: string, params: Record<string, unknown>): string {
+  return method === 'prompt.submit' && typeof params.session_id === 'string' ? params.session_id.trim() : ''
 }
 
-/**
- * Does this session's RPC have to carry `profile` in its params?
- *
- * Desktop's rule, verbatim in semantics: a blank owner routes ambient (never
- * guess — an unscoped call is the pre-existing "let the gateway decide" path),
- * an owner equal to the live route routes ambient too (the ambient dispatcher
- * carries the reauth-aware reconnect path), and anything else is pinned.
- */
-export function sessionRpcNeedsProfileRoute(
-  ownerProfile: null | string | undefined,
-  activeProfile: null | string | undefined
-): boolean {
-  const owner = (ownerProfile ?? '').trim()
+const TERMINAL_TURN_ACK_STATUSES = new Set(['complete', 'completed', 'error'])
 
-  return Boolean(owner) && owner !== (activeProfile ?? '').trim()
-}
-
-function routeFor(profile: string, scopeProfile: boolean): SessionRoute {
-  return {
-    connectionId: LOCAL_CONNECTION_ID,
-    profile,
-    scopeKey: backendScopeKey(LOCAL_CONNECTION_ID, profile),
-    scopeProfile
+function turnKeepsRunning(result: unknown): boolean {
+  if (!result || typeof result !== 'object' || !('status' in result)) {
+    // Older gateways may ACK without the newer structured status. Retaining
+    // until the terminal event is safer than recreating the client-gone cut.
+    return true
   }
+
+  const status = (result as { status?: unknown }).status
+
+  // Queued, redirected and future status values are non-terminal by default.
+  // Releasing only an explicit terminal ACK avoids recreating client_gone
+  // when a gateway accepts a turn without calling it "streaming".
+  return typeof status !== 'string' || !TERMINAL_TURN_ACK_STATUSES.has(status)
 }
 
-/**
- * The single-active-gateway router — not a stub.
- *
- * Rule 15 ("REST is profile-scoped, the chat WebSocket is not") is about EVENT
- * delivery. `session.resume`'s PARAMS already carry `profile`, and universal
- * already routes cross-profile resumes that way, so the route is real today: it
- * is a params-level route over one socket.
- */
-const singleGatewayRouter: SessionRequestRouter = {
-  active: () => routeFor(normalizeProfileKey($activeGatewayProfile.get()), false),
+async function withRoutedTurnLease<T>(
+  connectionId: null | string,
+  profile: string,
+  method: string,
+  params: Record<string, unknown>,
+  request: () => Promise<T>
+): Promise<T> {
+  const sessionId = promptSessionId(method, params)
 
-  activeInputs: [$activeGatewayProfile],
+  if (!sessionId) {
+    return requestWithRebindGuard(method, params, request)
+  }
 
-  dispatch<T>(route: SessionRoute, method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<T> {
-    // THE RE-READ. Everything above this line may have been decided before an
-    // await; everything below is one synchronous step.
-    const active = normalizeProfileKey($activeGatewayProfile.get())
+  const release = await retainGatewayForSessionTurn(connectionId, profile, sessionId)
 
-    if ($gatewaySwitching.get()) {
-      throw new SessionRouteError('switching', route.scopeKey)
+  try {
+    const result = await request()
+    resetBackgroundPollingGuardAfterRebind(method, params, result)
+
+    if (!turnKeepsRunning(result)) {
+      release()
     }
 
-    if ($gatewayState.get() !== 'open') {
-      throw new SessionRouteError('no-gateway', route.scopeKey)
-    }
-
-    const scoped = route.scopeProfile && sessionRpcNeedsProfileRoute(route.profile, active)
-
-    // Arity contract: `timeoutMs` is forwarded ONLY when the caller supplied it.
-    // `requestGateway` has three parameters and call-site assertions read the
-    // observed shape; universal has no `signal` parameter and must not invent
-    // one.
-    const sent = scoped ? { ...params, profile: route.profile } : params
-
-    return timeoutMs === undefined ? requestGateway<T>(method, sent) : requestGateway<T>(method, sent, timeoutMs)
-  },
-
-  resolve({ ownerProfile }): SessionRoute {
-    const owner = (ownerProfile ?? '').trim()
-
-    return owner ? routeFor(normalizeProfileKey(owner), true) : this.active()
+    return result
+  } catch (error) {
+    release()
+    throw error
   }
 }
 
-// One writer, and it is this hook. `$activeSessionRoute` is derived THROUGH the
-// registration, so MJXHRM-446 replaces the derivation by registering its router
-// — never by adding a setter, which is how desktop's `$activeGatewayRoute`
-// drifted from the socket it was supposed to describe.
-const $currentRouter = atom<SessionRequestRouter>(singleGatewayRouter)
+async function requestWithRebindGuard<T>(
+  method: string,
+  params: Record<string, unknown>,
+  request: () => Promise<T>
+): Promise<T> {
+  const result = await request()
+  resetBackgroundPollingGuardAfterRebind(method, params, result)
 
-const $ambientRoute = atom<SessionRoute>(singleGatewayRouter.active())
-
-let unbindActiveRoute: (() => void) | null = null
-
-function bindActiveRoute(router: SessionRequestRouter): void {
-  unbindActiveRoute?.()
-
-  const inputs = router.activeInputs ?? [$activeGatewayProfile]
-  // `subscribe` fires immediately, so the published route is correct before this
-  // returns.
-  unbindActiveRoute = computed([...inputs], () => router.active()).subscribe(route => $ambientRoute.set(route))
+  return result
 }
 
-bindActiveRoute(singleGatewayRouter)
-
-/** Universal's answer to desktop's `$activeGatewayRoute`: the live route, as a
- *  value. Read-only by contract — the only writer is the derivation above. */
-export const $activeSessionRoute: ReadableAtom<SessionRoute> = $ambientRoute
-
 /**
- * Register the router. Returns an IDEMPOTENT restore that only restores if this
- * router is still the current one — the house shape (`setSessionTransitionHook`,
- * `addGatewayEventListener`, `setConnectionIdResolver`).
+ * True when a session-scoped RPC must be pinned to `ownerProfile`'s own socket.
+ *
+ * A KNOWN owner (route or profile name) always needs its own socket: the
+ * session belongs to that profile regardless of what the window is showing.
+ * A bare profile names the legacy profile door's pool socket in every
+ * topology (a pick on the primary / explicit `local` source dials it).
+ * There is deliberately NO comparison against the active profile — "active" is
+ * presentation state, never a routing authority. Only a null/empty owner (a
+ * fresh draft with no session, or global chrome) routes ambient.
  */
-export function setSessionRequestRouter(router: SessionRequestRouter): () => void {
-  const previous = $currentRouter.get()
-
-  $currentRouter.set(router)
-  bindActiveRoute(router)
-
-  return () => {
-    if ($currentRouter.get() === router) {
-      $currentRouter.set(previous)
-      bindActiveRoute(previous)
-    }
+export function sessionRpcNeedsProfileRoute(ownerProfile: SessionOwnerScope | undefined): boolean {
+  if (isRoute(ownerProfile)) {
+    // A descriptor is an immutable ownership claim. Even an explicitly local
+    // route must not collapse to the ambient request: another connection can
+    // expose the same profile name, and activation is UI state only.
+    return Boolean(ownerProfile.connectionId.trim())
   }
-}
 
-/** Test seam. */
-export function __resetSessionRequestRouter(): void {
-  $currentRouter.set(singleGatewayRouter)
-  bindActiveRoute(singleGatewayRouter)
+  return ownerProfile != null && Boolean(String(ownerProfile).trim())
 }
 
 /**
- * Which profile's database holds this session.
- *
- * A HOOK, not an import: the answer lives in `store/session.ts`, which imports
- * `requestForSession` from here, and recipe 6.4's rule for an unavoidable cycle
- * is a registration hook (`setSessionTransitionHook`, `addSessionKeyHooks`,
- * `setStreamBatchSink`). It also keeps the light modules that only dispatch —
- * `session-recovery.ts`, `turn-lifecycle.ts` — off the whole session graph.
- *
- * SYNCHRONOUS WHENEVER IT CAN BE, and that is load-bearing: a loaded row carries
- * its own profile stamp and a single-profile install has nothing to route, so an
- * unconditional promise would defer every resume by a microtask — long enough
- * for a second open to overtake it (MJXHRM-81). Only a genuine miss on a
- * multi-profile install returns one.
+ * Dispatch a session-scoped RPC on the socket that owns `ownerProfile`,
+ * falling back to the ambient dispatcher when the active gateway already
+ * serves that profile (keeps the primary's reauth-aware reconnect path).
+ * The route is decided at CALL time, not at swap time.
  */
-export type SessionOwnerResolver = (storedSessionId: string) => Promise<string | undefined> | string | undefined
-
-/** With none registered every route is ambient — exactly the pre-existing
- *  "let the gateway decide" behaviour, never a guess. */
-let ownerResolver: null | SessionOwnerResolver = null
-
-export function setSessionOwnerResolver(resolver: SessionOwnerResolver): () => void {
-  const previous = ownerResolver
-
-  ownerResolver = resolver
-
-  return () => {
-    if (ownerResolver === resolver) {
-      ownerResolver = previous
-    }
-  }
-}
-
-/**
- * THE session-RPC verb: resolve the owning profile, then resolve and dispatch
- * the route in ONE synchronous step.
- *
- * The owner resolution is the only await, and it is skipped entirely when the
- * answer is already known — see `SessionOwnerResolver`.
- *
- * `ownerProfile` is an OVERRIDE for a call that is scoped to a profile rather
- * than to one conversation — MJXHRM-455's `host.requestProfile(route, …)`, whose
- * route names the profile outright and has no session to resolve it from. Left
- * unset (the normal case), the owner is derived from the session exactly as
- * before, so no existing call site changes shape.
- */
-export async function requestForSession<T>(
-  storedSessionId: null | string,
+export function requestForSessionProfile<T>(
+  ownerProfile: SessionOwnerScope | undefined,
+  ambientRequest: <R>(
+    method: string,
+    params?: Record<string, unknown>,
+    timeoutMs?: number,
+    signal?: AbortSignal
+  ) => Promise<R>,
   method: string,
   params: Record<string, unknown> = {},
   timeoutMs?: number,
-  ownerProfileOverride?: null | string
+  signal?: AbortSignal
 ): Promise<T> {
-  const pending = ownerProfileOverride ? undefined : storedSessionId ? ownerResolver?.(storedSessionId) : undefined
-  const ownerProfile = ownerProfileOverride ?? (pending instanceof Promise ? await pending : pending)
+  if (isRoute(ownerProfile)) {
+    const connectionId = ownerProfile.connectionId.trim()
 
-  // RESOLVE AND DISPATCH WITH NO AWAIT BETWEEN THEM.
-  const router = $currentRouter.get()
+    if (!connectionId) {
+      return Promise.reject(new Error('Session owner route is missing connectionId'))
+    }
 
-  return router.dispatch<T>(router.resolve({ ownerProfile, storedSessionId }), method, params, timeoutMs)
-}
+    const routedParams = routeParams(ownerProfile, params)
 
-/**
- * Send to the connection and profile the CALLER names.
- *
- * `requestForSession` asks who owns a stored id, which is right for a sidebar
- * verb and wrong for a bound tab: the tab recorded its connection when it
- * opened, and the merged rows that answer the ownership question can be emptied
- * or re-merged by a switch under it. Same re-read discipline — resolve and
- * dispatch with no await between them.
- */
-/**
- * The connection and profile a session's requests would be routed to.
- *
- * For a caller that has to SCOPE something — a slice it is about to create —
- * with the same answer its RPCs will use (MJXHRM-591, invariant 45). It is the
- * router's own `resolve`, so the scope and the socket cannot disagree.
- */
-export function routeScopeForSession(
-  storedSessionId: null | string,
-  ownerProfile?: null | string
-): { connectionId: string; profile: string } {
-  const route = $currentRouter.get().resolve({ ownerProfile, storedSessionId })
+    const profile = normKey(ownerProfile.profile)
 
-  return { connectionId: route.connectionId, profile: route.profile }
-}
+    return withRoutedTurnLease(connectionId, profile, method, routedParams, () =>
+      timeoutMs === undefined && signal === undefined
+        ? requestGatewayForAgent<T>(connectionId, profile, method, routedParams)
+        : requestGatewayForAgent<T>(connectionId, profile, method, routedParams, timeoutMs, signal)
+    )
+  }
 
-export function requestForConnection<T>(
-  ref: { connectionId: string; profile: null | string },
-  method: string,
-  params: Record<string, unknown> = {},
-  timeoutMs?: number
-): Promise<T> {
-  const router = $currentRouter.get()
-  const route = router.resolveRef?.(ref) ?? router.resolve({ ownerProfile: ref.profile, storedSessionId: null })
+  if (!sessionRpcNeedsProfileRoute(ownerProfile)) {
+    // Forward the extra args only when the caller actually supplied them. The
+    // ambient dispatcher is a plain gateway request whose arity callers assert
+    // on; handing it a trailing `undefined, undefined` on every session RPC
+    // changes the observed call shape for the many callers that never asked
+    // for a deadline (the plugin host bridge in contrib/wiring is the only one
+    // that does).
+    if (signal !== undefined) {
+      return requestWithRebindGuard(method, params, () => ambientRequest<T>(method, params, timeoutMs, signal))
+    }
 
-  return router.dispatch<T>(route, method, params, timeoutMs)
+    if (timeoutMs !== undefined) {
+      return requestWithRebindGuard(method, params, () => ambientRequest<T>(method, params, timeoutMs))
+    }
+
+    return requestWithRebindGuard(method, params, () => ambientRequest<T>(method, params))
+  }
+
+  const profile = normKey(ownerProfile)
+
+  return withRoutedTurnLease(null, profile, method, params, () =>
+    requestGatewayForProfile<T>(profile, method, params, timeoutMs, signal)
+  )
 }

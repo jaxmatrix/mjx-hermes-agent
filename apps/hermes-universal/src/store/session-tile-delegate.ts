@@ -53,7 +53,7 @@ import {
   sessionProfileIsAmbiguous
 } from '@/store/session-lifecycle'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
-import { requestForConnection } from '@/store/session-request-router'
+import { requestForConnection } from '@/store/session-route-dispatch'
 import {
   $sessionStates,
   DEFAULT_SESSION_PROFILE,

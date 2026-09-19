@@ -9,7 +9,7 @@ import { $dataUrlReadMaxMb, dataUrlReadMaxBytes, readCappedFileBase64 } from '@/
 import { requestGateway } from '@/store/gateway-client'
 import { notifyError } from '@/store/notifications'
 import { withSessionNotFoundResume } from '@/store/session-recovery'
-import { requestForSession } from '@/store/session-request-router'
+import { requestForSession } from '@/store/session-route-dispatch'
 import { $sessionStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
 
 // Attachment staging (Gc8/R7). Pick a file → read bytes → data-URL → file.attach

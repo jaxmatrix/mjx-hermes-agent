@@ -1,4 +1,4 @@
-import { requestForSession, routeScopeForSession } from '@/store/session-request-router'
+import { requestForSession, routeScopeForSession } from '@/store/session-route-dispatch'
 import {
   $sessionStates,
   dropSessionState,

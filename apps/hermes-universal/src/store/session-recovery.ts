@@ -23,7 +23,7 @@
  */
 
 import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
-import { requestForSession } from '@/store/session-request-router'
+import { requestForSession } from '@/store/session-route-dispatch'
 import { aliasStoredSessionId, rekeySession, runtimeKeyForStoredSession } from '@/store/session-state-types'
 
 /** Does this rejection mean "that runtime id no longer exists"? The gateway

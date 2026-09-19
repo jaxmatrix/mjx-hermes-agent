@@ -3,7 +3,7 @@ import { listProfilesRich } from '@/lib/gateway-rpc'
 
 import { $connection } from './connection'
 import { $connectionReady } from './connection-ready'
-import { requestForSession } from './session-request-router'
+import { requestForSession } from './session-route-dispatch'
 
 /**
  * The multi-connection SHAPE, with a single-connection body.

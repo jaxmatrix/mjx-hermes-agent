@@ -9,12 +9,12 @@ import { leaseSecondary, releaseSecondary } from '@/store/gateway-secondaries'
 import { $gatewaySwitching } from '@/store/gateway-switch'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import {
+  legacyRouteNeedsProfileParam,
   type SessionRequestRouter,
   type SessionRoute,
   SessionRouteError,
-  sessionRpcNeedsProfileRoute,
   setSessionRequestRouter
-} from '@/store/session-request-router'
+} from '@/store/session-route-dispatch'
 import { connectionIdForSession } from '@/store/session-sources'
 import { migrateLegacyTiles, setSessionRefResolver } from '@/store/session-states'
 
@@ -88,7 +88,7 @@ export const registrySessionRouter: SessionRequestRouter = {
         throw new SessionRouteError('no-gateway', route.scopeKey)
       }
 
-      const scoped = route.scopeProfile && sessionRpcNeedsProfileRoute(route.profile, active.profile)
+      const scoped = route.scopeProfile && legacyRouteNeedsProfileParam(route.profile, active.profile)
       const sent = scoped ? { ...params, profile: route.profile } : params
 
       // Arity contract (480): `timeoutMs` is forwarded ONLY when supplied.

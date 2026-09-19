@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 import { type GatewayEvent, JsonRpcGatewayClient, type WebSocketLike } from '@/gateway'
 import { acquireTunnel, type TunnelLease } from '@/store/connection-tunnels'
-import { SessionRouteError } from '@/store/session-request-router'
+import { SessionRouteError } from '@/store/session-route-dispatch'
 import { TauriWebSocket } from '@/transport/tauri-websocket'
 
 /**

@@ -4,7 +4,7 @@ import { selectRemotePaths } from '@/lib/desktop-fs'
 import { ensureSession } from '@/store/chat'
 import { requestGateway } from '@/store/gateway-client'
 import { notifyError } from '@/store/notifications'
-import { requestForSession } from '@/store/session-request-router'
+import { requestForSession } from '@/store/session-route-dispatch'
 
 import {
   attachToSession,
@@ -31,7 +31,7 @@ vi.mock('@/store/gateway-client', () => ({ requestGateway: vi.fn() }))
 // attachment reaches the gateway that owns the session rather than whichever one
 // the window happens to be pointed at (MJXHRM-446 made those two different
 // things). Only the draft path — no stored id yet — still goes direct.
-vi.mock('@/store/session-request-router', () => ({ requestForSession: vi.fn() }))
+vi.mock('@/store/session-route-dispatch', () => ({ requestForSession: vi.fn() }))
 vi.mock('@/store/session-state-types', () => ({
   $sessionStates: { get: () => ({ 'live-1': { runtimeSessionId: 'live-1', storedSessionId: 'stored-1' } }) },
   runtimeKeyForStoredSession: (storedId: string) => (storedId === 'stored-1' ? 'live-1' : null)
