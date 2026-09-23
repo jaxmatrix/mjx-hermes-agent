@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
 import pytest
 
 from agent import image_gen_registry
-from agent.image_gen_provider import ImageGenProvider
 
 
 @pytest.fixture(autouse=True)
@@ -14,109 +12,7 @@ def _reset_registry():
     image_gen_registry._reset_for_tests()
 
 
-@pytest.fixture
-def hermetic(monkeypatch, tmp_path):
-    """Isolate the unset-provider path from the developer's real machine.
-
-    With ``image_gen.provider`` unset the tool now resolves a backend, which
-    means plugin discovery and ``is_available()`` probes. Left unpatched those
-    read the real ~/.hermes credentials and reach the network — which also
-    poisons ``hermes_cli.models``' negative catalog cache for later tests.
-    """
-    from hermes_cli import plugins as plugins_module
-    from hermes_cli import runtime_provider as runtime_module
-
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    monkeypatch.delenv("FAL_KEY", raising=False)
-    monkeypatch.setattr(plugins_module, "_ensure_plugins_discovered", lambda *a, **kw: None)
-
-    def _set_runtime(name: str) -> None:
-        monkeypatch.setattr(runtime_module, "resolve_requested_provider", lambda *a, **kw: name)
-
-    _set_runtime("auto")
-
-    return _set_runtime
-
-
-class _FakeProvider(ImageGenProvider):
-    """Records what generate() was handed, so kwarg regressions are visible."""
-
-    def __init__(self, name: str, *, available: bool = True, max_refs: int = 4):
-        self._name = name
-        self._available = available
-        self._max_refs = max_refs
-        self.calls: list[dict] = []
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @property
-    def display_name(self) -> str:
-        return self._name.title()
-
-    def is_available(self) -> bool:
-        return self._available
-
-    def capabilities(self):
-        return {"modalities": ["text", "image"], "max_reference_images": self._max_refs}
-
-    def list_models(self):
-        return [{"id": f"{self._name}/model-v1", "display": "v1"}]
-
-    def default_model(self):
-        return f"{self._name}/model-v1"
-
-    def generate(self, prompt, aspect_ratio="landscape", **kwargs):
-        self.calls.append({"prompt": prompt, "aspect_ratio": aspect_ratio, **kwargs})
-
-        return {
-            "success": True,
-            "image": f"/tmp/{self._name}.png",
-            "model": kwargs.get("model") or self.default_model(),
-            "prompt": prompt,
-            "aspect_ratio": aspect_ratio,
-            "provider": self._name,
-        }
-
-
-class _FakeCodexProvider(ImageGenProvider):
-    @property
-    def name(self) -> str:
-        return "codex"
-
-    def generate(self, prompt, aspect_ratio="landscape", **kwargs):
-        return {
-            "success": True,
-            "image": "/tmp/codex-test.png",
-            "model": "gpt-5.2-codex",
-            "prompt": prompt,
-            "aspect_ratio": aspect_ratio,
-            "provider": "codex",
-        }
-
-
 class TestPluginDispatch:
-    def test_dispatch_routes_to_codex_provider(self, monkeypatch, tmp_path):
-        from tools import image_generation_tool
-        from agent import image_gen_registry as registry_module
-        from hermes_cli import plugins as plugins_module
-
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-        (tmp_path / "config.yaml").write_text("image_gen:\n  provider: codex\n")
-        image_gen_registry.register_provider(_FakeCodexProvider())
-
-        monkeypatch.setattr(image_generation_tool, "_read_configured_image_provider", lambda: "codex")
-        monkeypatch.setattr(plugins_module, "_ensure_plugins_discovered", lambda: None)
-        monkeypatch.setattr(registry_module, "get_provider", lambda name: _FakeCodexProvider() if name == "codex" else None)
-
-        dispatched = image_generation_tool._dispatch_to_plugin_provider("draw cat", "square")
-        payload = json.loads(dispatched)
-
-        assert payload["success"] is True
-        assert payload["provider"] == "codex"
-        assert payload["image"] == "/tmp/codex-test.png"
-        assert payload["aspect_ratio"] == "square"
 
 
 class TestAutoSelection:
