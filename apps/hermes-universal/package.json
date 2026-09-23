@@ -26,6 +26,8 @@
     "adb:reverse": "adb reverse tcp:5176 tcp:5176 && adb reverse tcp:5177 tcp:5177 && adb reverse tcp:4317 tcp:4317 && adb reverse tcp:4318 tcp:4318",
     "android:build:debug": "npm run android:prune && CARGO_TARGET_DIR=\"$PWD/src-tauri/target-android\" tauri android build --debug",
     "android:install": "adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk",
+    "absorb-desktop-src": "node scripts/absorb-desktop-src.mjs",
+    "gen-port-registry": "node scripts/gen-port-registry.mjs",
     "typecheck": "tsc -p . --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
