@@ -57,6 +57,27 @@ Authoritative gate for “missing vs present” remains
 [`src/lib/hermes-desktop/preload-drift.test.ts`](src/lib/hermes-desktop/preload-drift.test.ts)
 (`NOT_YET` ↔ keep `port-decisions.json` in sync when you change it).
 
+## Absorb complete (thin IPC)
+
+Waves 1–5 of the Electron→Tauri thin-host absorb are done on
+`pipeline/nous-thin-host`: preload members that are thin IPC now live on
+`window.hermesDesktop` via `src/lib/hermes-desktop/` + `src-tauri` commands.
+`npm run gen-port-registry` / `preload-drift.test.ts` are the gate.
+
+**Wave 6 (native / decisions), in order:**
+
+1. ~~Spellcheck~~ → `no-mapping`
+2. ~~`hudModifier`~~ → ported (`hud_modifier.rs` + native helper)
+3. ~~`screenshot`~~ → ported (`screenshot.rs`; macOS helper + `screencapture`)
+4. ~~`connections.updateManaged`~~ → ported (`connections/managed_update.rs` via live tunnel)
+
+`needs-Rust` count is **0**.
+
+**Check status at closeout:** `check:rust` (fmt / check / test) green; hermes-desktop
+vitest green. Full `npm run check` / `check:js` typecheck is still red on
+pre-existing absorb/MERGE debt (~1k+ TS errors in absorbed desktop UI) — not a
+Wave 5 regression; fix that debt separately from Wave 6 native ports.
+
 ## Branch / merge notes
 
 Work branch for this rebuild: `pipeline/nous-thin-host`.

@@ -59,105 +59,49 @@ const NOT_YET: Record<string, string> = {
   setPoolLimits: 'no mapping: no backend pool — one unified server per connection serves every profile',
 
   // -- needs Rust ---------------------------------------------------------------
-  readFileDataUrlForAttach:
-    'needs Rust: read_capped_file_base64 has one cap (the user’s); the caller falls back to readFileDataUrl',
-  setActiveWork:
-    'needs Rust: a process-wide quit guard (per-webview reports merged at quit_app / last window) and its dialog copy',
-  claimAmbientCue: 'needs Rust: a cross-window arbiter; also what would dedupe one OS notification across peer windows',
-  saveImageBuffer: 'needs Rust: a binary write into app data (composer-images)',
-  savePastedText: 'needs Rust: a write into app data',
-  saveClipboardImage: 'needs Rust: clipboard image → app data',
-  readFileText: 'needs Rust: a capped local text read with binary sniffing',
-  readDir: 'needs Rust: a local directory listing',
-  gitRoot: 'needs Rust: local git discovery',
-  renamePath: 'needs Rust: local rename',
-  writeTextFile: 'needs Rust: hardened local text write',
-  trashPath: 'needs Rust: OS trash',
-  openDir: 'needs Rust: mkdir -p + open in the file manager',
-  watchPreviewFile: 'needs Rust: file watcher',
-  watchDirectory: 'needs Rust: directory watcher',
-  stopPreviewFileWatch: 'needs Rust: file watcher',
-  onPreviewFileChanged: 'needs Rust: file watcher',
-  normalizePreviewTarget: 'needs Rust: local path resolution for previews',
-  capturePreview: 'needs Rust: guest webview capture',
-  resolveFavicon: 'needs Rust: favicon fetch + cache',
-  sanitizeWorkspaceCwd: 'needs Rust: local cwd validation',
-  getOnBattery: 'needs Rust: power source',
-  onBatteryChanged: 'needs Rust: power source',
-  getMachineProfile: 'needs Rust: host facts',
-  getRemoteDisplayReason: 'needs Rust: remote-display detection',
-  revealLogs: 'needs Rust: the log file’s path',
-  getRecentLogs: 'needs Rust: the log ring',
-  reportRendererError: 'needs Rust: a log sink for renderer crashes',
-  logsRoot: 'needs Rust: the log directory',
-  contextMenuSpellcheck: 'needs Rust: no spellcheck API on a Tauri webview',
-  contextMenuGuestAddWord: 'needs Rust: no spellcheck API on a Tauri webview',
-  onContextMenuSpellcheck: 'needs Rust: no spellcheck API on a Tauri webview',
-  'connections.updateManaged':
-    'needs Rust: a transactional update of an SSH install it manages (drain, update, prove, restore); desktop’s section feature-detects it',
-  saveGatewayFile:
-    'needs Rust: a download scoped by connection, profile and session — download_file follows media_set_target, the active source only',
-  mcpOauth: 'needs Rust: a one-shot loopback listener (listen / wait / cancel) for MCP OAuth redirects',
-  openSessionInTerminal:
-    'needs Rust: a launcher that resumes the session in the TUI (`hermes --tui --resume`); open_in_terminal only opens a shell at a directory',
+  // (none — Wave 6 cleared)
+
+  // -- spellcheck: intentional absence (no Tauri webview Chromium spellcheck IPC)
+  contextMenuSpellcheck:
+    'no mapping: Tauri webviews expose no Chromium misspelling/replace/add-word IPC; OS underline may still apply in-field; Hermes suggestion menu stays absent (context_menu.rs BridgeSupport.spelling=false)',
+  contextMenuGuestAddWord:
+    'no mapping: Tauri webviews expose no Chromium misspelling/replace/add-word IPC; guest dictionary add has no session API on wry',
+  onContextMenuSpellcheck:
+    'no mapping: no embedder context-menu misspelling event on WebKitGTK/WKWebView/WebView2 without a v2 engine adapter that does not exist yet',
 
   // -- batch 3: windows, updates, themes, git, terminal, satellites -------------
-  openBrowserWindow: 'batch 3: the in-app browser’s pop-out',
-  onBrowserPopoutClosed: 'batch 3: the in-app browser’s pop-out',
-  setPreviewShortcutActive: 'batch 3: preview pane shortcuts',
-  openPreviewInBrowser: 'batch 3: preview pane',
-  reachPreviewUrl: 'batch 3: browser_reach_url',
-  onClosePreviewRequested: 'batch 3: menu accelerators',
-  onPreviewNav: 'batch 3: menu accelerators',
-  onOpenFolderRequested: 'batch 3: menu accelerators',
-  onOpenUpdatesRequested: 'batch 3: menu accelerators',
-  onOpenFindBarRequested: 'batch 3: menu accelerators',
-  findInPage: 'batch 3: find_in_page',
-  stopFindInPage: 'batch 3: stop_find_in_page',
-  onFoundInPage: 'batch 3: find_in_page',
-  contextMenuEdit: 'batch 3: the context menu’s edit verbs (app/context-menu/actions.ts)',
-  contextMenuCopyImage: 'batch 3: context_menu_copy_image',
-  updates: 'batch 3: update_check / update_install',
-  getVersion: 'batch 3: app version, with updates',
-  relaunchApp: 'batch 3: relaunch, with updates',
-  uninstall: 'batch 3: no uninstaller on Tauri — decide absent-for-good',
-  themes: 'batch 3: marketplace_search / marketplace_fetch',
-  git: 'batch 3: local git',
-  terminal: 'batch 3: pty_*',
-  petOverlay: 'batch 3: the pet’s own window',
-  quickEntry: 'batch 3: the quick-entry satellite',
-  hud: 'batch 3: the HUD satellite',
-  chatOnboarding: 'batch 3: onboarding window growth',
-  introReveal: 'batch 3: the first-run film',
-  readPluginSource: 'batch 3: plugins_read',
-  desktopPluginsRoot: 'batch 3: plugins_root',
-  reconcileDesktopPlugins: 'batch 3: plugins_list',
-  probePluginRepo: 'batch 3: plugin install',
-  installDesktopPlugin: 'batch 3: plugin install',
-  getBootstrapState: 'batch 3: local_install_*',
-  continueBootstrapLocal: 'batch 3: local_install_*',
-  resetBootstrap: 'batch 3: local_install_*',
-  repairBootstrap: 'batch 3: local_install_*',
-  cancelBootstrap: 'batch 3: local_install_cancel',
-  onBootstrapEvent: 'batch 3: local_install_*',
-  localModelsEnabled: 'batch 3: launch flag — get_app_flag is async, and this is read synchronously',
-  guestOnboardingEnabled: 'batch 3: launch flag — get_app_flag is async, and this is read synchronously',
-  skipIntro: 'batch 3: launch flag — get_app_flag is async, and this is read synchronously',
+  onClosePreviewRequested:
+    'owned elsewhere: keybinds (use-keybinds.ts) — Universal has no Electron application menu; the same chords fire in-process',
+  onPreviewNav:
+    'owned elsewhere: keybinds (use-keybinds.ts) — Universal has no Electron application menu; the same chords fire in-process',
+  onOpenFolderRequested:
+    'owned elsewhere: keybinds (workspace.openFolder) — Universal has no Electron application menu; the same chords fire in-process',
+  onOpenUpdatesRequested:
+    'owned elsewhere: keybinds / Settings → Updates — Universal has no Electron application menu; the same chords fire in-process',
+  onOpenFindBarRequested:
+    'owned elsewhere: keybinds (view.findInPage) — Universal has no Electron application menu; the same chords fire in-process',
+  uninstall: 'no mapping: Tauri ships no in-app uninstaller; the OS package manager owns removal',
+  getBootstrapState:
+    'owned elsewhere: LocalInstallPanel + local_install_* — Electron’s DesktopInstallOverlay is a different install path; universal never dials these',
+  continueBootstrapLocal:
+    'owned elsewhere: LocalInstallPanel + local_install_* — Electron’s DesktopInstallOverlay is a different install path; universal never dials these',
+  resetBootstrap:
+    'owned elsewhere: LocalInstallPanel + local_install_* — Electron’s DesktopInstallOverlay is a different install path; universal never dials these',
+  repairBootstrap:
+    'owned elsewhere: LocalInstallPanel + local_install_* — Electron’s DesktopInstallOverlay is a different install path; universal never dials these',
+  cancelBootstrap:
+    'owned elsewhere: LocalInstallPanel + local_install_cancel — Electron’s DesktopInstallOverlay is a different install path; universal never dials these',
+  onBootstrapEvent:
+    'owned elsewhere: LocalInstallPanel + local_install_* — Electron’s DesktopInstallOverlay is a different install path; universal never dials these',
 
   // -- post-Nous thin-host: new preload members not yet ported -----------------
-  windowControls: 'needs Rust: custom titlebar window controls (minimize/maximize/close)',
-  hudModifier: 'needs Rust: HUD modifier key tracking',
-  screenshot: 'needs Rust: desktop screenshot capture',
-  'profile.getDefault': 'needs Rust: default profile preference (partial profile namespace)',
-  'profile.setDefault': 'needs Rust: default profile preference (partial profile namespace)',
-  'profile.onDefaultChanged': 'needs Rust: default profile preference (partial profile namespace)',
-  minimizeToTray: 'needs Rust: minimize-to-tray preference',
-  removeDesktopPlugin: 'batch 3: plugin uninstall (with installDesktopPlugin)',
+  minimizeToTray:
+    'owned elsewhere: store/background-mode.ts + set_background_mode — Keep Running is the same job; a second bridge would duplicate the Settings row',
   onPoolBackendRetiring: 'no mapping: no backend pool — one unified server per connection'
 }
 
 /** Lower it when an entry leaves. It does not go up without a decision. */
-const NOT_YET_SIZE = 100
+const NOT_YET_SIZE = 31
 
 /** Every member the preload exposes: `notify`, `zoom.get`, `git.review.list`. */
 function preloadSurface(): string[] {
@@ -172,11 +116,26 @@ function preloadSurface(): string[] {
         throw new Error('the preload spreads or computes a member — teach this test to read it')
       }
 
-      if (ts.isPropertyAssignment(property) && ts.isObjectLiteralExpression(property.initializer)) {
-        collect(property.initializer, `${prefix}${name}.`)
-      } else {
-        members.push(`${prefix}${name}`)
+      if (ts.isPropertyAssignment(property)) {
+        let init = property.initializer
+
+        // `hudModifier: { … } satisfies HudModifierApi` — descend into the object.
+        while (ts.isSatisfiesExpression(init)) {
+          init = init.expression
+        }
+
+        // `screenshot: process.platform === 'darwin' ? { … } : undefined`
+        if (ts.isConditionalExpression(init) && ts.isObjectLiteralExpression(init.whenTrue)) {
+          init = init.whenTrue
+        }
+
+        if (ts.isObjectLiteralExpression(init)) {
+          collect(init, `${prefix}${name}.`)
+          continue
+        }
       }
+
+      members.push(`${prefix}${name}`)
     }
   }
 
@@ -346,7 +305,14 @@ describe('the profile namespace', () => {
 
       expect([platform, members.filter(member => member.startsWith('profile.')).sort()]).toEqual([
         platform,
-        ['profile.get', 'profile.remember', 'profile.set']
+        [
+          'profile.get',
+          'profile.getDefault',
+          'profile.onDefaultChanged',
+          'profile.remember',
+          'profile.set',
+          'profile.setDefault'
+        ]
       ])
     }
   })

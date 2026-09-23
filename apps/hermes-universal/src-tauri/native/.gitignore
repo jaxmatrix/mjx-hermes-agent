@@ -1,0 +1,6 @@
+# Host-built helpers (see src-tauri/build.rs / Electron native scripts).
+# Keep sources; never check in the linked binary.
+hud-modifier/hud-modifier-monitor
+hud-modifier/hud-modifier-monitor.exe
+screenshot/command-screenshot-monitor
+screenshot/command-screenshot-monitor.exe

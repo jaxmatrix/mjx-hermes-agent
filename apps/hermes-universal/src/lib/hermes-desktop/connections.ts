@@ -816,6 +816,45 @@ export const connectionBridge: Pick<
   profile: {
     get: async () => ({ profile: await primaryProfile(await activeConnection()) }),
 
+    getDefault: async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+
+      return invoke<import('@/global').DesktopProfileRoute | null>('profile_default_get')
+    },
+
+    setDefault: async route => {
+      const { invoke } = await import('@tauri-apps/api/core')
+
+      return invoke<import('@/global').DesktopProfileRoute>('profile_default_set', { route })
+    },
+
+    onDefaultChanged: callback => {
+      let unlisten: (() => void) | undefined
+      let cancelled = false
+
+      void import('@tauri-apps/api/event').then(({ listen }) => {
+        if (cancelled) {
+          return
+        }
+
+        void listen<import('@/global').DesktopProfileRoute | null>(
+          'hermes://profile-default-changed',
+          event => callback(event.payload)
+        ).then(fn => {
+          if (cancelled) {
+            fn()
+          } else {
+            unlisten = fn
+          }
+        })
+      })
+
+      return () => {
+        cancelled = true
+        unlisten?.()
+      }
+    },
+
     // Electron's one preference file is, here, the registry store's per-source
     // memory: the primary is whichever connection the window is on.
     remember: async name => {

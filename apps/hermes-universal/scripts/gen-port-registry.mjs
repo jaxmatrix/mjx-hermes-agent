@@ -37,11 +37,20 @@ function preloadSurface(sourceText) {
       if (!name) {
         throw new Error('preload spreads or computes a member — teach gen-port-registry to read it')
       }
-      if (ts.isPropertyAssignment(property) && ts.isObjectLiteralExpression(property.initializer)) {
-        collect(property.initializer, `${prefix}${name}.`)
-      } else {
-        members.push(`${prefix}${name}`)
+      if (ts.isPropertyAssignment(property)) {
+        let init = property.initializer
+        while (ts.isSatisfiesExpression(init)) {
+          init = init.expression
+        }
+        if (ts.isConditionalExpression(init) && ts.isObjectLiteralExpression(init.whenTrue)) {
+          init = init.whenTrue
+        }
+        if (ts.isObjectLiteralExpression(init)) {
+          collect(init, `${prefix}${name}.`)
+          continue
+        }
       }
+      members.push(`${prefix}${name}`)
     }
   }
 

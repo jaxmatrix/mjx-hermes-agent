@@ -17,6 +17,7 @@
 //! row, the first seed. Taken in that order: `source`, then `writer`.
 
 pub mod error;
+pub mod managed_update;
 pub mod probe;
 pub mod registry;
 pub mod roster;

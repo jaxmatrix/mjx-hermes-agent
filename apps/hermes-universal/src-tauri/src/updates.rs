@@ -159,6 +159,13 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
     app.restart();
 }
 
+/// Restart the running app in place (About → Restart). Distinct from
+/// `update_install`, which only restarts after a successful self-update.
+#[tauri::command]
+pub fn relaunch_app(app: AppHandle) {
+    app.restart();
+}
+
 /// Open the update destination. Routed through the opener plugin's Rust API for
 /// the same reason `open_external` is (lib.rs): a Rust-internal call isn't gated
 /// by the opener ACL/scope. Handles the non-http `market://` / `itms-apps://`

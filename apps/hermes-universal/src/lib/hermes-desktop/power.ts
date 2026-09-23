@@ -1,19 +1,9 @@
 /**
- * `setKeepAwake`, over Rust's one sleep inhibitor (`keep_awake.rs`).
+ * Power + battery over Rust (`keep_awake.rs`, `host_facts.rs`).
  *
- * Desktop's store (`store/keep-awake.ts`) owns the preference and calls this on
- * every change — and once at boot, because a nanostores `subscribe` fires
- * immediately, which is what re-arms the inhibitor after a relaunch.
- *
- * Electron's `powerSaveBlocker` cannot refuse. An OS can: there is no logind
- * under WSL or on a non-systemd distro, and a sandboxed build may not reach the
- * system bus. `set_keep_awake` answers with what is HELD, so a refused arm turns
- * the switch back off and says so — a switch that reads "on" over a machine
- * free to sleep is the one outcome this lever must not have. Only an arm is
- * corrected: correcting a release as well could bounce between the two forever.
- *
- * Desktop only. A phone sleeps on its own terms, Rust answers
- * `unsupported_platform` there, and the caller optional-chains the member.
+ * `setKeepAwake`: sleep inhibitor (see prior docs).
+ * `getOnBattery` / `onBatteryChanged`: Electron powerMonitor mirror — seeds
+ * `store/power.ts` and stretches backstop polls on battery.
  */
 
 import type * as TauriCore from '@tauri-apps/api/core'
@@ -22,13 +12,14 @@ import { translateNow } from '@/i18n/runtime'
 
 type Bridge = NonNullable<typeof window.hermesDesktop>
 
+const BATTERY_EVENT = 'hermes://power-battery'
+
 /** Only the newest ask may correct the switch. */
 let generation = 0
 
 let core: null | Promise<typeof TauriCore> = null
 
 async function refused(error: unknown): Promise<void> {
-  // Dynamic: both stores are outside the install graph.
   const [{ setKeepAwake }, { notifyError }] = await Promise.all([
     import('@/store/keep-awake'),
     import('@/store/notifications')
@@ -55,4 +46,35 @@ const setKeepAwake: NonNullable<Bridge['setKeepAwake']> = on => {
     .catch(() => undefined)
 }
 
-export const powerBridge: Pick<Bridge, 'setKeepAwake'> = { setKeepAwake }
+const getOnBattery: NonNullable<Bridge['getOnBattery']> = async () => {
+  const { invoke } = await import('@tauri-apps/api/core')
+
+  return invoke<boolean>('get_on_battery')
+}
+
+const onBatteryChanged: NonNullable<Bridge['onBatteryChanged']> = callback => {
+  let stopped = false
+  let unlisten: (() => void) | undefined
+
+  void import('@tauri-apps/api/event')
+    .then(({ listen }) => listen<boolean>(BATTERY_EVENT, event => callback(Boolean(event.payload))))
+    .then(off => {
+      if (stopped) {
+        off()
+      } else {
+        unlisten = off
+      }
+    })
+    .catch(() => {})
+
+  return () => {
+    stopped = true
+    unlisten?.()
+  }
+}
+
+export const powerBridge: Pick<Bridge, 'getOnBattery' | 'onBatteryChanged' | 'setKeepAwake'> = {
+  getOnBattery,
+  onBatteryChanged,
+  setKeepAwake
+}

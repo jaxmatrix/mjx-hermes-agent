@@ -10,6 +10,9 @@
 //! `gen/android/buildSrc/.../BuildTask.kt` to avoid a wry 0.55 crash on cookie
 //! polling — see that file.)
 
+mod active_work;
+mod ambient;
+mod app_log;
 mod app_state;
 mod appearance;
 mod artifact;
@@ -17,25 +20,46 @@ mod artifact;
 mod backend_log;
 mod background;
 mod browser;
+mod chat_onboarding;
 mod cloud;
+mod composer_paste;
 mod connections;
 mod context_menu;
 mod data_url_read_max;
 mod deep_link;
 #[cfg(desktop)]
 mod external_terminal;
+mod favicon;
 mod files;
 mod find_in_page;
+#[cfg(desktop)]
+mod fs_ipc;
+mod git_review;
+mod git_worktree;
+mod host_facts;
+mod hud;
+#[cfg(desktop)]
+mod hud_modifier;
+mod intro_reveal;
 mod keep_awake;
 mod link_title;
 mod local_backend;
 mod local_install;
 mod marketplace;
+mod mcp_oauth;
 mod media;
 mod oauth;
+mod pet_overlay;
 mod plugins;
+mod plugins_install;
+#[cfg(desktop)]
+mod preview_capture;
+mod profile_default;
 mod pty;
+mod quick_entry;
 mod repo_scan;
+#[cfg(desktop)]
+mod screenshot;
 mod secrets;
 mod shortcuts;
 mod ssh;
@@ -46,9 +70,16 @@ mod tray;
 mod tunnels;
 mod updates;
 mod voice;
+#[cfg(desktop)]
+mod watchers;
 mod webview_cookies;
 mod window;
+#[cfg(desktop)]
+mod workspace;
 
+use active_work::{set_active_work, ActiveWorkState};
+use ambient::{claim_ambient_cue, AmbientState};
+use app_log::{logs_recent, logs_reveal, logs_root, report_renderer_error, AppLogState};
 use app_state::{get_app_flag, set_app_flag};
 use appearance::{appearance_capabilities, appearance_set_glass, AppearanceState};
 use artifact::{artifact_release, artifact_stage, ArtifactState, ARTIFACT_SCHEME};
@@ -59,9 +90,12 @@ use browser::commands::{
     browser_reach_url, browser_reload, browser_set_bounds, browser_set_visible, browser_stop,
 };
 use browser::BrowserState;
+use chat_onboarding::{chat_onboarding_grow, chat_onboarding_solo_boot};
 use cloud::{
     portal_agent_sign_in, portal_discover_agents, portal_login, portal_logout, portal_status,
 };
+use composer_paste::{save_clipboard_image, save_image_buffer, save_pasted_text};
+use connections::managed_update::{connections_update_managed, ManagedUpdateGate};
 use connections::{
     connections_claim_resume, connections_commit_source, connections_current_source,
     connections_list, connections_migrate, connections_remove, connections_resolve,
@@ -72,12 +106,42 @@ use context_menu::{
     context_menu_copy_image, context_menu_install, context_menu_save_image,
     context_menu_set_suppressed, ContextMenuState,
 };
-use data_url_read_max::{read_capped_file_base64, set_data_url_read_max, DataUrlReadMaxState};
+use data_url_read_max::{
+    read_capped_file_base64, read_capped_file_base64_for_attach, set_data_url_read_max,
+    DataUrlReadMaxState,
+};
 use deep_link::{deep_link_ready, DeepLinkState};
 #[cfg(desktop)]
-use external_terminal::open_in_terminal;
+use external_terminal::{open_in_terminal, open_session_in_terminal};
+use favicon::{resolve_favicon, FaviconState};
 use files::{cancel_download, download_file, download_folder, DownloadState};
 use find_in_page::{find_in_page, stop_find_in_page};
+#[cfg(desktop)]
+use fs_ipc::{fs_git_root, fs_open_dir, fs_read_dir, fs_rename, fs_trash, fs_write_text};
+use git_review::{
+    git_file_diff, git_repo_status, git_review_commit, git_review_commit_context,
+    git_review_create_pr, git_review_diff, git_review_list, git_review_pr_list, git_review_push,
+    git_review_rev_parse, git_review_revert, git_review_ship_info, git_review_stage,
+    git_review_unstage,
+};
+use git_worktree::{
+    git_base_branch_list, git_branch_list, git_branch_switch, git_worktree_add, git_worktree_list,
+    git_worktree_remove,
+};
+use host_facts::{get_machine_profile, get_on_battery, get_remote_display_reason, HostFactsState};
+use hud::{
+    hud_begin_move, hud_broadcast_changed, hud_emit_goto, hud_end_move, hud_move_by,
+    hud_reset_layout, hud_set_bounds, hud_set_ignore_mouse, hud_set_session,
+    hud_set_workspace_transfer, hud_windowing, HudState,
+};
+#[cfg(desktop)]
+use hud_modifier::{
+    hud_modifier_open_permission, hud_modifier_settings_get, hud_modifier_settings_set,
+    HudModifierStateHandle,
+};
+use intro_reveal::{
+    intro_reveal_close, intro_reveal_open, intro_reveal_ready, intro_reveal_skip, IntroRevealState,
+};
 use keep_awake::{set_keep_awake, KeepAwakeState};
 use link_title::fetch_link_title;
 use local_backend::{
@@ -86,11 +150,26 @@ use local_backend::{
 };
 use local_install::{local_install_cancel, local_install_detect, local_install_start};
 use marketplace::{marketplace_fetch, marketplace_search};
+use mcp_oauth::{mcp_oauth_cancel, mcp_oauth_listen, mcp_oauth_wait, McpOauthState};
 use media::{media_set_target, MediaState, MEDIA_SCHEME};
 use oauth::{oauth_login, oauth_logout, oauth_status};
+use pet_overlay::{
+    pet_overlay_close, pet_overlay_control, pet_overlay_open, pet_overlay_push_state,
+    pet_overlay_set_bounds, pet_overlay_set_focusable, pet_overlay_set_ignore_mouse,
+};
 use plugins::{plugins_list, plugins_read, plugins_root};
+use plugins_install::{plugins_install_desktop, plugins_probe, plugins_remove_desktop};
+#[cfg(desktop)]
+use preview_capture::capture_preview;
+use profile_default::{profile_default_get, profile_default_set};
 use pty::{pty_kill, pty_resize, pty_spawn, pty_write, PtyState};
+use quick_entry::{quick_entry_settings_get, quick_entry_settings_set, QuickEntryState};
 use repo_scan::repo_scan_git_repos;
+#[cfg(desktop)]
+use screenshot::{
+    screenshot_capture, screenshot_open_permission, screenshot_settings_get,
+    screenshot_settings_set, screenshot_subscribe, ScreenshotStateHandle,
+};
 use secrets::{
     secrets_clear, secrets_delete, secrets_get, secrets_lock, secrets_set, secrets_status,
     secrets_unlock,
@@ -107,16 +186,20 @@ use transport::{
     TransportState,
 };
 use tray::{tray_set_labels, tray_set_status, TrayState};
-use updates::{update_check, update_install, update_open_download, UpdateState};
+use updates::{relaunch_app, update_check, update_install, update_open_download, UpdateState};
 use voice::{
     voice_arm, voice_close, voice_force_turn, voice_open, voice_suspend, voice_update_auth,
     voice_wake_listen, VoiceState,
 };
+#[cfg(desktop)]
+use watchers::{stop_preview_file_watch, watch_directory, watch_preview_file, WatchersState};
 use window::{
     close_this_window, hide_satellite_window, hide_this_window, is_satellite_window_visible,
-    open_instance_window, open_satellite_window, open_screen_window, open_session_window,
-    open_tile_window, resize_satellite_window, show_app_window,
+    open_browser_window, open_instance_window, open_satellite_window, open_screen_window,
+    open_session_window, open_tile_window, resize_satellite_window, show_app_window,
 };
+#[cfg(desktop)]
+use workspace::{normalize_preview_target, read_file_text, sanitize_workspace_cwd};
 
 /// Open a URL in the system browser. Routed through the opener plugin's Rust API
 /// rather than its JS `openUrl` command: a Rust-internal call isn't gated by the
@@ -310,7 +393,7 @@ pub fn run() {
         }
     });
 
-    builder
+    let builder = builder
         .manage(TransportState::new())
         .manage(MediaState::default())
         // The live downloads' cancel flags. Managed on BOTH targets so the
@@ -326,6 +409,26 @@ pub fn run() {
         // the machine even if the webview never turned the preference back off.
         .manage(KeepAwakeState::default())
         .manage(DataUrlReadMaxState::default())
+        .manage(FaviconState::default())
+        .manage(HostFactsState::default())
+        .manage(AppLogState::default())
+        .manage(McpOauthState::default())
+        .manage(AmbientState::default())
+        .manage(ActiveWorkState::default())
+        .manage(IntroRevealState::default())
+        .manage(QuickEntryState::default())
+        .manage(HudState::default());
+
+    #[cfg(desktop)]
+    let builder = builder.manage(HudModifierStateHandle::default());
+
+    #[cfg(desktop)]
+    let builder = builder.manage(ScreenshotStateHandle::default());
+
+    #[cfg(desktop)]
+    let builder = builder.manage(WatchersState::default());
+
+    builder
         // Which glass request each window LABEL already carries, so a tint drag
         // under glass costs zero native calls (appearance/mod.rs).
         .manage(AppearanceState::default())
@@ -342,6 +445,7 @@ pub fn run() {
         // document, the credentials and the probe are platform-identical, and
         // only the `local` KIND is desktop-only.
         .manage(ConnectionsState::default())
+        .manage(ManagedUpdateGate::default())
         // The deep-link cold-start buffer. Managed on BOTH targets so the builder
         // chain has one shape — and it does real work on mobile, where a cold
         // launch from a tapped link races the WebView every time.
@@ -461,6 +565,20 @@ pub fn run() {
             }
 
             deep_link::setup(app.handle());
+
+            #[cfg(desktop)]
+            {
+                use tauri::Manager;
+
+                let state = app.state::<QuickEntryState>();
+                quick_entry::boot(app.handle(), state.inner());
+
+                let hud_mod = app.state::<HudModifierStateHandle>();
+                hud_modifier::boot(app.handle(), hud_mod.inner());
+
+                let shot = app.state::<ScreenshotStateHandle>();
+                screenshot::boot(app.handle(), shot.inner());
+            }
             tunnels::start_reaper(app.handle());
 
             let _ = app;
@@ -481,6 +599,68 @@ pub fn run() {
             pty_resize,
             pty_kill,
             repo_scan_git_repos,
+            git_worktree_list,
+            git_worktree_add,
+            git_worktree_remove,
+            git_branch_list,
+            git_base_branch_list,
+            git_branch_switch,
+            git_repo_status,
+            git_file_diff,
+            git_review_list,
+            git_review_diff,
+            git_review_stage,
+            git_review_unstage,
+            git_review_revert,
+            git_review_rev_parse,
+            git_review_commit,
+            git_review_commit_context,
+            git_review_push,
+            git_review_ship_info,
+            git_review_pr_list,
+            git_review_create_pr,
+            chat_onboarding_grow,
+            chat_onboarding_solo_boot,
+            intro_reveal_open,
+            intro_reveal_close,
+            intro_reveal_ready,
+            intro_reveal_skip,
+            quick_entry_settings_get,
+            quick_entry_settings_set,
+            pet_overlay_open,
+            pet_overlay_close,
+            pet_overlay_set_bounds,
+            pet_overlay_set_ignore_mouse,
+            pet_overlay_set_focusable,
+            pet_overlay_push_state,
+            pet_overlay_control,
+            hud_broadcast_changed,
+            hud_set_session,
+            hud_set_ignore_mouse,
+            hud_set_bounds,
+            hud_begin_move,
+            hud_end_move,
+            hud_move_by,
+            hud_set_workspace_transfer,
+            hud_reset_layout,
+            hud_windowing,
+            hud_emit_goto,
+            #[cfg(desktop)]
+            hud_modifier_settings_get,
+            #[cfg(desktop)]
+            hud_modifier_settings_set,
+            #[cfg(desktop)]
+            hud_modifier_open_permission,
+            #[cfg(desktop)]
+            screenshot_settings_get,
+            #[cfg(desktop)]
+            screenshot_settings_set,
+            #[cfg(desktop)]
+            screenshot_open_permission,
+            #[cfg(desktop)]
+            screenshot_subscribe,
+            #[cfg(desktop)]
+            screenshot_capture,
             voice_open,
             voice_arm,
             voice_wake_listen,
@@ -492,11 +672,58 @@ pub fn run() {
             reveal_in_file_manager,
             #[cfg(desktop)]
             open_in_terminal,
+            #[cfg(desktop)]
+            open_session_in_terminal,
+            #[cfg(desktop)]
+            fs_read_dir,
+            #[cfg(desktop)]
+            fs_git_root,
+            #[cfg(desktop)]
+            fs_open_dir,
+            #[cfg(desktop)]
+            fs_rename,
+            #[cfg(desktop)]
+            fs_write_text,
+            #[cfg(desktop)]
+            fs_trash,
+            #[cfg(desktop)]
+            sanitize_workspace_cwd,
+            #[cfg(desktop)]
+            read_file_text,
+            #[cfg(desktop)]
+            normalize_preview_target,
+            #[cfg(desktop)]
+            watch_preview_file,
+            #[cfg(desktop)]
+            watch_directory,
+            #[cfg(desktop)]
+            stop_preview_file_watch,
             appearance_capabilities,
             appearance_set_glass,
             set_keep_awake,
             set_data_url_read_max,
             read_capped_file_base64,
+            read_capped_file_base64_for_attach,
+            save_image_buffer,
+            save_pasted_text,
+            save_clipboard_image,
+            resolve_favicon,
+            get_on_battery,
+            get_machine_profile,
+            get_remote_display_reason,
+            logs_root,
+            logs_reveal,
+            logs_recent,
+            report_renderer_error,
+            mcp_oauth_listen,
+            mcp_oauth_wait,
+            mcp_oauth_cancel,
+            profile_default_get,
+            profile_default_set,
+            claim_ambient_cue,
+            set_active_work,
+            #[cfg(desktop)]
+            capture_preview,
             get_app_flag,
             set_app_flag,
             connections_list,
@@ -513,6 +740,7 @@ pub fn run() {
             connections_test,
             connections_roster,
             connections_update_all,
+            connections_update_managed,
             marketplace_search,
             marketplace_fetch,
             artifact_release,
@@ -548,9 +776,13 @@ pub fn run() {
             plugins_root,
             plugins_list,
             plugins_read,
+            plugins_probe,
+            plugins_install_desktop,
+            plugins_remove_desktop,
             open_session_window,
             open_instance_window,
             open_tile_window,
+            open_browser_window,
             open_screen_window,
             open_satellite_window,
             hide_satellite_window,
@@ -559,6 +791,7 @@ pub fn run() {
             update_check,
             update_install,
             update_open_download,
+            relaunch_app,
             ssh_connect,
             ssh_test,
             ssh_disconnect,
@@ -656,6 +889,7 @@ pub fn run() {
             //  • a detached tile: so the tile goes back in its slot (MJXHRM-173)
             //  • a satellite: so the main window can reclaim the gateway stream
             //    the HUD was holding (MJXHRM-371)
+            //  • a Browser pop-out: so the primary window can dock the tab again
             //  • ANY window: so the shells it spawned die with it (MJXHRM-373).
             //    `pty_kill` is only ever called by the terminal component's
             //    unmount cleanup, and that never runs for a natively closed
@@ -672,7 +906,7 @@ pub fn run() {
                 ..
             } = &event
             {
-                use tauri::Emitter;
+                use tauri::{Emitter, Manager};
 
                 #[cfg(desktop)]
                 pty::reap_window_ptys(app_handle, label);
@@ -685,6 +919,10 @@ pub fn run() {
                 // webview dies with its window, but the Rust-side registry
                 // would keep answering for it.
                 browser::reap_window(app_handle, label);
+
+                if let Some(state) = app_handle.try_state::<ActiveWorkState>() {
+                    state.forget(label);
+                }
 
                 // The main webview is gone (a reload, an Android process
                 // recreation). Stop claiming a listener exists, so the next link
@@ -700,6 +938,16 @@ pub fn run() {
                 }
                 if window::is_satellite_window_label(label) {
                     let _ = app_handle.emit(window::SATELLITE_WINDOW_CLOSED_EVENT, label.clone());
+                }
+                if window::is_browser_window_label(label) {
+                    if let Some(tab_id) = window::take_browser_tab_id(label) {
+                        let _ = app_handle.emit(window::BROWSER_WINDOW_CLOSED_EVENT, tab_id);
+                    }
+                }
+                if label == intro_reveal::WINDOW_LABEL {
+                    if let Some(state) = app_handle.try_state::<IntroRevealState>() {
+                        intro_reveal::on_destroyed(app_handle, &state);
+                    }
                 }
             }
 
@@ -728,6 +976,8 @@ pub fn run() {
                 use tauri::Manager;
 
                 if app_handle.state::<BackgroundState>().should_prevent_exit() {
+                    api.prevent_exit();
+                } else if active_work::hold_exit_for_active_work(app_handle) {
                     api.prevent_exit();
                 }
             }

@@ -1,20 +1,27 @@
 /**
+ * Local file surfaces over Rust `fs_*` / `workspace` / capped data-URL reads
+ * (Electron `fs-ipc`, `workspace-cwd`, preview text, attach).
+ *
  * `readFileDataUrl` and `dataUrlReadMax`: a file ON THIS DEVICE as a data URL,
  * refused in Rust before it is buffered (`data_url_read_max.rs`).
+ *
+ * `readFileDataUrlForAttach` uses a fixed 256 MiB ceiling
+ * (`read_capped_file_base64_for_attach`), independent of the Settings preview
+ * cap — same contract as Electron's `hermes:readFileDataUrlForAttach`.
  *
  * Desktop only asks the bridge for a local file — a gateway's file goes over
  * REST (`lib/desktop-fs.ts`, `isDesktopFsRemoteMode`) and never arrives here.
  *
- * The cap is one number with two homes, as it was before the resync. Electron's
- * main process owns a JSON file; here the webview owns a `localStorage` key and
- * Rust holds the value in force, which boots at the default. So every read
- * waits for the persisted value to have been pushed down once, and `set`
- * answers with what Rust actually stored.
+ * The preview cap is one number with two homes. Electron's main process owns a
+ * JSON file; here the webview owns a `localStorage` key and Rust holds the
+ * value in force, which boots at the default. So every preview read waits for
+ * the persisted value to have been pushed down once, and `set` answers with
+ * what Rust actually stored.
  *
- * `readFileDataUrlForAttach` stays ABSENT: Electron reads attachments under a
- * fixed 256 MiB cap, and `read_capped_file_base64` has one cap — the user's. Its
- * caller falls back to `readFileDataUrl`, which is the limit universal's attach
- * path always had (and the one a phone needs).
+ * Project-tree FS + workspace/preview helpers (`readDir`, `gitRoot`, `openDir`,
+ * `renamePath`, `writeTextFile`, `trashPath`, `readFileText`,
+ * `sanitizeWorkspaceCwd`, `normalizePreviewTarget`) are desktop-only — phones
+ * have no local project file manager.
  */
 
 import { clampDataUrlReadMaxMb, DATA_URL_READ_DEFAULT_MAX_MB } from '@hermes/shared'
@@ -36,7 +43,7 @@ interface CappedReadError {
   tooLarge?: boolean
 }
 
-async function invokeNative<T>(command: string, args: Record<string, unknown>): Promise<T> {
+async function invokeNative<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core')
 
   return invoke<T>(command, args)
@@ -95,11 +102,11 @@ const dataUrlReadMax: DataUrlReadMax = {
 /** Electron's `resolveRequestedPathForIpc`, for what a renderer actually sends:
  *  a path, a `file:` URL, or `~/…`. An Android `content://` URI passes through —
  *  Rust is what can open one. */
-async function localPath(requested: unknown): Promise<string> {
+async function localPath(requested: unknown, purpose = PURPOSE): Promise<string> {
   const raw = typeof requested === 'string' ? requested.trim() : ''
 
   if (!raw || raw.includes('\0')) {
-    throw new Error(`${PURPOSE} failed: file path is ${raw ? 'invalid' : 'required'}.`)
+    throw new Error(`${purpose} failed: file path is ${raw ? 'invalid' : 'required'}.`)
   }
 
   if (/^file:/i.test(raw)) {
@@ -108,7 +115,7 @@ async function localPath(requested: unknown): Promise<string> {
 
       return /^\/[a-z]:[\\/]/i.test(decoded) ? decoded.slice(1) : decoded
     } catch {
-      throw new Error(`${PURPOSE} failed: file URL is invalid.`)
+      throw new Error(`${purpose} failed: file URL is invalid.`)
     }
   }
 
@@ -154,7 +161,119 @@ const readFileDataUrl: Bridge['readFileDataUrl'] = async filePath => {
   return `data:${mediaMime(path)};base64,${base64}`
 }
 
-export const filesBridge: Pick<Bridge, 'dataUrlReadMax' | 'readFileDataUrl'> = { dataUrlReadMax, readFileDataUrl }
+const readDir: Bridge['readDir'] = async dirPath => {
+  const path = await localPath(dirPath)
+
+  return invokeNative('fs_read_dir', { path })
+}
+
+const gitRoot: NonNullable<Bridge['gitRoot']> = async startPath => {
+  const path = await localPath(startPath)
+
+  return invokeNative('fs_git_root', { path })
+}
+
+const openDir: NonNullable<Bridge['openDir']> = async dirPath => {
+  const path = await localPath(dirPath)
+
+  return invokeNative('fs_open_dir', { path })
+}
+
+const renamePath: NonNullable<Bridge['renamePath']> = async (targetPath, newName) => {
+  const path = await localPath(targetPath)
+
+  return invokeNative('fs_rename', { path, newName })
+}
+
+const writeTextFile: NonNullable<Bridge['writeTextFile']> = async (filePath, content) => {
+  const path = await localPath(filePath)
+
+  return invokeNative('fs_write_text', { path, content: String(content ?? '') })
+}
+
+const trashPath: NonNullable<Bridge['trashPath']> = async targetPath => {
+  const path = await localPath(targetPath)
+
+  return invokeNative('fs_trash', { path })
+}
+
+const ATTACH_PURPOSE = 'Attachment upload'
+
+const readFileDataUrlForAttach: NonNullable<Bridge['readFileDataUrlForAttach']> = async filePath => {
+  const path = await localPath(filePath, ATTACH_PURPOSE)
+  const blocked = sensitivePathBlockReason(path)
+
+  if (blocked) {
+    throw new Error(`${ATTACH_PURPOSE} blocked: ${blocked}`)
+  }
+
+  let base64: string
+
+  try {
+    base64 = await invokeNative<string>('read_capped_file_base64_for_attach', { path })
+  } catch (error) {
+    const refusal = (error && typeof error === 'object' ? error : {}) as CappedReadError
+
+    throw new Error(
+      refusal.tooLarge && refusal.message
+        ? `${ATTACH_PURPOSE} failed: ${refusal.message}.`
+        : `${ATTACH_PURPOSE} failed: file is not readable.`
+    )
+  }
+
+  const { mediaMime } = await import('@/lib/media')
+
+  return `data:${mediaMime(path)};base64,${base64}`
+}
+
+const readFileText: Bridge['readFileText'] = async filePath => {
+  const path = await localPath(filePath, 'Text preview')
+
+  return invokeNative('read_file_text', { path })
+}
+
+const sanitizeWorkspaceCwd: Bridge['sanitizeWorkspaceCwd'] = async cwd =>
+  invokeNative('sanitize_workspace_cwd', { cwd: cwd ?? null })
+
+const normalizePreviewTarget: Bridge['normalizePreviewTarget'] = async (target, baseDir) =>
+  invokeNative('normalize_preview_target', {
+    target,
+    baseDir: baseDir ?? null
+  })
+
+
+export const filesBridge: Pick<
+  Bridge,
+  'dataUrlReadMax' | 'readFileDataUrl' | 'readFileDataUrlForAttach'
+> = {
+  dataUrlReadMax,
+  readFileDataUrl,
+  readFileDataUrlForAttach
+}
+
+/** Desktop project-tree FS + workspace/preview — absent on phones (feature-detect). */
+export const projectFsBridge: Pick<
+  Bridge,
+  | 'gitRoot'
+  | 'normalizePreviewTarget'
+  | 'openDir'
+  | 'readDir'
+  | 'readFileText'
+  | 'renamePath'
+  | 'sanitizeWorkspaceCwd'
+  | 'trashPath'
+  | 'writeTextFile'
+> = {
+  gitRoot,
+  normalizePreviewTarget,
+  openDir,
+  readDir,
+  readFileText,
+  renamePath,
+  sanitizeWorkspaceCwd,
+  trashPath,
+  writeTextFile
+}
 
 /** Test seam: forget that the cap was pushed. */
 export function __resetDataUrlReadMax(): void {

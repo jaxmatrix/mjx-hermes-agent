@@ -29,6 +29,8 @@ export const QUICK_ENTRY_SUBMIT_EVENT = 'hermes://quick-entry-submit'
 export const QUICK_ENTRY_STATE_EVENT = 'hermes://quick-entry-state'
 /** "I'm up — tell me what the backend is doing." */
 export const QUICK_ENTRY_HELLO_EVENT = 'hermes://quick-entry-hello'
+/** Main → quick window: you were just (re)summoned — reset draft + focus. */
+export const QUICK_ENTRY_SHOWN_EVENT = 'hermes://quick-entry-shown'
 
 /** A no-op unlisten, so callers off Tauri (tests, web) still get a disposer. */
 const NOOP: UnlistenFn = () => {}
@@ -81,4 +83,12 @@ export function onQuickEntryState(handler: (state: unknown) => void): Promise<Un
 
 export function onQuickEntrySubmit(handler: (payload: unknown) => void): Promise<UnlistenFn> {
   return receive<unknown>(QUICK_ENTRY_SUBMIT_EVENT, handler)
+}
+
+export function emitQuickEntryShown(): Promise<void> {
+  return send(QUICK_ENTRY_SHOWN_EVENT)
+}
+
+export function onQuickEntryShown(handler: () => void): Promise<UnlistenFn> {
+  return receive<unknown>(QUICK_ENTRY_SHOWN_EVENT, () => handler())
 }

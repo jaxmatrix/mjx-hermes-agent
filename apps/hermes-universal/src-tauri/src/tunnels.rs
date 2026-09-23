@@ -2233,6 +2233,15 @@ pub async fn tunnel_status(app: AppHandle, connection_id: String) -> Option<Tunn
     })
 }
 
+/// Live gateway base URL for a connection, if its tunnel is up.
+pub fn base_url_for(app: &AppHandle, connection_id: &str) -> Option<String> {
+    locked(app, |inner| {
+        let key = inner.book.key_for(connection_id)?;
+        let slot = inner.book.slot(&key)?;
+        slot.base_url.clone()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -52,7 +52,7 @@ describe('isHudWindow', () => {
 })
 
 describe('isAuxiliaryWindow', () => {
-  it('is true for tiles and satellites, false for the primary and an activity screen', async () => {
+  it('is true for tiles, satellites, and Browser pop-outs; false for the primary and an activity screen', async () => {
     const windows = await load()
 
     const cases: Array<[string, boolean]> = [
@@ -60,7 +60,8 @@ describe('isAuxiliaryWindow', () => {
       ['?win=activity', false],
       ['?win=hud', true],
       ['?win=secondary', true],
-      ['?win=tile&tile=files', true]
+      ['?win=tile&tile=files', true],
+      ['?win=browser&tab=t1', true]
     ]
 
     for (const [search, expected] of cases) {
@@ -70,13 +71,33 @@ describe('isAuxiliaryWindow', () => {
   })
 })
 
-describe('capabilities Tauri does not have yet', () => {
-  it('never reads as a browser window, and offers neither opener', async () => {
-    atSearch('?win=browser&tab=t1')
+describe('isBrowserWindow', () => {
+  it('reads ?win=browser and its tab id', async () => {
+    atSearch('?win=browser&tab=url:browser-1')
 
     const windows = await load()
 
-    expect(windows.isBrowserWindow()).toBe(false)
+    expect(windows.isBrowserWindow()).toBe(true)
+    expect(windows.windowBrowserTabId()).toBe('url:browser-1')
+  })
+
+  it('is false for every other window kind', async () => {
+    const windows = await load()
+
+    for (const search of ['', '?win=hud', '?win=tile&tile=chat', '?win=activity']) {
+      atSearch(search)
+      expect(windows.isBrowserWindow()).toBe(false)
+      expect(windows.windowBrowserTabId()).toBeNull()
+    }
+  })
+})
+
+describe('capabilities that need the hermesDesktop bridge', () => {
+  it('offers neither opener without the bridge installed', async () => {
+    atSearch('')
+
+    const windows = await load()
+
     expect(windows.canOpenBrowserWindow()).toBe(false)
     expect(windows.canOpenSessionInTerminal()).toBe(false)
     expect(await windows.openBrowserInNewWindow('t1')).toBe(false)

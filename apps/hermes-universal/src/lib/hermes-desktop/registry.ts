@@ -9,9 +9,8 @@
  * the row the app is on re-homes every window exactly as universal's own
  * editor does.
  *
- * `updateManaged` is absent (`preload-drift.test.ts`): Electron's transactional
- * SSH update drains and restores serves it owns, and Rust has no such engine.
- * Desktop's Managed updates section feature-detects it and stays hidden.
+ * `updateManaged` posts through Rust's managed-update gate onto a live SSH
+ * tunnel's `/api/hermes/update` (see `connections/managed_update.rs`).
  */
 
 import type { DesktopConnectionTestResult } from '@/global'
@@ -194,7 +193,7 @@ export function changedReason(payload: {
 
 const CHANGED_EVENT = 'hermes://connections-changed'
 
-const registry: Omit<Required<Registry>, 'updateManaged'> = {
+const registry: Required<Registry> = {
   list: async () => toDesktopRegistry(await (await registryStore()).refreshConnections()),
 
   save: async payload => {
@@ -323,6 +322,12 @@ const registry: Omit<Required<Registry>, 'updateManaged'> = {
         return { ...base, ...(row.detail && { detail: row.detail }) }
       })
     }
+  },
+
+  updateManaged: async id => {
+    const { invoke } = await import('@tauri-apps/api/core')
+
+    return invoke('connections_update_managed', { id: String(id ?? '') })
   },
 
   onChanged: callback => {

@@ -61,7 +61,7 @@ pub enum PluginRoot {
 
 impl PluginRoot {
     /// Directory under the (profile-resolved) hermes home.
-    fn dir(self) -> &'static str {
+    pub(crate) fn dir(self) -> &'static str {
         match self {
             Self::DesktopPlugins => PLUGIN_DIR,
             Self::AgentPackages => AGENT_PACKAGE_DIR,
@@ -172,14 +172,14 @@ fn plugin_root_under(
     Ok(base.join(root.dir()))
 }
 
-fn root_for(profile: Option<String>, root: PluginRoot) -> Result<PathBuf, String> {
+pub(crate) fn root_for(profile: Option<String>, root: PluginRoot) -> Result<PathBuf, String> {
     let home = hermes_home().ok_or("could not resolve HERMES_HOME on this platform")?;
 
     plugin_root_under(home, profile.as_deref(), root)
 }
 
 /// A single, well-behaved path segment: no separators, no traversal, not hidden.
-fn safe_segment(name: &str) -> bool {
+pub(crate) fn safe_segment(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."

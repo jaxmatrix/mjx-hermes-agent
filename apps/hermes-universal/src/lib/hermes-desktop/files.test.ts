@@ -116,7 +116,27 @@ describe('hermesDesktop.readFileDataUrl', () => {
     expect(sensitivePathBlockReason('C:\\Users\\me\\.aws\\credentials')).toMatch(/AWS/)
   })
 
-  it('leaves the attach-sized read absent, so its caller falls back to this one', () => {
-    expect(filesBridge).not.toHaveProperty('readFileDataUrlForAttach')
+  it('reads attachments under the fixed 256 MiB Rust cap, not the preview Settings cap', async () => {
+    await expect(filesBridge.readFileDataUrlForAttach!('/tmp/archive.zip')).resolves.toBe(
+      'data:application/octet-stream;base64,QUJD'
+    )
+
+    expect(native.calls).toEqual([['read_capped_file_base64_for_attach', { path: '/tmp/archive.zip' }]])
+  })
+
+  it('keeps attach size refusals parseable and blocks credential paths', async () => {
+    native.read = () => {
+      throw { message: 'file is too large (99 bytes; limit 10 bytes)', tooLarge: true }
+    }
+
+    await expect(filesBridge.readFileDataUrlForAttach!('/tmp/big.bin')).rejects.toThrow(
+      /Attachment upload failed:.*too large .*limit 10 bytes/
+    )
+
+    native.calls = []
+    native.read = () => 'QUJD'
+
+    await expect(filesBridge.readFileDataUrlForAttach!('/work/app/.env')).rejects.toThrow(/blocked/)
+    expect(native.calls).toEqual([])
   })
 })

@@ -232,6 +232,13 @@ pub trait GuestHost: Send + Sync {
     fn clear_data(&self) -> Result<(), BrowserError>;
     fn open_devtools(&self) -> Result<bool, BrowserError>;
     fn close(&self) -> Result<(), BrowserError>;
+
+    /// RGBA pixels of the guest's on-screen region (width×height×4), for
+    /// annotate/crop. Default: unsupported — only the desktop child webview
+    /// implements this today (via screen capture of its bounds).
+    fn capture_rgba(&self) -> Result<(Vec<u8>, u32, u32), BrowserError> {
+        Err(BrowserError::unsupported())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -455,6 +462,11 @@ impl BrowserState {
 
     pub async fn open_devtools(&self, id: &str) -> Result<bool, BrowserError> {
         self.with_host(id, |g| g.host.open_devtools()).await
+    }
+
+    /// RGBA of the guest's on-screen pixels (desktop child webview only).
+    pub async fn capture_guest_rgba(&self, id: &str) -> Result<(Vec<u8>, u32, u32), BrowserError> {
+        self.with_host(id, |g| g.host.capture_rgba()).await
     }
 
     pub async fn close(&self, app: &AppHandle, id: &str) -> Result<(), BrowserError> {

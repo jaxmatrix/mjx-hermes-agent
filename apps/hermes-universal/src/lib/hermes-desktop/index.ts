@@ -46,24 +46,51 @@ import { createClipboardBridge } from '@/lib/clipboard-tauri'
 import { IS_DESKTOP, IS_TAURI } from '@/lib/platform'
 import { readWindowBelow } from '@/lib/surface'
 
+import { activeWorkBridge } from './active-work'
+import { ambientBridge } from './ambient'
 import { backendBridge } from './backend'
+import { browserWindowBridge } from './browser-window'
+import { chatOnboardingBridge } from './chat-onboarding'
+import { introRevealBridge } from './intro-reveal'
+import { quickEntryBridge, installQuickEntryToggleListener } from './quick-entry'
+import { petOverlayBridge } from './pet-overlay'
+import { hudBridge } from './hud'
+import { hudModifierBridge } from './hud-modifier'
+import { screenshotBridge } from './screenshot'
 import { cloudBridge } from './cloud'
 import { connectionConfigBridge } from './connection-config'
 import { connectionBridge, restScope } from './connections'
+import { contextMenuBridge } from './context-menu'
 import { dialogsBridge } from './dialogs'
 import { externalBridge, revealBridge } from './external'
-import { filesBridge } from './files'
+import { externalTerminalBridge } from './external-terminal'
+import { filesBridge, projectFsBridge } from './files'
+import { findInPageBridge } from './find-in-page'
+import { gatewayFileBridge } from './gateway-file'
+import { gitBridge } from './git'
 import { imagesBridge } from './images'
+import { launchFlagsBridge } from './launch-flags'
+import { previewBridge } from './preview'
+import { watchersBridge } from './watchers'
 import { nativeThemeBridge } from './native-theme'
 import { notificationsBridge } from './notifications'
+import { hostFactsBridge } from './host-facts'
+import { logsBridge } from './logs'
+import { mcpOauthBridge } from './mcp-oauth'
 import { powerBridge } from './power'
+import { pluginsBridge } from './plugins'
+import { previewOpenBridge } from './preview-open'
 import { registryBridge } from './registry'
 import { rosterBridge } from './roster'
 import { settingsBridge } from './settings'
 import { sshConfigBridge } from './ssh-config'
+import { terminalBridge } from './terminal'
+import { themesBridge } from './themes'
 import { translucencyBridge } from './translucency'
+import { updatesBridge } from './updates'
 import { wakeIndicatorBridge } from './wake-indicator'
 import { hostsWindowChrome, installWindowControlsOverlay } from './window-chrome'
+import { windowControlsBridge } from './window-controls'
 import { restoreZoom, zoomBridge } from './zoom'
 
 /**
@@ -112,6 +139,11 @@ export function installHermesDesktopBridge(): void {
     restoreZoom()
   }
 
+  // OS chord for Quick Entry → toggle the sat-quick window.
+  if (IS_DESKTOP && IS_TAURI) {
+    installQuickEntryToggleListener()
+  }
+
   // Deliberately a partial object cast to the full bridge type. The alternative
   // is stubbing 18 namespaces of methods nothing calls yet, which would hide
   // which parts are actually wired — a missing method throws a TypeError naming
@@ -119,6 +151,7 @@ export function installHermesDesktopBridge(): void {
   window.hermesDesktop = {
     api: apiBridge,
     ...connectionBridge,
+    ...launchFlagsBridge,
     // The OS clipboard. Desktop's `installClipboardShim` and `writeClipboardText`
     // feature-detect `writeClipboard`; without it every copy falls back to the
     // web API, which WebKitGTK drops (see `lib/clipboard-tauri.ts`).
@@ -137,6 +170,13 @@ export function installHermesDesktopBridge(): void {
       ...dialogsBridge,
       ...externalBridge,
       ...filesBridge,
+      ...hostFactsBridge,
+      ...logsBridge,
+      ...mcpOauthBridge,
+      ...ambientBridge,
+      ...activeWorkBridge,
+      ...gatewayFileBridge,
+      resolveFavicon: previewBridge.resolveFavicon,
       ...imagesBridge,
       ...notificationsBridge,
       // The mobile pre-flight; desktop webviews ask on `getUserMedia` themselves.
@@ -150,10 +190,37 @@ export function installHermesDesktopBridge(): void {
       ...cloudBridge,
       ...sshConfigBridge,
       ...rosterBridge,
-      ...backendBridge
+      ...backendBridge,
+      ...updatesBridge,
+      ...themesBridge,
+      ...findInPageBridge
     }),
-    // No file manager, sleep inhibitor, folder picker or window theme on a phone.
-    ...(IS_DESKTOP && { ...revealBridge, ...powerBridge, ...settingsBridge, ...nativeThemeBridge }),
+    // No file manager, sleep inhibitor, folder picker, project-tree FS, or
+    // window theme on a phone.
+    ...(IS_DESKTOP && {
+      ...revealBridge,
+      ...externalTerminalBridge,
+      ...browserWindowBridge,
+      ...terminalBridge,
+      ...powerBridge,
+      ...settingsBridge,
+      ...nativeThemeBridge,
+      ...projectFsBridge,
+      ...watchersBridge,
+      ...previewBridge,
+      ...previewOpenBridge,
+      ...windowControlsBridge,
+      ...pluginsBridge,
+      ...contextMenuBridge,
+      ...chatOnboardingBridge,
+      ...introRevealBridge,
+      ...quickEntryBridge,
+      ...petOverlayBridge,
+      ...hudBridge,
+      ...hudModifierBridge,
+      ...screenshotBridge,
+      git: gitBridge
+    }),
     ...translucencyBridge(),
     // Optional-chained by its only caller; an Electron backend-pool keepalive
     // with no Tauri analogue.

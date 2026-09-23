@@ -471,11 +471,10 @@ export async function openNewWindow(): Promise<void> {
 }
 
 // --------------------------------------------------------------------------
-// Browser pop-out and open-in-terminal. Rust has no command for either yet
-// (Phase 4), so both are feature-detected on the `window.hermesDesktop` bridge
-// exactly as desktop does it: `lib/hermes-desktop` is where the windows and
-// terminal namespaces land, and until they do the checks read false and the
-// openers take desktop's own absent-capability path.
+// Browser pop-out and open-in-terminal. Both ride `window.hermesDesktop` —
+// Browser via Rust `open_browser_window`, terminal via `open_session_in_terminal`.
+// Feature-detect the bridge members exactly as desktop does: absent means the
+// affordance is off (phones, plain-browser vitest).
 // --------------------------------------------------------------------------
 
 export function canOpenBrowserWindow(): boolean {
@@ -727,16 +726,14 @@ export function isHudWindow(): boolean {
   return satelliteSurface() === hud
 }
 
-// Phase 4: there is no browser window kind on Tauri yet — `src-tauri/src/window.rs`
-// builds tiles, instances, activities and the hud/quick/wake satellites, and
-// nothing else — so no window of this app can be one.
 export function isBrowserWindow(): boolean {
-  return false
+  return winFlag() === 'browser'
 }
 
-// Phase 4: nothing builds a URL with `?tab=` yet, so this is null.
+/** The `$previewTabs` id this Browser pop-out is showing, or null when this
+ *  window is not one. */
 export function windowBrowserTabId(): null | string {
-  return queryParam('tab')
+  return isBrowserWindow() ? queryParam('tab') : null
 }
 
 // Desktop's "any window that is NOT the primary app instance". Every tile and
@@ -756,8 +753,9 @@ export function isPeerInstanceWindow(search = typeof window === 'undefined' ? ''
   }
 }
 
-// Phase 4: `open_satellite_window` puts no `?profile=` on the HUD's URL, so this
-// is null ("no override") and boot adopts the primary's profile, as it always has.
+// `open_satellite_window` may carry `?profile=` for the HUD (and any satellite
+// that needs a non-primary backend at boot). Absent → no override; boot adopts
+// the primary's profile.
 export function windowProfileOverride(): null | string {
   return queryParam('profile')
 }
@@ -1142,7 +1140,11 @@ export async function doesSatelliteWindowExist(surface: string): Promise<boolean
  * size, its chrome, and whether it gets a layer-shell role at all — comes from
  * the registry in `src-tauri/src/window.rs`, not from here.
  */
-export async function openSatelliteWindow(surface: string, route?: string): Promise<null | string> {
+export async function openSatelliteWindow(
+  surface: string,
+  route?: string,
+  profile?: null | string
+): Promise<null | string> {
   if (!satelliteLabel(surface) || !canOpenSatelliteWindow()) {
     return null
   }
@@ -1153,7 +1155,11 @@ export async function openSatelliteWindow(surface: string, route?: string): Prom
   flushComposerDraftsBeforeOpen()
 
   try {
-    const opened = await invoke<SatelliteWindow>('open_satellite_window', { route: route ?? null, surface })
+    const opened = await invoke<SatelliteWindow>('open_satellite_window', {
+      route: route ?? null,
+      surface,
+      profile: profile?.trim() || null
+    })
 
     // Only a fresh attach answers with a grant; a satellite that merely came
     // forward keeps the one already written down for it.
