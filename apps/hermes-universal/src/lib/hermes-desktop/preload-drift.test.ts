@@ -142,11 +142,22 @@ const NOT_YET: Record<string, string> = {
   onBootstrapEvent: 'batch 3: local_install_*',
   localModelsEnabled: 'batch 3: launch flag — get_app_flag is async, and this is read synchronously',
   guestOnboardingEnabled: 'batch 3: launch flag — get_app_flag is async, and this is read synchronously',
-  skipIntro: 'batch 3: launch flag — get_app_flag is async, and this is read synchronously'
+  skipIntro: 'batch 3: launch flag — get_app_flag is async, and this is read synchronously',
+
+  // -- post-Nous thin-host: new preload members not yet ported -----------------
+  windowControls: 'needs Rust: custom titlebar window controls (minimize/maximize/close)',
+  hudModifier: 'needs Rust: HUD modifier key tracking',
+  screenshot: 'needs Rust: desktop screenshot capture',
+  'profile.getDefault': 'needs Rust: default profile preference (partial profile namespace)',
+  'profile.setDefault': 'needs Rust: default profile preference (partial profile namespace)',
+  'profile.onDefaultChanged': 'needs Rust: default profile preference (partial profile namespace)',
+  minimizeToTray: 'needs Rust: minimize-to-tray preference',
+  removeDesktopPlugin: 'batch 3: plugin uninstall (with installDesktopPlugin)',
+  onPoolBackendRetiring: 'no mapping: no backend pool — one unified server per connection'
 }
 
 /** Lower it when an entry leaves. It does not go up without a decision. */
-const NOT_YET_SIZE = 91
+const NOT_YET_SIZE = 100
 
 /** Every member the preload exposes: `notify`, `zoom.get`, `git.review.list`. */
 function preloadSurface(): string[] {
