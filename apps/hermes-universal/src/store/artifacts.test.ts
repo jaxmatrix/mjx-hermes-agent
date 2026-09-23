@@ -52,6 +52,7 @@ describe('artifact registry', () => {
     const second = upsertArtifact('session-1', HTML, '<html>v2</html>')
 
     expect(second?.artifactId).toBe(first?.artifactId)
+    expect(second?.versionAdded).toBe(true)
 
     const record = getArtifact(first!.artifactId)
 
@@ -106,6 +107,17 @@ describe('artifact preview tabs', () => {
     openArtifact(result.artifactId)
 
     expect($previewTabs.get()).toHaveLength(1)
+  })
+
+  it('keeps artifact tabs out of the persisted tab list', () => {
+    window.localStorage.clear()
+    const result = upsertArtifact('session-1', HTML, '<html>v1</html>')!
+
+    openArtifact(result.artifactId)
+
+    // Artifact tabs are never persistable, so the profile's bucket stays empty
+    // and the key is removed rather than stored as an empty list.
+    expect(window.localStorage.getItem('hermes.desktop.previewTabs.v2')).toBeNull()
   })
 
   it('opening an unknown artifact opens nothing', () => {

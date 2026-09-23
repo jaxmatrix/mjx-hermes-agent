@@ -15,7 +15,9 @@ import { toDesktopRegistry } from '@/lib/hermes-desktop/registry-shape'
 import { statusSupportsNativeFlow } from '@/lib/native-auth-decisions'
 import { loadString, saveString } from '@/lib/persist'
 import { IS_TAURI } from '@/lib/platform'
+import { invalidateProfileScopedQueries } from '@/lib/query-client'
 import { mergeSshSecrets } from '@/lib/secure-store'
+import { isTimeoutError, withTimeout } from '@/lib/with-timeout'
 import {
   $activeConnection,
   type ConnectionDescriptorHint,
@@ -242,6 +244,18 @@ export const $activeConnectionId = computed($desktopConnection, connection => co
 
 /** Desktop's: the source a switch is preflighting, for the switcher's spinner. */
 export const $pendingConnectionId = atom<null | string>(null)
+
+// Every await of a source switch is bounded. A wedged dial, probe, or commit
+// must surface as a failed click — not a spinner that also swallows every
+// later click on the same source.
+const SWITCH_DIAL_TIMEOUT_MS = 20_000
+const SWITCH_COMMIT_TIMEOUT_MS = 20_000
+const SWITCH_REMEMBER_TIMEOUT_MS = 5_000
+
+// Re-invalidate when the fold's connection id actually changes (after publish),
+// so refetches land on the backend the tags now name. `listen` skips mount;
+// the computed dedupes equal ids.
+$activeConnectionId.listen(() => invalidateProfileScopedQueries())
 
 const LAST_PROFILE_KEY = 'hermes.connections.lastProfileByConnection'
 const LAST_PROFILE_MAX = 64
@@ -1134,7 +1148,11 @@ export async function selectConnection(connectionId: string, options: SelectConn
     // commit: it is remembered for the next launch, and if a peer's switch was
     // on its way to this window the click made after it wins, everywhere.
     // Swallowed: a row removed under the click has its own announcement coming.
-    await commitSource(connectionId).catch(() => {})
+    await withTimeout(
+      commitSource(connectionId).catch(() => {}),
+      SWITCH_REMEMBER_TIMEOUT_MS,
+      `Timed out remembering "${connectionId}".`
+    ).catch(() => {})
 
     return
   }
@@ -1160,10 +1178,14 @@ export async function selectConnection(connectionId: string, options: SelectConn
   try {
     const resolved = await resolveConnection(connectionId, explicitProfile ? profile : null)
 
-    const proven = await preflight(resolved, {
-      attemptId: options.attemptId,
-      interactive: options.allowInteractive !== false
-    })
+    const proven = await withTimeout(
+      preflight(resolved, {
+        attemptId: options.attemptId,
+        interactive: options.allowInteractive !== false
+      }),
+      SWITCH_DIAL_TIMEOUT_MS,
+      `Timed out connecting to "${resolved.label}".`
+    )
 
     lease = proven.lease
 
@@ -1178,26 +1200,36 @@ export async function selectConnection(connectionId: string, options: SelectConn
 
     const corrected = provenAuthMode(resolved, proven.connection)
 
-    await heldFromAnnouncements(async () => {
-      // Before the commit, too: the peers it tells resolve the ROW, and must
-      // mint for the gate the preflight found. Not applied — the commit below
-      // is newer than the re-commit this save may cause. Swallowed: a list that
-      // cannot be written must not fail a switch the preflight has proven.
-      if (corrected) {
-        await correctAuthMode(connectionId, corrected, { apply: false }).catch(() => {})
-      }
+    try {
+      await withTimeout(
+        heldFromAnnouncements(async () => {
+          // Before the commit, too: the peers it tells resolve the ROW, and must
+          // mint for the gate the preflight found. Not applied — the commit below
+          // is newer than the re-commit this save may cause. Swallowed: a list that
+          // cannot be written must not fail a switch the preflight has proven.
+          if (corrected) {
+            await correctAuthMode(connectionId, corrected, { apply: false }).catch(() => {})
+          }
 
-      await commitSource(connectionId, {
-        adopt: next => {
-          revision = next
-        },
-        connection: proven.connection,
-        resolved
-      })
-    }).catch(() => {
-      // Rust's text can name the row; the person reads this app's words.
-      throw preflightFailure(null)
-    })
+          await commitSource(connectionId, {
+            adopt: next => {
+              revision = next
+            },
+            connection: proven.connection,
+            resolved
+          })
+        }),
+        SWITCH_COMMIT_TIMEOUT_MS,
+        `Timed out activating "${resolved.label}".`
+      )
+    } catch (error) {
+      // Commit may have published via announcement before the command returned.
+      // If the fold is already on the target, keep the switch fail-open.
+      if (!isTimeoutError(error) || $activeConnection.get()?.connectionId !== connectionId) {
+        // Rust's text can name the row; the person reads this app's words.
+        throw isTimeoutError(error) ? error : preflightFailure(null)
+      }
+    }
 
     releaseLatch(connectionId)
     // A deliberate connect's session is the user's to keep, sign-out latch or not.

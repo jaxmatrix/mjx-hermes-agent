@@ -329,3 +329,14 @@ describe('resizing the calling satellite', () => {
     expect(calls).toEqual(['invoke:resize_satellite_window'])
   })
 })
+
+describe('isPeerInstanceWindow', () => {
+  it('recognizes only the full peer marker', async () => {
+    const { isPeerInstanceWindow } = await import('./windows')
+
+    expect(isPeerInstanceWindow('?peer=1')).toBe(true)
+    expect(isPeerInstanceWindow('?peer=0')).toBe(false)
+    expect(isPeerInstanceWindow('?win=secondary')).toBe(false)
+    expect(isPeerInstanceWindow('')).toBe(false)
+  })
+})

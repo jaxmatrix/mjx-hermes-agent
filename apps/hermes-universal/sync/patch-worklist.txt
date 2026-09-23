@@ -1,26 +1,4 @@
 # Phase 3 worklist: AUTO files whose universal version carried platform work
 # (Tauri, observability, mobile, WebKit) that desktop's version overwrites.
 # Recover each from the phase-1 commit: git show <phase1>^:<path>
-app/chat/composer/hooks/use-mic-recorder.ts
-app/chat/composer/index.tsx
-app/chat/hooks/use-composer-actions.test.ts
-app/chat/hooks/use-composer-actions.ts
-app/chat/scroll-to-bottom-button.tsx
-app/chat/sidebar/index.tsx
-app/chat/sidebar/profile-switcher.tsx
-app/overlays/overlay-split-layout.tsx
-app/right-pane/terminal/rail.tsx
-app/shell/titlebar.ts
-app/starmap/timeline.tsx
-components/assistant-ui/thread/list.tsx
-components/assistant-ui/thread/user-message-edit.test.tsx
-components/assistant-ui/thread/user-message.tsx
-components/assistant-ui/tool/approval.tsx
-components/chat/composer-dock.ts
-components/pane-shell/tree/renderer/tree-group.test.tsx
-components/pane-shell/tree/renderer/tree-group.tsx
-components/pane-shell/tree/renderer/tree-split.tsx
-components/ui/pane-tab.tsx
-components/ui/sidebar.tsx
-components/ui/tooltip.tsx
-lib/voice-playback.ts
+
