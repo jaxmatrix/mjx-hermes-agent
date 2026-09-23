@@ -14,19 +14,14 @@ vi.mock('@/store/gateway-client', async () => {
     $gatewayState: atom('open')
   }
 })
-import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { flushDeltas } from '@/lib/stream-batch'
 import { routeGatewayEvent as handleGatewayEvent } from '@/store/event-router'
 import { requestGateway } from '@/store/gateway-client'
 import { $currentFastMode, $currentModel, $currentProvider, $currentReasoningEffort } from '@/store/model'
 import { $petActivity } from '@/store/pet'
 import { $activeProfile } from '@/store/profiles'
-import {
-  $activeSessionAwaitingInput,
-  clearAllPrompts,
-  sessionApprovalRequest,
-  sessionClarifyRequest
-} from '@/store/prompts'
+import { $activeSessionAwaitingInput, clearAllPrompts, sessionApprovalRequest } from '@/store/prompts';
+import { sessionClarifyRequest } from '@/store/clarify'
 import { $sessionKeyStates, newDraftKey, rekeySession, updateSession } from '@/store/session-state-types'
 import { $subagentsBySession } from '@/store/subagents'
 import { beginTurn, getInflightTurn } from '@/store/turn-lifecycle'
@@ -793,7 +788,7 @@ describe('ensureSession profile + selection', () => {
 
     expect(requestGateway).toHaveBeenCalledWith('session.create', {
       cols: 96,
-      ...SESSION_SOURCE_PARAMS,
+      source: 'desktop',
       profile: 'research',
       model: 'glm-5',
       provider: 'zai',
@@ -810,7 +805,7 @@ describe('ensureSession profile + selection', () => {
 
     await ensureSession()
 
-    expect(vi.mocked(requestGateway).mock.calls[0][1]).toEqual({ cols: 96, ...SESSION_SOURCE_PARAMS, fast: false })
+    expect(vi.mocked(requestGateway).mock.calls[0][1]).toEqual({ cols: 96, source: 'desktop', fast: false })
   })
 
   // The composer reads the live slice, so the echo in the create reply is what

@@ -33,6 +33,47 @@ Underlying script: [`scripts/desktop-sync.mjs`](scripts/desktop-sync.mjs)
 After a Nous merge that updates `apps/desktop`, run absorb, then
 `npx vitest run src/lib/hermes-desktop/preload-drift.test.ts`.
 
+## Reconciliation (post-absorb — do this, not archive restore)
+
+**Desktop’s `src/` is the product shape.** Absorb is the only bulk update path.
+The archive branch is recovery archaeology, not a second source of truth to
+merge back in.
+
+When absorb overwrites a file, symbols universal used to export that desktop
+does not are recorded (see historical `sync/dropped-exports.txt` / sync script
+diff). That list is a **call-site worklist**, not a restore checklist:
+
+| Signal | Action |
+| --- | --- |
+| Symbol moved/renamed on desktop | Repoint the importer at the desktop module/name |
+| Symbol gone because desktop dropped the capability | Delete or rewrite the caller for the desktop path |
+| Symbol is host-only (bridge, mobile, Rust) | Lives under `sync/protected.txt` / `src/lib/hermes-desktop/` / `src-tauri` — not in absorb |
+
+**Do not** graft pre-import universal exports onto absorbed desktop files. That
+recreates a fork and breaks the next absorb cycle.
+
+### Steady-state update cycle
+
+```text
+apps/desktop changes (Nous / local)
+        │
+        ▼
+npm run absorb-desktop-src          # desktop src → universal (skip protected)
+        │
+        ▼
+preload-drift + gen-port-registry   # thin IPC still matches Electron preload
+        │
+        ▼
+reconcile NEW surface only          # protected diffs, new preload members,
+                                    # call sites that still name deleted APIs
+        │
+        ▼
+npm run check:js / smoke
+```
+
+Each absorb should leave a small delta: “what desktop added or renamed” plus
+“what the host must newly bridge.” Not a full re-port of universal.
+
 ## Port registry (preload → tasks)
 
 ```bash
@@ -75,8 +116,10 @@ Waves 1–5 of the Electron→Tauri thin-host absorb are done on
 
 **Check status at closeout:** `check:rust` (fmt / check / test) green; hermes-desktop
 vitest green. Full `npm run check` / `check:js` typecheck is still red on
-pre-existing absorb/MERGE debt (~1k+ TS errors in absorbed desktop UI) — not a
-Wave 5 regression; fix that debt separately from Wave 6 native ports.
+absorb reconciliation debt (~1k+ TS errors: call sites not yet aligned to
+desktop’s shape, plus protected/host seams) — not a Wave 5/6 regression.
+Resolve by aligning to desktop + thin-host bridges, never by restoring archive
+exports (see **Reconciliation** above).
 
 ## Branch / merge notes
 

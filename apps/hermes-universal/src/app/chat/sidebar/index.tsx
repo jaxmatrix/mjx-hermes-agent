@@ -33,46 +33,8 @@ import { $activeConnectionId } from '@/store/connections'
 import { $cronJobs } from '@/store/cron'
 import { $interfaceMode, $showsAdvancedChrome, shownInMode } from '@/store/interface-mode'
 import { $bindings } from '@/store/keybinds'
-import {
-  $dismissedAutoProjectIds,
-  $panesFlipped,
-  $pinnedSessionIds,
-  $sidebarCardRows,
-  $sidebarCronOpen,
-  $sidebarFiltersActive,
-  $sidebarGrouping,
-  $sidebarMessagingOpenIds,
-  $sidebarOrdering,
-  $sidebarPinsOpen,
-  $sidebarPrDataWanted,
-  $sidebarPrFilter,
-  $sidebarProfileFilter,
-  $sidebarProjectFilter,
-  $sidebarProjectOrderIds,
-  $sidebarRecentsOpen,
-  $sidebarSessionOrderIds,
-  $sidebarSessionOrderManual,
-  $sidebarShowAllSessions,
-  $sidebarShowArchived,
-  $sidebarStatusFilter,
-  $sidebarWorkspaceOrderIds,
-  $sidebarWorkspaceParentOrderIds,
-  filterVisibleProjects,
-  pinSession,
-  SESSION_SEARCH_FOCUS_EVENT,
-  setPinnedSessionOrder,
-  setSidebarCronOpen,
-  setSidebarPinsOpen,
-  setSidebarProjectOrderIds,
-  setSidebarRecentsOpen,
-  setSidebarSessionOrderIds,
-  setSidebarSessionOrderManual,
-  setSidebarWorkspaceOrderIds,
-  setSidebarWorkspaceParentOrderIds,
-  SIDEBAR_SESSIONS_PAGE_SIZE,
-  toggleSidebarMessagingOpen,
-  unpinSession
-} from '@/store/layout'
+import { $dismissedAutoProjectIds, $panesFlipped, $pinnedSessionIds, $sidebarCardRows, $sidebarCronOpen, $sidebarFiltersActive, $sidebarGrouping, $sidebarMessagingOpenIds, $sidebarOrdering, $sidebarPinsOpen, $sidebarPrDataWanted, $sidebarPrFilter, $sidebarProfileFilter, $sidebarProjectFilter, $sidebarProjectOrderIds, $sidebarRecentsOpen, $sidebarSessionOrderIds, $sidebarSessionOrderManual, $sidebarShowAllSessions, $sidebarShowArchived, $sidebarStatusFilter, $sidebarWorkspaceOrderIds, $sidebarWorkspaceParentOrderIds, filterVisibleProjects, pinSession, setPinnedSessionOrder, setSidebarCronOpen, setSidebarPinsOpen, setSidebarProjectOrderIds, setSidebarRecentsOpen, setSidebarSessionOrderIds, setSidebarSessionOrderManual, setSidebarWorkspaceOrderIds, setSidebarWorkspaceParentOrderIds, SIDEBAR_SESSIONS_PAGE_SIZE, toggleSidebarMessagingOpen, unpinSession } from '@/store/layout'
+import { SESSION_SEARCH_FOCUS_EVENT } from '@/store/pane-geometry'
 import { notifyError } from '@/store/notifications'
 import {
   $newChatProfile,

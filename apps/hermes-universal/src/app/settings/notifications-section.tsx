@@ -24,7 +24,7 @@ import { notify } from '@/store/notifications'
 
 import { CONTROL_TEXT } from './constants'
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
-import { settingRowElementId } from './settings-search'
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 
 const CAPTION = 'text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)'
 

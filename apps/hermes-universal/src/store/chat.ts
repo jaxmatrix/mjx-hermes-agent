@@ -20,7 +20,6 @@ import {
   type ToolCallPart,
   withActiveAssistant
 } from '@/lib/session-key-messages'
-import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { stopSpeaking } from '@/lib/tts'
 import {
   isVoicePlaybackActive,
@@ -39,24 +38,9 @@ import { clearPreviewArtifacts } from '@/store/preview-status'
 import { normalizeProfileKey } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
 import { resolveNewSessionCwd } from '@/store/project-scope'
-import {
-  $approval,
-  $clarify,
-  $secret,
-  $sudo,
-  type ApprovalRequest,
-  type ClarifyRequest,
-  clearSessionApproval,
-  clearSessionClarify,
-  clearSessionSecret,
-  clearSessionSudo,
-  type SecretRequest,
-  sessionApprovalRequest,
-  sessionClarifyRequest,
-  sessionSecretRequest,
-  sessionSudoRequest,
-  type SudoRequest
-} from '@/store/prompts'
+import { sessionApprovalRequest, sessionSecretRequest, sessionSudoRequest } from '@/store/prompts'
+import { $approval, $clarify, $secret, $sudo, type ApprovalRequest, type ClarifyRequest, clearSessionApproval, clearSessionClarify, clearSessionSecret, clearSessionSudo, type SecretRequest, type SudoRequest } from '@/store/prompt-session-bridge'
+import { sessionClarifyRequest } from '@/store/clarify'
 import {
   $activeSessionKey,
   $sessionKeyStates,
@@ -106,6 +90,7 @@ export {
 // The blocking-prompt request shapes live in store/prompts.ts (the owner of
 // prompt state for every session); re-exported here for the existing sites.
 export type { ApprovalRequest, ClarifyRequest, SecretRequest, SudoRequest }
+export { $approval, $clarify, $secret, $sudo } from '@/store/prompt-session-bridge'
 
 export type ApprovalChoice = 'always' | 'deny' | 'once' | 'session'
 
@@ -335,7 +320,7 @@ export async function ensureSession(): Promise<{ created: boolean; id: string; s
 
   const created = await requestGateway<SessionCreateResponse>('session.create', {
     cols: 96,
-    ...SESSION_SOURCE_PARAMS,
+    source: 'desktop',
     ...(cwd && { cwd }),
     ...(profile ? { profile } : {}),
     ...newSessionOverrides()

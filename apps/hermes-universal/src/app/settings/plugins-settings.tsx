@@ -43,7 +43,7 @@ import {
   SettingsContent,
   SettingsSection
 } from './primitives'
-import { settingRowElementId } from './settings-search'
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 
 // Ported from apps/desktop/src/app/settings/plugins-settings.tsx. Universal adds
 // the dual-door surface: the active door and its root are always named, and the

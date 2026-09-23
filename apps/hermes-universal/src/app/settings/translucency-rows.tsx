@@ -27,7 +27,7 @@ import {
 } from '@/store/translucency'
 
 import { ListRow } from './primitives'
-import { settingRowElementId } from './settings-search'
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 
 /**
  * The Appearance page's translucency rows: mode, tint, frost, area, fade.

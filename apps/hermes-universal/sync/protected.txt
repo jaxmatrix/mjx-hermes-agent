@@ -85,6 +85,11 @@ store/ssh-backend.*
 # and lands verbatim as an AUTO file, so only the lifecycle half is protected.
 store/session-lifecycle.*
 store/chat.ts
+store/prompt-session-bridge.ts
+store/terminal-open.ts
+store/layout-edges.ts
+store/live-poll.ts
+store/pane-geometry.ts
 store/transcript-paint.*
 store/artifacts.*
 store/windows.ts
@@ -94,6 +99,7 @@ lib/connection-color.*
 components/chat/chat-connection-banner.*
 components/chat/connection-accent.*
 app/chat/use-tab-connection.*
+app/settings/setting-row-id.ts
 app/gateway/gateway-configurator.tsx
 hermes.ts
 # The public `@hermes/plugin-sdk` specifier resolves to universal-only

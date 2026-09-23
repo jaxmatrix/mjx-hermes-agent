@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { RpcEvent } from '@/types/hermes'
+import type { RpcEvent } from '@/sdk'
 
 import { emitGatewayEvent, onGatewayEvent } from './events'
 

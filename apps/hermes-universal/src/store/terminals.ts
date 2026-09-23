@@ -1,6 +1,6 @@
 import { persistentAtom } from '@/lib/persisted'
 import { atom } from '@/store/atom'
-import { setTerminalOpen } from '@/store/layout'
+import { setTerminalOpen } from '@/store/terminal-open'
 import type { TerminalHostPreference } from '@/transport/terminal-transport'
 
 // Multi-terminal state for the right pane (adapted, much simplified, from

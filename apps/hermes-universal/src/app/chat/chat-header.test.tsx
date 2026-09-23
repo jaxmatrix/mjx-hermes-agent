@@ -3,7 +3,8 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type * as PlatformModule from '@/lib/platform'
-import { $panesFlipped, $rightSidebarOpen, $terminalOpen, setSidebarOpen } from '@/store/layout'
+import { $panesFlipped, $rightSidebarOpen, setSidebarOpen } from '@/store/layout'
+import { $terminalOpen } from '@/store/terminal-open'
 import { $reviewOpen } from '@/store/review'
 
 // The titlebar-clearing inset is desktop-only chrome; jsdom reports no Tauri

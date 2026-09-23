@@ -3,7 +3,7 @@ import { dedupeGeneratedImageEchoesInParts } from '@/lib/generated-images'
 import { shouldProjectInflightDump, userTurnAlreadyPersisted } from '@/lib/live-tail'
 import { dedupeRepeatedTextInParts } from '@/lib/session-key-messages'
 import type { ChatMessage, ChatPart, ToolCallPart } from '@/store/chat'
-import type { MessageReaction, SessionMessage, SessionResumeResponse } from '@/types/hermes'
+import type { MessageReaction, SessionMessage, SessionResumeResult } from '@/types/hermes'
 
 // Hydrate a stored transcript (SessionMessage[]) into our lean assistant-ui parts
 // model (Hc1). Lean port of desktop apps/desktop/src/lib/chat-messages.ts
@@ -547,7 +547,7 @@ export function toChatMessages(messages: SessionMessage[]): ChatMessage[] {
  */
 export function appendLiveSessionProjection(
   messages: ChatMessage[],
-  projection: Pick<SessionResumeResponse, 'inflight' | 'queued' | 'session_id'>
+  projection: Pick<SessionResumeResult, 'inflight' | 'queued' | 'session_id'>
 ): ChatMessage[] {
   const inflightUser = projection.inflight?.user?.trim() ?? ''
   const inflightAssistant = projection.inflight?.assistant ?? ''

@@ -40,7 +40,7 @@ import { PluginsSettings } from './plugins-settings'
 import { EmptyState, ListRow, SettingsContent } from './primitives'
 import { ProvidersSection } from './providers-section'
 import { useSettingsNav } from './settings-nav'
-import { settingRowElementId } from './settings-search'
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 import { useDeepLinkHighlight } from './use-deep-link-highlight'
 import { VoiceSection } from './voice-section'
 

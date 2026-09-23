@@ -18,7 +18,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { PALETTE_AREA } from '@/app/command-palette/contrib'
-import { STATUSBAR_AREAS } from '@/app/contrib/surfaces'
+import { STATUSBAR_AREAS } from '@/sdk'
 import { I18nProvider } from '@/i18n'
 import accentPlugin from '@/plugins/accent/plugin'
 import { ThemeProvider } from '@/themes'

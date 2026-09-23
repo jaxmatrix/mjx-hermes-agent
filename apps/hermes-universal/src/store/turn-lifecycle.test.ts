@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
-import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
-import { clearSessionClarify, sessionApprovalRequest, sessionClarifyRequest, setSessionClarify } from '@/store/prompts'
+import { sessionApprovalRequest } from '@/store/prompts'
+import { clearSessionClarify, setSessionClarify } from '@/store/prompt-session-bridge'
+import { sessionClarifyRequest } from '@/store/clarify'
 import {
   $activeSessionKey,
   $sessionKeyStates,
@@ -31,7 +32,7 @@ import {
   setTurnCompacting,
   STALE_TURN_MS
 } from '@/store/turn-lifecycle'
-import type { SessionInfo, SessionResumeResponse } from '@/types/hermes'
+import type { SessionInfo, SessionResumeResult } from '@/types/hermes'
 
 const event = (type: string): GatewayEvent => ({ type }) as GatewayEvent
 
@@ -191,7 +192,7 @@ describe('remoteTurnSnapshot', () => {
       messages: [],
       resumed: 'stored-1',
       session_id: 'runtime-1'
-    } as unknown as SessionResumeResponse
+    } as unknown as SessionResumeResult
 
     expect(remoteTurnSnapshot(resumed)).toEqual({
       running: true,
@@ -204,7 +205,7 @@ describe('remoteTurnSnapshot', () => {
   })
 
   it('reads an older gateway that omits everything', () => {
-    const resumed = { message_count: 0, messages: [], resumed: 's', session_id: 'r' } as SessionResumeResponse
+    const resumed = { message_count: 0, messages: [], resumed: 's', session_id: 'r' } as SessionResumeResult
 
     expect(remoteTurnSnapshot(resumed)).toMatchObject({ running: false, autoContinue: null, corrections: [] })
   })
@@ -421,7 +422,7 @@ describe('reconcileSessionTurn', () => {
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-10',
       omit_messages: true,
-      ...SESSION_SOURCE_PARAMS,
+      source: 'desktop',
       profile: 'research'
     })
 
@@ -769,7 +770,7 @@ describe('resumedTurnIsLive', () => {
 
   it('reads a streaming inflight snapshot', () => {
     expect(
-      resumedTurnIsLive({ ...base, running: false, inflight: { user: 'x', streaming: true } } as SessionResumeResponse)
+      resumedTurnIsLive({ ...base, running: false, inflight: { user: 'x', streaming: true } } as SessionResumeResult)
     ).toBe(true)
   })
 
@@ -782,12 +783,12 @@ describe('resumedTurnIsLive', () => {
         ...base,
         running: false,
         auto_continue: { attempt: 1, interrupted_at: 0 }
-      } as SessionResumeResponse)
+      } as SessionResumeResult)
     ).toBe(true)
   })
 
   it('stays false for an idle session', () => {
-    expect(resumedTurnIsLive({ ...base, running: false } as SessionResumeResponse)).toBe(false)
+    expect(resumedTurnIsLive({ ...base, running: false } as SessionResumeResult)).toBe(false)
   })
 
   // A retained failed turn is NOT live — its terminal frame was simply lost.
@@ -797,7 +798,7 @@ describe('resumedTurnIsLive', () => {
         ...base,
         running: false,
         inflight: { user: 'x', error: 'boom', status: 'error', streaming: false }
-      } as SessionResumeResponse)
+      } as SessionResumeResult)
     ).toBe(false)
   })
 })
@@ -812,7 +813,7 @@ describe('adoptResumedTurn', () => {
       auto_continue: { attempt: 2, interrupted_at: 1_000 },
       // The cold branches fill this from the crash marker.
       inflight: { user: 'fix the flaky test', assistant: '', streaming: true }
-    } as SessionResumeResponse)
+    } as SessionResumeResult)
 
     expect(plan).toEqual({ action: 'adopt', origin: 'auto-continue', prompt: 'fix the flaky test', attempts: 2 })
     expect(getInflightTurn('s1')).toMatchObject({
@@ -828,13 +829,13 @@ describe('adoptResumedTurn', () => {
       ...base,
       running: true,
       inflight: { user: 'other surface', assistant: 'partial', streaming: true }
-    } as SessionResumeResponse)
+    } as SessionResumeResult)
 
     expect(getInflightTurn('s1')).toMatchObject({ origin: 'remote', prompt: 'other surface' })
   })
 
   it('records nothing for an idle session', () => {
-    expect(adoptResumedTurn('s1', { ...base, running: false } as SessionResumeResponse)).toEqual({ action: 'noop' })
+    expect(adoptResumedTurn('s1', { ...base, running: false } as SessionResumeResult)).toEqual({ action: 'noop' })
     expect(getInflightTurn('s1')).toBeNull()
   })
 
@@ -852,7 +853,7 @@ describe('adoptResumedTurn', () => {
       ...base,
       running: true,
       pending_approval: { command: 'rm -rf /', request_id: 'a1' }
-    } as SessionResumeResponse)
+    } as SessionResumeResult)
 
     expect(sessionApprovalRequest('s1').get()).toMatchObject({ command: 'rm -rf /', requestId: 'a1' })
   })
@@ -865,7 +866,7 @@ describe('adoptResumedTurn', () => {
       running: false,
       auto_continue: { attempt: 1, interrupted_at: 0 },
       inflight: { user: 'go', assistant: '', streaming: true }
-    } as SessionResumeResponse
+    } as SessionResumeResult
 
     adoptResumedTurn('s1', resumed)
     const first = getInflightTurn('s1')

@@ -22,7 +22,7 @@ import {
 import { useI18n } from '@/i18n'
 import { AlertTriangle, Cpu, Loader2 } from '@/lib/icons'
 import { queryClient } from '@/lib/query-client'
-import { REASONING_EFFORT_VALUES } from '@/lib/reasoning-effort'
+import { REASONING_EFFORT_VALUES } from '@/sdk'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { setCurrentModel, setCurrentProvider } from '@/store/model'

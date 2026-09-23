@@ -65,7 +65,7 @@ import type { StatusbarItem } from '@/app/shell/statusbar-controls'
 import { registry } from '@/contrib/registry'
 import { resetChat } from '@/store/chat'
 import { $gatewayState } from '@/store/gateway-client'
-import { $terminalOpen } from '@/store/layout'
+import { $terminalOpen } from '@/store/terminal-open'
 import { $statusbarHiddenIds, STATUSBAR_HIDDEN_BY_DEFAULT } from '@/store/statusbar-prefs'
 import { $subagentsBySession } from '@/store/subagents'
 

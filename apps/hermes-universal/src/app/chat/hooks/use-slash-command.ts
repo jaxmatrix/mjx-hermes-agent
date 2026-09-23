@@ -52,7 +52,7 @@ import {
 import { withSessionNotFoundResume } from '@/store/session-recovery'
 import { $activeSessionKey, $sessionKeyStates, updateSession } from '@/store/session-state-types'
 import { openAppRoute } from '@/store/windows'
-import { useSkinCommand } from '@/themes'
+import { useSkinCommand } from '@/themes/use-skin-command'
 import type { UsageStats } from '@/types/hermes'
 
 /**

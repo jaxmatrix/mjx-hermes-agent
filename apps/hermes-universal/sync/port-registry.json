@@ -2,7 +2,7 @@
   "version": 1,
   "source": "apps/desktop/electron/preload.ts",
   "archiveBranch": "archive/hermes-universal-pre-pipeline",
-  "generatedAt": "2026-09-23T20:58:01.327Z",
+  "generatedAt": "2026-09-23T21:42:50.387Z",
   "counts": {
     "ported": 227,
     "no-mapping": 34

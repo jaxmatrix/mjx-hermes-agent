@@ -37,7 +37,7 @@ import type { DesktopTheme } from '@/themes/types'
 import { $marketplaceInstalls, isUserTheme, removeUserTheme } from '@/themes/user-themes'
 
 import { ListRow, SectionHeading, SettingsContent } from './primitives'
-import { settingRowElementId } from './settings-search'
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 import { TerminalFontSetting } from './terminal-font-setting'
 import { TranslucencySettings } from './translucency-rows'
 

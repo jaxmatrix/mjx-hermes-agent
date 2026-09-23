@@ -29,7 +29,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PALETTE_AREA } from '@/app/command-palette/contrib'
-import { STATUSBAR_AREAS } from '@/app/contrib/surfaces'
+import { STATUSBAR_AREAS } from '@/sdk'
 import { ROUTES_AREA, SIDEBAR_NAV_AREA } from '@/app/routes'
 import type * as Hermes from '@/hermes'
 import { I18nProvider } from '@/i18n'

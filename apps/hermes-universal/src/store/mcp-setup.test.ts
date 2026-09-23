@@ -30,9 +30,10 @@ import {
 import { notifyError } from '@/store/notifications'
 import type * as Pet from '@/store/pet'
 import { setPetActivity } from '@/store/pet'
-import { clearAllPrompts, sessionMcpSetupRequest, setSessionMcpSetup } from '@/store/prompts'
+import { clearAllPrompts, sessionMcpSetupRequest } from '@/store/prompts'
+import { setSessionMcpSetup } from '@/store/prompt-session-bridge'
 import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
-import type { SessionResumeResponse } from '@/types/hermes'
+import type { SessionResumeResult } from '@/types/hermes'
 
 const rpc = vi.mocked(requestGateway)
 
@@ -177,8 +178,8 @@ describe('skipMcpSetupRequest', () => {
 })
 
 describe('applyResumedMcpSetup', () => {
-  const resumed = (pending: unknown): Pick<SessionResumeResponse, 'pending_prompt'> =>
-    ({ pending_prompt: pending }) as Pick<SessionResumeResponse, 'pending_prompt'>
+  const resumed = (pending: unknown): Pick<SessionResumeResult, 'pending_prompt'> =>
+    ({ pending_prompt: pending }) as Pick<SessionResumeResult, 'pending_prompt'>
 
   it('rebuilds both halves of a card the cold open never saw', () => {
     applyResumedMcpSetup(

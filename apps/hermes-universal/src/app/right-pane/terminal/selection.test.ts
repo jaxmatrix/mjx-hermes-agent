@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { mirrorSelection } from './selection'
+import { mirrorSelection } from '@/app/right-pane/terminal/clipboard'
 
 function terminalHost(): { host: HTMLDivElement; textarea: HTMLTextAreaElement } {
   const host = document.createElement('div')

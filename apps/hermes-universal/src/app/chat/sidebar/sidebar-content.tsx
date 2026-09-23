@@ -16,37 +16,13 @@ import { reuseUnchanged } from '@/lib/structural-share'
 import { useStoreSelector } from '@/lib/use-session-slice'
 import { useStore } from '@/store/atom'
 import { $busy, $sessionId } from '@/store/chat'
-import { $cronJobs, refreshCronJobs, triggerCron } from '@/store/cron'
-import {
-  $dismissedAutoProjectIds,
-  $pinnedSessionIds,
-  $sidebarAgentsGrouped,
-  $sidebarMessagingOpenIds,
-  $sidebarOrdering,
-  $sidebarPinsOpen,
-  $sidebarPrFilter,
-  $sidebarProjectFilter,
-  $sidebarProjectOrderIds,
-  $sidebarRecentsOpen,
-  $sidebarSessionOrderIds,
-  $sidebarSessionOrderManual,
-  $sidebarShowArchived,
-  $sidebarStatusFilter,
-  pinSession,
-  SESSION_SEARCH_FOCUS_EVENT,
-  setPinnedSessionOrder,
-  setSidebarAgentsGrouped,
-  setSidebarPinsOpen,
-  setSidebarProjectOrderIds,
-  setSidebarRecentsOpen,
-  setSidebarSessionOrderIds,
-  setSidebarSessionOrderManual,
-  type SidebarOrdering,
-  toggleSidebarMessagingOpen,
-  unpinSession
-} from '@/store/layout'
+import { $cronJobs, triggerCron } from '@/store/cron';
+import { refreshCronJobs } from '@/app/cron/cron-actions'
+import { $dismissedAutoProjectIds, $pinnedSessionIds, $sidebarAgentsGrouped, $sidebarMessagingOpenIds, $sidebarOrdering, $sidebarPinsOpen, $sidebarPrFilter, $sidebarProjectFilter, $sidebarProjectOrderIds, $sidebarRecentsOpen, $sidebarSessionOrderIds, $sidebarSessionOrderManual, $sidebarShowArchived, $sidebarStatusFilter, pinSession, setPinnedSessionOrder, setSidebarAgentsGrouped, setSidebarPinsOpen, setSidebarProjectOrderIds, setSidebarRecentsOpen, setSidebarSessionOrderIds, setSidebarSessionOrderManual, type SidebarOrdering, toggleSidebarMessagingOpen, unpinSession } from '@/store/layout'
+import { SESSION_SEARCH_FOCUS_EVENT } from '@/store/pane-geometry'
 import { $sidebarCronOpen, setSidebarCronOpen } from '@/store/layout'
-import { $changeEventsAvailable, $cronChangeTick, livePollIntervalMs } from '@/store/live-sync'
+import { $changeEventsAvailable, $cronChangeTick } from '@/store/live-sync'
+import { livePollIntervalMs } from '@/store/live-poll'
 import { newSessionInProfile, startNewSession } from '@/store/new-session'
 import { $profileScope, ALL_PROFILES, normalizeProfileKey } from '@/store/profile'
 import { $profiles } from '@/store/profiles'
@@ -100,7 +76,7 @@ import { $archivedSessions, loadArchivedSessions, sessionCostUsd } from '@/store
 import { openAppRoute } from '@/store/windows'
 import type { SessionInfo, SessionSearchResult } from '@/types/hermes'
 
-import { countLabel } from './chrome'
+import { countLabel } from '@/app/starmap/text'
 import { SidebarCronJobsSection } from './cron-jobs-section'
 import { SidebarFilterMenu } from './filter-menu'
 import { SidebarLoadMoreButton, SidebarLoadMoreRow } from './load-more-row'

@@ -24,7 +24,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { SessionInfo } from '@/types/hermes'
 
-import type { SidebarSessionGroup } from './projects/model'
+import type { SidebarSessionGroup } from '@/app/chat/sidebar/projects/workspace-groups'
 
 /** Every `renderRows` identity handed to a lane, in render order. */
 const seenRenderRows: unknown[] = []

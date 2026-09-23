@@ -49,7 +49,7 @@ import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 
 import { KeysSection } from './keys-section'
-import { credentialRowElementId, settingRowElementId } from './settings-search'
+import { credentialRowElementId, settingRowElementId } from '@/app/settings/setting-row-id'
 import { SectionBody } from './settings-section'
 
 function Search() {

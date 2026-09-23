@@ -21,8 +21,8 @@
  */
 
 import { requestGateway } from '@/store/gateway-client'
-import { type ApprovalRequest, setSessionApproval } from '@/store/prompts'
-import type { PendingApprovalPayload, SessionResumeResponse } from '@/types/hermes'
+import { type ApprovalRequest, setSessionApproval } from '@/store/prompt-session-bridge'
+import type { PendingApprovalPayload, SessionResumeResult } from '@/types/hermes'
 
 /** The client-side request an `approval.request` payload (or its replay
  *  snapshot) describes. Both shapes come from `_approval_request_payload`. */
@@ -100,7 +100,7 @@ export async function replayPendingApproval(sessionId: string, key: string): Pro
  * `applyResumedClarify` fills for clarify, and the reason
  * `_live_session_payload` reports `pending_approval` at all.
  */
-export function applyResumedApproval(key: string, resumed: Pick<SessionResumeResponse, 'pending_approval'>): boolean {
+export function applyResumedApproval(key: string, resumed: Pick<SessionResumeResult, 'pending_approval'>): boolean {
   const pending = resumed.pending_approval
 
   if (!pending || typeof pending.request_id !== 'string') {

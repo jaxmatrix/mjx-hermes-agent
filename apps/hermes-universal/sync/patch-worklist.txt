@@ -1,4 +1,5 @@
 # Phase 3 worklist: AUTO files whose universal version carried platform work
 # (Tauri, observability, mobile, WebKit) that desktop's version overwrites.
 # Recover each from the phase-1 commit: git show <phase1>^:<path>
-
+app/shell/statusbar-controls.tsx
+components/notifications.tsx

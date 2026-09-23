@@ -13,7 +13,7 @@ import { useI18n } from '@/i18n'
 import { isMetaClose, middleClickHandlers } from '@/lib/middle-click'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
-import { setTerminalOpen } from '@/store/layout'
+import { setTerminalOpen } from '@/store/terminal-open'
 import {
   $activeTerminalId,
   $terminals,

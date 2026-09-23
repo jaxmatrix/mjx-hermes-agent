@@ -65,22 +65,18 @@ import { notify } from '@/store/notifications'
 import { applyBridgeLayoutPreset, revealBridgePane } from '@/store/pane-focus'
 import { flashPetActivity, setPetActivity } from '@/store/pet'
 import { $activeGatewayProfile } from '@/store/profile'
+import { clearAllPrompts, sessionAwaitingInput, sessionMcpSetupRequest, sessionSecretRequest, sessionSudoRequest } from '@/store/prompts'
 import {
-  clearAllPrompts,
   clearSessionClarify,
   clearSessionMcpSetup,
   clearSessionSecret,
   clearSessionSudo,
-  sessionAwaitingInput,
-  sessionMcpSetupRequest,
-  sessionSecretRequest,
-  sessionSudoRequest,
   setSessionApproval,
   setSessionClarify,
   setSessionMcpSetup,
   setSessionSecret,
   setSessionSudo
-} from '@/store/prompts'
+} from '@/store/prompt-session-bridge'
 import { applyReactionEvent } from '@/store/reactions'
 import { EMPTY_USAGE, reduceSessionState } from '@/store/session-reducer'
 import { connectionEpoch, noteConnectionEpoch, noteReplaySeq } from '@/store/session-replay'

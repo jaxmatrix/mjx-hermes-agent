@@ -14,31 +14,9 @@ import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $currentCwd } from '@/store/chat'
-import {
-  $panesFlipped,
-  $rightSidebarOpen,
-  $terminalOpen,
-  CHAT_SIDEBAR_PANE_ID,
-  FILE_TREE_DEFAULT_WIDTH,
-  FILE_TREE_MAX_WIDTH,
-  FILE_TREE_MIN_WIDTH,
-  FILE_TREE_PANE_ID,
-  PREVIEW_DEFAULT_WIDTH,
-  PREVIEW_MAX_WIDTH,
-  PREVIEW_MIN_WIDTH,
-  PREVIEW_PANE_ID,
-  setSidebarOverlayMounted,
-  SIDEBAR_DEFAULT_WIDTH,
-  SIDEBAR_MAX_WIDTH,
-  TERMINAL_COLUMN_DEFAULT_WIDTH,
-  TERMINAL_COLUMN_MAX_WIDTH,
-  TERMINAL_COLUMN_MIN_WIDTH,
-  TERMINAL_COLUMN_PANE_ID,
-  TERMINAL_DEFAULT_HEIGHT,
-  TERMINAL_MAX_HEIGHT,
-  TERMINAL_MIN_HEIGHT,
-  TERMINAL_PANE_ID
-} from '@/store/layout'
+import { $panesFlipped, $rightSidebarOpen, CHAT_SIDEBAR_PANE_ID, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH } from '@/store/layout'
+import { FILE_TREE_DEFAULT_WIDTH, FILE_TREE_MAX_WIDTH, FILE_TREE_MIN_WIDTH, FILE_TREE_PANE_ID, PREVIEW_DEFAULT_WIDTH, PREVIEW_MAX_WIDTH, PREVIEW_MIN_WIDTH, PREVIEW_PANE_ID, setSidebarOverlayMounted, TERMINAL_COLUMN_DEFAULT_WIDTH, TERMINAL_COLUMN_MAX_WIDTH, TERMINAL_COLUMN_MIN_WIDTH, TERMINAL_COLUMN_PANE_ID, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MAX_HEIGHT, TERMINAL_MIN_HEIGHT, TERMINAL_PANE_ID } from '@/store/pane-geometry'
+import { $terminalOpen } from '@/store/terminal-open'
 import { $previewTabs } from '@/store/preview'
 import { previewFile } from '@/store/preview-open'
 import { $reviewOpen, REVIEW_PANE_ID } from '@/store/review'

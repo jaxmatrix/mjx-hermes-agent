@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from 'react-router'
 
 import { ChatTitle } from '@/app/chat/chat-title'
-import { TITLEBAR_AREAS } from '@/app/contrib/surfaces'
+import { TITLEBAR_AREAS } from '@/sdk'
 import { isWorkspacePagePath, NEW_CHAT_ROUTE } from '@/app/routes'
 import { ConnectionBar } from '@/components/chat/connection-accent'
 import { Codicon } from '@/components/ui/codicon'

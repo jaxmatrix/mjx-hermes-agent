@@ -8,7 +8,7 @@ import { CredentialKeyCard, credentialPlaceholder, credentialRowLabel } from './
 import { useEnvCredentials } from './env-credentials'
 import { SettingsContent, SettingsSkeleton } from './primitives'
 import { SettingsProfileScope } from './profile-scope'
-import { credentialRowElementId } from './settings-search'
+import { credentialRowElementId } from '@/app/settings/setting-row-id'
 import { useDeepLinkHighlight } from './use-deep-link-highlight'
 
 // Settings → Tools & Keys. Ported to desktop parity (apps/desktop/src/app/settings/

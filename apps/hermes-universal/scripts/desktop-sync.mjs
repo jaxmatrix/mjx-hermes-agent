@@ -241,9 +241,9 @@ if (apply || losing.length) fs.writeFileSync(
   path.join(SYNC_DIR, 'dropped-exports.txt'),
   '# Symbols universal exported that desktop\'s version of the same file does not.\n' +
     '# Each is either a symbol desktop MOVED (re-point the caller at its new home)\n' +
-    '# or one that is genuinely universal-only (restore it). Either way a caller\n' +
-    '# somewhere still names it. Recover the old file with:\n' +
-    '#   git show <before-the-import>:apps/hermes-universal/<path>\n' +
+    '# or one desktop dropped (delete or rewrite the caller). Never restore onto\n' +
+    '# an AUTO file — that re-forks the absorb cycle. Recover archaeology with:\n' +
+    '#   git show archive/hermes-universal-pre-pipeline:apps/hermes-universal/<path>\n' +
     losing.map((r) => `\n${r.dest}\n` + r.dropped.map((n) => `    ${n}`).join('\n')).join('') +
     '\n'
 )

@@ -16,7 +16,7 @@ import { confirm } from '@/store/confirm'
 import { notify } from '@/store/notifications'
 
 import { ListRow } from './primitives'
-import { settingRowElementId } from './settings-search'
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 
 /**
  * The in-app browser's four device-local rows (MJXHRM-447), in Settings ▸

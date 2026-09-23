@@ -21,17 +21,8 @@ vi.mock('@/store/gateway-client', async () => {
 vi.mock('@/components/chat/vibe-hearts', () => ({ burstVibeHearts: vi.fn() }))
 
 import { routeGatewayEvent } from '@/store/event-router'
-import {
-  $changeEventsAvailable,
-  $cronChangeTick,
-  $pairingChangeTick,
-  $petChange,
-  $platformsChangeTick,
-  $pluginsChangeTick,
-  $sessionsChangeTick,
-  livePollIntervalMs,
-  resetLiveSync
-} from '@/store/live-sync'
+import { $changeEventsAvailable, $cronChangeTick, $pairingChangeTick, $petChange, $platformsChangeTick, $pluginsChangeTick, $sessionsChangeTick, resetLiveSync } from '@/store/live-sync'
+import { livePollIntervalMs } from '@/store/live-poll'
 
 const event = (type: string, payload?: unknown): GatewayEvent => ({ type, payload }) as GatewayEvent
 

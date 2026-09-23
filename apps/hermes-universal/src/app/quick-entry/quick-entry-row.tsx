@@ -1,5 +1,5 @@
 import { ListRow } from '@/app/settings/primitives'
-import { settingRowElementId } from '@/app/settings/settings-search'
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'

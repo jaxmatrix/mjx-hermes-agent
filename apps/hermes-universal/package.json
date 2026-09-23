@@ -27,6 +27,7 @@
     "android:build:debug": "npm run android:prune && CARGO_TARGET_DIR=\"$PWD/src-tauri/target-android\" tauri android build --debug",
     "android:install": "adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk",
     "absorb-desktop-src": "node scripts/absorb-desktop-src.mjs",
+    "repoint-imports": "node scripts/repoint-imports.mjs",
     "gen-port-registry": "node scripts/gen-port-registry.mjs",
     "typecheck": "tsc -p . --noEmit",
     "test": "vitest run",

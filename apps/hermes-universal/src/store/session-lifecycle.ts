@@ -38,7 +38,6 @@ import { sessionTitle } from '@/lib/chat-runtime'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { appendLiveSessionProjection, toChatMessages } from '@/lib/session-history'
 import { chatMessageText } from '@/lib/session-key-messages'
-import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { stableArray } from '@/lib/stable-array'
 import { readJson, writeJson } from '@/lib/storage'
 import { reuseUnchanged } from '@/lib/structural-share'
@@ -99,7 +98,7 @@ import {
 import { clearTranscriptPaint, paintCachedTail } from '@/store/transcript-paint'
 import { adoptResumedTurn, resumedTurnIsLive } from '@/store/turn-lifecycle'
 import { openAppRoute, ownsPersistedAppState } from '@/store/windows'
-import type { SessionCreateResponse, SessionInfo, SessionResumeResponse, SessionSearchResult } from '@/types/hermes'
+import type { SessionCreateResponse, SessionInfo, SessionResumeResult, SessionSearchResult } from '@/types/hermes'
 
 // Session history + switching (Hc2). Lean adaptation of desktop store/session.ts —
 // no windows/projects/pins/profiles/branch/cwd/model. Two ids: the STORED id
@@ -1361,10 +1360,10 @@ async function reclaimWarmSession(
     // ROUTED: the profile resolved a moment ago can be stale by the time this
     // sends — `softSwitchGateway` re-homes the app with no coordination — so the
     // route is re-read inside the dispatch.
-    const resumed = await requestForSession<SessionResumeResponse>(storedId, 'session.resume', {
+    const resumed = await requestForSession<SessionResumeResult>(storedId, 'session.resume', {
       session_id: storedId,
       cols: 96,
-      ...SESSION_SOURCE_PARAMS
+      source: 'desktop'
     })
 
     if (!stillWanted() || (resumed.session_id ?? storedId) === warmKey) {
@@ -1575,10 +1574,10 @@ async function hydrateColdSession(storedId: string): Promise<void> {
   // backend that never heard of the session. `requestForSession` re-reads the
   // route inside the dispatch and rejects with a typed `SessionRouteError`
   // instead. The owner lookup it does is a memo hit on the resolution above.
-  const resumePromise = requestForSession<SessionResumeResponse>(storedId, 'session.resume', {
+  const resumePromise = requestForSession<SessionResumeResult>(storedId, 'session.resume', {
     session_id: storedId,
     cols: 96,
-    ...SESSION_SOURCE_PARAMS
+    source: 'desktop'
   })
 
   // The rejection is consumed by the `await` below; this only keeps it from
@@ -2017,7 +2016,7 @@ async function forkBranchSession({
     // then (desktop's `branchStoredSession` behaves identically).
     const branched = await requestGateway<SessionCreateResponse>('session.create', {
       cols: 96,
-      ...SESSION_SOURCE_PARAMS,
+      source: 'desktop',
       ...(cwd && { cwd }),
       ...(profile ? { profile } : {}),
       messages: branchMessages.map(({ content, role }) => ({ content, role })),

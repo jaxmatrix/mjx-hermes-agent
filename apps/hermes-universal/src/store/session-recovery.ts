@@ -22,7 +22,6 @@
  *    against a session they are no longer looking at.
  */
 
-import { SESSION_SOURCE_PARAMS } from '@/lib/session-source'
 import { requestForSession } from '@/store/session-route-dispatch'
 import { aliasStoredSessionId, rekeySession, runtimeKeyForStoredSession } from '@/store/session-state-types'
 
@@ -124,7 +123,7 @@ export async function resumeStoredRuntimeSession(storedSessionId: string): Promi
   const resumed = await requestForSession<{ session_id?: string }>(storedSessionId, 'session.resume', {
     session_id: storedSessionId,
     omit_messages: true,
-    ...SESSION_SOURCE_PARAMS
+    source: 'desktop'
   })
 
   return resumed?.session_id ?? null
