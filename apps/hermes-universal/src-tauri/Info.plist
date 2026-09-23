@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS bundle Info.plist extras. Tauri merges this file (picked up by convention
+  from src-tauri/) into the generated bundle Info.plist. NSMicrophoneUsageDescription
+  is required for WKWebView getUserMedia / mic capture — without it macOS kills the
+  app (TCC) on first mic access.
+-->
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Hermes uses the microphone for voice conversations.</string>
+</dict>
+</plist>

@@ -1,0 +1,554 @@
+[package]
+name = "hermes-universal"
+# Kept in lockstep with tauri.conf.json's `version` — the updater compares the
+# running build against the published manifest, so a placeholder here would make
+# every check claim an update was available.
+version = "0.0.1"
+description = "Hermes Universal — Tauri v2 client (desktop + Android + iOS from one codebase)."
+authors = ["Nous Research <info@nousresearch.com>"]
+edition = "2021"
+# 1.85 is russh 0.62's MSRV (see the `russh` dependency below). Everything else
+# in the tree builds on 1.77; this is the floor the SSH gateway mode forces.
+rust-version = "1.85"
+
+# The library target is what the Android/iOS project links against, so the
+# cdylib/staticlib crate-types are mandatory for the mobile targets. The name
+# must match what src/main.rs (desktop) and the generated mobile entry call.
+[lib]
+name = "hermes_universal_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Update checks (MJX-6, updates.rs). ON by default since MJXHRM-144: the whole
+# point of the About page's Updates block is that a shipped build can find its
+# own successor, and a feature nothing turns on (no CI, no build script did)
+# meant every real build hid the block entirely.
+#
+# Turn it OFF (`--no-default-features`) for a build that must never touch the
+# network — the stub then reports "disabled" and About renders version-only.
+#
+# Tracing (MJXHRM-176 follow-on): OpenTelemetry spans for the backend, exported
+# to a local collector. OFF by default — a stock build compiles none of it and
+# links no exporter.
+#
+# TWO switches, deliberately. The feature only makes tracing POSSIBLE; nothing
+# is recorded until `HERMES_TRACE=1` is set at launch. So an ordinary
+# `tauri dev --features tracing` still costs nothing, and a release binary
+# contains nothing at all.
+#
+# `tauri/tracing` is the load-bearing entry. Tauri's own command macro wraps
+# every #[tauri::command] in a span and — critically — `.instrument()`s the
+# SPAWNED future for async ones (tauri-macros `command/wrapper.rs`). That is the
+# part a hand-rolled `invoke_handler` wrapper cannot do: `respond_async` spawns
+# and returns, so a wrapper would time dispatch (microseconds) rather than the
+# work. "Trace every command" therefore costs one word here, not 50 edits.
+[features]
+default = ["update-checks"]
+update-checks = ["dep:regex", "dep:tauri-plugin-updater"]
+tracing = [
+  "dep:tracing",
+  "dep:tracing-subscriber",
+  "dep:tracing-log",
+  "dep:tracing-opentelemetry",
+  "dep:opentelemetry",
+  "dep:opentelemetry_sdk",
+  "dep:opentelemetry-otlp",
+  "tauri/tracing"
+]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `tray-icon` is what makes background mode reachable (MJXHRM-436): once the
+# window can be hidden without ending the process, the tray is the only thing
+# that can bring it back or shut it down. `image-png` is what puts
+# `tauri::image::Image::from_bytes` in scope — `app.default_window_icon()` is
+# `None` on macOS, so a tray built from it would be invisible there and the icon
+# has to be embedded from `icons/32x32.png` instead. Neither feature adds a
+# crate: `tray-icon`, `muda`, `image` and `png` are already resolved in
+# `Cargo.lock` (both are target-gated to desktop inside tauri, so the mobile
+# builds compile none of it).
+# `unstable` is what puts `Window::add_child` in scope — the child webview the
+# in-app browser's desktop guest IS (MJXHRM-447). It unlocks nothing at runtime
+# by itself. Two costs, both accepted deliberately:
+#   1. the feature is semver-EXEMPT, so a 2.x patch bump can break the build —
+#      hence the `~2.11` pin rather than the bare `2` every other tauri crate
+#      here uses;
+#   2. it silently removes the `CannotReparentWebviewWindow` guard. Inert today
+#      (nothing calls `reparent`), and pinned by a test in browser/policy.rs
+#      that the guest label can never be a window label.
+tauri = { version = "~2.11", features = ["macos-private-api", "tray-icon", "image-png", "unstable"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Structured logging — on Android these route to logcat via the `android_logger`
+# init that tao/wry performs on startup, so `log::` calls are visible with
+# `adb logcat`. Used for connect/OAuth diagnostics on mobile.
+log = "0.4"
+
+# Platform detection (A5): lets the frontend tell Android from a desktop Tauri
+# build so it can gate mobile-only behaviour (e.g. hide Local gateway mode).
+tauri-plugin-os = "2"
+
+# Secure credential storage (D1): the OS-native keystore, driven from our own
+# src/secrets/ rather than through a plugin — Android Keystore, iOS/macOS
+# Keychain, Windows Credential Manager, Linux Secret Service.
+#
+# This replaced a vendored copy of charlesportwoodii/tauri-plugin-keyring. That
+# repository carries NO license file, so there is no grant to redistribute it,
+# and it was being compiled into a shipping binary. keyring-core and all four
+# platform stores below are MIT/Apache-2.0, so talking to them directly removes
+# the problem instead of documenting it. Binding a credential to a device unlock
+# (kSecAccessControl, setUserAuthenticationRequired) also needs a layer a generic
+# get/set wrapper cannot express. The per-platform store crates are declared in
+# their own [target.…] sections further down.
+keyring-core = "1.0"
+
+# Microphone OS-permission (R10, voice). In-tree plugin: durably declares Android
+# RECORD_AUDIO/MODIFY_AUDIO_SETTINGS (merged from a committed manifest, since gen/
+# is gitignored) + a check/request seam for Android/iOS. Capture itself stays in
+# the webview (getUserMedia); desktop is a no-op. See plugins/tauri-plugin-mic.
+tauri-plugin-mic = { path = "plugins/tauri-plugin-mic" }
+
+# The MOBILE half of the in-app browser (MJXHRM-447). Desktop's guest is a child
+# webview built in src/browser/desktop.rs; a phone has no such thing — a "window"
+# there is an Activity/UIScene — so the Android/iOS guest is a native
+# WebView/WKWebView that only a Kotlin/Swift half can hold at a rect. In-tree,
+# like tauri-plugin-mic, so its manifest and ProGuard rules live somewhere
+# committed rather than in the gitignored gen/ tree.
+tauri-plugin-browser = { path = "plugins/tauri-plugin-browser" }
+
+# Open external links in the system browser (Gc6/R11).
+tauri-plugin-opener = "2"
+
+# Haptic feedback on send/approval (Gc10/R9).
+tauri-plugin-haptics = "2"
+
+# File attachments (Gc8/R7): native picker + read the picked file to a data-URL.
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+
+# Native OS notifications (Ic10/R8): turn-done / approval / error while backgrounded.
+tauri-plugin-notification = "2"
+
+# `hermes://` OS deep links (MJXHRM-455) — the front door for a plugin install, an
+# MCP install and any future in-app target. Not target-gated: the crate compiles a
+# per-OS `imp` itself (Android talks to its own Kotlin plugin, the rest read the
+# launch argv / `open-url`), and `plugins.deep-link` in tauri.conf.json is what
+# makes the BUNDLER write the registry key / `.desktop` MimeType / Info.plist entry
+# that claims the scheme with the OS.
+tauri-plugin-deep-link = "2"
+
+# Clipboard for the integrated terminal (MJXHRM-415). xterm renders to a canvas,
+# so a paste must read the clipboard explicitly — and WebKitGTK gates
+# `navigator.clipboard.readText` far more tightly than Chromium, which makes
+# Ctrl+Shift+V a silent no-op on the Linux desktop build.
+tauri-plugin-clipboard-manager = "2"
+
+# Transport core (Step 2a): all HTTP + WS traffic runs here, not in the webview,
+# so there is no CORS constraint and we can talk to any backend on the LAN.
+# `net` is for the SSH gateway's local port-forward listener (ssh/forward.rs):
+# we bind 127.0.0.1:0 ourselves and keep the listener, rather than the
+# bind-then-release-then-hope dance the Electron desktop needed.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "io-util", "time", "net"] }
+# Random session token for the local-spawn backend (E3.a, desktop-only).
+# NOTE: russh pulls getrandom 0.4; the two majors coexist deliberately. Do not
+# "dedupe" them — 0.4 changed its API and 0.2 is what this crate's code targets.
+getrandom = "0.2"
+
+# The sealed credential vault (secrets/vault.rs). Both are already in the tree —
+# russh's `ssh-cipher` pulls aes-gcm 0.11 and zeroize — so naming them directly
+# adds no crate to the lockfile.
+#
+# 0.11 is the post-`hybrid-array` API line: `Nonce<Aes256Gcm>` is an `Array`,
+# `KeyInit::new_from_slice` takes a byte slice, and `Aead::encrypt` takes a
+# `Payload` when there is AAD. default-features would add the crate's own
+# `getrandom` (the 0.3 major); randomness here comes from `getrandom = "0.2"`
+# above, which is what the rest of this crate targets.
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+# Wipes the vault key and every decrypted body on drop.
+zeroize = { version = "1", features = ["alloc"] }
+
+# --- SSH gateway transport (MJX-55) -------------------------------------------
+# A pure-Rust SSH client, NOT a shell-out to the system `ssh` binary the way the
+# Electron desktop app does it. That is deliberate: it makes SSH gateway mode work
+# on Android/iOS, which have no ssh binary. The cost is that ~/.ssh/config parsing,
+# known_hosts TOFU, ssh-agent and ProxyJump are ours to implement (see src/ssh/).
+#
+# default-features would pull `aws-lc-rs`, which needs cmake + a C toolchain and
+# breaks the Android NDK cross-build. russh supports `ring` as an alternative
+# crypto backend — the same choice already made for rustls below.
+russh = { version = "0.62", default-features = false, features = ["ring", "rsa", "flate2"] }
+# Control-socket-free ownership identity: sha256(installationId, scope) — see
+# ssh/ownership.rs, ported from desktop's electron/desktop-installation.ts.
+sha2 = "0.10"
+hex = "0.4"
+# CancellationToken for the bootstrap coordinator's supersede / drain barrier
+# (ssh/coordinator.rs, ported from electron/ssh-bootstrap-coordinator.ts).
+tokio-util = "0.7"
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+# Already in the tree transitively (url / reqwest), so naming it directly costs
+# no extra compilation unit. Used by the hermes-media:// scheme to decode a path
+# for its extension check without hand-rolling a decoder.
+percent-encoding = "2"
+# rustls so we don't need OpenSSL/NDK-cross OpenSSL on the Android build.
+#
+# BOTH root sources, deliberately in step with tokio-tungstenite below —
+# `rustls-tls` alone expands to `rustls-tls-webpki-roots`, i.e. the bundled
+# Mozilla set and nothing else, so HTTP did NOT honor the OS trust store while
+# the WEBSOCKET did. One hostname, two verdicts: `wss://` connected and every
+# REST call to the same gateway failed the handshake. That asymmetry bites any
+# self-signed or corporate-MITM gateway, not just a dev box with a local CA.
+#
+# The two sources are additive rather than exclusive — reqwest builds ONE
+# `RootCertStore` and extends it with webpki roots and then native certs
+# (async_impl/client.rs) — and both default to on once their feature is
+# enabled, so no `ClientBuilder` call is needed at the construction sites in
+# transport.rs. Android keeps working for the same reason spelled out below:
+# its empty native store yields zero valid and zero invalid certs, which skips
+# reqwest's "zero valid certificates" error, and webpki still fills the store.
+# `rustls-native-certs` was already in the lockfile via tokio-tungstenite, so
+# this pulls in no new dependency and no second crypto provider.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "json", "cookies", "multipart"] }
+# Enable BOTH root sources: native-roots so desktop honors the OS trust store (corporate
+# / self-signed CAs), AND webpki-roots as the fallback. Android exposes no file-based
+# native cert store, so native-roots alone fails at the wss:// handshake with "no native
+# root CA certificates found"; with webpki-roots also enabled tokio-tungstenite suppresses
+# that error and uses the bundled Mozilla roots (the same set reqwest's `rustls-tls` uses).
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots", "rustls-tls-webpki-roots"] }
+# Pin the rustls crypto provider explicitly (see lib.rs): tokio-tungstenite's
+# wss:// path calls ClientConfig::builder(), which needs a process-default provider.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+# VS Code Marketplace theme install (marketplace.rs): a `.vsix` is a plain zip, so
+# we unzip the extension and pull its color-theme JSON out. deflate-only (pure-Rust
+# flate2/miniz_oxide backend) — no native codec deps, so it stays cross-platform
+# incl. the Android/iOS NDK build.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# Play Store listing scrape (updates.rs) — only pulled in by `update-checks`.
+# Google publishes no version API, so the listing HTML is the only source; the
+# patterns it matches are inherently unstable, hence the soft "unparsed" result.
+regex = { version = "1", optional = true }
+
+# OpenTelemetry span export (`tracing` feature). All optional — a default build
+# links none of them.
+#
+# EVERY ONE IS `default-features = false`, and that is not tidiness. This crate
+# installs exactly ONE rustls crypto provider process-wide (see the
+# `install_default` call in lib.rs) and panics if the features ever expose more
+# than one; russh is pinned to `ring` for the same reason, because `aws-lc-rs`
+# also breaks the Android NDK cross-build. `opentelemetry-otlp` with default
+# features pulls tonic's TLS stack, which can drag in a SECOND provider — and the
+# symptom would be a panic at the first wss:// handshake, on every platform, far
+# from anything that looks telemetry-related.
+#
+# The collector is plaintext on loopback, so the exporter needs no TLS at all.
+# `cargo tree -d` must show one rustls provider before this is changed.
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "registry"], optional = true }
+# Bridges the existing `log::` calls into the same pipeline. Desktop currently
+# installs no logger at all, so those calls go nowhere today — this is the first
+# time they become visible outside Android's logcat.
+tracing-log = { version = "0.2", default-features = false, features = ["log-tracer", "std"], optional = true }
+tracing-opentelemetry = { version = "0.31", default-features = false, optional = true }
+opentelemetry = { version = "0.30", default-features = false, features = ["trace"], optional = true }
+opentelemetry_sdk = { version = "0.30", default-features = false, features = ["trace"], optional = true }
+opentelemetry-otlp = { version = "0.30", default-features = false, features = ["trace", "grpc-tonic"], optional = true }
+
+# Explicit, serializable cookie jar (D3.a/D4): replaces reqwest's private default
+# jar so the OAuth flow (oauth.rs) can share one store across a redirect-following
+# and a redirect-disabled client, and so session cookies can be serialized to the
+# keyring and rehydrated across launches (R2b).
+reqwest_cookie_store = "0.8"
+# Direct handle on the cookie store's JSON (de)serialization (D4/R2b) — reqwest_cookie_store
+# re-exports the store type but not its serde helpers.
+cookie_store = "0.21"
+
+# --- Native voice capture + encode (voice/, MJX-96) ---------------------------
+# Rust owns the whole voice audio lifecycle across ALL platforms now: cpal captures
+# raw PCM (ALSA/Linux, CoreAudio/macOS+iOS, WASAPI/Windows, AAudio-oboe/Android), we
+# resample to 16 kHz mono and encode with pure-Rust codecs (no system GStreamer/libav,
+# no C toolchain beyond Android's oboe), then POST the transcription from Rust. These
+# are unconditional (not desktop-gated) so the mobile targets get the same engine; the
+# Android build additionally needs the NDK for cpal's oboe backend (see the
+# `[target.'cfg(target_os = "android")']` override below).
+cpal = "0.15"
+# Pure-Rust anti-aliased sample-rate conversion → 16 kHz mono for whisper.
+rubato = "0.16"
+# Pure-Rust WAV encoder (default output; gateway maps audio/wav → .wav).
+hound = "3.5"
+# Pure-Rust FLAC encoder (optional compressed output; gateway maps audio/flac → .flac).
+flacenc = "0.4"
+# Encode the clip into the `data:` URL the transcribe endpoint wants — kept in Rust so
+# the ~1 MB base64 clip never crosses IPC (Tauri serializes `Vec<u8>` as a JSON number
+# array, ~4x bloat).
+base64 = "0.22"
+
+[dev-dependencies]
+# Scratch directories for the vault's file-format tests. Already transitive.
+tempfile = "3"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Route Rust `log::` output to stderr on desktop — the third of the three logger
+# entries in this file, and the last platform that had none. Its absence hid a
+# real bug: macOS could not write to the keychain at all, and the one line that
+# said so (`store_native_tokens` failing inside the RFC 8252 sign-in) was a
+# `log::warn!` on a platform where nothing consumed `log::`.
+#
+# `default-features = false` drops regex/colour/humantime; the level still comes
+# from RUST_LOG, and `run()` sets a default so a plain launch is not silent.
+env_logger = { version = "0.11", default-features = false }
+# Local shell PTY for the right-pane terminal (pty.rs, desktop-only). Cross-platform
+# PTY: Unix openpty / Windows ConPTY. Gated OFF the mobile targets — a phone has no
+# local shell, the right pane isn't shown there, and this keeps it out of the NDK build.
+portable-pty = "0.9"
+# System-sleep inhibitor behind the keep-awake toggle (keep_awake.rs, desktop-only):
+# macOS IOPMAssertion, Windows SetThreadExecutionState, Linux systemd-inhibit over
+# D-Bus. Gated for the same reason as the PTY — a phone has no such lever, and this
+# keeps the D-Bus/IOKit bindings out of the NDK build.
+keepawake = "0.6"
+# OS-level hotkeys that fire while Hermes is in the BACKGROUND (MJXHRM-55) — the
+# substrate a summonable second surface needs. Gated here rather than checked at
+# runtime because neither mobile OS lets an app claim a system-wide chord, so the
+# plugin has nothing to do there and no reason to be in the NDK build.
+tauri-plugin-global-shortcut = "2"
+# The other half of the deep link on Windows/Linux, where a `hermes://` click
+# starts a SECOND process with the URL as its argv instead of talking to the
+# running one. The plugin kills the newcomer and forwards its arguments, and the
+# `deep-link` feature is what makes its default callback hand them to
+# `tauri-plugin-deep-link` — so the link lands in the instance the user already
+# has open. Desktop-only by construction: the crate is `#![cfg(not(mobile))]`,
+# because Android/iOS deliver into the running Activity/scene themselves.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+# Signed self-update (MJXHRM-144), desktop-only — a phone updates through its
+# store, and the plugin has no mobile implementation. The signature is what makes
+# the update channel safe to host anywhere: the minisign public key is compiled
+# into the binary (`plugins.updater.pubkey`) and the plugin verifies the
+# downloaded bundle against it BEFORE installing, which cannot be disabled. So an
+# attacker who owns the manifest host can freeze or deny updates, but cannot
+# serve a malicious one — the private signing key is the only root of trust.
+tauri-plugin-updater = { version = "2", optional = true }
+
+# Route Rust `log::` output to logcat on Android. tao does not reliably install a
+# logger, so our connect/OAuth diagnostics were invisible; init it ourselves in
+# `run()`. See the `oslog` entry below for the iOS half. (Desktop still installs no
+# logger — the comment here used to claim "desktop uses stdout", which was never
+# true; nothing bridges `log::` there outside the optional `tracing` feature.)
+# cpal's Android backend (oboe) needs the NDK/oboe toolchain — see the cpal note
+# under [dependencies].
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"
+# The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
+# plugin that used to wrap them — see the keyring-core note under [dependencies].
+# Reads its Context/JavaVM from the global `ndk_context`, which Tauri does NOT
+# populate — MainActivity does it, via this crate's own JNI entry point. See
+# gen/android/.../KeyringInit.kt.
+android-native-keyring-store = "1.0"
+# Calling INTO the Java side, for the device-unlock gate: BiometricPrompt needs a
+# FragmentActivity and the UI thread, so the prompt itself lives in Kotlin
+# (BiometricGate.kt) and Rust drives it over JNI. Both crates are already in the
+# tree via tao/wry/tauri; naming them adds no compilation.
+jni = "0.21"
+ndk-context = "0.1"
+# cpal on Android speaks to AAudio/OpenSL ES via the C++ `oboe` library; the
+# `oboe-shared-stdcxx` feature links libc++_shared from the NDK. Requires the NDK
+# on the build host (the user drives Android builds — MJX-96).
+cpal = { version = "0.15", features = ["oboe-shared-stdcxx"] }
+
+# GTK (Linux only) — window translucency sets the GTK toplevel's opacity
+# (appearance.rs). Version pinned to Tauri's gtk to avoid a duplicate in the tree.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+# The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
+# plugin that used to wrap them — see the keyring-core note under [dependencies].
+# `crypto-rust` keeps the D-Bus session encryption off OpenSSL, matching the
+# rustls choice elsewhere — the Android cross-build has no OpenSSL to link.
+dbus-secret-service-keyring-store = { version = "1.0", features = ["crypto-rust"] }
+# polkit, for the device-unlock gate (src/secrets/gate.rs). Linux has no Hello or
+# LocalAuthentication; polkit's CheckAuthorization with AllowUserInteraction is
+# the platform's own "prove you are this user" prompt. Already in the tree via
+# the Secret Service stack.
+zbus = "5"
+# gtk-layer-shell is loaded at RUNTIME (src/surface/layer_shell.rs), never linked:
+# it is absent as a -dev package on plenty of machines and useless on X11 and
+# GNOME-on-Wayland, so making it a build dependency would trade a capability
+# question for a packaging failure. `libloading` is the dlopen wrapper; the
+# library itself is not a dependency of this crate at all.
+libloading = "0.8"
+# X11 window enumeration for `read_window_below` (surface/x11.rs, MJXHRM-392).
+# Pure-Rust X protocol client — NOT a shell-out to xprop/xwininfo the way the
+# Electron desktop's `get-windows` does it, so there is no x11-utils packaging
+# requirement and no subprocess. Costs nothing in the tree: arboard (clipboard)
+# and global-hotkey both already depend on this exact version with default
+# features, so `cargo tree -i x11rb` is unchanged by naming it here.
+x11rb = "0.13"
+# WebKitGTK (Linux only) — the desktop webview auto-DENIES getUserMedia unless the
+# embedder answers WebKitWebView's `permission-request` signal. wry doesn't, so we
+# allow microphone requests ourselves (see lib.rs). Version matches wry's webkit2gtk
+# (0.55 → 2.0.2) to avoid a duplicate in the tree; `v2_8` exposes the
+# UserMediaPermissionRequest type used to scope the allow to mic/camera only.
+webkit2gtk = { version = "2.0", features = ["v2_8"] }
+
+# macOS window enumeration for `read_window_below` (surface/mac.rs, MJXHRM-392).
+# `core-graphics` and `core-foundation` are already in the tree via tao at these
+# versions, so this adds no crate; `core-foundation-sys` is what core-foundation
+# itself is built on, and is used here for the dictionary lookups, whose safe
+# wrappers do not have the CFString-keyed shape CGWindowList returns.
+#
+# NOTE the permission line, which is a product decision and not just a code one:
+# CGWindowListCopyWindowInfo needs NO grant for owner/bounds/z-order, and titles
+# need Screen Recording. This build PREFLIGHTS that grant and never requests it.
+[target.'cfg(target_os = "macos")'.dependencies]
+# Window glass (src/appearance/mac.rs). Called DIRECTLY rather than through
+# Tauri's `Window::set_effects`, which drops this crate's `Result` and reports
+# success on every platform including Linux — the capability report exists so
+# nothing has to infer a material from a call that did not throw. Already in the
+# tree as tauri's own dependency at this exact version, so naming it adds no
+# crate and leaves Cargo.lock untouched.
+window-vibrancy = "0.6"
+# The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
+# plugin that used to wrap them — see the keyring-core note under [dependencies].
+#
+# `keychain` — the file-based login keychain — is where macOS stores, NOT the
+# `protected` Protected Data store the iOS block below selects. The two Apple
+# targets deliberately do not store alike, because only one of them has a
+# provisioning profile.
+#
+# The Protected Data keychain writes with `kSecUseDataProtectionKeychain`, which
+# on macOS requires the process to carry a keychain access group — granted by a
+# `keychain-access-groups`/`application-identifier` entitlement, which only a
+# provisioning profile supplies. This bundle has neither (there is no
+# `bundle.macOS` section in tauri.conf.json, and `tauri dev` runs a bare binary),
+# so every write returned `errSecMissingEntitlement (-34018)`. Nothing surfaced
+# it: `protected::Store::new()` is infallible, so the store reported itself
+# available and only the writes failed. The visible symptom was an RFC 8252
+# sign-in that completed and left the app signed out, because the token set
+# could not reach the keyring (`oauth.rs::store_native_tokens`).
+#
+# What this store HOLDS on macOS is one login-keychain item,
+# `hermes/vaultKey/password`, the key that seals `secrets.vault` in the app data
+# dir; every credential lives in that file (src/secrets/vault.rs explains why:
+# per-item, per-direction ACL checks, each a password dialog on an unsigned
+# build).
+#
+# `protected` stays enabled on macOS for READING only: `secrets/store.rs` still
+# consults it as a legacy source, so a credential an earlier build did manage to
+# store there is adopted into the login keychain instead of being orphaned.
+apple-native-keyring-store = { version = "1.0", features = ["keychain", "protected"] }
+core-graphics = "0.25"
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
+# Windows window enumeration for `read_window_below` (surface/win.rs,
+# MJXHRM-392). windows-sys is already in the tree at this version via tauri's own
+# Windows stack; these features are declaration-only bindings, so enabling them
+# adds no crate and no runtime cost.
+[target.'cfg(target_os = "windows")'.dependencies]
+# DWM system backdrops for window glass (src/appearance/win.rs) — same crate,
+# same reason, same "already tauri's dependency" note as the macOS block above.
+window-vibrancy = "0.6"
+# The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
+# plugin that used to wrap them — see the keyring-core note under [dependencies].
+windows-native-keyring-store = "1.1"
+# WinRT projections for the Windows Hello gate (secrets/gate.rs). NOT the same
+# crate as `windows-sys` below and not interchangeable with it: `windows-sys` is
+# raw FFI with no WinRT support, and `UserConsentVerifier` is a WinRT class, so
+# `use windows::Security::Credentials::UI::...` cannot resolve against it — the
+# gate's Windows arm was uncompilable, not just untested.
+#
+# 0.61 rather than 0.62: that version is already in the tree, so this adds no
+# crate. `Foundation` supplies IAsyncOperation, which every call goes through
+# via `.get()`.
+windows = { version = "0.61", features = [
+  "Foundation",
+  "Security_Credentials_UI",
+] }
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+# Route Rust `log::` output to os_log on iOS — the exact counterpart of the
+# `android_logger` entry above, and added for a concrete failure: iOS installed no
+# logger at all, so every diagnostic (ours AND wry's "failed to navigate to url"
+# error) was dropped on the floor. An ATS-blocked sign-in therefore looked like
+# "tapping the button does nothing" with not one line anywhere to say why.
+#
+# `oslog` rather than `tauri-plugin-log`: the plugin is the richer answer (it covers
+# Android and desktop too) but it ships a Swift package, which would change the iOS
+# Xcode project this repo tracks under gen/apple. This is a pure-Rust FFI shim, so
+# it needs no project regeneration. Records surface in Console.app, Xcode, and
+# `xcrun simctl spawn booted log stream --predicate 'subsystem == "…"'`.
+#
+# `default-features = false` drops the crate's own `OsLog` wrapper types; only the
+# `logger` feature (its `log::Log` impl) is used.
+[target.'cfg(target_os = "ios")'.dependencies]
+# The OS credential store behind src/secrets/. All MIT/Apache-2.0, unlike the
+# plugin that used to wrap them — see the keyring-core note under [dependencies].
+# `protected` is REQUIRED here — the crate `compile_error!`s on iOS without it,
+# and iOS has a provisioning profile so the entitlement macOS lacks is present.
+# Do not "unify" this with the macOS block above; see the note there.
+apple-native-keyring-store = { version = "1.0", features = ["protected"] }
+oslog = { version = "0.2.0", default-features = false, features = ["logger"] }
+
+# Reading WKHTTPCookieStore ourselves, without blocking the main thread
+# (src/webview_cookies.rs). wry's `WebView::cookies()` waits for the completion handler
+# by PUMPING A NESTED NSRunLoop in NSDefaultRunLoopMode — the exact mode tao attaches
+# its control-flow observers to — so it re-enters tao while tao is mid user-callback,
+# tao panics `unexpected state InUserCallback`, and an `extern "C"` panic aborts the
+# process. Every device crash report for this app is that one stack. See the module
+# note in webview_cookies.rs.
+#
+# These are not new crates: wry already pulls all four for `target_vendor = "apple"`,
+# with the same `WKHTTPCookieStore` feature, so naming them directly costs no extra
+# compilation. Kept minimal — only what the cookie read touches.
+objc2-web-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "WKHTTPCookieStore",
+  "WKWebsiteDataStore",
+] }
+
+# The Objective-C runtime bindings, shared by BOTH Apple targets. objc2 and
+# friends used to sit in the iOS-only block above, because the cookie read was
+# their only caller; the device-unlock gate (src/secrets/gate.rs) needs them on
+# macOS too. wry already pulls all of these for `target_vendor = "apple"` with the
+# same features, so naming them here costs no extra compilation.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "std",
+  "NSArray",
+  "NSDate",
+  "NSError",
+  "NSHTTPCookie",
+  "NSString",
+] }
+# Touch ID / Face ID, with the OS passcode as fallback. `LAPolicy` and the
+# evaluate call are all we use; everything else in the framework (LARight,
+# LAPersistedRight, the key types) is left out.
+objc2-local-authentication = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "block2",
+  "LAContext",
+  "LAError",
+  "LAPublicDefines",
+] }
+
+# Vendored tao with a single upstream-confirmed fix. tao 0.35.3 returns a dangling
+# UISceneConfiguration from `application:configurationForConnectingSceneSession:`
+# (see vendor/tao-0.35.3/src/platform_impl/ios/view.rs), which segfaults every
+# optimized iOS build at launch because Info.ios.plist sets
+# UIApplicationSupportsMultipleScenes. tao 0.36.0 carries the same fix, but
+# tauri-runtime-wry 2.11.4 (the newest 2.x) requires ^0.35.0 and cannot take it,
+# 0.35.3 is the last 0.35 release, and `[patch]` replaces a source, not a version,
+# so 0.36.0 is not reachable this way either.
+# REMOVE this patch, and the vendored tree, once tauri-runtime-wry requires tao
+# 0.36 (checked against the crates.io index on 2026-09-15: still ^0.35.0).
+[patch.crates-io]
+tao = { path = "vendor/tao-0.35.3" }

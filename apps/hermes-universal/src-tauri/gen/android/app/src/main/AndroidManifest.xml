@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- AndroidTV support -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
+    <!-- networkSecurityConfig SUPERSEDES usesCleartextTraffic on API 24+, and minSdk
+         is 24, so the flag below is inert and kept only as documentation of the
+         intent. The policy lives in res/xml/network_security_config.xml (release:
+         loopback only, which the RFC 8252 sign-in callback needs) and is replaced
+         wholesale by the debug source set's copy of the same filename. -->
+    <!-- Backup is OFF, deliberately.
+         Credentials live in Keystore-encrypted SharedPreferences inside the app's
+         private storage (see src/secrets/). Android's default backup would copy
+         that storage off the device — to adb backup on API 24-30, and to
+         Google's cloud on 31+ — where the Keystore key that decrypts it does NOT
+         follow. So the copy is useless to the user and is one more place their
+         encrypted credentials exist. allowBackup covers the legacy path;
+         dataExtractionRules covers cloud backup and device-to-device transfer on
+         API 31+, which allowBackup alone no longer governs. -->
+    <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:theme="@style/Theme.hermes_universal"
+        android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:launchMode="singleTask"
+            android:label="@string/main_activity_title"
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <!-- AndroidTV support -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+            <!-- `hermes://` deep links (MJXHRM-455). On MainActivity, which is
+                 `singleTask`, so a link tapped while the app is running arrives as
+                 `onNewIntent` into the EXISTING WebView — no second window, the
+                 same rule mobile OAuth works under. BROWSABLE is what lets a
+                 browser hand the link over at all. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="hermes" />
+            </intent-filter>
+            <!-- tauri-plugin-deep-link's build script rewrites the block between
+                 these two markers from `plugins.deep-link.mobile[]` in
+                 tauri.conf.json on every Android build. That key is deliberately
+                 UNSET (the filter above is hand-authored so it is reviewable and
+                 present in a tracked file rather than appearing at build time), so
+                 the generated block is empty and the rewrite is a no-op. Placed
+                 here, with this exact indentation, so the build does not have to
+                 write the file at all. -->
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+            
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+        </activity>
+
+        <!-- Native screen activity (MJX-141): ONE Activity hosting every windowable
+             surface (Settings / Command Center / Profiles); the surface is chosen by
+             the route the WebView loads. Lives in MainActivity's task so hardware
+             back / Home return to it. Not exported (launched only from within the app
+             via Rust's open_screen_window). Default launchMode = plain back-stack
+             push. Same configChanges as MainActivity so rotation/resize don't
+             recreate the WebView. -->
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:name=".ScreenActivity"
+            android:parentActivityName=".MainActivity"
+            android:exported="false" />
+
+        <provider
+          android:name="androidx.core.content.FileProvider"
+          android:authorities="${applicationId}.fileprovider"
+          android:exported="false"
+          android:grantUriPermissions="true">
+          <meta-data
+            android:name="android.support.FILE_PROVIDER_PATHS"
+            android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

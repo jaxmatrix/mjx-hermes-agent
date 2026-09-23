@@ -1,0 +1,177 @@
+import type { ReactNode } from 'react'
+
+import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { useI18n } from '@/i18n'
+import { COMPLETION_SOUND_VARIANTS, previewCompletionSound } from '@/lib/completion-sound'
+import { triggerHaptic } from '@/lib/haptics'
+import { Bell, Play } from '@/lib/icons'
+import { nativeNotificationCapabilities } from '@/lib/native-notification-capabilities'
+import { IS_DESKTOP } from '@/lib/platform'
+import { cn } from '@/lib/utils'
+import { useStore } from '@/store/atom'
+import { $completionSoundVariantId, setCompletionSoundVariantId } from '@/store/completion-sound'
+import { $hapticsMuted } from '@/store/haptics'
+import {
+  $nativeNotifyPrefs,
+  NATIVE_NOTIFICATION_KINDS,
+  sendTestNativeNotification,
+  setNativeNotifyEnabled,
+  setNativeNotifyKind
+} from '@/store/native-notifications'
+import { notify } from '@/store/notifications'
+
+import { CONTROL_TEXT } from './constants'
+import { ListRow, SectionHeading, SettingsContent } from './primitives'
+import { settingRowElementId } from './settings-search'
+
+const CAPTION = 'text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)'
+
+function Caption({ children, className }: { children: ReactNode; className?: string }) {
+  return <p className={cn(CAPTION, className)}>{children}</p>
+}
+
+function ToggleRow(props: {
+  checked: boolean
+  description: string
+  disabled?: boolean
+  /** DOM id for the ⌘K settings-search deep link (`settingRowElementId`). */
+  id?: string
+  label: string
+  onChange: (on: boolean) => void
+}) {
+  return (
+    <ListRow
+      action={
+        <Switch
+          aria-label={props.label}
+          checked={props.checked}
+          disabled={props.disabled}
+          onCheckedChange={on => {
+            void triggerHaptic('selection')
+            props.onChange(on)
+          }}
+        />
+      }
+      description={props.description}
+      id={props.id}
+      title={props.label}
+    />
+  )
+}
+
+// Notifications (Jc9): native-notification prefs + completion sound + haptics.
+// Ported to desktop parity from apps/desktop notifications-settings.tsx. The
+// haptics-mute row is desktop-only-absent (desktop mutes via titlebar); universal
+// keeps it on mobile/web where there is no titlebar mute control.
+export function NotificationsSection() {
+  const { t } = useI18n()
+  const prefs = useStore($nativeNotifyPrefs)
+  const hapticsMuted = useStore($hapticsMuted)
+  const completionSoundVariantId = useStore($completionSoundVariantId)
+  const copy = t.settings.notifications
+
+  const runTest = async () => {
+    void triggerHaptic('submit')
+    const ok = await sendTestNativeNotification(copy.testTitle, copy.testBody)
+    notify({ kind: ok ? 'info' : 'error', message: ok ? copy.testSent : copy.testUnsupported })
+  }
+
+  return (
+    <SettingsContent>
+      <SectionHeading icon={Bell} title={copy.title} />
+      <Caption className="mb-2 leading-(--conversation-caption-line-height)">{copy.intro}</Caption>
+
+      <ToggleRow
+        checked={prefs.enabled}
+        description={copy.enableAllDesc}
+        label={copy.enableAll}
+        onChange={setNativeNotifyEnabled}
+      />
+
+      {NATIVE_NOTIFICATION_KINDS.map(kind => (
+        <ToggleRow
+          checked={prefs.enabled && prefs.kinds[kind]}
+          description={copy.kinds[kind].description}
+          disabled={!prefs.enabled}
+          id={kind === 'plugin' ? settingRowElementId('notifications.plugin') : undefined}
+          key={kind}
+          label={copy.kinds[kind].label}
+          onChange={on => setNativeNotifyKind(kind, on)}
+        />
+      ))}
+
+      {/* Rule 9: report what actually happens rather than offering a control
+          that does nothing. Action buttons and tap activation are mobile-only —
+          the desktop notification plugin registers neither — so a plugin's
+          buttons silently do not appear here, and the page says so instead of
+          leaving the user to discover it. */}
+      {!nativeNotificationCapabilities().actions && <Caption>{copy.noActionsNotice}</Caption>}
+
+      <ListRow
+        action={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Select
+              onValueChange={value => {
+                const variantId = Number.parseInt(value, 10)
+
+                setCompletionSoundVariantId(variantId)
+                previewCompletionSound(variantId)
+                void triggerHaptic('selection')
+              }}
+              value={String(completionSoundVariantId)}
+            >
+              <SelectTrigger className={cn('min-w-56', CONTROL_TEXT)}>
+                <SelectValue />
+              </SelectTrigger>
+
+              <SelectContent>
+                {COMPLETION_SOUND_VARIANTS.map(variant => (
+                  <SelectItem key={variant.id} value={String(variant.id)}>
+                    {variant.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Button
+              className="gap-1.5"
+              onClick={() => {
+                previewCompletionSound()
+                void triggerHaptic('selection')
+              }}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              <Play className="size-3.5" />
+              {copy.completionSoundPreview}
+            </Button>
+          </div>
+        }
+        description={copy.completionSoundDesc}
+        title={copy.completionSoundTitle}
+      />
+
+      <div className="mt-4 flex flex-col gap-2">
+        <Button className="self-start" onClick={() => void runTest()} size="sm" type="button" variant="outline">
+          <Bell />
+          {copy.test}
+        </Button>
+        <Caption>{copy.focusedHint}</Caption>
+      </div>
+
+      {/* Desktop mutes haptics from the titlebar; the titlebar is desktop-only, so
+          keep a mute control here on mobile/web (it also gates the completion sound). */}
+      {!IS_DESKTOP && (
+        <div className="mt-6">
+          <ListRow
+            action={<Switch checked={hapticsMuted} onCheckedChange={muted => $hapticsMuted.set(muted)} />}
+            title={t.titlebar.muteHaptics}
+          />
+        </div>
+      )}
+    </SettingsContent>
+  )
+}

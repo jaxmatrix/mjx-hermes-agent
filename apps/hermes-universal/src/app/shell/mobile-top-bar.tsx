@@ -1,0 +1,100 @@
+import { useLocation, useNavigate } from 'react-router'
+
+import { ChatTitle } from '@/app/chat/chat-title'
+import { TITLEBAR_AREAS } from '@/app/contrib/surfaces'
+import { isWorkspacePagePath, NEW_CHAT_ROUTE } from '@/app/routes'
+import { ConnectionBar } from '@/components/chat/connection-accent'
+import { Codicon } from '@/components/ui/codicon'
+import { Slot } from '@/contrib/react/slot'
+import { useI18n } from '@/i18n'
+import { useStoreSelector } from '@/lib/use-session-slice'
+import { useStore } from '@/store/atom'
+import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
+
+import { DownloadsTray } from './downloads-tray'
+import { MobileChromeBar } from './mobile-chrome-bar'
+import { useSidebar } from './sidebar'
+import { TitlebarButton } from './titlebar-button'
+
+// The mobile top bar. Styled after the desktop titlebar chrome (same border /
+// --ui-bg-chrome / codicon vocabulary) but as a touch-friendly row that owns the
+// safe-area top inset — the chrome fills the status-bar area and the controls sit
+// below the notch. First increment hosts only the left-sidebar toggle button;
+// more buttons (search / settings / …) are added here later.
+//
+// `titleBar.left` / `titleBar.right` are mounted here too, so a plugin chip lands
+// on the phone exactly as it does in the desktop titlebar. `titleBar.center` is
+// deliberately NOT mounted: on mobile ChatTitle owns all the middle slack (there
+// is no header row), and a contributed node there would fight it for width.
+export function MobileTopBar() {
+  const { t } = useI18n()
+  const { toggleMobile, toggleMobileRight } = useSidebar()
+  const navigate = useNavigate()
+  // Derived from the path rather than read off `$workspacePage`: only the
+  // desktop controller keeps that atom in sync, and this bar is the phone's.
+  const onPage = isWorkspacePagePath(useLocation().pathname)
+  // The chat on screen, and the connection it is bound to. Read from the SLICE,
+  // which carries its scope from its first write — never from the active
+  // connection, which a background chat does not belong to.
+  const sessionKey = useStore($activeSessionKey)
+  const chatConnectionId = useStoreSelector($sessionKeyStates, states => states[sessionKey]?.connectionId ?? null)
+
+  return (
+    <MobileChromeBar
+      // Active session title — the same clickable pill (session actions menu)
+      // the desktop chat header uses. On mobile the fixed layout has no header
+      // row, so it lives here.
+      // Fills the row it is given: the title is this bar's only wide target and
+      // the way into the session menu, so it takes the full height and width and
+      // starts at the left edge — matching the title menu on every second screen.
+      center={
+        <span className="relative flex h-full w-full items-center ps-2">
+          {/* WHICH CONNECTION this chat is on, as a 3 px rule down the start
+              edge (MJXHRM-591). The phone shows one chat at a time, so the bar
+              is the only place a colour can say it — and a colour is what the
+              owner chose over a text chip. */}
+          <ConnectionBar connectionId={chatConnectionId} />
+          <ChatTitle className="h-full w-full justify-start" />
+        </span>
+      }
+      left={
+        <>
+          {/* On a full page the useful control in this corner is the way out, so
+              it becomes Back — to the chat, which is the phone's one home. On the
+              chat itself it opens the sidebar.
+
+              `history` rather than a speech bubble or a hamburger: the button
+              names what is behind it (your past chats) instead of the mechanism,
+              and a bubble read as "messages" next to an app that is nothing but
+              messages. The icon size is set via Codicon's `size` (inline
+              font-size) — it beats TitlebarButton's base `[&_.codicon]` rule,
+              which an equal-specificity class override can't. */}
+          {onPage ? (
+            <TitlebarButton density="mobile" label={t.common.back} onClick={() => navigate(NEW_CHAT_ROUTE)}>
+              <Codicon className="rtl:-scale-x-100" name="chevron-left" size="1.4rem" />
+            </TitlebarButton>
+          ) : (
+            <TitlebarButton density="mobile" label={t.titlebar.showSidebar} onClick={toggleMobile}>
+              <Codicon name="history" size="1.4rem" />
+            </TitlebarButton>
+          )}
+          <Slot area={TITLEBAR_AREAS.left} />
+        </>
+      }
+      right={
+        <>
+          {/* Right-sidebar toggle → the Workspace. Uses the drawer / right-panel
+              glyph (not a gear — this opens a panel, not settings). */}
+          <Slot area={TITLEBAR_AREAS.right} />
+          {/* The same tray as the desktop titlebar's, at touch density. A phone
+              is where a background download matters most: it is the surface
+              where the user cannot see a file manager to check on one. */}
+          <DownloadsTray density="mobile" />
+          <TitlebarButton density="mobile" label={t.titlebar.showRightSidebar} onClick={toggleMobileRight}>
+            <Codicon name="layout-sidebar-right" size="1.4rem" />
+          </TitlebarButton>
+        </>
+      }
+    />
+  )
+}

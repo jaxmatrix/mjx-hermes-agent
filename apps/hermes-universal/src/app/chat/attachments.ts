@@ -1,0 +1,296 @@
+import { open } from '@tauri-apps/plugin-dialog'
+
+import { formatRefValue as refValue } from '@/components/assistant-ui/directive-text'
+import { translateNow } from '@/i18n'
+import { selectRemotePaths } from '@/lib/desktop-fs'
+import { ensureSession } from '@/store/chat'
+import type { ComposerAttachment } from '@/store/composer'
+import { $dataUrlReadMaxMb, dataUrlReadMaxBytes, readCappedFileBase64 } from '@/store/data-url-read-max'
+import { requestGateway } from '@/store/gateway-client'
+import { notifyError } from '@/store/notifications'
+import { withSessionNotFoundResume } from '@/store/session-recovery'
+import { requestForSession } from '@/store/session-route-dispatch'
+import { $sessionKeyStates, runtimeKeyForStoredSession } from '@/store/session-state-types'
+
+// Attachment staging (Gc8/R7). Pick a file → read bytes → data-URL → file.attach
+// (which stages it server-side and returns a @file:/@image: ref) → the ref is
+// spliced into the prompt text on submit (the desktop model).
+//
+// The read is CAPPED and it happens in Rust (`readCappedFileBase64` →
+// `data_url_read_max.rs`), not here. `@tauri-apps/plugin-fs`'s `readFile` used
+// to do it, which meant the base64 of an arbitrarily large file was allocated
+// in the webview before anything could object — on a phone that is the system
+// killing the process, so there was no error to show and no draft left to show
+// it in. Rust refuses on the file's own size before allocating, and the same
+// call resolves Android SAF `content://` URIs (which is why it goes through the
+// fs plugin's `Fs::open` rather than `std::fs`). Settings ▸ Chat sets the cap.
+//
+// Every ref this module BUILDS goes through `refValue` (formatRefValue), which
+// quotes a value the reference grammar would otherwise cut short. The gateway's
+// pattern falls back to `\S+` for an unquoted value, so `@folder:/srv/my code`
+// resolves `/srv/my` — a directory that often exists — and strands ` code` in
+// the prompt as prose. `file.attach` already quotes on its side
+// (`_format_ref_value` in tui_gateway/methods_prompt.py); these are the refs we
+// mint ourselves, so they have to do the same.
+
+const MIME_BY_EXT: Record<string, string> = {
+  gif: 'image/gif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  json: 'application/json',
+  md: 'text/markdown',
+  pdf: 'application/pdf',
+  png: 'image/png',
+  svg: 'image/svg+xml',
+  txt: 'text/plain',
+  webp: 'image/webp'
+}
+
+// The reverse map, for bytes that arrive with a MIME and no filename (a pasted
+// or dropped blob). Only the image types a clipboard actually produces.
+const EXT_BY_MIME: Record<string, string> = {
+  'image/gif': 'gif',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/svg+xml': 'svg',
+  'image/webp': 'webp'
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).pop() || path
+}
+
+function mimeFor(name: string): string {
+  return MIME_BY_EXT[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream'
+}
+
+function dataUrl(base64: string, mime: string): string {
+  return `data:${mime};base64,${base64}`
+}
+
+function toDataUrl(bytes: Uint8Array, mime: string): string {
+  let binary = ''
+
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+
+  return dataUrl(btoa(binary), mime)
+}
+
+export interface StagedAttachment {
+  ref: string
+  name: string
+}
+
+/**
+ * Stage an already-known absolute path via file.attach (read bytes → data-URL →
+ * gateway) and return its prompt ref. Shared by the picker and the OS file-drop
+ * handler (a Tauri drop hands over paths directly). Returns null on failure —
+ * e.g. a dropped directory, whose readFile throws, is skipped rather than fatal.
+ *
+ * Failure RAISES a notification rather than returning quietly. The caller can't
+ * tell "cancelled" from "failed" (both were null), so an unreadable file, an
+ * Android SAF content-URI the resolver can't open, a file over the size cap, or
+ * a `file.attach` that answers without a ref all used to land as complete
+ * silence: no chip, no error, the turn sent as if nothing had been attached.
+ * Cancel never reaches here — the pickers return before calling.
+ */
+export async function stageAttachmentFromPath(path: string): Promise<StagedAttachment | null> {
+  const name = basename(path)
+
+  return stageAttachment(name, async () => dataUrl(await readCappedFileBase64(path), mimeFor(name)), path)
+}
+
+/**
+ * Stage BYTES that never had a path — a pasted or dropped image blob.
+ *
+ * `file.attach` takes `path` OR `data_url` (`methods_prompt.py` errors only when
+ * both are missing), and the gateway materialises the upload in the session
+ * workspace, so a blob is a first-class attachment rather than a lesser one.
+ * That matters because the clipboard is where screenshots live: on every
+ * platform the DOM paste event is what carries them, and universal had no
+ * consumer for it at all — the composer called `preventDefault()` on an image
+ * paste and then dropped the bytes (MJXHRM-415).
+ *
+ * `name` is what the chip shows and what the gateway files it under; the
+ * extension is derived from the blob's own MIME so the gateway sees a real image.
+ */
+export async function stageAttachmentFromBlob(blob: Blob, name?: string): Promise<StagedAttachment | null> {
+  const label = name || `pasted-image-${Date.now()}.${EXT_BY_MIME[blob.type] ?? 'png'}`
+
+  return stageAttachment(label, async () => {
+    // Same cap, checked here rather than in Rust: these bytes never had a path,
+    // so there is nothing for Rust to open — but base64 still expands them by a
+    // third on the way to a gateway frame, and a 400 MB screenshot buffer is
+    // exactly as fatal on a phone as a 400 MB file.
+    const maxMb = $dataUrlReadMaxMb.get()
+
+    if (blob.size > dataUrlReadMaxBytes(maxMb)) {
+      throw new Error(translateNow('composer.attachTooLarge', maxMb))
+    }
+
+    return toDataUrl(new Uint8Array(await blob.arrayBuffer()), blob.type || mimeFor(label))
+  })
+}
+
+/**
+ * Stage bytes into ONE named session — not the active one.
+ *
+ * `stageAttachment` below resolves `ensureSession()`, which is the session the
+ * user is looking at. That is right for a composer and wrong for anything
+ * staging into a session it names: a Bot Mode room fans one attachment out to
+ * six member sessions, none of them focused, and the active-session resolve
+ * would have quietly put all six copies in the user's own chat.
+ *
+ * Routed through MJXHRM-480's session router rather than `requestGateway`, so a
+ * member on another connection is reached on ITS gateway. `withSessionNotFoundResume`
+ * still guards the runtime id, which is what a sleep/wake invalidates.
+ *
+ * Returns null on failure, having already raised the notification — same
+ * contract as the stagers below.
+ */
+export async function attachToSession(
+  storedSessionId: string,
+  input: { dataUrl: string; name: string; path?: string; profile?: null | string }
+): Promise<StagedAttachment | null> {
+  const { name } = input
+
+  try {
+    const runtimeKey = runtimeKeyForStoredSession(storedSessionId)
+    const live = (runtimeKey ? $sessionKeyStates.get()[runtimeKey]?.runtimeSessionId : null) ?? storedSessionId
+
+    const { result: res } = await withSessionNotFoundResume(live, storedSessionId, sessionId =>
+      requestForSession<{ ref_text?: string }>(
+        storedSessionId,
+        'file.attach',
+        {
+          name,
+          path: input.path,
+          session_id: sessionId,
+          data_url: input.dataUrl
+        },
+        undefined,
+        input.profile ?? undefined
+      )
+    )
+
+    if (res.ref_text) {
+      return { ref: res.ref_text, name }
+    }
+
+    throw new Error(translateNow('composer.attachNoRef'))
+  } catch (error) {
+    notifyError(error, translateNow('composer.attachFailed', name))
+
+    return null
+  }
+}
+
+/** Shared body of the two stagers above: bytes → data URL → `file.attach` → ref.
+ *  The ACTIVE-session caller of `attachToSession`. */
+async function stageAttachment(
+  name: string,
+  readDataUrl: () => Promise<string>,
+  path?: string
+): Promise<StagedAttachment | null> {
+  try {
+    const dataUrl = await readDataUrl()
+    const { id: sessionId, storedId } = await ensureSession()
+
+    if (storedId) {
+      return attachToSession(storedId, { dataUrl, name, path })
+    }
+
+    // A draft has no stored id to route by, so the runtime id is the only
+    // handle there is. Attach runs against the RUNTIME session id, so after a
+    // sleep/wake it hits a dead runtime and 'session not found' — while plain
+    // text silently recovered on its own, which is exactly why the bug read as
+    // "text works, images don't". One shared resolver rebinds and retries once
+    // (MJXHRM-219).
+    const { result: res } = await withSessionNotFoundResume(sessionId, storedId, live =>
+      requestGateway<{ ref_text?: string }>('file.attach', {
+        name,
+        path,
+        session_id: live,
+        data_url: dataUrl
+      })
+    )
+
+    if (res.ref_text) {
+      return { ref: res.ref_text, name }
+    }
+
+    throw new Error(translateNow('composer.attachNoRef'))
+  } catch (error) {
+    notifyError(error, translateNow('composer.attachFailed', name))
+
+    return null
+  }
+}
+
+/** Open the picker, stage the file via file.attach, return its prompt ref. */
+export async function pickAttachment(): Promise<StagedAttachment | null> {
+  const path = await open({ multiple: false }).catch(() => null)
+
+  if (typeof path !== 'string') {
+    return null
+  }
+
+  return stageAttachmentFromPath(path)
+}
+
+/**
+ * Pick a folder (no byte staging — folders resolve as `@folder:` refs).
+ *
+ * LOCAL, so the path is only meaningful when this machine's disk IS the
+ * gateway's: see `gatewayOwnsLocalFs`, which is what decides whether the
+ * composer offers this at all.
+ */
+export async function pickFolderAttachment(): Promise<StagedAttachment | null> {
+  const path = await open({ directory: true, multiple: false }).catch(() => null)
+
+  if (typeof path !== 'string') {
+    return null
+  }
+
+  return { name: basename(path), ref: `@folder:${refValue(path)}` }
+}
+
+// Remote picks browse the BACKEND filesystem, so no staging/file.attach — the
+// path already lives where the session runs and a raw ref is the whole job
+// (the same shape the gateway's @-mention completions produce).
+
+/** Pick a file on the backend filesystem → `@file:` ref. */
+export async function pickRemoteAttachment(defaultPath?: string): Promise<StagedAttachment | null> {
+  const [path] = await selectRemotePaths({ defaultPath })
+
+  return path ? { name: basename(path), ref: `@file:${refValue(path)}` } : null
+}
+
+/** Pick a folder on the backend filesystem → `@folder:` ref. */
+export async function pickRemoteFolderAttachment(defaultPath?: string): Promise<StagedAttachment | null> {
+  const [path] = await selectRemotePaths({ defaultPath, directories: true })
+
+  return path ? { name: basename(path), ref: `@folder:${refValue(path)}` } : null
+}
+
+/**
+ * Convert a StagedAttachment (gateway ref + name) into the ComposerAttachment
+ * the ported composer's scope model uses. Kind is inferred from the ref prefix.
+ */
+export function stagedToComposerAttachment(staged: StagedAttachment): ComposerAttachment {
+  const ref = staged.ref
+
+  const kind: ComposerAttachment['kind'] = ref.startsWith('@image:')
+    ? 'image'
+    : ref.startsWith('@folder:')
+      ? 'folder'
+      : ref.startsWith('@url:')
+        ? 'url'
+        : ref.startsWith('@terminal:')
+          ? 'terminal'
+          : 'file'
+
+  return { id: ref, kind, label: staged.name, refText: ref }
+}

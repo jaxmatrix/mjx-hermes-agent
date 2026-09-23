@@ -1,0 +1,1374 @@
+import { GatewaySignInBusyError, GatewaySignInRequiredError, isGatewayReauthRequired } from '@/gateway'
+import { translateNow } from '@/i18n/runtime'
+import {
+  fetchAuthProviders,
+  oauthLogin,
+  oauthLogout,
+  type OauthStatus,
+  oauthStatus,
+  oauthStatusIsUnknown,
+  passwordLogin,
+  portalAgentSignIn,
+  portalLogout,
+  type SignInOutcome
+} from '@/lib/auth'
+import { errorText } from '@/lib/error-text'
+import { isGatewayAuthFailure } from '@/lib/gateway-auth-failure'
+import { loadString, saveString } from '@/lib/persist'
+import { IS_NATIVE_MOBILE } from '@/lib/platform'
+import { reconnectBackoffDelayMs } from '@/lib/reconnect-backoff'
+import { clearSecrets, loadSecrets, loadSshSecrets, saveSecrets, type Secrets } from '@/lib/secure-store'
+import {
+  clearSessionJar,
+  forgetPersistedSessionCookies,
+  persistSessionCookies,
+  resumeSessionCookiePersistence,
+  suspendSessionCookiePersistence
+} from '@/lib/session-persist'
+import {
+  $activeConnection,
+  describeConnection,
+  publishActiveConnection,
+  setPendingConnectionHint,
+  takePendingConnectionHint
+} from '@/store/active-connection'
+import { onBackground, onForeground } from '@/store/app-lifecycle'
+import {
+  $connection,
+  $connectionError,
+  $connectionPhase,
+  $hasConnected,
+  $status,
+  type StatusInfo
+} from '@/store/connection-atoms'
+import { isLatched, latchBackendFailure, releaseLatch } from '@/store/connection-latches'
+import { $gatewayState, closeGateway, connectGateway, lastGatewayCloseCode } from '@/store/gateway-client'
+import { chooseGatedAuth, type Connection } from '@/store/gateway-config'
+import {
+  clearGatewayTarget,
+  clearPendingOAuth,
+  clearPendingPortal,
+  loadGatewayTarget,
+  saveGatewayTarget,
+  savePendingOAuth,
+  takePendingOAuth
+} from '@/store/gateway-restore'
+import { getInstallationId } from '@/store/installation-id'
+import { spawnLocalBackend, stopLocalBackend } from '@/store/local-backend'
+import {
+  $sshStep,
+  attachSshPrompts,
+  cancelSsh,
+  connectSshBackend,
+  disconnectSsh,
+  isQuietSshError,
+  newAttemptId,
+  onSshDisconnected,
+  onSshProgress,
+  type SshConnectConfig,
+  sshScopeOf
+} from '@/store/ssh-backend'
+import { httpRequest } from '@/transport/http'
+
+// The atoms themselves live in the LEAF `store/connection-atoms.ts` so that
+// `lib/api.ts` and `store/active-connection.ts` can read them without pulling in
+// the connect/reconnect machinery (and without the import cycle that would
+// create). Re-exported here so every existing importer is unchanged.
+export {
+  $connection,
+  $connectionError,
+  $connectionPhase,
+  $hasConnected,
+  $status,
+  type ConnectionPhase,
+  type StatusInfo
+} from '@/store/connection-atoms'
+// AuthMode / Connection are now defined in store/gateway-config (the reconciled
+// model incl. 'oauth' + gateway mode). Re-exported here so existing importers of
+// '@/store/connection' keep working.
+export type { AuthMode, Connection } from '@/store/gateway-config'
+
+// The RemoteProvider: resolve a LAN/remote Hermes backend URL + auth, then hold
+// the live connection descriptor. All chat traffic then runs over the gateway
+// (store/gateway.ts). Remote only — no local-spawn mode on mobile.
+//
+// Two auth shapes:
+//   • token / none  — loopback / non-gated backends (auth_required=false):
+//                      WS uses ?token= (or nothing).
+//   • ticket         — gated backends (auth_required=true): password-login sets a
+//                      session cookie (held in Rust), and the WS uses a fresh
+//                      single-use ?ticket= minted per connect (store/gateway.ts).
+
+export interface ConnectInput {
+  url: string
+  token?: string
+  username?: string
+  password?: string
+  /**
+   * May this connect hand the user to a login page?
+   *
+   * **Defaults to false, and that default is the point.** An interactive sign-in
+   * is a one-way door on mobile — it navigates the app's only webview away — and
+   * an unrequested window on desktop. It must only ever happen because a person
+   * pressed something: `selectConnection` passes `true` for a click (its own
+   * default, desktop's contract) and `false` for anything else. Every other
+   * caller (boot restore, the reconnect supervisor, a post-sign-in resume)
+   * leaves it false and gets a {@link GatewaySignInRequiredError} it can surface
+   * as a CTA instead.
+   */
+  allowInteractive?: boolean
+  /** The registry row being signed in to. Parked in the mobile resume marker,
+   *  so the post-reload boot lands on it (see `beginOAuthLogin`). */
+  connectionId?: string
+}
+
+// Non-secret conveniences live in localStorage for a synchronous prefill; the
+// secrets (token/password) live in the OS keyring (see @/lib/secure-store).
+const URL_KEY = 'hermes.url'
+const USER_KEY = 'hermes.username'
+
+export const lastUrl = (): string => loadString(URL_KEY)
+/** The connect form's prefill for next time. Non-secret. */
+export const rememberLastUrl = (url: string): void => saveString(URL_KEY, url.trim())
+export const lastUsername = (): string => loadString(USER_KEY)
+
+/** Read the saved token/password from the keyring (silent; null if none). */
+export function loadSavedLogin(): Promise<Secrets | null> {
+  return loadSecrets()
+}
+
+/** Forget the saved secrets (e.g. a "sign out everywhere" affordance).
+ *
+ *  Resolves false when the wipe did not land — the keystore was unreachable, or
+ *  it refused. Callers that tell the user they are signed out everywhere should
+ *  check: a failed wipe used to be indistinguishable from a clean one. */
+export function forgetSavedLogin(): Promise<boolean> {
+  // Before the wipe, not after: the memo must not outlive the keyring entry it
+  // describes, or a reconnect would skip re-persisting an identical jar.
+  forgetPersistedSessionCookies()
+
+  return clearSecrets()
+}
+
+/** The registry id of whatever is live, for the saved target. Read AFTER the
+ *  publish, so it names the connection that actually came up. */
+function activeConnectionId(): string | undefined {
+  return $activeConnection.get()?.connectionId
+}
+
+export function normalizeBaseUrl(raw: string): string {
+  let value = raw.trim()
+
+  if (!/^https?:\/\//i.test(value)) {
+    value = `http://${value}`
+  }
+
+  return value.replace(/\/+$/, '')
+}
+
+/** Probe /api/status WITHOUT credentials to learn how the backend authenticates. */
+export async function probeStatus(rawUrl: string): Promise<StatusInfo> {
+  const base = normalizeBaseUrl(rawUrl)
+  const res = await httpRequest('GET', `${base}/api/status`, { timeoutMs: 8000 })
+
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`Backend responded HTTP ${res.status}`)
+  }
+
+  return JSON.parse(res.body) as StatusInfo
+}
+
+/**
+ * Drive the interactive gateway OAuth sign-in.
+ *
+ * On desktop this opens a dedicated sign-in window and the promise resolves when the
+ * session lands. On ANDROID AND iOS the Rust command navigates the CALLING webview to the
+ * login and back (neither phone can host a dismissable second window — see
+ * src-tauri/src/oauth.rs); that navigation destroys this JS context, so `oauthLogin` never
+ * resolves here. We persist a one-shot resume marker FIRST so the post-reload boot
+ * (`autoRestoreConnection`) finishes the connect. Callers must treat this as "may never
+ * return" on mobile.
+ *
+ * Both mobile flows navigate away — the RFC 8252 one to `/auth/native/authorize`, the
+ * cookie cascade to `/auth/login` — so the marker is right for either.
+ */
+async function beginOAuthLogin(
+  base: string,
+  provider?: string,
+  username?: string,
+  connectionId?: string
+): Promise<void> {
+  if (!IS_NATIVE_MOBILE) {
+    const outcome = await oauthLogin(base, provider)
+
+    if (outcome?.busy) {
+      throw new GatewaySignInBusyError('A sign-in is already in progress')
+    }
+
+    return
+  }
+
+  // The marker carries the SOURCE being signed in to (MJXHRM-446). The
+  // navigation destroys this JS context, so without an id the post-reload
+  // resume can only guess which gateway it just signed into — and on a
+  // multi-source install a guess means coming back on the wrong machine.
+  savePendingOAuth({ base, connectionId, provider, username })
+
+  let outcome: SignInOutcome
+
+  try {
+    outcome = await oauthLogin(base, provider)
+  } catch (err) {
+    // A REJECTION on mobile means we never navigated (Rust failed to bind the loopback
+    // listener, or the webview refused the load) — this JS context is still alive and
+    // the caller is about to surface the error. The marker we parked is now garbage
+    // that would otherwise sit in localStorage and fire on some unrelated later launch,
+    // seeding `$restoring` and sending the boot down the resume branch for a sign-in
+    // that never happened.
+    //
+    // This reasoning is only sound because losing the sign-in race is NO LONGER a
+    // rejection. It used to be, and the assumption above was then flatly false: the
+    // winner HAD navigated, and this line — `takePendingOAuth` is a global
+    // read-and-clear — deleted the winner's marker. The user completed the sign-in,
+    // the SPA reloaded, `autoRestoreConnection` found nothing to resume, and dropped
+    // them on the connect screen holding a login they had just finished.
+    takePendingOAuth()
+
+    throw err
+  }
+
+  if (outcome?.busy) {
+    // Someone else owns the flow and has already navigated this webview. Leave their
+    // marker exactly where it is — it is the only thing that will finish the connect
+    // after the reload — and stop without reporting a failure, because none happened.
+    throw new GatewaySignInBusyError('A sign-in is already in progress')
+  }
+}
+
+/** The reply shape for "the probe never got an answer", so callers branch on one thing. */
+function unknownOauthStatus(): OauthStatus {
+  return { signedIn: false, reachable: false }
+}
+
+/**
+ * Refuse to open a login page unless someone asked for one.
+ *
+ * Throws {@link GatewaySignInRequiredError}, which no retry ladder treats as
+ * retryable — a missing credential does not come back on its own, so spinning on
+ * it only delays the CTA the user actually needs.
+ */
+function requireInteractive(input: ConnectInput): void {
+  if (input.allowInteractive) {
+    return
+  }
+
+  // Copy, never the base: this message reaches a toast (`notifyError`).
+  throw new GatewaySignInRequiredError(translateNow('settings.connections.tunnelSignInMessage'))
+}
+
+/** How `input`'s gateway authenticates, with a session held for it. */
+async function negotiate(input: ConnectInput): Promise<{ conn: Connection; provider?: string }> {
+  const base = normalizeBaseUrl(input.url)
+  const status = await probeStatus(base)
+
+  $status.set(status)
+
+  if (!status.auth_required) {
+    const token = input.token?.trim()
+
+    return {
+      conn: token
+        ? { baseUrl: base, mode: 'remote', authMode: 'token', token }
+        : { baseUrl: base, mode: 'remote', authMode: 'none' }
+    }
+  }
+
+  // Gated: pick the concrete path from the advertised providers. Password
+  // login (→ ticket) wins only when the operator supplied credentials AND a
+  // provider supports it; otherwise the interactive OAuth path.
+  const providers = await fetchAuthProviders(base)
+  const choice = chooseGatedAuth(providers, Boolean(input.username && input.password))
+
+  if (choice.authMode === 'ticket') {
+    if (!input.username || !input.password) {
+      throw new Error('This backend requires a username and password')
+    }
+
+    // password-login sets the session cookie in Rust; the WS authorizes with
+    // a per-dial ?ticket=.
+    await passwordLogin(base, input.username, input.password, choice.provider)
+
+    return { conn: { baseUrl: base, mode: 'remote', authMode: 'ticket' } }
+  }
+
+  // Reuse a still-live session (e.g. a restored cookie jar, R2b) rather than
+  // forcing an interactive sign-in; only open the webview when signed out.
+  const live = await oauthStatus(base).catch(() => unknownOauthStatus())
+
+  // "Could not tell" is not "signed out". A gateway we cannot reach says
+  // nothing about the credential we hold, and treating it as signed out is
+  // what sent users with perfectly good sessions to a login page whenever
+  // the network wobbled. Fail as a network fault so the caller's retry
+  // ladder handles it.
+  // Not `live.error`: that is Rust's text, which names the host, and this
+  // message reaches a toast through `selectConnection`'s preflight.
+  if (oauthStatusIsUnknown(live)) {
+    throw new Error(translateNow('settings.connections.verdict', 'unreachable'))
+  }
+
+  if (!live.signedIn) {
+    requireInteractive(input)
+    // On mobile this navigates the app away and never returns here — the reload
+    // resumes via the pending marker (see beginOAuthLogin / restoreLaunchConnection).
+    await beginOAuthLogin(base, choice.provider, input.username, input.connectionId)
+  }
+
+  return { conn: { baseUrl: base, mode: 'remote', authMode: 'oauth' }, provider: choice.provider }
+}
+
+/**
+ * The preflight of a switch onto a URL (MJXHRM-602): learn how the gateway
+ * authenticates and hold a session for it, publishing and dialling nothing — a
+ * failure leaves whatever the window is on untouched. The descriptor carries no
+ * ticket: the gateway socket mints its own per dial.
+ */
+export async function authenticate(input: ConnectInput): Promise<Connection> {
+  return (await negotiate(input)).conn
+}
+
+/**
+ * A person's connect just landed: its session is theirs to keep. Undoes a
+ * sign-out's persistence latch, then snapshots the jar. No-op in token/none mode.
+ */
+export async function keepSession(): Promise<void> {
+  resumeSessionCookiePersistence()
+  await persistSessionCookies()
+}
+
+/** LEGACY (retires in MJXHRM-602 F4): authenticate, publish, then dial `gateway-client`. */
+export async function connect(input: ConnectInput): Promise<void> {
+  const base = normalizeBaseUrl(input.url)
+  // Taken SYNCHRONOUSLY, before the first await. The hint is one-shot and
+  // `selectConnection` parks it immediately before calling this, so two
+  // overlapping switches would otherwise each publish whichever identity was
+  // parked last.
+  const hint = takePendingConnectionHint()
+
+  armReconnect()
+  $connectionError.set(null)
+  $connectionPhase.set('probing')
+
+  try {
+    const { conn, provider: oauthProvider } = await negotiate(input)
+
+    // ONE notification: the descriptor, its profile and its identity land
+    // together, so nothing can fire REST at the new base under the old source's
+    // scope while this awaits (store/active-connection.ts).
+    publishActiveConnection(describeConnection(conn, hint))
+    $connectionPhase.set('connecting')
+
+    try {
+      await dial(conn)
+    } catch (err) {
+      // An OAuth session that expired between the status check and the ws-ticket
+      // mint surfaces as GatewayReauthRequiredError — re-run sign-in once. This
+      // honours `allowInteractive` too: the expiry is real either way, but only a
+      // user-driven connect may answer it by opening a login page.
+      if (conn.authMode === 'oauth' && isGatewayReauthRequired(err)) {
+        requireInteractive(input)
+        await beginOAuthLogin(base, oauthProvider, input.username)
+        await dial(conn)
+      } else {
+        throw err
+      }
+    }
+
+    $connectionPhase.set('ready')
+    // Non-secret prefill in localStorage; secrets in the keyring (best-effort —
+    // if the keyring is unavailable, secrets simply aren't persisted).
+    saveString(URL_KEY, input.url.trim())
+    saveString(USER_KEY, input.username ?? '')
+    await saveSecrets({ token: input.token?.trim() || undefined, password: input.password || undefined })
+    // Persist the session cookie jar (R2b) so a cookie-backed login (ticket now,
+    // oauth/cloud once D6/E land) survives an app restart. No-op in token/none mode.
+    await persistSessionCookies()
+    // Remember this target so the next launch auto-reconnects (D8).
+    saveGatewayTarget({
+      connectionId: activeConnectionId(),
+      mode: 'remote',
+      url: input.url.trim(),
+      username: input.username || undefined
+    })
+  } catch (err) {
+    $connectionError.set(errorText(err))
+    $connectionPhase.set('error')
+    publishActiveConnection(null)
+    throw err
+  }
+}
+
+/**
+ * Local mode (E3.b, desktop-only): spawn a bundled backend and connect to it in
+ * token mode. The Rust command resolves only once the backend is HTTP-ready.
+ */
+export async function connectLocal(profile?: null | string): Promise<void> {
+  const hint = takePendingConnectionHint()
+
+  armReconnect()
+  $connectionError.set(null)
+  $connectionPhase.set('connecting')
+
+  try {
+    const backend = await spawnLocalBackend(profile)
+
+    const conn: Connection = {
+      baseUrl: backend.baseUrl,
+      mode: 'local',
+      authMode: 'token',
+      token: backend.token,
+      profile: profile ?? null
+    }
+
+    publishActiveConnection(describeConnection(conn, hint))
+    await dial(conn)
+    $connectionPhase.set('ready')
+    // Remember this target so the next launch auto-reconnects (D8).
+    saveGatewayTarget({ connectionId: activeConnectionId(), mode: 'local', profile: profile ?? null })
+  } catch (err) {
+    // Tear the child down so a failed connect doesn't leave an orphan process.
+    void stopLocalBackend().catch(() => {})
+    $connectionError.set(errorText(err))
+    $connectionPhase.set('error')
+    publishActiveConnection(null)
+    throw err
+  }
+}
+
+/** The non-secret half of an SSH target, as the settings form collects it. */
+export type SshTarget = Omit<
+  SshConnectConfig,
+  'privateKeyPem' | 'passphrase' | 'password' | 'installationId' | 'reuseToken' | 'interactive'
+>
+
+/**
+ * SSH mode (MJX-55): reach a backend on a remote host through an SSH tunnel.
+ *
+ * Rust does the whole lifecycle and hands back a token-authed backend on
+ * loopback, so from here this looks much more like `connectLocal` than like
+ * `connect` — there is no /api/status probe and no auth negotiation, because the
+ * tunnel already terminates at a backend we started ourselves.
+ *
+ * `onProgress` matters more than it looks: a cold connect spawns a process on
+ * the remote and waits for it to bind, which can take 45–90s. Without it the UI
+ * shows a motionless spinner for long enough to read as a hang.
+ */
+export async function connectSsh(
+  target: SshTarget,
+  options: { interactive?: boolean; attemptId?: string } = {}
+): Promise<void> {
+  armReconnect()
+  $connectionError.set(null)
+  $connectionPhase.set('connecting')
+
+  const attemptId = options.attemptId ?? newAttemptId()
+  const profile = target.profile ?? null
+  // Taken BEFORE the long dial: a 90 s SSH connect must not have its identity
+  // stolen by a second dial that started meanwhile.
+  const hint = takePendingConnectionHint()
+  // Tracked so `disconnect()` can abort a dial that is still running. A cold SSH
+  // connect can take 90s, and without this the "Use a different gateway" escape
+  // hatch only *looks* like it worked: the UI moves on while Rust keeps
+  // spawning a backend on the remote.
+  activeSshAttempt = attemptId
+
+  // Publish progress for surfaces that never see the attempt id — the connecting
+  // screen during a boot restore, and the tunnel re-bootstrap. Subscribed before
+  // the invoke so no step is missed.
+  const unlistenProgress = await onSshProgress(attemptId, progress => $sshStep.set(progress.step)).catch(() => null)
+  // A dial that may ask gets its questions on screen: attached before the invoke,
+  // because Rust can ask during the very first auth exchange.
+  const detachPrompts = options.interactive ? await attachSshPrompts(attemptId).catch(() => null) : null
+
+  try {
+    // Secrets come from the keyring, never from the saved target.
+    const [installationId, sshSecrets, saved] = await Promise.all([
+      getInstallationId(),
+      loadSshSecrets(),
+      loadSavedLogin().catch(() => null)
+    ])
+
+    const backend = await connectSshBackend(attemptId, {
+      ...target,
+      profile,
+      // Absent for the legacy owner, which is what collapses its ownership id to
+      // the bare profile so a running remote backend is REATTACHED (§8.6).
+      connectionId: hint?.dialConnectionId ?? undefined,
+      installationId,
+      privateKeyPem: sshSecrets.privateKeyPem,
+      passphrase: sshSecrets.passphrase,
+      password: sshSecrets.password,
+      // The previous session token is what lets Rust REATTACH to a backend that
+      // is already running remotely instead of spawning a second one.
+      reuseToken: saved?.token || undefined,
+      interactive: options.interactive ?? false
+    })
+
+    const conn: Connection = {
+      baseUrl: backend.baseUrl,
+      mode: 'ssh',
+      authMode: 'token',
+      token: backend.token,
+      profile,
+      remoteHost: backend.hostLabel,
+      // Stable across re-tunnels, unlike baseUrl — see connectionCacheKey.
+      remoteIdentity: backend.ownershipId,
+      sshScope: backend.scope
+    }
+
+    publishActiveConnection(describeConnection(conn, hint))
+    await dial(conn)
+    $connectionPhase.set('ready')
+
+    // Persist the token so the NEXT launch can reattach rather than respawn.
+    //
+    // ONLY for the legacy owner. A REGISTERED connection's reattach token is
+    // written by Rust under its own account (`connections::remember_reuse_token`)
+    // — the bare `SecretKey::Token` is shared with the remote gateway path, so
+    // writing it here for every source is D-4: an ssh reattach token clobbering
+    // a remote gateway's token and vice-versa.
+    if (!hint?.dialConnectionId) {
+      await saveSecrets({ token: backend.token })
+    }
+
+    saveGatewayTarget({ connectionId: activeConnectionId(), mode: 'ssh', profile, ssh: target })
+    // The scope Rust dialled, not one derived here from the profile: one backend
+    // serves every profile of a connection. An older core keyed it per profile.
+    await watchSshTunnel(backend.scope ?? sshScopeOf(hint?.dialConnectionId ?? null, profile))
+  } catch (err) {
+    // The QUIET flag: the row was retargeted mid-dial, so a NEWER primary
+    // attempt owns this connection and is publishing its own result
+    // (MJXHRM-592). Tearing down here would release the primary hold under that
+    // attempt and cancel its dial, so this one only reports upwards.
+    //
+    // The flag, never the kind: Rust mints `superseded` for a failure that IS
+    // this caller's own (a newer dial won the install race), and skipping the
+    // teardown for that one latched the primary hold with no owner here.
+    if (isQuietSshError(err)) {
+      throw err
+    }
+
+    // Drop the tunnel so a failed connect does not leave one open. The remote
+    // backend is deliberately left alone — Rust already reaped it if the failure
+    // was its own.
+    void disconnectSsh(profile, hint?.dialConnectionId ?? null).catch(() => {})
+    $connectionError.set(errorText(err))
+    $connectionPhase.set('error')
+    publishActiveConnection(null)
+    throw err
+  } finally {
+    unlistenProgress?.()
+    detachPrompts?.()
+    $sshStep.set(null)
+
+    if (activeSshAttempt === attemptId) {
+      activeSshAttempt = null
+    }
+  }
+}
+
+/** The in-flight SSH dial, if any, so a deliberate disconnect can abort it. */
+let activeSshAttempt: null | string = null
+
+/**
+ * Cloud mode (E5): connect to a portal-discovered agent's gateway. The agent
+ * session cookie is already in the shared jar (portal_agent_sign_in ran first),
+ * so this is an OAuth-style connect — the WS mints a ticket from that cookie.
+ */
+export async function connectCloud(baseUrl: string, profile?: null | string): Promise<void> {
+  const hint = takePendingConnectionHint()
+
+  armReconnect()
+  $connectionError.set(null)
+  $connectionPhase.set('connecting')
+
+  try {
+    const conn: Connection = {
+      baseUrl: normalizeBaseUrl(baseUrl),
+      mode: 'cloud',
+      authMode: 'oauth',
+      profile: profile ?? null
+    }
+
+    publishActiveConnection(describeConnection(conn, hint))
+
+    try {
+      await dial(conn)
+    } catch (err) {
+      // An already-expired agent session surfaces as GatewayReauthRequiredError —
+      // re-run the silent SSO once, mirroring connect()'s oauth retry.
+      if (isGatewayReauthRequired(err)) {
+        await portalAgentSignIn(conn.baseUrl)
+        await dial(conn)
+      } else {
+        throw err
+      }
+    }
+
+    $connectionPhase.set('ready')
+    await persistSessionCookies()
+    // Remember this target so the next launch auto-reconnects (D8). connectCloudAgent
+    // enriches it with the agent id/name afterwards (for the restore label).
+    saveGatewayTarget({
+      cloudBaseUrl: conn.baseUrl,
+      connectionId: activeConnectionId(),
+      mode: 'cloud',
+      profile: profile ?? null
+    })
+  } catch (err) {
+    $connectionError.set(errorText(err))
+    $connectionPhase.set('error')
+    publishActiveConnection(null)
+    throw err
+  }
+}
+
+export function disconnect(): void {
+  // Mark this as a deliberate close so the reconnect supervisor stands down.
+  intentionalClose = true
+  // A deliberate disconnect ends the session: the root gate falls back to the
+  // connect picker (not the reconnecting screen) next.
+  $hasConnected.set(false)
+
+  const conn = $connection.get()
+
+  // If we were on a local-spawned backend, stop the child too.
+  if (conn?.mode === 'local') {
+    void stopLocalBackend().catch(() => {})
+  }
+
+  // For SSH this drops the TUNNEL only. The remote backend stays up on purpose
+  // (it is detached) so the next connect reattaches instead of paying a full
+  // spawn — matching desktop.
+  if (conn?.mode === 'ssh') {
+    stopWatchingSshTunnel()
+    void disconnectSsh(conn.profile ?? null, $activeConnection.get()?.dialConnectionId ?? null).catch(() => {})
+  }
+
+  // Abort a dial that has not produced a connection yet — at this point there is
+  // no `conn` to branch on, so this sits outside the check above.
+  if (activeSshAttempt) {
+    void cancelSsh(activeSshAttempt).catch(() => {})
+    activeSshAttempt = null
+  }
+
+  closeGateway()
+  publishActiveConnection(null)
+  $connectionPhase.set('idle')
+  $connectionError.set(null)
+}
+
+/**
+ * Sign out: unlike disconnect() (which only drops the socket), this invalidates
+ * the session — tells the gateway to revoke it, clears the portal (Privy) session
+ * for cloud, forgets stored secrets (incl. the persisted cookie jar), drops the
+ * auto-dial target, then disconnects.
+ *
+ * The three things this has to get right, each of which it previously got wrong:
+ *
+ *  1. **Every gated session is revoked, not just `oauth`.** A `ticket` session is
+ *     a password login whose cookie lives in the same Rust jar; skipping the
+ *     logout POST for it meant the gateway never heard about the sign-out and the
+ *     cookie stayed live. `oauth_logout` is the right call for both — it drops any
+ *     native tokens (a no-op when there are none) and POSTs `/auth/logout`, whose
+ *     clearing `Set-Cookie` reqwest applies to the jar.
+ *  2. **The jar is emptied locally too**, because (1) needs a network. A sign-out
+ *     on a plane must not come back signed in.
+ *  3. **The auto-dial target goes.** Leaving `hermes.connection.last` behind is
+ *     what made the next launch seed `$restoring`, paint "Reconnecting", and dial
+ *     a gateway with no credential — which then opened an interactive sign-in
+ *     nobody asked for. The URL and username stay: they are the prefill, so the
+ *     user lands on a sign-in screen that already knows where they were going.
+ */
+export async function signOut(): Promise<void> {
+  const conn = $connection.get()
+
+  // Before the network calls, not after: everything below can fail or hang, and a
+  // sign-out must not be able to leave persistence armed behind it.
+  suspendSessionCookiePersistence()
+
+  if (conn && (conn.authMode === 'oauth' || conn.authMode === 'ticket')) {
+    await oauthLogout(conn.baseUrl).catch(() => {})
+  }
+
+  if (conn?.mode === 'cloud') {
+    await portalLogout().catch(() => {})
+  }
+
+  // Only THIS gateway's cookies. The Rust jar is still shared by every registered
+  // connection (MJXHRM-526 splits it), so emptying it wholesale would sign the
+  // user out of every other source too.
+  if (conn) {
+    await clearSessionJar(conn.baseUrl)
+  }
+
+  await forgetSavedLogin().catch(() => {})
+
+  // Nothing to auto-dial and nothing to resume.
+  clearGatewayTarget()
+  clearPendingOAuth()
+  clearPendingPortal()
+
+  disconnect()
+}
+
+// --------------------------------------------------------------------------
+// SSH tunnel watchdog
+// --------------------------------------------------------------------------
+// The reconnect supervisor below re-opens the WEBSOCKET. That is enough for a
+// dropped socket, but not for a dropped SSH SESSION: the baseUrl points at a
+// local ephemeral port that only exists while the tunnel does, so once the
+// session dies the supervisor re-dials a port nothing is listening on, backs off
+// to 30s, and spins forever.
+//
+// Rust tells us when that happens. The fix is a full re-bootstrap rather than a
+// re-dial — and because the remote backend was left running deliberately, that
+// bootstrap hits the REUSE path (lockfile + /api/ssh/ownership proof) and
+// reattaches in about two seconds instead of respawning.
+
+let sshWatcher: null | (() => void) = null
+
+async function watchSshTunnel(scope: string): Promise<void> {
+  sshWatcher?.()
+  sshWatcher = null
+
+  const unlisten = await onSshDisconnected(scope, () => {
+    // A deliberate disconnect does not emit this, but the user may have torn the
+    // connection down between the event firing and it arriving.
+    if (intentionalClose || $connection.get()?.mode !== 'ssh') {
+      return
+    }
+
+    void rebootstrapSsh()
+  }).catch(() => null)
+
+  if (unlisten) {
+    sshWatcher = unlisten
+  }
+}
+
+/** Stop watching (a deliberate disconnect, or a switch to another mode). */
+function stopWatchingSshTunnel(): void {
+  sshWatcher?.()
+  sshWatcher = null
+}
+
+let rebootstrapping = false
+
+/**
+ * Re-bootstrap the tunnel that died.
+ *
+ * Reads the LIVE connection rather than `loadGatewayTarget()`: the saved target
+ * is whatever was persisted last, which after a source switch is a DIFFERENT
+ * host — so the watchdog used to be able to re-dial the wrong machine (D-2). The
+ * live descriptor is also what carries the registry identity, so a re-bootstrap
+ * reattaches under the same ownership id instead of spawning a second backend.
+ */
+async function rebootstrapSsh(): Promise<void> {
+  if (rebootstrapping) {
+    return
+  }
+
+  rebootstrapping = true
+
+  try {
+    const active = $activeConnection.get()
+
+    // The watchdog stands down for a latched source too — otherwise the latch
+    // only stops one of the two retry paths and the loop continues through this
+    // one instead.
+    if (isLatched(active?.connectionId ?? null)) {
+      return
+    }
+
+    const target = loadGatewayTarget()
+    const ssh = target?.ssh
+
+    if (!ssh?.host || (active && active.connection.mode !== 'ssh')) {
+      return
+    }
+
+    const profile = active?.connection.profile ?? target?.profile ?? null
+
+    if (active) {
+      // Re-arm the identity for the dial that is about to publish.
+      setPendingConnectionHint({
+        connectionId: active.connectionId,
+        dialConnectionId: active.dialConnectionId,
+        label: active.label
+      })
+    }
+
+    // Non-interactive: this fires on its own schedule, with no user waiting on a
+    // dialog. Keyring-held credentials are all it gets.
+    await connectSsh({ ...ssh, profile }, { interactive: false })
+  } catch {
+    // connectSsh already set $connectionError + phase; the connecting screen
+    // surfaces it and the ordinary supervisor keeps retrying the socket. Except
+    // for a rejection carrying the QUIET flag: a newer primary attempt owns the
+    // connection and publishes its own result, so there is nothing to surface.
+  } finally {
+    rebootstrapping = false
+  }
+}
+
+// --------------------------------------------------------------------------
+// Auto-reconnect supervisor (D7)
+// --------------------------------------------------------------------------
+// The vendored client has no reconnect logic, so a dropped socket (sleep/wake,
+// network blip, expired session) leaves the app 'closed'. This watches
+// $gatewayState and, on an UNEXPECTED close, re-dials with FULL-JITTER capped
+// backoff (lib/reconnect-backoff): connectGateway re-mints a FRESH ws-ticket
+// each attempt, and on an expired OAuth session it re-drives sign-in first.
+// Guards against re-dialling a user-initiated disconnect and against re-entrant
+// loops (the close a reconnect itself triggers).
+//
+// Jitter matters because a gateway restart drops every app pointed at it in the
+// same instant; a deterministic ladder then has them all redial in the same
+// instant too, which can exhaust the gateway's descriptors while it is still
+// coming back up.
+//
+// FIXME(D7): reconnect re-opens the socket; it does not respawn a local backend
+// whose process actually died, nor replay an interrupted streaming turn.
+
+let intentionalClose = false
+let reconnecting = false
+let switching = false
+
+/** Allow auto-reconnect after a fresh (re)connect attempt. */
+/**
+ * How many deliberate dials are in flight.
+ *
+ * `connectGateway` starts with `client?.close()`, which drives `$gatewayState` to
+ * `closed` synchronously — and every `connect*` sets `$connection` BEFORE awaiting
+ * it. So the supervisor's subscriber fired *inside* a dial that was still running,
+ * and a boot restore ended up with two ladders racing the same gateway: its own,
+ * bounded at three attempts, and the supervisor's, which is unbounded.
+ *
+ * A counter rather than a flag because a gateway switch can legitimately overlap
+ * two dials, and a flag would be cleared by whichever finished first.
+ */
+let dialInFlight = 0
+
+/** Run a deliberate dial, holding the supervisor off for its duration. */
+async function dial(conn: Connection): Promise<void> {
+  dialInFlight++
+
+  try {
+    await connectGateway(conn)
+  } finally {
+    dialInFlight--
+  }
+}
+
+function armReconnect(): void {
+  intentionalClose = false
+  // A deliberate dial is the one thing that undoes a sign-out's persistence
+  // latch: the user is asking for a session again, so the jar this connect
+  // produces is theirs to keep. Every connect* path comes through here.
+  resumeSessionCookiePersistence()
+}
+
+/**
+ * A soft gateway switch is starting (store/gateway-switch.ts): stand the reconnect
+ * supervisor down so it doesn't race the deliberate re-dial. Lives here rather than
+ * reading `$gatewaySwitching` because connection.ts must not import gateway-switch.ts
+ * (that store already imports this one — the seam keeps the store graph acyclic).
+ *
+ * Two flags are needed: `intentionalClose` covers the teardown, but every connect*()
+ * calls armReconnect() at the top of the dial, so only `switching` keeps the ladder
+ * down through the NEW gateway's handshake.
+ */
+export function beginGatewaySwitch(): void {
+  switching = true
+  intentionalClose = true
+  // The cross-episode flap state describes the gateway being LEFT (MJXHRM-446:
+  // a switch changes source, not just socket). Carrying it over would let one
+  // source's failing streak escalate the next source on its very first failure.
+  lastReadyAt = 0
+  sustainedFailingSince = null
+}
+
+/** The switch finished (or failed): re-arm the supervisor against the new connection. */
+export function endGatewaySwitch(): void {
+  switching = false
+}
+
+/**
+ * Once the loop has been failing continuously for this long, publish the last
+ * failure on `$connectionError`. That is what reveals the embedded gateway
+ * configurator on the connecting screen (see gateway-connecting-screen.tsx), so
+ * a gateway that never comes back stops being a spinner with no way out.
+ *
+ * Time-based rather than attempt-count-based, because full jitter makes attempt
+ * counts a meaningless clock: six jittered attempts can elapse in ~9s, while
+ * the old deterministic 1→30s ladder took ~45s to reach six failures. 45s keeps
+ * that original calibration (matching desktop's RECONNECT_ESCALATE_AFTER_MS).
+ */
+const RECONNECT_ESCALATE_AFTER_MS = 45_000
+
+/**
+ * How many AUTH failures the supervisor will absorb before standing down.
+ *
+ * Auth and network failures get different policies on purpose, and collapsing
+ * them would be a regression in one direction or the other. A revoked credential
+ * does not become valid by being asked again, so an uncapped ladder on 401s is a
+ * spinner the user can never escape. A network failure is the opposite: refused,
+ * timed out, DNS, a gateway mid-restart — those genuinely do resolve on their
+ * own, and capping them would make a phone that spent 60s in a lift give up
+ * permanently. So only this counter is bounded; network failures keep the
+ * uncapped ladder and rely on RECONNECT_ESCALATE_AFTER_MS for their way out.
+ *
+ * Three rather than one because a rotation genuinely can race a dial — the
+ * bearer refreshed out from under an in-flight mint — and that deserves more
+ * than a single retry before the session is declared dead.
+ *
+ * Not a dead end: `wakeReconnect()` resets this, so returning to the app always
+ * buys a fresh budget (store/app-lifecycle.ts).
+ */
+const MAX_AUTH_ATTEMPTS = 3
+
+const reconnectDelay = (attempt: number): number => reconnectBackoffDelayMs(attempt)
+// Cancels the backoff currently being slept off, if any. Set for the duration of
+// each sleep so a foreground wake can cut it short — the ladder's cap is 15s, and a
+// user who just reopened the app should not have to sit out the remainder of one.
+let cancelBackoffSleep: null | (() => void) = null
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      cancelBackoffSleep = null
+      resolve()
+    }, ms)
+
+    cancelBackoffSleep = () => {
+      clearTimeout(timer)
+      cancelBackoffSleep = null
+      resolve()
+    }
+  })
+}
+
+// DESKTOP ONLY — see the reauth branch in the loop for why mobile must never reach here.
+//
+// Unreachable for `ssh`: that mode is always authMode 'token', and the loop only
+// calls this on a GatewayReauthRequiredError, which the ticket/oauth paths raise.
+// A dropped SSH TUNNEL is a different failure and is not handled here — see the
+// FIXME above.
+async function reauthForReconnect(conn: Connection): Promise<void> {
+  if (conn.mode === 'cloud') {
+    // Silent: `portalAgentSignIn` walks the SSO cascade over reqwest. Nothing
+    // navigates and no window opens, so a background actor may drive it.
+    await portalAgentSignIn(conn.baseUrl)
+
+    return
+  }
+
+  // Everything else needs a login page, and this is a background actor — the loop
+  // wakes on any dropped socket, with no user intent behind it. Opening one from
+  // here is the mobile crash-and-strand described at the call site, and on desktop
+  // it is a window the user never asked for. Stop and let them decide.
+  throw new GatewaySignInRequiredError('Session expired — sign in again')
+}
+
+// Set by `wakeReconnect`, consumed at the top of each loop iteration: it skips the
+// pending backoff and refunds the auth budget for the coming attempt. Only
+// `wakeReconnect` sets it and only the loop clears it, so a wake that arrives while
+// no loop is running is still honoured by the loop it starts.
+let wakeRequested = false
+
+/**
+ * When the socket last reached `ready`, across loop episodes.
+ *
+ * Module-scoped on purpose: every counter inside `runReconnectLoop` is created
+ * fresh per episode, and a flap ENDS an episode (the loop breaks on success) and
+ * starts a new one. So there was nothing left to notice that the previous
+ * "success" had lasted 40ms. This is the one fact that has to outlive the loop.
+ */
+let lastReadyAt = 0
+
+/**
+ * `failingSince`, carried across loop episodes.
+ *
+ * Reset only by a connection that survived {@link MIN_UPTIME_MS}. Without it a
+ * gateway that accepts and immediately closes never escalates: each flap breaks
+ * the loop as a "success" and the next episode starts the clock again from zero.
+ */
+let sustainedFailingSince: null | number = null
+
+/**
+ * How long a connection has to survive before it counts as one.
+ *
+ * `connectGateway` resolves on the socket OPEN — the JSON-RPC `gateway.ready`
+ * handshake is not awaited — so a server that accepts and immediately closes
+ * produced a "success" that cleared the error and reset every counter, over and
+ * over, with nothing ever escalating. Five seconds is far longer than a real
+ * handshake and far shorter than any usable session.
+ */
+const MIN_UPTIME_MS = 5_000
+
+/**
+ * Stop retrying and say so.
+ *
+ * The loop used to leave `$connectionPhase` at `'connecting'` on every terminal
+ * break, so a supervisor that had definitively given up still rendered the
+ * connecting spinner — indistinguishable from one still trying. Publishing the
+ * error reveals the inline configurator; the phase is what lets the UI say
+ * "stopped" rather than "working on it".
+ *
+ * `$hasConnected` stays latched deliberately — see the call site.
+ */
+function standDown(message: string): void {
+  $connectionError.set(message)
+  $connectionPhase.set('error')
+}
+
+/**
+ * Wake a backed-off reconnect loop and give it a fresh budget.
+ *
+ * Called when the user brings the app back to the front (store/app-lifecycle.ts).
+ * Two jobs, and both matter on a phone:
+ *
+ *  • The ladder's next attempt can be up to 15s away, and a user staring at a
+ *    spinner they just returned to should not wait it out.
+ *  • The auth budget is reset, so a session that stood down as expired gets one
+ *    clean round of attempts every time the user actually comes back rather than
+ *    staying dead until the app is relaunched. This is what keeps
+ *    MAX_AUTH_ATTEMPTS from being a trap: the cap ends a spinner, it does not end
+ *    the session permanently.
+ *
+ * Re-arming a loop that already stood down is safe — it re-enters through the
+ * same `$gatewayState` path any other drop takes.
+ */
+export function wakeReconnect(): void {
+  const conn = $connection.get()
+
+  if (intentionalClose || switching || !conn) {
+    return
+  }
+
+  // A changed host key is held down PER CONNECTION until the user verifies it
+  // (store/connection-latches.ts). Coming back to the app is fresh intent to use
+  // the app, not an answer to that question, so a wake must not re-dial a source
+  // the loop itself stood down as terminal. Keyed exactly as the loop latches it.
+  if (isLatched($activeConnection.get()?.connectionId ?? conn.baseUrl) === 'host-key-changed') {
+    return
+  }
+
+  wakeRequested = true
+
+  // A loop already running is asleep on its backoff; cut that short so the flag is
+  // acted on now rather than up to 15s from now.
+  cancelBackoffSleep?.()
+
+  // A loop that already stood down (the auth budget, or a socket that closed while
+  // nothing was watching) has to be re-entered. It re-arms through the same path any
+  // other drop takes.
+  if (!reconnecting && $gatewayState.get() === 'closed') {
+    void runReconnectLoop()
+  }
+}
+
+async function runReconnectLoop(): Promise<void> {
+  reconnecting = true
+
+  let attempt = 0
+  // Consecutive AUTH failures this episode (401 / reauth-required), tracked apart
+  // from `attempt` because the two get different budgets — see MAX_AUTH_ATTEMPTS.
+  // Episode-scoped like `failingSince`: every success leaves the loop, so a later
+  // drop starts a fresh count. A foreground wake refunds it mid-episode.
+  let authAttempts = 0
+
+  // A session that actually held ends the previous failing streak. A session that
+  // did NOT — one that opened and died inside `MIN_UPTIME_MS` — carries it
+  // forward, which is the whole point: the loop BREAKS on success, so a flap ends
+  // one episode and starts another, and the escalation clock used to be reborn at
+  // null every single time. An accept-then-close gateway could therefore flap
+  // forever without ever escalating, silently, while the user watched a spinner.
+  if (lastReadyAt !== 0 && Date.now() - lastReadyAt >= MIN_UPTIME_MS) {
+    sustainedFailingSince = null
+  }
+
+  // Wall-clock start of this disconnect episode (the first FAILED reconnect),
+  // null while we have not failed yet. Drives the escalation below. Seeded from
+  // the cross-episode value so a flap cannot reset it.
+  let failingSince: null | number = sustainedFailingSince
+
+  while (!intentionalClose && !switching) {
+    const conn = $connection.get()
+
+    if (!conn) {
+      break
+    }
+
+    // A foreground wake skips the pending backoff and refunds the auth budget:
+    // the user is back and looking at this, so make the attempt now and give a
+    // stood-down session a genuine second chance.
+    if (wakeRequested) {
+      wakeRequested = false
+      attempt = 0
+      authAttempts = 0
+      // `failingSince` is deliberately NOT refunded. It measures how long this
+      // gateway has been failing, which is what decides when the error — and with
+      // it the configurator — is finally shown. Resetting it here meant a phone
+      // foregrounded more often than every 45s never reached the escalation at
+      // all: the user got an eternal spinner with nothing to act on, for a
+      // gateway that had been dead the whole time. The two budgets above are
+      // about giving the attempt a fresh chance; this one is about telling the
+      // truth, and a wake is not evidence that anything got better.
+    } else {
+      await sleep(reconnectDelay(attempt))
+    }
+
+    if (intentionalClose || switching || !$connection.get()) {
+      break
+    }
+
+    $connectionPhase.set('connecting')
+
+    try {
+      // For ssh, re-dialling the socket is pointless if the tunnel is what died —
+      // the port is gone with it. Re-bootstrap instead; it reattaches to the
+      // still-running remote backend through the reuse path.
+      if (conn.mode === 'ssh') {
+        await rebootstrapSsh()
+
+        if ($connectionPhase.get() === 'ready') {
+          break
+        }
+
+        throw new Error('SSH re-bootstrap did not reach a live connection')
+      }
+
+      await connectGateway(conn)
+
+      if (intentionalClose || switching || !$connection.get()) {
+        closeGateway()
+
+        break
+      }
+
+      // `connectGateway` resolves on the socket OPEN, not on a completed
+      // handshake, so "connected" here can mean a socket the server is about to
+      // close. Treating that as success reset every counter and cleared the
+      // error, which turned a gateway that accepts-then-drops into an unbounded
+      // silent flap: no escalation, no error, no way for the user to see it.
+      // Record when we got here; the next episode decides whether it counted.
+      lastReadyAt = Date.now()
+      $connectionError.set(null)
+      $connectionPhase.set('ready')
+
+      break
+    } catch (err) {
+      // A failure that cannot self-heal is LATCHED, per connection, and the loop
+      // stands down for that source (P-23). Nothing latched before this: the
+      // loop re-entered on every `'closed'` and backed off forever, which is how
+      // desktop's bundle showed 157 boot retries in 2.5 hours against a
+      // reinstalled VPS. A transient fault is deliberately NOT latched.
+      const latched = latchBackendFailure($activeConnection.get()?.connectionId ?? conn.baseUrl, {
+        attemptedRemote: conn.mode !== 'local',
+        error: err,
+        isReauth: conn.authMode === 'oauth' && isGatewayReauthRequired(err)
+      })
+
+      if (latched === 'host-key-changed') {
+        // Terminal by construction (`ssh/known_hosts.rs` calls it "always
+        // fatal"): retrying cannot succeed until someone verifies the new key.
+        $connectionError.set(errorText(err))
+
+        break
+      }
+
+      // Auth failures spend their own budget. A credential the gateway refuses does
+      // not become valid by being asked again, so this is the counter that has to
+      // terminate — otherwise a genuinely expired session is an endless spinner. It
+      // is checked BEFORE the mode-specific handling below so every auth path
+      // (ticket, oauth, cloud, desktop re-auth) shares one stopping rule.
+      // A refused credential arrives three ways, and only the first used to be
+      // recognised: `GatewayReauthRequiredError` (the ws-ticket mint answered 401),
+      // close code 4401/4403 (accepted, then closed for a bad credential or
+      // origin), or `HTTP error: 401|403` (`/api/ws` refuses PRE-ACCEPT, so there
+      // is no close frame at all). The last two took the unbounded network ladder.
+      const refused = isGatewayReauthRequired(err) || isGatewayAuthFailure(err, lastGatewayCloseCode())
+
+      if (refused) {
+        authAttempts++
+
+        if (authAttempts >= MAX_AUTH_ATTEMPTS) {
+          // Stand down onto a screen with a working Sign in button — the correct
+          // terminal state for a session that really is dead. `$connectionError` is
+          // what reveals the embedded configurator on the connecting screen
+          // (gateway-connecting-screen.tsx). A later `wakeReconnect()` refunds the
+          // budget, so this ends the spinner without ending the session forever.
+          //
+          // `$hasConnected` is deliberately left latched: clearing it drops the
+          // render to the connect PICKER (app/mobile-controller.tsx), which is a
+          // first-run surface and throws away the context of the gateway that just
+          // failed. The error phase is what the terminal card keys off.
+          standDown(errorText(err))
+
+          break
+        }
+      }
+
+      if (conn.authMode === 'oauth' && isGatewayReauthRequired(err)) {
+        // On mobile an interactive sign-in is a ONE-WAY DOOR: it navigates the app's only
+        // webview to the login page and never returns (see `beginOAuthLogin`). This loop
+        // is a BACKGROUND actor — it wakes on any dropped socket, with no user intent — so
+        // walking through that door hijacks the whole app at an arbitrary moment, most
+        // cruelly right as the user brings it back from the background.
+        //
+        // Worse, it does not hold the webview against anyone else. A user tapping Sign in
+        // on the connect screen starts a second flow, which reads `webview.url()` AFTER
+        // this one has already navigated and so captures the LOGIN PAGE as its "return
+        // here afterwards" target. Whichever finishes last then restores the app to the
+        // login page, and there is no way home. That is a real crash-and-strand seen on
+        // device, not a theoretical race.
+        //
+        // So: report it and stand down. The user gets one deliberate, foreground sign-in.
+        // `$connectionError` is what reveals the embedded configurator on the connecting
+        // screen (gateway-connecting-screen.tsx), and `mintWsTicket` has already phrased
+        // this for a human — "Session expired — sign in again".
+        //
+        // Published immediately rather than after RECONNECT_ESCALATE_AFTER_MS: that window
+        // exists to let a transient failure resolve itself, and a refused credential is not
+        // transient. Nothing is gained by making the user watch a spinner for 45s first.
+        //
+        // DESKTOP now stands down too. It used to be carved out on the grounds that a
+        // separate sign-in window cannot strand anyone — true, but it still means a login
+        // window appears on its own while the user is doing something else, and the rule
+        // we settled on is that an interactive sign-in only ever happens because a person
+        // asked for one. `reauthForReconnect` enforces the same rule one level down.
+        //
+        // CLOUD keeps its carve-out, and only cloud: it re-auths through
+        // `portalAgentSignIn`, which is the SILENT reqwest cascade (`cloud.rs::agent_sso`).
+        // Nothing navigates and no window opens, so it is exactly the "recovery may retry"
+        // case — blocking it would be a pointless regression.
+        if (conn.mode !== 'cloud') {
+          standDown(errorText(err))
+
+          break
+        }
+
+        try {
+          await reauthForReconnect(conn)
+          await connectGateway(conn)
+          $connectionError.set(null)
+          $connectionPhase.set('ready')
+
+          break
+        } catch {
+          // fall through to backoff
+        }
+      }
+
+      if (failingSince === null) {
+        failingSince = Date.now()
+      }
+
+      // Published across episodes so a flap resumes this streak instead of
+      // starting a new one. Cleared at the top of the next episode, but only by a
+      // session that lasted.
+      sustainedFailingSince = failingSince
+
+      // Past the escalation window, stop swallowing the failure: publishing it
+      // reveals the configurator on the connecting screen, so a gateway that is
+      // never coming back has a way out instead of an endless spinner. The last
+      // error is used verbatim — it says WHY, which a generic string cannot.
+      if (Date.now() - failingSince >= RECONNECT_ESCALATE_AFTER_MS) {
+        $connectionError.set(errorText(err))
+      }
+
+      attempt++
+    }
+  }
+
+  reconnecting = false
+}
+
+$gatewayState.subscribe(state => {
+  if (state === 'closed' && !intentionalClose && !switching && !reconnecting && !dialInFlight && $connection.get()) {
+    void runReconnectLoop()
+  }
+})
+
+// Latch "has connected this session" on every ready transition (initial connect,
+// local/cloud connect, and each successful auto-reconnect). One place covers them
+// all; `disconnect()` clears it.
+//
+// The same hook re-snapshots the cookie jar, because the persisted copy goes stale
+// the moment the gateway rotates anything. `persistSessionCookies` used to run only
+// at the end of connect()/connectCloud(), so the keyring kept whatever pair the
+// FIRST dial saw while the live Rust jar took every rotated `hermes_session_at`/`_rt`
+// the server sent afterwards. A cold boot then imported credentials that had been
+// rotated away hours earlier — and against a provider with reuse detection that is
+// an actively revoked session, not merely a stale one. Every transition to `ready`
+// is the right trigger: the initial dial, each auto-reconnect, each soft switch.
+//
+// There is still ONE Rust jar and ONE keyring snapshot of it (MJXHRM-526 splits
+// both per connection), so this re-persists the whole jar whichever source just
+// became ready — the same scope the two connect-time calls already had.
+$connectionPhase.subscribe(phase => {
+  if (phase === 'ready') {
+    $hasConnected.set(true)
+    schedulePersistSessionCookies()
+
+    // A source that just connected is, by definition, no longer held down.
+    const connectionId = $activeConnection.get()?.connectionId
+
+    if (connectionId) {
+      releaseLatch(connectionId)
+    }
+  }
+})
+
+// Debounced so a burst of ready transitions (a soft switch re-dialling, a flapping
+// socket) costs one keyring write rather than one per transition — the export walks
+// the jar and the write can go over IPC to another process on desktop.
+let persistCookiesTimer: null | ReturnType<typeof setTimeout> = null
+
+function schedulePersistSessionCookies(): void {
+  if (persistCookiesTimer !== null) {
+    clearTimeout(persistCookiesTimer)
+  }
+
+  persistCookiesTimer = setTimeout(() => {
+    persistCookiesTimer = null
+    void persistSessionCookies()
+  }, 1_000)
+}
+
+/** Snapshot the jar now, skipping the debounce. Called when the app is about to be
+ *  backgrounded (store/app-lifecycle.ts): the process may not survive to run a
+ *  pending timer, and the rotation it is holding is the one the next launch needs. */
+export function flushSessionCookies(): void {
+  if (persistCookiesTimer !== null) {
+    clearTimeout(persistCookiesTimer)
+    persistCookiesTimer = null
+  }
+
+  void persistSessionCookies()
+}
+
+// Wire the connection half of the app lifecycle. Called once from main.tsx, after
+// `initAppLifecycle()`.
+//
+//  • foreground — wake a backed-off reconnect and refund the auth budget, so a
+//    user who just came back is not watching out a 15s jittered sleep and a
+//    session that stood down as expired gets one clean re-try.
+//  • background — snapshot the cookie jar NOW rather than on the debounce, because
+//    the process may not live long enough to run a pending timer and the rotation
+//    it holds is exactly what the next cold launch needs.
+export function initConnectionLifecycle(): void {
+  onForeground(wakeReconnect)
+  onBackground(flushSessionCookies)
+}

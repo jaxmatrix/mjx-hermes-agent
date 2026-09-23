@@ -1,0 +1,482 @@
+import { execFileSync } from 'node:child_process'
+import fs from 'node:fs'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import tailwindcss from '@tailwindcss/vite'
+import react from '@vitejs/plugin-react'
+// `vitest/config` is a superset of Vite's defineConfig — using it lets the test
+// harness share this file's `@` alias, React plugin, and Tailwind wiring.
+import { defineConfig } from 'vitest/config'
+
+// Extension-ful on purpose: Vite's `configLoader: 'native'` (the future
+// default) resolves config imports through Node, which does not do extension
+// inference. Without it the config loads today and warns, and stops loading
+// the day that flag flips.
+import { addSpanSources } from './src/observability/auto/span-sources.ts'
+import { addStoreNames } from './src/observability/auto/store-names.ts'
+
+// Tauri expects a fixed dev port and a non-clearing console.
+//
+// `TAURI_DEV_HOST` is the address the DEVICE dials — NOT the address this server
+// binds. The two are different questions and conflating them is a trap: the CLI
+// rewrites a `localhost` devUrl to a real address whenever the attached Android
+// device is physical (tauri-cli `use_network_address_for_dev_url`), so on a phone
+// run this is always set to something, and binding only to it would make the
+// server unreachable over whichever transport it did not name. See `server` below.
+const host = process.env.TAURI_DEV_HOST
+
+const require = createRequire(import.meta.url)
+const reactDir = dirname(require.resolve('react/package.json'))
+// `core.js` explicitly, not `require.resolve('@tauri-apps/api/core')`. The
+// package publishes no exports map, so resolution falls back to extension
+// probing — and `require` probes `.cjs` first, which would alias the browser
+// bundle at the CommonJS build of a module that is otherwise pure ESM.
+const tauriCoreEsm = join(dirname(require.resolve('@tauri-apps/api/package.json')), 'core.js')
+
+/**
+ * Default label for traces, so an unlabelled capture still says where it came
+ * from. `__hermesTrace.run(...)` overrides it at runtime — see
+ * src/observability/run.ts.
+ *
+ * `HERMES_TRACE_RUN` names BOTH halves of a full-stack trace from one variable.
+ * The Rust backend reads it from the real environment at startup; a webview has
+ * no environment, so the same name has to be baked in at build time here.
+ * Without this the two halves would need separate labels for the same run, and
+ * the exact pair worth correlating — a frontend span and the Rust work it
+ * caused — would be filed under different names in the one UI built to
+ * correlate them.
+ */
+function traceRunDefault(): string {
+  return process.env.HERMES_TRACE_RUN || gitBranch()
+}
+
+/**
+ * Resolved here rather than in the app because the app cannot read git. Failure
+ * is expected and silent: a tarball, a CI checkout in detached HEAD, or no git
+ * at all should not break the build over a label.
+ */
+function gitBranch(): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      cwd: fileURLToPath(new URL('.', import.meta.url)),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+  } catch {
+    return 'local'
+  }
+}
+
+/**
+ * Store autocapture, dev/bench only. Two pieces, both here because both are
+ * build concerns rather than app code.
+ *
+ * The ALIAS points `nanostores` at our wrapper so every store write is timed,
+ * covering the ~34 files that import the package directly as well as the ones
+ * going through `@/store/atom`. A second alias, `nanostores-real`, resolves to
+ * the actual package: the wrapper is `nanostores` as far as resolution is
+ * concerned, so it cannot import itself, and the package's exports map offers no
+ * deep subpath to escape through.
+ *
+ * The TRANSFORM gives each store a name. Every atom in the app is a module-level
+ * `export const $Name = atom(...)`, so rewriting the call to pass `'$Name'` is
+ * enough — and since real nanostores ignores extra arguments, the rewrite is
+ * inert whenever the alias is off. Without it every span would say "anonymous",
+ * which is the one thing that would make store autocapture useless.
+ */
+const STORE_TRACING = process.env.NODE_ENV !== 'production' || process.env.VITE_ENABLE_BENCH === 'true'
+
+/**
+ * IPC trace propagation, dev/bench only — same gate, separate concern.
+ *
+ * Aliases `@tauri-apps/api/core` to a wrapper that puts a W3C `traceparent` on
+ * every `invoke`, so the Rust backend's spans join the frontend's trace instead
+ * of forming their own. Aliased rather than hand-called because `invoke` is
+ * reached from dozens of places and the point is that no call site has to know.
+ *
+ * `@tauri-apps/api-real/core` is the escape hatch, exactly as `nanostores-real`
+ * is above: the wrapper IS the aliased specifier, so it cannot import it.
+ */
+const IPC_TRACING = STORE_TRACING
+
+const storeNamePlugin = {
+  enforce: 'pre' as const,
+  name: 'hermes-store-names',
+  transform(code: string, id: string) {
+    // Test files are excluded because the transform matches raw TEXT, not
+    // syntax: a spec containing `export const $x = atom(` inside a fixture
+    // string is indistinguishable from the real thing. Its own tests are
+    // exactly that shape. (addStoreNames is idempotent too, so this is the
+    // second lock rather than the only one.)
+    if (!id.includes('/src/') || !/\.tsx?$/.test(id) || /\.(test|spec)\.tsx?$/.test(id)) {
+      return null
+    }
+
+    const next = addStoreNames(code)
+
+    // `map: null` — the rewrite only ever APPENDS an argument inside an
+    // existing call, so line numbers are unchanged and stack traces stay
+    // truthful without a real sourcemap.
+    return next === null ? null : { code: next, map: null }
+  }
+}
+
+/**
+ * Span source attribution — same shape as the store transform above, and on in
+ * every build rather than dev-only.
+ *
+ * It ships because a span that cannot say which module raised it is materially
+ * harder to read, and the cost is one interned integer per span (see the
+ * `spanSrc` column in span.ts) rather than the alias-plus-wrapper the store
+ * transform needs. A user's OTLP dump from a release build is worth the same
+ * attribution a dev capture gets.
+ */
+const spanSourcePlugin = {
+  enforce: 'pre' as const,
+  name: 'hermes-span-sources',
+  transform(code: string, id: string) {
+    // Tests excluded for the reason the store transform gives: this matches raw
+    // TEXT, and a spec whose fixtures ARE import statements is indistinguishable
+    // from the real thing. `span-sources.test.ts` is exactly that file.
+    if (!id.includes('/src/') || !/\.tsx?$/.test(id) || /\.(test|spec)\.tsx?$/.test(id)) {
+      return null
+    }
+
+    const next = addSpanSources(code, id)
+
+    // `map: null` — the rewrite replaces one line with one line, so line
+    // numbers are unchanged and stack traces stay truthful. The transform
+    // refuses multi-line imports to keep that true.
+    return next === null ? null : { code: next, map: null }
+  }
+}
+
+// The emoji picker (frimousse) fetches `<emojibaseUrl>/<locale>/data.json` at
+// runtime, defaulting to a CDN. The app's CSP has no `connect-src` for one, and
+// a client that has to reach the internet to draw a picker is broken on a
+// plane — so serve the bundled `emojibase-data` at a stable local path instead:
+// middleware in dev, emitted assets in the build, only the files a locale needs.
+const emojibaseDir = dirname(require.resolve('emojibase-data/package.json'))
+
+const EMOJIBASE_PATH = /^[a-z-]+\/(data|messages|shortcodes\/emojibase)\.json$/
+
+const emojibaseAssets = () => ({
+  name: 'hermes:emojibase-assets',
+  configureServer(server: {
+    middlewares: {
+      use: (route: string, handler: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void
+    }
+  }) {
+    server.middlewares.use('/emojibase', (req, res, next) => {
+      const rel = (req.url ?? '').split('?')[0].replace(/^\/+/, '')
+
+      if (!EMOJIBASE_PATH.test(rel)) {
+        return next()
+      }
+
+      fs.readFile(join(emojibaseDir, rel), (err, buf) => {
+        if (err) {
+          return next()
+        }
+
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+        res.end(buf)
+      })
+    })
+  },
+  generateBundle(this: { emitFile: (asset: { fileName: string; source: Uint8Array; type: 'asset' }) => void }) {
+    for (const rel of ['en/data.json', 'en/messages.json', 'en/shortcodes/emojibase.json']) {
+      this.emitFile({ fileName: `emojibase/${rel}`, source: fs.readFileSync(join(emojibaseDir, rel)), type: 'asset' })
+    }
+  }
+})
+
+// The dev-only render counter (src/debug) must be imported STATICALLY above
+// react-dom — react-dom captures the devtools hook at module init, so a dynamic
+// import lands too late and observes zero commits. A static side-effect import
+// can't be tree-shaken, so instead the whole graph is aliased out of any non-dev
+// build. `command === 'serve'` covers `vite dev`; vitest also reports 'serve',
+// and never imports main.tsx, so nothing is loaded there either way.
+const debugEntry = (command: string) =>
+  fileURLToPath(
+    new URL(command === 'serve' ? './src/debug/dev-only.ts' : './src/debug/dev-only.noop.ts', import.meta.url)
+  )
+
+export default defineConfig(({ command }) => ({
+  define: {
+    __TRACE_RUN_DEFAULT__: JSON.stringify(traceRunDefault())
+  },
+  plugins: [react(), tailwindcss(), emojibaseAssets(), spanSourcePlugin, ...(STORE_TRACING ? [storeNamePlugin] : [])],
+  // Tailwind v4 is handled entirely by `@tailwindcss/vite`; pin an explicit
+  // empty PostCSS config so Vite doesn't walk UP the filesystem and pick up a
+  // stray postcss/tailwind config from the install location (see desktop
+  // vite.config.ts for the same guard).
+  css: { postcss: { plugins: [] } },
+  resolve: {
+    alias: {
+      // Exact-match key, declared first so it wins over the `@` prefix below.
+      '@/debug/dev-only': debugEntry(command),
+      // Store autocapture — see storeNamePlugin above for why this is two
+      // entries. Order matters only for readability; the keys are exact.
+      ...(STORE_TRACING
+        ? {
+            nanostores: fileURLToPath(new URL('./src/observability/auto/stores.ts', import.meta.url)),
+            'nanostores-real': require.resolve('nanostores')
+          }
+        : {}),
+      // IPC trace propagation — see IPC_TRACING above. Declared BEFORE the `@`
+      // alias for the same reason the nanostores pair is: these keys are exact
+      // matches, and reading them together keeps the two escape hatches in one
+      // place.
+      ...(IPC_TRACING
+        ? {
+            '@tauri-apps/api-real/core': tauriCoreEsm,
+            '@tauri-apps/api/core': fileURLToPath(new URL('./src/observability/auto/tauri-core.ts', import.meta.url))
+          }
+        : {}),
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // The plugin SDK's public specifier. A bundled plugin writes
+      // `import { host } from '@hermes/plugin-sdk'` and resolves here; a
+      // runtime-loaded one gets the same object through sdk/runtime.ts's blob
+      // shims. Same alias desktop's vite.config.ts declares, one module further
+      // out: `sdk/universal.ts` is desktop's barrel plus universal's additions.
+      '@hermes/plugin-sdk': fileURLToPath(new URL('./src/sdk/universal.ts', import.meta.url)),
+      // @hermes/shared is a workspace package whose exports map does not list
+      // every module the ported desktop code imports (translucency is the one
+      // that bit). Desktop resolves the package by ALIAS rather than through
+      // the exports field for exactly this reason, so do the same: the prefix
+      // alias covers every subpath whose filename matches, and the two below it
+      // cover the ones whose filename does not.
+      '@hermes/shared/billing': fileURLToPath(new URL('../shared/src/billing-types.ts', import.meta.url)),
+      '@hermes/shared/color': fileURLToPath(new URL('../shared/src/color.ts', import.meta.url)),
+      '@hermes/shared': fileURLToPath(new URL('../shared/src', import.meta.url)),
+      // The tour injects driver.js's prebuilt IIFE into a guest page as raw
+      // source, and the package's exports map does not expose that dist file.
+      // Resolve the main entry and point at its sibling. Both keys on purpose:
+      // alias matching is exact, and the id keeps the `?raw` query in dev but
+      // loses it on some build paths.
+      'driver.js/dist/driver.js.iife.js?raw': `${join(
+        dirname(require.resolve('driver.js')),
+        'driver.js.iife.js'
+      )}?raw`,
+      'driver.js/dist/driver.js.iife.js': join(dirname(require.resolve('driver.js')), 'driver.js.iife.js'),
+      // React MUST be a singleton: sdk/runtime.ts hands plugins the app's own
+      // React namespace, and a second copy reaching the bundle would break every
+      // plugin hook with an unhelpful "invalid hook call".
+      //
+      // Resolved through Node from THIS package, not hardcoded to the workspace
+      // root: npm hoists React to the root today, but any workspace whose range
+      // drifts off the hoisted one gets a nested copy instead, and a root-pinned
+      // alias would then hand app code one copy while react-dom keeps its peer
+      // one — two dispatchers, and every hook in the test suite throws
+      // "Cannot read properties of null (reading 'useCallback')". `require.resolve`
+      // lands on exactly the copy react-dom resolves to, in every install layout.
+      react: reactDir,
+      'react-dom': dirname(require.resolve('react-dom/package.json')),
+      'react/jsx-dev-runtime': join(reactDir, 'jsx-dev-runtime.js'),
+      'react/jsx-runtime': join(reactDir, 'jsx-runtime.js')
+    },
+    // Shiki MUST be a singleton too, for size rather than correctness. Its bundle
+    // entry statically pulls ~300 TextMate grammars and every bundled theme, so a
+    // second copy anywhere in the graph emits the whole set twice — measured at
+    // ~19.8 MB of byte-identical chunks, a third of the release bundle. That is
+    // exactly what `@streamdown/code` (`shiki: ^3.19.0`) did until the root
+    // package.json pinned it forward with an override.
+    //
+    // Both packages that brought a nested range are now gone — `@streamdown/code`
+    // (see markdown-text.tsx) and `react-shiki` — so this app is the
+    // only thing that depends on shiki, and `codeToTokens` in diff-lines.tsx is
+    // the only thing that imports it. The entry stays as the guard against the
+    // next package that ships a range, alongside the root override.
+    dedupe: ['react', 'react-dom', 'shiki']
+  },
+  clearScreen: false,
+  server: {
+    // Always every interface, never `TAURI_DEV_HOST`. A phone reaches this server
+    // one of two ways — through an `adb reverse` tunnel, which arrives on loopback,
+    // or over Wi-Fi, which arrives on the LAN interface — and `npm run android:dev`
+    // picks between them at the command line. Binding 0.0.0.0 serves both, so
+    // switching transports to find the faster one never needs a config edit.
+    host: '0.0.0.0',
+    port: 5176,
+    strictPort: true,
+    // Only the CLIENT half is address-specific: this is what the HMR runtime in the
+    // webview dials back on. Left `undefined` off-device so a desktop `npm run dev`
+    // keeps Vite's default (infer from the page origin) rather than being pinned to
+    // a port nothing is listening on.
+    hmr: host ? { protocol: 'ws', host, port: 5177 } : undefined,
+    // Transform the shell's entry path before the phone asks for it. On desktop this
+    // is noise; over a phone link every module is a round trip, so serialising
+    // "request → transform → respond" for the first few hundred modules is exactly
+    // the wait being removed. Mobile files are listed alongside the shared entry
+    // because the mobile shell is the surface that is slow to reach.
+    warmup: {
+      clientFiles: [
+        './src/main.tsx',
+        './src/app.tsx',
+        './src/app/mobile-controller.tsx',
+        './src/app/shell/mobile-shell.tsx',
+        './src/app/shell/mobile-surface-shell.tsx'
+      ]
+    },
+    // Never watch the Rust build trees or the generated mobile projects.
+    // `src-tauri/target*` holds hundreds of thousands of build artifacts (every
+    // cross-compile arch — Android i686, aarch64, …; the glob covers the
+    // per-surface trees the dev:ext:* scripts point CARGO_TARGET_DIR at, so
+    // desktop and Android never contend), and Vite recursively
+    // watching it exhausts Linux's inotify watcher limit (ENOSPC). `src-tauri/gen`
+    // holds the generated Android/iOS projects: during `tauri android dev`,
+    // Gradle continuously rewrites files under `gen/android/build/` (e.g.
+    // `reports/problems/problems-report.html`), and Vite would see each write as a
+    // frontend change and fire a spurious full-page reload mid-build — resetting
+    // app state to a fresh boot. Both trees are generated and gitignored; Tauri
+    // already restarts the app on native changes, so the dev server has no reason
+    // to look in either.
+    watch: { ignored: ['**/src-tauri/target*/**', '**/src-tauri/gen/**'] }
+  },
+  // Serves the PRODUCTION bundle from dist/. `npm run dev:prodweb` points the
+  // Tauri dev shell here instead of at the dev server, so the Rust side stays in
+  // dev (fast rebuilds, devtools) while the frontend is exactly what ships —
+  // minified, tree-shaken, no HMR runtime, no React dev-mode double-render.
+  // Fixed port so src-tauri/tauri.prodweb.conf.json's devUrl can match it;
+  // 5177 is taken by HMR on device builds, 5178 left as headroom.
+  preview: {
+    // 0.0.0.0 for the same reason `server.host` is — and here it is load-bearing:
+    // there is no `adb reverse` mapping for 5179, so a device run of `dev:prodweb`
+    // has to arrive over the LAN interface.
+    host: '0.0.0.0',
+    port: 5179,
+    strictPort: true
+  },
+  // Pre-bundle the heavy dependencies that are only reachable through a dynamic
+  // import, so they are ready before anything asks for them.
+  //
+  // The failure this prevents is specific: when Vite meets a dependency it did not
+  // optimise at startup it re-runs the optimiser and RELOADS THE PAGE. A reload
+  // costs a few hundred milliseconds on desktop and re-fetches the whole module
+  // graph over the phone link on Android — so a lazy route silently converts
+  // "navigate to Skills" into "boot the app again".
+  //
+  // Every entry here is a real dependency of this package. Do NOT read the list as
+  // a claim about the production chunk graph — an earlier version of this comment
+  // did, and it was wrong on three of five entries (corrected in MJXHRM-45 against
+  // an actual `vite build`):
+  //   • `mermaid` is genuinely lazy-only (`embeds/registry.tsx`) and does land in
+  //     its own chunk;
+  //   • `@codemirror/*` is split into a chunk, but the ENTRY statically imports
+  //     that chunk (profiles / starmap / profile-switcher / preview-file all
+  //     import `CodeEditor` eagerly), so it is split without being deferred;
+  //   • `@xterm/*` and `katex` have no lazy boundary anywhere and are inlined
+  //     straight into `index-*.js`.
+  // Desktop imports all three the same way, so this is parity, not a port gap —
+  // but pre-bundling them still costs nothing and keeps dev-server behaviour
+  // stable, so the entries stay. Deps reached statically from the entry (the
+  // assistant-ui stack) are deliberately absent: the scanner already finds those
+  // on cold start.
+  //
+  // `shiki` and `react-shiki` MOVED into this list in MJXHRM-380, which put a
+  // `lazy()` / dynamic `import()` in front of all four of OUR entry points to
+  // them — exactly the shape the reload hazard above describes: without these
+  // entries the first code fence in a conversation would re-run the optimiser and
+  // reload the page mid-reply.
+  //
+  // `react-shiki` left this list with the dependency. `shiki` stays:
+  // three of those four seams are gone (the fence and the preview compute their
+  // own colours), but `import('shiki')` in diff-lines.tsx is still there and
+  // still first hit mid-conversation, which is the whole hazard.
+  //
+  // MJXHRM-45 then found the seam was still defeated by a fifth importer we do
+  // not own — `@streamdown/code` statically imports shiki, and
+  // `markdown-text.tsx` statically imported that — and deferred it to first
+  // markdown mount. MJXHRM-380's follow-up removed that dependency outright
+  // instead: supplying `components.SyntaxHighlighter` makes assistant-ui replace
+  // streamdown's own code block, and `plugins.code` feeds nothing else, so the
+  // plugin was downloading all of shiki (plus a second regex engine) for a dead
+  // branch. See the comment above `MARKDOWN_PLUGINS` in markdown-text.tsx.
+  //
+  // What keeps this honest is a test, not this comment:
+  // `src/entry-graph.test.ts` walks the static import graph from `main.tsx` and
+  // fails if anything puts shiki back on it.
+  optimizeDeps: {
+    // driver.js only enters the graph through the tour's DYNAMIC import chain
+    // (lib/tour/run-tour.ts — `src/entry-graph.test.ts` enforces that), so the
+    // dep scanner never sees it at startup. Left alone, first use registers it
+    // as a missing dep at runtime and triggers Vite's "new dependencies
+    // optimized" full page reload — mid-tour, which is the one moment a reload
+    // is most visible. It is pure ESM with no CJS deps, so serving it
+    // unoptimized is free.
+    //
+    // The `?raw` forms are here now too: desktop's preview surface landed with
+    // the resync (app/chat/right-rail/preview-tour.ts injects the prebuilt IIFE
+    // into the pane's guest page), so the bare id is no longer the only form
+    // that reaches the resolver. Prebundling a `?raw` id would hand the raw-text
+    // transform an ES module and fail with "does not provide an export named
+    // 'default'". Exclusion matches exact ids, hence every form.
+    exclude: [
+      'driver.js',
+      'driver.js/dist/driver.js.iife.js',
+      'driver.js/dist/driver.js.iife.js?raw',
+      'driver.js/dist/driver.css?raw'
+    ],
+    include: [
+      '@codemirror/commands',
+      '@codemirror/language',
+      '@codemirror/language-data',
+      '@codemirror/state',
+      '@codemirror/view',
+      '@streamdown/mermaid',
+      '@xterm/addon-fit',
+      '@xterm/addon-unicode11',
+      '@xterm/addon-web-links',
+      '@xterm/addon-webgl',
+      '@xterm/xterm',
+      'katex',
+      'mermaid',
+      'shiki'
+    ]
+  },
+  build: {
+    // Android System WebView baseline — keep the transpile target conservative.
+    // This is a JS concern and must NOT reach the CSS, hence `cssTarget` below.
+    target: 'es2021',
+    // CSS gets its OWN target, and needs one. Vite 8 changed `cssMinify` to
+    // default to Lightning CSS (it used to follow `build.minify`, which is
+    // esbuild here), and Lightning takes its targets from `cssTarget` — which
+    // otherwise inherits `target`. `es2021` expands to chrome85/safari14.1,
+    // below the Chrome 87 that logical properties need and the Chrome 88 that
+    // `:is()` needs, so Lightning rewrote EVERY logical utility (`-start-`,
+    // `ms-`, `ps-`, `text-start`, `border-s`…) into physical `left`/`right`
+    // guarded by `:lang()` lists, and every `:is()` into `:-webkit-any()`:
+    // 2584 `:lang()` selectors in a build whose source has none. That makes
+    // direction depend on the element's LANGUAGE rather than its `dir`, which
+    // is not what the authored CSS says — and it happens only in a build,
+    // because the dev server never runs the minify pass. That is the whole of
+    // the "works in dev, wrong in the signed release" difference.
+    //
+    // These floors are Tailwind v4's own (see @tailwindcss/node's Lightning
+    // targets: safari/ios 16.4, chrome 111, firefox 128), so this asks for
+    // nothing the framework's output does not already assume — downleveling
+    // Tailwind's CSS to chrome85 bought no real reach, it only changed meaning.
+    cssTarget: ['chrome111', 'safari16.4', 'firefox128'],
+    minify: process.env.TAURI_DEBUG ? false : 'esbuild',
+    sourcemap: !!process.env.TAURI_DEBUG
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test-setup.ts'],
+    // Vitest's default `include` is rooted at this config's directory, so it
+    // never reaches the shared sample plugins — which tsconfig and eslint DO
+    // cover. A bundled plugin ships in this app's build; its tests belong in
+    // this app's run, or the SDK's only real third-party-shaped consumer is
+    // the one thing nothing verifies.
+    include: ['src/**/*.test.{ts,tsx}', '../../packages/hermes-sample-plugins/**/*.test.{ts,tsx}'],
+    // Components don't import CSS (styles.css is loaded once in main.tsx), so
+    // skip stylesheet processing in tests.
+    css: false
+  }
+}))
