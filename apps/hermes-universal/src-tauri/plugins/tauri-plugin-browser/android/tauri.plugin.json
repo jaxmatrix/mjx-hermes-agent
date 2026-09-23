@@ -1,5 +1,0 @@
-{
-  "android": {
-    "kotlin": "com.nousresearch.hermes.plugin.browser.BrowserPlugin"
-  }
-}
