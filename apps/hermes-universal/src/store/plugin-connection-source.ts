@@ -49,8 +49,19 @@ export interface PluginAgentRoster {
    *  different facts.
    *
    *  So is a THIRD fact: `ok && !observed` means the source was seeded, not
-   *  dialled ("connect to find out"), which `ok` alone cannot express. */
-  sources: { connectionId: string; error?: string; observed: boolean; ok: boolean }[]
+   *  dialled ("connect to find out"), which `ok` alone cannot express.
+   *
+   *  Bot Mode also reads Desktop-shaped fields (`reachable`, `kind`, `label`)
+   *  when the registry source is installed. */
+  sources: {
+    connectionId: string
+    error?: string
+    kind?: string
+    label?: string
+    observed: boolean
+    ok: boolean
+    reachable?: boolean
+  }[]
 }
 
 export interface PluginProfileRoute {

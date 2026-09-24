@@ -52,20 +52,45 @@ function describe(): PluginConnection[] {
 export const registryConnectionSource: PluginConnectionSource = {
   agents: async (): Promise<PluginAgentRoster> => {
     const roster = await connectionsRoster()
-    const labels = new Map($registryView.get().connections.map(row => [row.id, row.label]))
+    const rows = new Map($registryView.get().connections.map(row => [row.id, row]))
 
     return {
-      agents: roster.agents.map(agent => ({
-        connectionId: agent.connectionId,
-        isDefault: agent.isDefault,
-        // The `@name-device` handle, so two boxes serving `default` are
-        // distinguishable in a plugin's own UI.
-        label: agent.handle === agent.profile ? agent.profile : `${agent.profile} · ${labels.get(agent.connectionId) ?? ''}`,
-        profile: agent.profile
-      })),
-      // A source that failed carries its error rather than vanishing: a missing
-      // row and a broken row are different facts.
-      sources: roster.sources
+      agents: roster.agents.map(agent => {
+        const row = rows.get(agent.connectionId)
+
+        return {
+          connectionId: agent.connectionId,
+          isDefault: agent.isDefault,
+          // The `@name-device` handle, so two boxes serving `default` are
+          // distinguishable in a plugin's own UI.
+          label:
+            agent.handle === agent.profile
+              ? agent.profile
+              : `${agent.profile} · ${row?.label ?? ''}`,
+          profile: agent.profile
+        }
+      }),
+      // Match Desktop's getAgentRoster: Bot Mode annotateBotSource reads
+      // `reachable` / kind / label / error — not Rust's `ok` alone.
+      sources: roster.sources.flatMap(source => {
+        const row = rows.get(source.connectionId)
+
+        if (!row) {
+          return []
+        }
+
+        return [
+          {
+            connectionId: row.id,
+            error: source.error,
+            kind: row.kind,
+            label: row.label,
+            observed: source.observed,
+            ok: source.ok,
+            reachable: source.ok
+          }
+        ]
+      })
     }
   },
 

@@ -19,7 +19,11 @@ import { installObservability } from './observability/install'
 import { holdForLaunch } from './store/active-connection'
 import { initAppLifecycle, onBackground } from './store/app-lifecycle'
 import { initBackgroundMode } from './store/background-mode'
+import { initTray } from './store/tray'
 import { openTunnelPage } from './store/connection-tunnels'
+// Side effect: installs registryConnectionSource so host.agents() unions every
+// logged-in gateway (Bot Mode multi-connection). Must load before plugins poll.
+import './store/connection-plugin-source'
 import { restoreLaunchConnection, startConnectionsWatcher } from './store/connections'
 import { registerBuiltinDeepLinkRoutes } from './store/deep-link-builtins'
 import { initDownloadSync } from './store/downloads'
@@ -147,6 +151,9 @@ export function bootUniversal(): void {
   if (IS_TAURI && ownsPersistedAppState()) {
     lever('close guard', () => void installWindowCloseGuard())
     lever('background mode', () => initBackgroundMode())
+    // Native tray labels/status — must stay out of background-mode (import cycle
+    // with connection). Same owner window that owns the close guard.
+    lever('tray', () => initTray())
     lever('surface grants', () => void sweepStaleSurfaceGrants())
   }
 
