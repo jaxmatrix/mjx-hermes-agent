@@ -27,8 +27,12 @@ import {
 } from './avatar-image'
 import { useBots } from './i18n'
 import { PetTab } from './pet'
+import { requestForBot } from './routing'
+import type { RosterRow } from './types'
 
 interface AvatarPickerProps {
+  /** When set, image.generate / pet gallery hit this bot's home gateway. */
+  bot?: RosterRow
   /** `null` = no explicit pick, i.e. the name's deterministic hue. */
   color: null | string
   /** Feeds the Generate tab when the user leaves the description blank. */
@@ -41,7 +45,16 @@ interface AvatarPickerProps {
 }
 
 /** Shape grid + color swatches, shared by Edit Profile and New Bot. */
-export function AvatarPicker({ shape, color, image, onShape, onColor, onImage, generateSeed }: AvatarPickerProps) {
+export function AvatarPicker({
+  bot,
+  shape,
+  color,
+  image,
+  onShape,
+  onColor,
+  onImage,
+  generateSeed
+}: AvatarPickerProps) {
   const b = useBots()
   const pickerName = generateSeed?.name || 'agent'
   const imagen = useValue($imagenAvailable)
@@ -84,10 +97,14 @@ export function AvatarPicker({ shape, color, image, onShape, onColor, onImage, g
 
       const img = custom
         ? await (async () => {
-            const res = await host.request<GeneratedImage>('image.generate', {
+            const params = {
               prompt: `${custom}. Avatar for an AI agent: centered, bold flat vector style, solid color background, no text.`,
               aspect_ratio: 'square'
-            })
+            }
+
+            const res = bot?.sourceScoped
+              ? await requestForBot<GeneratedImage>(bot, 'image.generate', params)
+              : await host.request<GeneratedImage>('image.generate', params)
 
             if (!res?.success) {
               throw new Error(res?.error || 'generation failed')
@@ -95,7 +112,12 @@ export function AvatarPicker({ shape, color, image, onShape, onColor, onImage, g
 
             return res.image_data || res.image
           })()
-        : await generateAvatarImage(generateSeed?.name || 'agent', generateSeed?.title, generateSeed?.description)
+        : await generateAvatarImage(
+            generateSeed?.name || 'agent',
+            generateSeed?.title,
+            generateSeed?.description,
+            bot
+          )
 
       if (img) {
         onImage(await normalizeAvatarImage(img))
@@ -276,7 +298,7 @@ export function AvatarPicker({ shape, color, image, onShape, onColor, onImage, g
           Choose an image…
         </Button>
       ) : null}
-      {tab === 'pet' ? <PetTab image={image} onImage={onImage} /> : null}
+      {tab === 'pet' ? <PetTab bot={bot} image={image} onImage={onImage} /> : null}
     </div>
   )
 }

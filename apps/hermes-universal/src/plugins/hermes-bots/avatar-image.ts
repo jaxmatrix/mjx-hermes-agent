@@ -6,7 +6,9 @@
 
 import { atom, universalHost as host } from '@hermes/plugin-sdk'
 
+import { requestForBot } from './routing'
 import { getPluginCtx } from './shared'
+import type { RosterRow } from './types'
 
 // ── image avatars: upload from device + generate via image.generate ─────────
 
@@ -107,22 +109,25 @@ export interface GeneratedImage {
 export async function generateAvatarImage(
   bot: string,
   title?: string,
-  description?: string
+  description?: string,
+  owner?: null | Partial<RosterRow>
 ): Promise<string | undefined> {
   const who = [title || bot, description].filter(Boolean).join(' — ')
 
+  const params = {
+    prompt:
+      `Cute minimal robot avatar for an AI agent named "${who}". ` +
+      'Friendly simple mascot face, bold flat vector style, solid color background, centered, no text.',
+    aspect_ratio: 'square'
+  }
+
   // Remote image backends routinely take 40–60 s; the socket's generic 30 s
   // deadline discarded renders the backend then completed (#86161).
-  const res = await host.request<GeneratedImage>(
-    'image.generate',
-    {
-      prompt:
-        `Cute minimal robot avatar for an AI agent named "${who}". ` +
-        'Friendly simple mascot face, bold flat vector style, solid color background, centered, no text.',
-      aspect_ratio: 'square'
-    },
-    IMAGE_GENERATE_TIMEOUT_MS
-  )
+  const res = owner?.sourceScoped
+    ? await requestForBot<GeneratedImage>(owner, 'image.generate', params, {
+        timeoutMs: IMAGE_GENERATE_TIMEOUT_MS
+      })
+    : await host.request<GeneratedImage>('image.generate', params, IMAGE_GENERATE_TIMEOUT_MS)
 
   if (!res?.success) {
     throw new Error(res?.error || 'generation failed')
