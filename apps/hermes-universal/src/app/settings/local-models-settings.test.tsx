@@ -11,6 +11,9 @@ import { LocalModelsSettings } from './local-models-settings'
 // Mock the API layer — the pane's contract is what it RENDERS from these
 // payloads, not transport.
 vi.mock('@/hermes', () => ({
+  profileScopeKey: (profile?: string | null) => (profile ?? '').trim() || 'default',
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   activateLocalModel: vi.fn(),
   deleteLocalModel: vi.fn(),
   downloadBrowsedModel: vi.fn(),

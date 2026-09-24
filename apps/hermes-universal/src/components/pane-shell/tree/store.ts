@@ -12,11 +12,11 @@ import { $registryVersion, registry } from '@/contrib/registry'
 import { translateNow } from '@/i18n'
 import { LAYOUT_KEYS } from '@/lib/layout-persistence'
 import { Codecs } from '@/lib/persisted'
-import { writeKey } from '@/lib/storage'
+import { readKey, writeKey } from '@/lib/storage'
 import { type InterfaceMode, modeLayout } from '@/store/interface-mode'
 import { notify } from '@/store/notifications'
 import { clearAllPaneSizeOverrides } from '@/store/panes'
-import { isBrowserWindow, isSecondaryWindow } from '@/store/windows'
+import { isBrowserWindow, isSecondaryWindow, ownsPersistedAppState } from '@/store/windows'
 
 import {
   allPaneIds,
@@ -2140,6 +2140,62 @@ export function persistTree() {
   persist($layoutTree.get())
 }
 
+/** Reload `$layoutTree` from the persisted record (profile-import handshake). */
+function reloadLayoutTreeFromStorage() {
+  const raw = readKey(LAYOUT_KEYS.tree)
+
+  if (raw === null) {
+    return
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown
+
+    if (isLayoutNode(parsed)) {
+      const tree = normalize(migratePersistedTree(parsed))
+
+      if (tree) {
+        $layoutTree.set(tree)
+      }
+    }
+  } catch {
+    // Junk on disk — leave the live atom alone.
+  }
+}
+
+let appliedLayoutImportToken: string | null =
+  typeof window !== 'undefined' ? readKey(LAYOUT_KEYS.imported) : null
+
+function tryAdoptImportedLayout() {
+  if (typeof window === 'undefined' || !ownsPersistedAppState()) {
+    return
+  }
+
+  const token = readKey(LAYOUT_KEYS.imported)
+
+  if (!token || token === appliedLayoutImportToken) {
+    return
+  }
+
+  appliedLayoutImportToken = token
+  reloadLayoutTreeFromStorage()
+  clearAllPaneSizeOverrides()
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', event => {
+    if (event.key === LAYOUT_KEYS.imported) {
+      tryAdoptImportedLayout()
+    }
+  })
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      tryAdoptImportedLayout()
+    }
+  })
+}
+
 export function resetLayoutTree() {
   persist(null)
   clearAllPaneSizeOverrides()
@@ -2170,6 +2226,13 @@ export function resetLayoutTree() {
   for (const side of Object.keys(sideOpeners) as TreeSide[]) {
     sideOpeners[side]?.(true)
   }
+}
+
+/** Nudge pane strips that read tool state during render (preview mode toggles). */
+export const $stripToolsGeneration = atom(0)
+
+export function invalidateStripTools(): void {
+  $stripToolsGeneration.set($stripToolsGeneration.get() + 1)
 }
 
 // Dev hook for automation.

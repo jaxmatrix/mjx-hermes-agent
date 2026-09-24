@@ -37,7 +37,7 @@ import {
   type OpenContextMenu,
   openDomContextMenu,
   openTerminalContextMenu
-} from './store'
+} from './store-desktop-menu'
 import { isWebUrl, resolveDomTarget } from './target'
 
 /** Marks a surface that owns PLAIN right-clicks itself (the user-message

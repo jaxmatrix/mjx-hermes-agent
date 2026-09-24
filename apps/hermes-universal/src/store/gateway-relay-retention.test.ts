@@ -1,3 +1,4 @@
+import { atom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Bot-relay socket retention (#93594): the desktop bot relay RPCs every
@@ -18,6 +19,9 @@ const gatewayMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   setApiRequestConnection: vi.fn(),
   HermesGateway: class {
     connectionState = 'closed'
@@ -38,7 +42,8 @@ vi.mock('@/hermes', () => ({
 }))
 vi.mock('@/store/session', () => ({
   setConnection: gatewayMocks.setConnection,
-  setGatewayState: gatewayMocks.setGatewayState
+  setGatewayState: gatewayMocks.setGatewayState,
+  $gatewayState: atom('closed')
 }))
 vi.mock('@/store/notify-baseline', () => ({ markNativeNotifyBaseline: vi.fn() }))
 

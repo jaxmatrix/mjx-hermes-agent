@@ -1084,6 +1084,9 @@ export function useSlashCommand(deps: SlashCommandDeps) {
 
           await runExec(ctx)
         },
+        focus: async ctx => {
+          await runExec(ctx)
+        },
         // /browser connect|disconnect|status manages the live CDP connection on
         // the gateway host, mirroring the TUI's browser.manage RPC. It mutates
         // BROWSER_CDP_URL (and may launch Chrome) in the gateway process — only

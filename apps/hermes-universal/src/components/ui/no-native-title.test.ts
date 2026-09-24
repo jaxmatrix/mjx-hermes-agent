@@ -97,6 +97,12 @@ describe('no native title= on button elements', () => {
       // '/src/app/shell/titlebar.tsx' → 'src/app/shell/titlebar.tsx'
       const relativePath = globPath.replace(/^\//, '')
 
+      // Test fixtures (`<button title={…}>` stand-ins) are not shipped UI — same
+      // skip as desktop's __tests__/no-native-title.test.ts.
+      if (relativePath.includes('.test.') || relativePath.includes('.render.test.')) {
+        continue
+      }
+
       const tagPattern = /<(Button|button)\b/gu
       let match: RegExpExecArray | null
 

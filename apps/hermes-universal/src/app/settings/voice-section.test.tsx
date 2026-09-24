@@ -8,11 +8,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // free-text field whose known voices are dropdown suggestions rather than a
 // gate; without voices, the generic free-text Input.
 vi.mock('@/hermes', () => ({
+  peekConfigReadOrigin: () => undefined,
+  retainConfigReadOrigin: (record: object) => record,
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  profileScopeKey: (profile?: string | null) => (profile ?? '').trim() || 'default',
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   // Via ConfigSection → store/projects → store/profile → store/profiles, which
   // syncs the REST scope at import time.
   setApiRequestProfile: vi.fn(),
   // The levels panel in the header slot seeds the prefs store when it mounts.
-  getApiRequestProfile: () => null,
   getHermesConfigRecord: vi.fn(async () => ({ tts: { provider: 'elevenlabs', elevenlabs: { voice_id: 'v1' } } })),
   getHermesConfigSchema: vi.fn(async () => ({ fields: { 'tts.elevenlabs.voice_id': { type: 'string' } } })),
   saveHermesConfig: vi.fn(async () => ({ ok: true })),

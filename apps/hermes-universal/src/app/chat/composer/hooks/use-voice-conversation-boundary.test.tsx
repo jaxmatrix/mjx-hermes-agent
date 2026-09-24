@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/hermes', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getApiRequestConnection: () => null,
+  setApiRequestProfile: vi.fn(),
   getApiRequestProfile: () => null,
   hermesApi: mocks.config,
   speakText: vi.fn()

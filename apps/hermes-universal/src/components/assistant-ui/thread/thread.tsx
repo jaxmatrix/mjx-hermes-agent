@@ -1,5 +1,5 @@
 import { ThreadPrimitive } from '@assistant-ui/react'
-import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import { type ComponentProps, createContext, useCallback, useContext, useMemo, useState } from 'react'
 
 import { shouldShowIntro } from '@/app/chat/intro-visibility'
 import { useSessionView } from '@/app/chat/session-view'
@@ -10,6 +10,8 @@ import { userTurnOrdinal } from '@/lib/session-key-messages'
 import { useStore } from '@/store/atom'
 import { interruptSession, restoreToMessage } from '@/store/chat'
 import { $introSplash } from '@/store/intro-splash'
+import { $freshDraftReady } from '@/store/session'
+import { isAuxiliaryWindow } from '@/store/windows'
 import { isSecondaryWindow } from '@/store/windows'
 
 import { AssistantMessage } from './assistant-message'
@@ -114,8 +116,11 @@ export function Thread() {
   // splash is concerned, so the wordmark does not paint over the conversation
   // the user came back to (the promise already written at
   // `app/chat/intro-visibility.ts`).
-  const transcriptEmpty = useStore(view.$paintedMessagesEmpty)
+  const transcriptEmpty = useStore(view.$messagesEmpty)
   const introSplash = useStore($introSplash)
+  const freshDraftReady = useStore($freshDraftReady)
+  const selectedSessionId = useStore(view.$storedId)
+  const activeSessionId = useStore(view.$runtimeId)
   const [target, setTarget] = useState<null | RestoreConfirmTarget>(null)
 
   // The splash is a property of THIS surface, not of the app: `view` is the
@@ -124,10 +129,14 @@ export function Thread() {
   // transcript. Passing `undefined` is how the list is told not to render an
   // empty state at all — it only paints `emptyPlaceholder` when there is one.
   const emptyPlaceholder = shouldShowIntro({
+    activeSessionId,
+    auxiliaryWindow: isAuxiliaryWindow(),
     enabled: introSplash,
-    primaryWindow: PRIMARY_WINDOW,
-    sessionKey: mountedSessionKey,
-    transcriptEmpty
+    freshDraftReady,
+    messagesEmpty: transcriptEmpty,
+    primary: PRIMARY_WINDOW && view.kind === 'primary',
+    routedSessionView: false,
+    selectedSessionId
   })
     ? EmptyPlaceholder
     : undefined
@@ -167,7 +176,7 @@ export function Thread() {
     // pointed at. Refusing is the only safe reading of "I don't know which
     // session this is".
     if (!key) {
-      throw new Error(t.desktop.restoreNoSession)
+      throw new Error(t.desktop.sessionUnavailable)
     }
 
     // Throws on failure, which ConfirmDialog turns into an inline error and
@@ -208,12 +217,12 @@ export function Thread() {
       >
         <ThreadMessageList
           clampToComposer
-          components={MESSAGE_COMPONENTS}
+          components={MESSAGE_COMPONENTS as unknown as ComponentProps<typeof ThreadMessageList>['components']}
           emptyPlaceholder={emptyPlaceholder}
           loadingIndicator={LOADING_INDICATOR}
           sessionKey={mountedSessionKey}
         />
-        <ThreadTimeline sessionKey={mountedSessionKey} />
+        <ThreadTimeline />
         {restoreDialog}
       </ThreadPrimitive.Root>
     </RestoreRequestContext.Provider>

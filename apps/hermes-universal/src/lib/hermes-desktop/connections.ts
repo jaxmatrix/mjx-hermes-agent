@@ -28,6 +28,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 import { sshStepLabel, tunnelErrorMessage } from '@/app/gateway/ssh-copy'
 import { isGatewayReauthRequired } from '@/gateway'
+import type { DesktopProfileRoute } from '@/global'
 import type { DesktopBootProgress, HermesConnection } from '@/global'
 import { TRANSLATIONS } from '@/i18n/catalog'
 import { getRuntimeI18nLocale, translateNow } from '@/i18n/runtime'
@@ -819,13 +820,13 @@ export const connectionBridge: Pick<
     getDefault: async () => {
       const { invoke } = await import('@tauri-apps/api/core')
 
-      return invoke<import('@/global').DesktopProfileRoute | null>('profile_default_get')
+      return invoke<DesktopProfileRoute | null>('profile_default_get')
     },
 
     setDefault: async route => {
       const { invoke } = await import('@tauri-apps/api/core')
 
-      return invoke<import('@/global').DesktopProfileRoute>('profile_default_set', { route })
+      return invoke<DesktopProfileRoute>('profile_default_set', { route })
     },
 
     onDefaultChanged: callback => {
@@ -837,7 +838,7 @@ export const connectionBridge: Pick<
           return
         }
 
-        void listen<import('@/global').DesktopProfileRoute | null>(
+        void listen<DesktopProfileRoute | null>(
           'hermes://profile-default-changed',
           event => callback(event.payload)
         ).then(fn => {

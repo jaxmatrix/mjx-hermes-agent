@@ -1,25 +1,12 @@
 /**
- * The find-in-page store: what it asks the engine for, and what it refuses to
- * ask after the bar is gone.
+ * The find-in-page store: scoped DOM search (primary window path).
+ *
+ * Legacy tests targeted the WebKitGTK `find_in_page` invoke bridge; the store
+ * now walks `[data-chat-surface]` in-process (#81726). Behaviour contracts live
+ * here; FindBar wiring is in `components/find-bar.test.tsx`.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-const invoke = vi.fn(async (_command: string, _args?: unknown) => undefined)
-
-vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: unknown) => invoke(cmd, args) }))
-
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: async () => () => undefined
-}))
-
-// The engine binding exists only on WebKitGTK; the store gates on that.
-vi.mock('@/lib/platform', async importOriginal => ({
-  ...(await importOriginal<typeof Platform>()),
-  PLATFORM: 'linux'
-}))
-
-import type * as Platform from '@/lib/platform'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   $findInPage,
@@ -31,43 +18,60 @@ import {
   updateFindResults
 } from './find-in-page'
 
+function plantSurface(id = 'surface'): HTMLElement {
+  const root = document.createElement('div')
+
+  root.setAttribute('data-chat-surface', '')
+  root.id = id
+  document.body.appendChild(root)
+
+  return root
+}
+
 beforeEach(() => {
-  invoke.mockClear()
-  openFindBar()
+  $findInPage.set({ active: false, query: '', matchOrdinal: 0, matchCount: 0 })
 })
 
 afterEach(() => {
   closeFindBar()
+  document.body.innerHTML = ''
 })
-
-const calls = (name: string) => invoke.mock.calls.filter(call => call[0] === name)
 
 describe('find-in-page', () => {
   it('searches from scratch on a fresh query', () => {
+    const surface = plantSurface()
+
+    surface.textContent = 'hello world'
+    openFindBar()
     setFindQuery('hello')
 
-    expect(calls('find_in_page')).toEqual([['find_in_page', { findNext: false, forward: true, query: 'hello' }]])
     expect($findInPage.get().query).toBe('hello')
+    expect($findInPage.get().matchCount).toBe(1)
+    expect(surface.querySelectorAll('mark.find-hit').length).toBe(1)
   })
 
   it('steps with the previous query instead of re-searching', () => {
+    const surface = plantSurface()
+
+    surface.textContent = 'hello hello hello'
+    openFindBar()
     setFindQuery('hello')
-    invoke.mockClear()
 
     findNext()
-    findPrevious()
+    expect($findInPage.get().matchOrdinal).toBe(2)
 
-    expect(calls('find_in_page')).toEqual([
-      ['find_in_page', { findNext: true, forward: true, query: 'hello' }],
-      ['find_in_page', { findNext: true, forward: false, query: 'hello' }]
-    ])
+    findPrevious()
+    expect($findInPage.get().matchOrdinal).toBe(1)
+    expect(surface.querySelectorAll('mark.find-hit').length).toBe(3)
   })
 
   it('counts the position itself — the engine only reports how many there are', () => {
-    setFindQuery('hello')
-    updateFindResults(3)
+    const surface = plantSurface()
 
-    // First result for a fresh query: the engine has selected match one.
+    surface.textContent = 'hello hello hello'
+    openFindBar()
+    setFindQuery('hello')
+
     expect($findInPage.get()).toMatchObject({ matchCount: 3, matchOrdinal: 1 })
 
     findNext()
@@ -75,47 +79,59 @@ describe('find-in-page', () => {
 
     findNext()
     findNext()
-    // Wraps, because the engine search wraps.
     expect($findInPage.get().matchOrdinal).toBe(1)
   })
 
   it('clears the highlight the moment the query empties, without waiting', () => {
+    const surface = plantSurface()
+
+    surface.textContent = 'hello world'
+    openFindBar()
     setFindQuery('hello')
-    invoke.mockClear()
+    expect(surface.querySelectorAll('mark.find-hit').length).toBe(1)
 
     setFindQuery('')
 
-    expect(calls('stop_find_in_page')).toHaveLength(1)
     expect($findInPage.get()).toMatchObject({ matchCount: 0, matchOrdinal: 0, query: '' })
+    expect(surface.querySelectorAll('mark.find-hit').length).toBe(0)
   })
 
   it('will not search for a closed bar — a fired debounce must not re-highlight', () => {
+    plantSurface()
+    openFindBar()
     closeFindBar()
-    invoke.mockClear()
 
     setFindQuery('late')
     findNext()
 
-    expect(calls('find_in_page')).toHaveLength(0)
     expect($findInPage.get().query).toBe('')
+    expect($findInPage.get().matchCount).toBe(0)
   })
 
   it('closes once, not twice — Escape is a shared gesture', () => {
+    const surface = plantSurface()
+
+    surface.textContent = 'hello'
+    openFindBar()
     setFindQuery('hello')
-    invoke.mockClear()
+    expect(surface.querySelectorAll('mark.find-hit').length).toBe(1)
 
     closeFindBar()
     closeFindBar()
 
-    expect(calls('stop_find_in_page')).toHaveLength(1)
+    expect($findInPage.get().active).toBe(false)
+    expect(surface.querySelectorAll('mark.find-hit').length).toBe(0)
   })
 
-  it('drops a result that arrives for a query the user already cleared', () => {
+  it('accepts bridge results for secondary-window renderers', () => {
+    plantSurface()
+    openFindBar()
     setFindQuery('hello')
     setFindQuery('')
 
-    updateFindResults(9)
+    updateFindResults(1, 9)
 
-    expect($findInPage.get().matchCount).toBe(0)
+    expect($findInPage.get().matchCount).toBe(9)
+    expect($findInPage.get().matchOrdinal).toBe(1)
   })
 })

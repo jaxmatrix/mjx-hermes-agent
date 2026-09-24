@@ -9,7 +9,7 @@
  * it once on mount so a bot the user never opened still shows real state.
  */
 
-import { Codicon, host, useValue } from '@hermes/plugin-sdk'
+import { Codicon, universalHost as host, useValue } from '@hermes/plugin-sdk'
 import type { RpcEvent } from '@hermes/plugin-sdk'
 import type { ProfileGroupRoute } from '@hermes/plugin-sdk'
 import { useEffect, useMemo } from 'react'
@@ -162,7 +162,7 @@ export function ScreenPortal({ bot }: { bot: RosterRow }) {
   return (
     <button
       aria-label={`${t.screen.portalTitle}: ${subtitle}`}
-      className="group flex w-full items-center gap-2 rounded-md border border-(--ui-stroke-secondary) bg-(--chrome-action-hover)/40 px-2 py-1.5 text-left transition-colors hover:bg-(--chrome-action-hover)"
+      className="group flex w-full items-center gap-2 rounded-md border border-(--ui-stroke-secondary) bg-(--chrome-action-hover)/40 px-2 py-1.5 text-start transition-colors hover:bg-(--chrome-action-hover)"
       onClick={() => openBotScreen(bot, null)}
       type="button"
     >

@@ -9,7 +9,7 @@
  * a fresh status the caller uses to flip the pane to "Start screen".
  */
 
-import { Button, Codicon, GlyphSpinner, host } from '@hermes/plugin-sdk'
+import { Button, Codicon, GlyphSpinner, universalHost as host } from '@hermes/plugin-sdk'
 import type { RpcEvent } from '@hermes/plugin-sdk'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -118,7 +118,7 @@ export function ScreenInstallCard({ bot, status, onInstalled }: ScreenInstallCar
         <div className="text-sm font-medium">{t.screen.notInstalledTitle}</div>
         <div className="text-xs text-muted-foreground">{t.screen.notInstalledBody}</div>
         {status.install_command ? (
-          <code className="select-text break-all rounded bg-muted px-2 py-1 text-left text-xs">{status.install_command}</code>
+          <code className="select-text break-all rounded bg-muted px-2 py-1 text-start text-xs">{status.install_command}</code>
         ) : (
           <div className="text-xs text-muted-foreground">{t.screen.noPackageManager}</div>
         )}
@@ -129,7 +129,7 @@ export function ScreenInstallCard({ bot, status, onInstalled }: ScreenInstallCar
           </Button>
         ) : null}
         {log.length > 0 ? (
-          <pre className="max-h-48 overflow-auto rounded bg-black/80 p-2 text-left font-mono text-[0.65rem] leading-tight text-white/85">
+          <pre className="max-h-48 overflow-auto rounded bg-black/80 p-2 text-start font-mono text-[0.65rem] leading-tight text-white/85">
             {log.join('\n')}
             <div ref={logEnd} />
           </pre>

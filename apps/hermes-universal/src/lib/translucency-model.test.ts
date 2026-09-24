@@ -156,7 +156,7 @@ describe('normalizeMaterial / normalizeScope', () => {
     expect(normalizeMaterial('sidebar')).toBe('under-window')
     expect(normalizeMaterial(undefined)).toBe('under-window')
     expect(normalizeScope('sidebar')).toBe('sidebar')
-    expect(normalizeScope('elsewhere')).toBe('window')
+    expect(normalizeScope('elsewhere')).toBe('sidebar')
   })
 })
 
@@ -240,7 +240,7 @@ describe('normalizeState', () => {
       intensity: 0,
       material: 'under-window',
       mode: 'glass',
-      scope: 'window'
+      scope: 'sidebar'
     })
     expect(normalizeState({ intensity: 40 }, true).mode).toBe('clear')
     expect(normalizeState({ material: 'nope', scope: 'nope' }, false)).toEqual({
@@ -248,7 +248,7 @@ describe('normalizeState', () => {
       intensity: 0,
       material: 'under-window',
       mode: 'clear',
-      scope: 'window'
+      scope: 'sidebar'
     })
   })
 })
@@ -256,28 +256,28 @@ describe('normalizeState', () => {
 describe('defaults table', () => {
   it('carries the per-appearance, per-platform numbers verbatim', () => {
     expect(defaultTranslucencyValues('light', false)).toEqual({
-      fade: 1,
-      intensity: 66,
+      fade: 0,
+      intensity: 29,
       material: 'header',
-      scope: 'window'
+      scope: 'sidebar'
     })
     expect(defaultTranslucencyValues('dark', false)).toEqual({
       fade: 0,
-      intensity: 22,
+      intensity: 29,
       material: 'titlebar',
-      scope: 'window'
+      scope: 'sidebar'
     })
     expect(defaultTranslucencyValues('light', true)).toEqual({
       fade: 0,
-      intensity: 20,
+      intensity: 29,
       material: 'under-window',
-      scope: 'window'
+      scope: 'sidebar'
     })
     expect(defaultTranslucencyValues('dark', true)).toEqual({
       fade: 0,
-      intensity: 5,
+      intensity: 29,
       material: 'under-window',
-      scope: 'window'
+      scope: 'sidebar'
     })
   })
 

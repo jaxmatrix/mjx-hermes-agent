@@ -15,16 +15,21 @@ const terminal = vi.hoisted(() => ({ read: vi.fn<(options: unknown) => unknown>(
 
 vi.mock('@/app/right-pane/terminal/buffer', () => ({ readActiveTerminal: terminal.read }))
 
-vi.mock('@/store/gateway-client', () => ({
-  addGatewayEventListener: (listener: (event: { payload?: unknown; type: string }) => void) => {
-    stream.route = listener
+vi.mock('@/store/gateway-client', async () => {
+  const { atom } = await import('@/store/atom')
 
-    return () => {
-      stream.route = null
-    }
-  },
-  requestGateway: vi.fn().mockResolvedValue({ status: 'ok' })
-}))
+  return {
+    $gatewayState: atom('open'),
+    addGatewayEventListener: (listener: (event: { payload?: unknown; type: string }) => void) => {
+      stream.route = listener
+
+      return () => {
+        stream.route = null
+      }
+    },
+    requestGateway: vi.fn().mockResolvedValue({ status: 'ok' })
+  }
+})
 
 import { requestGateway } from '@/store/gateway-client'
 

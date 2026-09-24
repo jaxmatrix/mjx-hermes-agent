@@ -35,6 +35,9 @@ import {
 } from './use-background-sync'
 
 vi.mock('@/hermes', async original => ({
+  getApiRequestConnection: () => null,
+  setApiRequestProfile: vi.fn(),
+  getApiRequestProfile: () => 'default',
   ...(await original<Record<string, unknown>>()),
   getLatestSessionMessages: vi.fn()
 }))

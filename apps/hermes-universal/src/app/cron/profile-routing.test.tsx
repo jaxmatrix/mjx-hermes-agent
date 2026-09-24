@@ -17,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CronJob } from '@/types/hermes'
 
 const hermes = vi.hoisted(() => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   createCronJob: vi.fn(async () => ({ enabled: true, id: 'new' })),
   deleteCronJob: vi.fn(async () => ({ ok: true })),
   getAutomationBlueprints: vi.fn(async () => []),

@@ -60,7 +60,7 @@ export function LanguageSwitcher({ className, collapsed = false, dropUp = false 
       aria-expanded={open}
       aria-label={title}
       className={cn(
-        'min-w-32 justify-between gap-2 border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) px-2.5 text-left text-muted-foreground hover:text-foreground',
+        'min-w-32 justify-between gap-2 border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) px-2.5 text-start text-muted-foreground hover:text-foreground',
         collapsed && 'min-w-0 px-2',
         className
       )}

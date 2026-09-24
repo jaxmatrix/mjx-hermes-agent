@@ -46,6 +46,7 @@ const onFoundInPage: Bridge['onFoundInPage'] = callback => {
   void (async () => {
     try {
       const { listen } = await import('@tauri-apps/api/event')
+
       // Rust emits the raw match count (u32). Electron's activeMatchOrdinal is
       // not available on WebKitGTK — report 0 and let the finder step locally.
       const unlisten = await listen<number>('hermes://found-in-page', event => {

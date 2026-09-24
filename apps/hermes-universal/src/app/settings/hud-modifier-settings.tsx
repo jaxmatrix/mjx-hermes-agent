@@ -54,7 +54,7 @@ export function HudModifierSettings() {
     [api, common.loadFailed, common.saveFailed]
   )
 
-  // eslint-disable-next-line no-restricted-syntax -- native IPC subscription, not a store mirror.
+   
   useEffect(() => {
     if (!api) {
       return

@@ -1,6 +1,6 @@
 import { atom, computed } from 'nanostores'
 
-import { PRIMARY_SESSION_VIEW } from '@/app/chat/session-view'
+import { $primaryBusy } from '@/app/chat/primary-session-busy'
 import { persistBoolean, storedBoolean } from '@/lib/storage'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 
@@ -242,12 +242,11 @@ export const $petRoamDir = atom<-1 | 0 | 1>(0)
  * on this — never on `$petState` itself, which would feed back on its own
  * `$petMotion`-driven pose and stall the wander.
  */
-// Turn-busy comes from the active runtime's own slice (`$primaryBusy` in
-// session-view.tsx explains why the global `$busy` mirror can't be trusted:
-// #84434 / #84438). The pop-out overlay push reads the same atom so both
-// surfaces derive the pose from one signal.
+// Turn-busy comes from `$primaryBusy` (see `primary-session-busy.ts` — the
+// global `$busy` mirror can't be trusted: #84434 / #84438). The pop-out overlay
+// push reads the same atom so both surfaces derive the pose from one signal.
 export const $petAtRest = computed(
-  [$petActivity, PRIMARY_SESSION_VIEW.$busy],
+  [$petActivity, $primaryBusy],
   (activity, busy): boolean => deriveLivePetState(activity, busy) === 'idle'
 )
 
@@ -257,7 +256,7 @@ export const $petAtRest = computed(
  * reads as deliberate movement.
  */
 export const $petState = computed(
-  [$petActivity, PRIMARY_SESSION_VIEW.$busy, $petMotion],
+  [$petActivity, $primaryBusy, $petMotion],
   (activity, busy, motion): PetState => {
     const base = deriveLivePetState(activity, busy)
 

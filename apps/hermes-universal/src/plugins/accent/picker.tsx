@@ -293,8 +293,8 @@ function AccentPicker() {
           H<span className="inline-block w-[3ch] text-end">{Math.round(lch.h)}</span> L{lch.l.toFixed(2)} C
           {lch.c.toFixed(3)}
         </span>
-        <span className={ratio >= 4.5 ? '' : 'text-(--dt-destructive)'}>
-          {renderedMode} {ratio.toFixed(1)}:1
+        <span className={(ratio ?? 0) >= 4.5 ? '' : 'text-(--dt-destructive)'}>
+          {renderedMode} {(ratio ?? 0).toFixed(1)}:1
         </span>
       </div>
       {/* Always occupies its row, even when empty — this line appears exactly

@@ -3,6 +3,7 @@ import { stripAnsi } from '@hermes/shared/ansi'
 import { type ToolTitleKey, translateNow } from '@/i18n'
 import { normalizeExternalUrl } from '@/lib/external-link'
 import { isFileMediaPath, mediaKind } from '@/lib/media'
+import { parsePersistedToolOutput } from '@/lib/persisted-tool-output'
 import { summarizeShellCommand } from '@/lib/summarize-command'
 import { capitalize, firstStringField, normalize } from '@/lib/text'
 import { CONNECTION_CARD_KEY, isCardTool, isFileEditTool, isSilentTool } from '@/lib/tool-render-class'
@@ -1452,9 +1453,20 @@ export function toolPreviewOutcome(part: ToolPart): { previewTarget: string; sta
   }
 }
 
+function persistedOutputFromPart(part: ToolPart, resultRecord: Record<string, unknown>) {
+  if (typeof part.result === 'string') {
+    return parsePersistedToolOutput(part.result)
+  }
+
+  const merged = firstStringField(resultRecord, ['output', 'content', 'text', 'message', 'stdout'])
+
+  return merged ? parsePersistedToolOutput(merged) : null
+}
+
 export function buildToolView(part: ToolPart, inlineDiff: string): ToolView {
   const argsRecord = parseMaybeObject(part.args)
   const resultRecord = toolResultRecord(part)
+  const spillover = persistedOutputFromPart(part, resultRecord)
   const meta = toolMeta(part.toolName)
   const status = toolStatus(part, resultRecord)
   // Skip residual error-heuristic text once status is success (stale isError
@@ -1525,9 +1537,11 @@ export function buildToolView(part: ToolPart, inlineDiff: string): ToolView {
   const terminalCommand = part.toolName === 'terminal' ? shellCommand(argsRecord) : undefined
   const terminalExitCode = part.toolName === 'terminal' ? numericField(resultRecord, 'exit_code') : undefined
 
+  const resolvedDetail = spillover && status !== 'error' ? spillover.preview : detail
+
   return {
     countLabel: resultCount ? formatCountLabel(resultCount) : undefined,
-    detail,
+    detail: resolvedDetail,
     detailLabel: error ? 'Error details' : toolDetailLabel(part.toolName),
     durationLabel: durationLabel(resultRecord),
     icon: meta.icon,
@@ -1540,6 +1554,7 @@ export function buildToolView(part: ToolPart, inlineDiff: string): ToolView {
     stderr: hasSplitStreams ? stderrRaw || undefined : undefined,
     terminalCommand,
     terminalExitCode,
+    spilloverReference: spillover ?? undefined,
     stdout: hasSplitStreams ? stdout || undefined : undefined,
     status,
     subtitle,

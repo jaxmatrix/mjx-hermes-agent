@@ -25,7 +25,8 @@ import { $activeTreeGroup, $layoutTree, noteActiveTreeGroup } from '@/components
 import { DRAFT_TILE_KEY, isChatPaneId, sessionTilePaneId, WORKSPACE_PANE_ID } from '@/lib/pane-ids'
 import { navigateTo } from '@/lib/route-nav'
 import { $currentCwd } from '@/store/chat'
-import { $projectScope, $projectTree, ALL_PROJECTS } from '@/store/projects'
+import { $projectScope, $projectTree } from '@/store/project-scope'
+import { ALL_PROJECTS } from '@/store/projects'
 import { $sessionKeyTabs } from '@/store/session-key-states'
 import { $activeStoredSessionId } from '@/store/session-lifecycle'
 

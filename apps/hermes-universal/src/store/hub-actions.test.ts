@@ -9,6 +9,9 @@ const getActionStatus = vi.fn()
 const installSkillFromHub = vi.fn()
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getActionStatus: (...args: unknown[]) => getActionStatus(...args),
   installSkillFromHub: (...args: unknown[]) => installSkillFromHub(...args),
   uninstallSkillFromHub: vi.fn(),

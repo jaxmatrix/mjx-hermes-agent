@@ -136,7 +136,7 @@ function ScreenHeroContent({ bot, meta }: { bot: RosterRow; meta?: BotMeta | nul
   return (
     <button
       aria-label={`${t.screen.portalTitle}: ${caption}`}
-      className={`group relative block w-full overflow-hidden rounded-lg border border-(--ui-stroke-secondary) bg-black text-left ${TONE_RING[tone] ?? ''}`}
+      className={`group relative block w-full overflow-hidden rounded-lg border border-(--ui-stroke-secondary) bg-black text-start ${TONE_RING[tone] ?? ''}`}
       onClick={() => openBotScreen(bot, meta ?? null)}
       ref={boxRef}
       style={{ aspectRatio: '16 / 10' }}

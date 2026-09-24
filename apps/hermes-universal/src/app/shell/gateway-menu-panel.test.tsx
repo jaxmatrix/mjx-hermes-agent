@@ -11,6 +11,9 @@ vi.mock('@/components/ui/tooltip', () => ({
 }))
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getLogs: vi.fn().mockResolvedValue({ lines: [] })
 }))
 

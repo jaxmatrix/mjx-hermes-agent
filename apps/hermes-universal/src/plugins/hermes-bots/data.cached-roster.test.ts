@@ -24,7 +24,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
 
   return {
     atom,
-    host: { state: { connectionId: { get: () => connection.id }, profile: { get: () => 'default' } } },
+    universalHost: { state: { connectionId: { get: () => connection.id }, profile: { get: () => 'default' } } },
     queryClient: {
       getQueriesData: ({ queryKey }: { queryKey: unknown[] }) =>
         [...cache.values()]

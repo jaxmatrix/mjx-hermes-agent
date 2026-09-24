@@ -26,7 +26,7 @@ export const BackgroundResult: FC<BackgroundResultProps> = ({ text, report, proc
 
   return (
     <div
-      className="flex w-full min-w-0 flex-col self-start py-1 pl-(--message-text-indent)"
+      className="flex w-full min-w-0 flex-col self-start py-1 ps-(--message-text-indent)"
       data-slot="aui_background-result"
     >
       <div data-conversation-scaffold="">
@@ -143,7 +143,7 @@ export const SystemMessage: FC = () => {
       <MessagePrimitive.Root
         className={cn(
           'w-[60%] max-w-[44rem] self-center px-2 py-0.5 text-[0.6875rem] leading-5 text-muted-foreground/60',
-          multiline ? 'text-left' : 'text-center'
+          multiline ? 'text-start' : 'text-center'
         )}
         data-role="system"
         data-slot="aui_system-message-root"
@@ -157,7 +157,7 @@ export const SystemMessage: FC = () => {
             <LinkifiedText className="whitespace-pre-wrap" explicitOnly pretty={false} text={output} />
           </>
         )}{' '}
-        <MessageTimelineTimestamp className={cn(multiline ? 'mt-0.5 block' : 'ml-1.5')} />
+        <MessageTimelineTimestamp className={cn(multiline ? 'mt-0.5 block' : 'ms-1.5')} />
       </MessagePrimitive.Root>
     )
   }
@@ -168,13 +168,13 @@ export const SystemMessage: FC = () => {
     <MessagePrimitive.Root
       className={cn(
         'w-[60%] max-w-[44rem] self-center px-2 py-0.5 text-[0.6875rem] leading-5 text-muted-foreground/55',
-        multiline ? 'text-left' : 'text-center'
+        multiline ? 'text-start' : 'text-center'
       )}
       data-role="system"
       data-slot="aui_system-message-root"
     >
       <LinkifiedText className="whitespace-pre-wrap" explicitOnly pretty={false} text={text} />{' '}
-      <MessageTimelineTimestamp className={cn(multiline ? 'mt-0.5 block' : 'ml-1.5')} />
+      <MessageTimelineTimestamp className={cn(multiline ? 'mt-0.5 block' : 'ms-1.5')} />
     </MessagePrimitive.Root>
   )
 }

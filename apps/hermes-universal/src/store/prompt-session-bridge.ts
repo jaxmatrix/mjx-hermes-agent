@@ -7,13 +7,18 @@
  * module is listed in `sync/protected.txt`.
  *
  * Mapping:
- *   $approval / setSessionApproval / clearSessionApproval  → prompts $approvalRequest / set / clear
+ *   $approval / setSessionApproval / clearSessionApproval  → prompts queues / set / clear
  *   $clarify  / setSessionClarify  / clearSessionClarify   → clarify store
  *   $sudo / $secret likewise
  *   setSessionMcpSetup / clearSessionMcpSetup              → mcp-setup store
+ *
+ * Active-session views key on `$activeSessionKey` (unified map), not desktop's
+ * `$activeSessionId` atom — on universal that atom is the STORED id alias, while
+ * the event router keys prompts by the RUNTIME map key.
  */
+import { computed } from '@/store/atom'
 import {
-  $clarifyRequest,
+  $clarifyRequests,
   type ClarifyRequest,
   clearClarifyRequest,
   sessionClarifyRequest,
@@ -26,9 +31,9 @@ import {
   setMcpSetupRequest
 } from '@/store/mcp-setup'
 import {
-  $approvalRequest,
-  $secretRequest,
-  $sudoRequest,
+  $approvalRequests,
+  $secretRequests,
+  $sudoRequests,
   type ApprovalRequest,
   clearApprovalRequest,
   clearSecretRequest,
@@ -42,6 +47,7 @@ import {
   setSudoRequest,
   type SudoRequest
 } from '@/store/prompts'
+import { $activeSessionKey } from '@/store/session-state-types'
 
 export type { ApprovalRequest, ClarifyRequest, McpSetupRequest, SecretRequest, SudoRequest }
 export {
@@ -52,10 +58,29 @@ export {
   sessionSudoRequest
 }
 
-export const $approval = $approvalRequest
-export const $clarify = $clarifyRequest
-export const $secret = $secretRequest
-export const $sudo = $sudoRequest
+export const $approval = computed(
+  [$approvalRequests, $activeSessionKey],
+  (all, key) => all[key] ?? null
+)
+export const $clarify = computed(
+  [$clarifyRequests, $activeSessionKey],
+  (requests, key) => requests[key] ?? null
+)
+export const $secret = computed(
+  [$secretRequests, $activeSessionKey],
+  (all, key) => all[key] ?? null
+)
+export const $sudo = computed(
+  [$sudoRequests, $activeSessionKey],
+  (all, key) => all[key] ?? null
+)
+
+/** Active-session parked-on-user flag — same sources as prompts' sessionAwaitingInput. */
+export const $activeSessionAwaitingInput = computed(
+  [$clarifyRequests, $approvalRequests, $sudoRequests, $secretRequests, $activeSessionKey],
+  (clarify, approvals, sudos, secrets, key) =>
+    Boolean(clarify[key] || approvals[key] || sudos[key] || secrets[key])
+)
 
 export function setSessionApproval(
   key: string,

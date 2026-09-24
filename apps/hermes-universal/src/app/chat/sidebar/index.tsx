@@ -34,8 +34,8 @@ import { $cronJobs } from '@/store/cron'
 import { $interfaceMode, $showsAdvancedChrome, shownInMode } from '@/store/interface-mode'
 import { $bindings } from '@/store/keybinds'
 import { $dismissedAutoProjectIds, $panesFlipped, $pinnedSessionIds, $sidebarCardRows, $sidebarCronOpen, $sidebarFiltersActive, $sidebarGrouping, $sidebarMessagingOpenIds, $sidebarOrdering, $sidebarPinsOpen, $sidebarPrDataWanted, $sidebarPrFilter, $sidebarProfileFilter, $sidebarProjectFilter, $sidebarProjectOrderIds, $sidebarRecentsOpen, $sidebarSessionOrderIds, $sidebarSessionOrderManual, $sidebarShowAllSessions, $sidebarShowArchived, $sidebarStatusFilter, $sidebarWorkspaceOrderIds, $sidebarWorkspaceParentOrderIds, filterVisibleProjects, pinSession, setPinnedSessionOrder, setSidebarCronOpen, setSidebarPinsOpen, setSidebarProjectOrderIds, setSidebarRecentsOpen, setSidebarSessionOrderIds, setSidebarSessionOrderManual, setSidebarWorkspaceOrderIds, setSidebarWorkspaceParentOrderIds, SIDEBAR_SESSIONS_PAGE_SIZE, toggleSidebarMessagingOpen, unpinSession } from '@/store/layout'
-import { SESSION_SEARCH_FOCUS_EVENT } from '@/store/pane-geometry'
 import { notifyError } from '@/store/notifications'
+import { SESSION_SEARCH_FOCUS_EVENT } from '@/store/pane-geometry'
 import {
   $newChatProfile,
   $profiles,
@@ -1138,7 +1138,7 @@ export function ChatSidebar({
     [currentCwd]
   )
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (!inProject || !enteredProject) {
       lastProjectCwdSyncRef.current = null
@@ -1510,7 +1510,7 @@ export function ChatSidebar({
         // the narrow overlay renders the live instance) — the sidebar always
         // paints itself fully.
         'relative h-full min-w-0 overflow-hidden border-t-0 border-b-0 text-foreground transition-none',
-        panesFlipped ? 'border-l border-r-0' : 'border-r border-l-0',
+        panesFlipped ? 'border-s border-e-0' : 'border-e border-s-0',
         'border-(--sidebar-edge-border) bg-(--ui-sidebar-surface-background) opacity-100'
       )}
       collapsible="none"
@@ -1545,7 +1545,7 @@ export function ChatSidebar({
                       // resolved region has been observed to swallow clicks on the
                       // top rows. Same carve-out as USER_BUBBLE_BASE_CLASS in
                       // thread.tsx.
-                      'flex h-7 w-full justify-start gap-2 rounded-md border border-transparent px-2 text-left text-[0.8125rem] font-medium text-(--ui-text-secondary) transition-colors duration-100 ease-out [-webkit-app-region:no-drag] hover:bg-(--ui-control-hover-background) hover:text-foreground hover:transition-none',
+                      'flex h-7 w-full justify-start gap-2 rounded-md border border-transparent px-2 text-start text-[0.8125rem] font-medium text-(--ui-text-secondary) transition-colors duration-100 ease-out [-webkit-app-region:no-drag] hover:bg-(--ui-control-hover-background) hover:text-foreground hover:transition-none',
                       active &&
                         'border-(--ui-stroke-tertiary) bg-(--ui-control-active-background) text-foreground shadow-none hover:border-(--ui-stroke-tertiary)!',
                       !isInteractive &&
@@ -1610,7 +1610,7 @@ export function ChatSidebar({
                     </span>
                     {isNewSession && (
                       <KbdGroup
-                        className={cn('ml-auto opacity-55', newSessionKbdFlash && 'opacity-100!')}
+                        className={cn('ms-auto opacity-55', newSessionKbdFlash && 'opacity-100!')}
                         keys={newSessionKbd}
                         size="sm"
                       />

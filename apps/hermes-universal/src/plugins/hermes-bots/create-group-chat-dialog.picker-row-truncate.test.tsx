@@ -24,7 +24,7 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => {
 
   return {
     ...original,
-    host: {
+    universalHost: {
       ...original.host,
       connections: vi.fn(async () => []),
       notify: vi.fn(),

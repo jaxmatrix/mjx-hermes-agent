@@ -5,22 +5,30 @@ import { ConnectScreen } from '@/app/connect-screen'
 import { GatewayConnectingScreen } from '@/app/gateway/gateway-connecting-screen'
 import { ModelPickerOverlay } from '@/app/model-picker-overlay'
 import { ModelVisibilityOverlay } from '@/app/model-visibility-overlay'
-import { OnboardingScreen } from '@/app/onboarding/onboarding-screen'
 import { FloatingPet } from '@/app/pet/floating-pet'
-import { ProviderConnectOverlay } from '@/app/settings/provider-connect-overlay'
 import { StarmapView } from '@/app/starmap'
 import { NotificationStack } from '@/components/notifications'
+import { DesktopOnboardingOverlay } from '@/components/onboarding'
 import { ResourcePressureBanner } from '@/components/resource-pressure-banner'
 import { useKeyboardInset } from '@/hooks/use-keyboard-inset'
 import { useStore } from '@/store/atom'
 import { $connectionPhase, $hasConnected } from '@/store/connection'
+import { requestGateway } from '@/store/gateway-client'
 import { $restoring } from '@/store/gateway-restore'
 import { $gatewaySwitching } from '@/store/gateway-switch'
+import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
 import { startLiveSessionSync } from '@/store/live-session-status'
-import { $onboardingActive, checkConfigured } from '@/store/onboarding'
-import { syncPetInfo } from '@/store/pet-gallery'
+import { startNewSession, startNewSessionTab } from '@/store/new-session'
+import { $activeGatewayProfile } from '@/store/profile'
+import {
+  $selectedStoredSessionId,
+  $sessions,
+  sessionMatchesStoredId,
+  sessionPinId
+} from '@/store/session'
+import { archiveSessionLocal } from '@/store/session-lifecycle'
 import { openAppRoute } from '@/store/windows'
-import { bumpZoom, initZoom, setZoomPercent } from '@/store/zoom'
+import { bumpZoom, initZoom, setZoomPercent } from '@/store/zoom-universal'
 
 import { CommandPalette } from './command-palette'
 import { useKeybinds } from './hooks/use-keybinds'
@@ -34,26 +42,26 @@ import { SidebarProvider } from './shell/sidebar'
 // The PHONE's main-window root (`app.tsx` sends the desktop main window to
 // desktop's own root instead). Connected-guard + routing: until a gateway
 // connection is ready we show the full-screen ConnectScreen (no nav). Once ready,
-// the first-run onboarding wizard shows if no provider is configured; otherwise
+// desktop's onboarding overlay owns first-run / manual provider setup; otherwise
 // the touch shell hosts the routed views. The toast stack (portaled to <body>)
 // floats over all.
 export function MobileController() {
   const phase = useStore($connectionPhase)
-  const onboarding = useStore($onboardingActive)
   const restoring = useStore($restoring)
   const hasConnected = useStore($hasConnected)
   const switching = useStore($gatewaySwitching)
+  const activeProfile = useStore($activeGatewayProfile)
 
   // Publishes --visual-viewport-{height,top} / --keyboard-inset /
   // data-keyboard-open for the WHOLE mobile app, not just the shells.
   // `html.is-mobile #root` is sized from those vars (styles.css), and
-  // ConnectScreen / GatewayConnectingScreen / OnboardingScreen all render OUTSIDE
-  // MobileShell below while holding focusable fields — so measuring only inside
-  // the shells left those screens on the layout viewport, and a disconnect while
-  // typing (which swaps the shell for the connecting screen) stripped the vars
-  // out from under #root mid-keyboard. Inert off-mobile: desktop reports
-  // offsetTop 0 and a visual viewport the size of the layout one. The hook
-  // refcounts ONE module-level subscription, so the shells' own calls stay free.
+  // ConnectScreen / GatewayConnectingScreen all render OUTSIDE MobileShell
+  // below while holding focusable fields — so measuring only inside the shells
+  // left those screens on the layout viewport, and a disconnect while typing
+  // (which swaps the shell for the connecting screen) stripped the vars out
+  // from under #root mid-keyboard. Inert off-mobile: desktop reports offsetTop
+  // 0 and a visual viewport the size of the layout one. The hook refcounts ONE
+  // module-level subscription, so the shells' own calls stay free.
   useKeyboardInset()
 
   // UI scale: apply the persisted zoom once, and wire Cmd/Ctrl +/-/0 shortcuts.
@@ -83,15 +91,6 @@ export function MobileController() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // On reaching a live connection, check whether a provider is configured and
-  // pull the active pet's sprite so the in-app pet can render in chat.
-  useEffect(() => {
-    if (phase === 'ready') {
-      void checkConfigured()
-      void syncPetInfo()
-    }
-  }, [phase])
-
   // Live-session rehydration + the coalesced session-list refresh
   // (store/live-session-status). Started HERE, not in app/contrib/controller:
   // that module is also imported by the tile and HUD satellite windows, and a
@@ -106,7 +105,7 @@ export function MobileController() {
   // instead of bouncing to the connecting screen. Only once we've been connected:
   // on a first run the connect screen owns the dial and must keep it.
   const live = phase === 'ready' || (switching && hasConnected)
-  const connected = live && !onboarding
+  const connected = live
 
   // Which windowable surface (settings / command-center / agents / cron / …) the
   // route names, and the "return to where you were" path — desktop's
@@ -130,7 +129,32 @@ export function MobileController() {
   // ⌘G/⌘N and ⌘K listeners this app used to carry. Mounted unconditionally so
   // the keys work on the connect / onboarding screens too.
   useKeybinds({
-    toggleCommandCenter: () => (commandCenterOpen ? closeOverlayToPreviousRoute() : openAppRoute(COMMAND_CENTER_ROUTE))
+    archiveSelectedSession: () => {
+      const sessionId = $selectedStoredSessionId.get()
+
+      if (sessionId) {
+        void archiveSessionLocal(sessionId)
+      }
+    },
+    openNewSessionTab: () => startNewSessionTab(),
+    startFreshSession: () => startNewSession(),
+    toggleCommandCenter: () => (commandCenterOpen ? closeOverlayToPreviousRoute() : openAppRoute(COMMAND_CENTER_ROUTE)),
+    toggleSelectedPin: () => {
+      const sessionId = $selectedStoredSessionId.get()
+
+      if (!sessionId) {
+        return
+      }
+
+      const session = $sessions.get().find(s => sessionMatchesStoredId(s, sessionId))
+      const pinId = session ? sessionPinId(session) : sessionId
+
+      if ($pinnedSessionIds.get().includes(pinId)) {
+        unpinSession(pinId)
+      } else {
+        pinSession(pinId)
+      }
+    }
   })
 
   // Only the Gateway settings page is usable while disconnected (it's the
@@ -172,13 +196,6 @@ export function MobileController() {
         ) : (
           <ConnectScreen />
         )}
-      </>
-    )
-  } else if (onboarding) {
-    content = (
-      <>
-        <NotificationStack />
-        <OnboardingScreen />
       </>
     )
   } else {
@@ -242,10 +259,14 @@ export function MobileController() {
         )}
         {/* Star map overlay — the radial "what Hermes has learned" map. */}
         {connected && starmapOpen && <StarmapView onClose={closeOverlayToPreviousRoute} />}
-        {/* Provider-connect overlay — a focused per-provider sign-in card that
-            floats OVER the settings page (z-70) without unmounting it. Opened from
-            Providers → Accounts; gated on $connectProvider, not $onboardingActive. */}
-        {connected && <ProviderConnectOverlay />}
+        {/* First-run / manual provider setup — same overlay desktop wiring mounts. */}
+        {connected && (
+          <DesktopOnboardingOverlay
+            enabled
+            profile={activeProfile}
+            requestGateway={requestGateway}
+          />
+        )}
         {/* Edit-models ("model visibility") dialog — opened from the composer's
             model menu ("Edit models"). Self-gates on $modelVisibilityOpen +
             gateway-open; "Add provider…" routes to Providers → Accounts. */}

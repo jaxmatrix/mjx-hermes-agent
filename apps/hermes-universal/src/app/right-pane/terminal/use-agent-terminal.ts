@@ -42,7 +42,7 @@ export function useAgentTerminal({ active, id, procId }: { active: boolean; id: 
     return { ...base, background: surface, cursorAccent: surface }
   }
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     const host = hostRef.current
 
@@ -198,7 +198,7 @@ export function useAgentTerminal({ active, id, procId }: { active: boolean; id: 
 
   // Keep inactive agent terminals mounted for their backlog, but do not observe
   // or fit them until they become the visible tab.
-  // eslint-disable-next-line no-restricted-syntax -- lifecycle flag prevents a duplicate first-mount fit
+   
   useEffect(() => {
     if (!active) {
       initialActiveFitRef.current = false

@@ -48,6 +48,7 @@ import { isOnboardingEnabled } from '@/lib/onboarding-enabled'
 import { toolResultRecord } from '@/lib/tool-result-metadata'
 import { useEnterAnimation } from '@/lib/use-enter-animation'
 import { cn } from '@/lib/utils'
+import { previewFile } from '@/store/preview-open'
 import { recordPreviewArtifact } from '@/store/preview-status'
 import { sessionApprovalRequest } from '@/store/prompts'
 import { $toolInlineDiff } from '@/store/tool-diffs'
@@ -472,6 +473,7 @@ function ToolEntry({ part }: ToolEntryProps) {
   const detailMatchesTitle = useMemo(() => looksRedundant(view.title, view.detail), [view.title, view.detail])
 
   const showDetail =
+    !view.spilloverReference &&
     (!view.inlineDiff || (hideCodeDiffs && view.status === 'error')) &&
     (Boolean(view.stdout || view.stderr) ||
       (view.status === 'error' && Boolean(detailSections.summary || detailSections.body)) ||
@@ -496,6 +498,7 @@ function ToolEntry({ part }: ToolEntryProps) {
       view.stderr ||
       view.terminalCommand ||
       view.terminalExitCode !== undefined ||
+      view.spilloverReference ||
       showPayload
     )
 
@@ -537,7 +540,7 @@ function ToolEntry({ part }: ToolEntryProps) {
         'size-5 rounded-md text-(--ui-text-tertiary) transition-opacity hover:text-(--ui-text-primary) hover:opacity-100',
         open
           ? 'opacity-80'
-          : 'opacity-0 group-hover/disclosure-row:opacity-80 group-focus-within/disclosure-row:opacity-80'
+          : 'opacity-0 coarse:opacity-100 group-hover/disclosure-row:opacity-80 group-focus-within/disclosure-row:opacity-80'
       )}
       onClick={event => {
         event.stopPropagation()
@@ -637,7 +640,7 @@ function ToolEntry({ part }: ToolEntryProps) {
           {copyAction.text && (
             <CopyButton
               appearance="inline"
-              className="absolute right-4 top-1.5 z-10 h-5 gap-0 rounded-md px-1 opacity-5 transition-opacity group-hover/tool-block:opacity-100 hover:opacity-100 focus-visible:opacity-100"
+              className="absolute end-4 top-1.5 z-10 h-5 gap-0 rounded-md px-1 opacity-5 transition-opacity group-hover/tool-block:opacity-100 hover:opacity-100 focus-visible:opacity-100"
               iconClassName="size-3"
               label={copyAction.label}
               showLabel={false}
@@ -649,6 +652,7 @@ function ToolEntry({ part }: ToolEntryProps) {
           {part.toolName === 'terminal' && toolViewMode !== 'technical' && (
             <TerminalTranscript command={view.terminalCommand} exitCode={view.terminalExitCode} />
           )}
+          {view.spilloverReference && <SpilloverReference reference={view.spilloverReference} />}
           {view.imageUrl && (
             <div className="max-w-72 overflow-hidden rounded-[0.25rem] border border-(--ui-stroke-tertiary)">
               <MarkdownImage alt={copy.outputAlt} className="h-auto w-full object-cover" src={view.imageUrl} />
@@ -750,6 +754,36 @@ function ToolEntry({ part }: ToolEntryProps) {
 interface TerminalTranscriptProps {
   command?: string
   exitCode?: number
+}
+
+function SpilloverReference({
+  reference
+}: {
+  reference: { path: string; preview: string; sizeLabel?: string }
+}) {
+  return (
+    <div className="max-w-full space-y-1 text-xs leading-relaxed text-(--ui-text-secondary)">
+      <div className="font-mono text-[0.7rem] wrap-anywhere">{reference.path}</div>
+      {reference.sizeLabel && <div>{reference.sizeLabel}</div>}
+      {reference.preview && (
+        <pre className="max-h-56 overflow-auto whitespace-pre-wrap wrap-anywhere font-mono text-[0.7rem] leading-[1.55]">
+          {reference.preview}
+        </pre>
+      )}
+      <Button
+        className="h-7 px-2 text-xs"
+        onClick={event => {
+          event.stopPropagation()
+          previewFile(reference.path)
+        }}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        Open
+      </Button>
+    </div>
+  )
 }
 
 function TerminalTranscript({ command, exitCode }: TerminalTranscriptProps) {

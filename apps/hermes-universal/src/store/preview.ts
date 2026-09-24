@@ -301,8 +301,12 @@ function activePreviewTab(): PreviewTab | null {
 }
 
 // A restored active id whose tab didn't survive validation would leave the rail
-// pointing at nothing.
-selectRightRailTab(activePreviewTab()?.id ?? null)
+// pointing at nothing. Deferred: `session-states` → `preview` → `layout` →
+// `session-dot-state` → `session-states` can re-enter this module before
+// `$rightRailActiveTabId` exists.
+queueMicrotask(() => {
+  selectRightRailTab(activePreviewTab()?.id ?? null)
+})
 
 /** The target the rail is currently showing, or null when it has no tabs. */
 export const $previewTarget = computed(

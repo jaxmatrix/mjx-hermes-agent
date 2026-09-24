@@ -24,6 +24,9 @@ import { deferred } from '../../../test/deferred'
 import { useHermesConfig } from './use-hermes-config'
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getHermesConfig: vi.fn(),
   getHermesConfigDefaults: vi.fn().mockResolvedValue({})
 }))

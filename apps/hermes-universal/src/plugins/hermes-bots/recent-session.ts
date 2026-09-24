@@ -13,7 +13,7 @@
  */
 
 import * as sdk from '@hermes/plugin-sdk'
-import { haptic, host } from '@hermes/plugin-sdk'
+import { haptic, universalHost as host } from '@hermes/plugin-sdk'
 
 import { saveSelectedRosterBot } from './bot-state'
 import { prepareBotSource } from './canonical-chat'

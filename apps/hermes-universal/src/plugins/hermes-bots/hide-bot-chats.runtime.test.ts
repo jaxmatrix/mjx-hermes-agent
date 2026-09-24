@@ -24,7 +24,7 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => {
 
   return {
     ...sdk,
-    host: {
+    universalHost: {
       ...sdk.host,
       listPersistedSessions,
       onEvent: vi.fn(() => () => undefined),

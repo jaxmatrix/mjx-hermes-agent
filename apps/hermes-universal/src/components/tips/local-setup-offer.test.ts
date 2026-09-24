@@ -11,6 +11,9 @@ const getLocalModelsStatus = vi.fn()
 const getLocalCatalog = vi.fn()
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getLocalCatalog: (...args: unknown[]) => getLocalCatalog(...args),
   getLocalModelsStatus: (...args: unknown[]) => getLocalModelsStatus(...args)
 }))

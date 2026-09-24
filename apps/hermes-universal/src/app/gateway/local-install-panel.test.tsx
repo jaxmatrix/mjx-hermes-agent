@@ -59,7 +59,7 @@ describe('when Hermes is already installed', () => {
   it('shows the install and offers Continue', async () => {
     renderPanel()
 
-    expect(await screen.findByText('Hermes is installed')).toBeInTheDocument()
+    expect(await screen.findByText('Hermes found')).toBeInTheDocument()
     expect(screen.getByText('/usr/local/bin/hermes')).toBeInTheDocument()
     expect(screen.getByText('Version hermes 1.4.0')).toBeInTheDocument()
 
@@ -69,12 +69,12 @@ describe('when Hermes is already installed', () => {
 
   it('does not offer to install anything', async () => {
     renderPanel()
-    await screen.findByText('Hermes is installed')
+    await screen.findByText('Hermes found')
 
     // The found state is Continue-only: offering a reinstall here is how a
     // working install gets clobbered by accident.
-    expect(screen.queryByText('NousResearch Hermes Agent')).not.toBeInTheDocument()
-    expect(screen.queryByText('MJX Fork of Hermes Agent')).not.toBeInTheDocument()
+    expect(screen.queryByText('Official release')).not.toBeInTheDocument()
+    expect(screen.queryByText('My fork')).not.toBeInTheDocument()
   })
 })
 
@@ -86,37 +86,35 @@ describe('when nothing is installed', () => {
   it('says so and offers both repos', async () => {
     renderPanel()
 
-    expect(await screen.findByText('No local installation found')).toBeInTheDocument()
-    expect(screen.getByText('NousResearch Hermes Agent')).toBeInTheDocument()
-    expect(screen.getByText('MJX Fork of Hermes Agent')).toBeInTheDocument()
+    expect(await screen.findByText('No local install')).toBeInTheDocument()
+    expect(screen.getByText('Official release')).toBeInTheDocument()
+    expect(screen.getByText('My fork')).toBeInTheDocument()
   })
 
   it('describes the fork when it is picked', async () => {
     renderPanel()
-    await screen.findByText('No local installation found')
+    await screen.findByText('No local install')
 
-    fireEvent.click(screen.getByText('MJX Fork of Hermes Agent'))
+    fireEvent.click(screen.getByText('My fork'))
 
-    expect(
-      await screen.findByText('A fork of Hermes Agent built for testing experimental features in Hermes Agent.')
-    ).toBeInTheDocument()
+    expect(await screen.findByText('Install from your fork of the repository.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Install' })).toBeInTheDocument()
   })
 
   it('describes upstream when it is picked', async () => {
     renderPanel()
-    await screen.findByText('No local installation found')
+    await screen.findByText('No local install')
 
-    fireEvent.click(screen.getByText('NousResearch Hermes Agent'))
+    fireEvent.click(screen.getByText('Official release'))
 
-    expect(await screen.findByText('The official Hermes Agent from NousResearch.')).toBeInTheDocument()
+    expect(await screen.findByText('Install the official Hermes release.')).toBeInTheDocument()
   })
 
   it('renders no Back of its own — the wizard header owns the only one', async () => {
     renderPanel()
-    await screen.findByText('No local installation found')
+    await screen.findByText('No local install')
 
-    fireEvent.click(screen.getByText('MJX Fork of Hermes Agent'))
+    fireEvent.click(screen.getByText('My fork'))
     await screen.findByRole('button', { name: 'Install' })
 
     // A second Back stacked under the header's is what this replaced; the
@@ -132,7 +130,7 @@ describe('during and after an install', () => {
 
   it('renders the stage ladder with the installer’s own titles', async () => {
     renderPanel()
-    await screen.findByText('No local installation found')
+    await screen.findByText('No local install')
 
     emit({
       protocolVersion: 1,
@@ -151,7 +149,7 @@ describe('during and after an install', () => {
 
   it('shows the failure with the log already open', async () => {
     renderPanel()
-    await screen.findByText('No local installation found')
+    await screen.findByText('No local install')
 
     emit(
       { protocolVersion: 1, stages: [{ name: 'venv', title: 'Create venv' }], type: 'manifest' },
@@ -168,14 +166,14 @@ describe('during and after an install', () => {
 
   it('offers Done on the placeholder setup screen', async () => {
     renderPanel()
-    await screen.findByText('No local installation found')
+    await screen.findByText('No local install')
 
     emit(
       { protocolVersion: 1, stages: [{ name: 'venv', title: 'Create venv' }], type: 'manifest' },
       { installRoot: '/home/u/.hermes/hermes-agent', type: 'complete' }
     )
 
-    expect(await screen.findByText('Hermes is ready')).toBeInTheDocument()
+    expect(await screen.findByText('Install complete')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Done' }))
     expect(onContinue).toHaveBeenCalled()
@@ -199,9 +197,9 @@ describe('during and after an install', () => {
     })
 
     renderPanel()
-    await screen.findByText('No local installation found')
+    await screen.findByText('No local install')
 
-    fireEvent.click(screen.getByText('MJX Fork of Hermes Agent'))
+    fireEvent.click(screen.getByText('My fork'))
     fireEvent.click(await screen.findByRole('button', { name: 'Install' }))
 
     const start = await waitFor(() => {

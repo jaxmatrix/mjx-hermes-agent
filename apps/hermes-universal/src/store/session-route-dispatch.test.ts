@@ -18,12 +18,15 @@ vi.mock('@/store/gateway-client', () => ({
 }))
 
 vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   // `store/profiles.ts` calls this at module scope; the ambient route reads
   // `store/profile` → `store/profiles`.
   setApiRequestProfile: vi.fn()
 }))
 
 const { $gatewaySwitching } = await import('@/store/gateway-switch')
+const { $activeGatewayProfile } = await import('@/store/profile')
 const { $activeProfile } = await import('@/store/profiles')
 
 const {
@@ -47,6 +50,7 @@ beforeEach(() => {
   $gatewayState.set('open')
   $gatewaySwitching.set(false)
   $activeProfile.set(null)
+  $activeGatewayProfile.set('default')
   owner = () => undefined
   __resetSessionRequestRouter()
 })
@@ -84,7 +88,7 @@ describe('requestForSession', () => {
   // every backend; a soft switch landing in that window changes which route is
   // live. Deciding before the await sends the resume to the wrong one.
   it('honours a route change that happens between resolving the owner and dispatching', async () => {
-    $activeProfile.set('work')
+    $activeGatewayProfile.set('work')
 
     let release: (value: string) => void = () => {}
 
@@ -97,7 +101,7 @@ describe('requestForSession', () => {
 
     // The user switches profile while the probe is still out. The owner is
     // 'work', which WAS the ambient route when the call started.
-    $activeProfile.set(null)
+    $activeGatewayProfile.set('default')
     release('work')
     await inflight
 
@@ -121,7 +125,7 @@ describe('requestForSession', () => {
   // Rule 34: this error reaches toasts and spans, so it must carry a profile
   // scope key and never a gateway URL.
   it('carries the scope key and no URL', async () => {
-    $activeProfile.set('work')
+    $activeGatewayProfile.set('work')
     $gatewayState.set('closed')
 
     const error = (await requestForSession('s1', 'session.resume').catch((e: unknown) => e)) as InstanceType<
@@ -163,7 +167,7 @@ describe('$activeSessionRoute', () => {
       scopeProfile: false
     })
 
-    $activeProfile.set('work')
+    $activeGatewayProfile.set('work')
     expect($activeSessionRoute.get().profile).toBe('work')
     // T26's other half: the primary connection's scope key IS the bare profile.
     expect($activeSessionRoute.get().scopeKey).toBe('work')

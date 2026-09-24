@@ -16,7 +16,7 @@ const { openRosterBot, openSession, prepareBotSource } = vi.hoisted(() => ({
 vi.mock('@hermes/plugin-sdk', () => ({
   BOT_CHAT_SESSION_HYDRATION_TIMEOUT_MS: 60_000,
   haptic: () => undefined,
-  host: { openSession, notifyError: vi.fn() }
+  universalHost: { openSession, notifyError: vi.fn() }
 }))
 vi.mock('./bot-state', () => ({ saveSelectedRosterBot: () => undefined }))
 vi.mock('./canonical-chat', () => ({ prepareBotSource }))

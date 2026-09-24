@@ -3702,6 +3702,8 @@ export const ja = defineLocale({
     stopFailed: '停止に失敗しました',
     regenerateFailed: '再生成に失敗しました',
     editFailed: '編集に失敗しました',
+    restoreMissing: '復元するメッセージが見つかりません。',
+    restoreEmpty: 'そのメッセージには復元するテキストがありません。',
     editTurnUnavailable: 'このターンはサーバー履歴にありません（圧縮で削除された可能性があります）。',
     resumeFailed: '再開に失敗しました',
     readOnlyTranscriptTitle: '読み取り専用で開きました',

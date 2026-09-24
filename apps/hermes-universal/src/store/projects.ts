@@ -595,9 +595,12 @@ export async function moveSessionToProject(
     throw new Error(translateNow('sidebar.projects.moveNoFolder'))
   }
 
+  const { liveSessionIdFor } = await import('@/store/session-lookup')
+  const sessionKey = liveSessionIdFor(sessionId)
+
   const res = await gatewayRequest<WorkspaceMovePayload>('session.workspace.move', {
     cwd,
-    session_key: sessionId,
+    session_key: sessionKey,
     ...(profile ? { profile } : {})
   })
 

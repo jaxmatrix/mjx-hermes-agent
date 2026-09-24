@@ -84,11 +84,11 @@ function PopoverContent({
           <span className="relative block h-[7px] w-4 overflow-visible">
             <span
               className={cn(
-                'absolute top-0 left-1/2 size-[11px] -translate-x-1/2 -translate-y-1/2 rotate-45 bg-(--popover-surface)',
+                'absolute top-0 start-1/2 size-[11px] -translate-x-1/2 -translate-y-1/2 rotate-45 bg-(--popover-surface)',
                 variant === 'accent'
                   ? // Borderless and opaque: nothing to seam, nothing to blur.
                     'rounded-[1px]'
-                  : 'border-r border-b border-(--ui-stroke-secondary) backdrop-blur-md'
+                  : 'border-e border-b border-(--ui-stroke-secondary) backdrop-blur-md'
               )}
             />
           </span>

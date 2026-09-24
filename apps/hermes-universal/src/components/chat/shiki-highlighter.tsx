@@ -151,7 +151,7 @@ export const SyntaxHighlighter: FC<HermesSyntaxHighlighterProps> = ({
     <CodeCard data-streaming={defer ? 'true' : undefined}>
       <CopyButton
         appearance="inline"
-        className="absolute right-4 top-1.5 z-10 h-5 gap-0 rounded-md px-1 opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100"
+        className="absolute end-4 top-1.5 z-10 h-5 gap-0 rounded-md px-1 opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100"
         iconClassName="size-3"
         label={t.assistant.tool.copyCode}
         showLabel={false}
@@ -159,7 +159,13 @@ export const SyntaxHighlighter: FC<HermesSyntaxHighlighterProps> = ({
       />
       <CodeCardBody className="[&_pre]:px-3 [&_pre]:py-2.5">
         <ExpandableBlock>
-          <Pre className="aui-shiki m-0 overflow-hidden bg-transparent p-0">
+          <Pre
+            className="aui-shiki m-0 overflow-hidden bg-transparent p-0"
+            // Inline beats typography's pale `prose-pre` color — same contract
+            // CodeFence pins with FENCE_PRE_STYLE. A class alone loses to the
+            // prose layer; an inline style does not.
+            style={{ background: 'transparent', color: 'inherit' }}
+          >
             {plain ? (
               <PlainCode code={content} />
             ) : (

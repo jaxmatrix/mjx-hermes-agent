@@ -13,7 +13,14 @@
  * text — whether anybody actually answered.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type * as ModWindows from '@/store/windows'
+// Import through the same specifier production uses (`vite.config` aliases this
+// under VITEST). `@/test/tauri-event` is the same file on disk but a second
+// module instance — installing the mock there would leave production's emit as
+// the default no-op.
+import { installTauriEventMock, resetTauriEventMock, type TauriEventMock } from '@/test/tauri-event'
 
 const bus = vi.hoisted(() => {
   const listeners = new Map<string, Set<(payload: unknown) => void>>()
@@ -38,14 +45,13 @@ const bus = vi.hoisted(() => {
       return () => forEvent.delete(wrapped)
     }),
     reset() {
-      listeners.clear()
+      // Keep STASH/FLUSH handlers from `ensureTransport()` — they register once
+      // per module load and every case delivers through them.
       bus.emit.mockClear()
       bus.listen.mockClear()
     }
   }
 })
-
-vi.mock('@tauri-apps/api/event', () => ({ emit: bus.emit, listen: bus.listen }))
 
 // The bus only exists under a real runtime, and this whole file is about what
 // happens there — off Tauri every broadcast in it is a deliberate no-op.
@@ -62,10 +68,21 @@ vi.mock('@/lib/platform', async importOriginal => ({
  *  `tile: null` exactly like it too. */
 const here = vi.hoisted(() => ({ surface: null as null | string, tile: null as null | string }))
 
-vi.mock('@/store/windows', () => ({
-  addressesThisWindow: (address: { surface: null | string; tile: null | string }) =>
-    address.surface === here.surface && address.tile === here.tile
-}))
+vi.mock('@/store/windows', async importOriginal => {
+  const actual = await importOriginal<typeof ModWindows>()
+
+  return {
+    ...actual,
+    addressesThisWindow: (address: { surface: null | string; tile: null | string }) =>
+      address.surface === here.surface && address.tile === here.tile
+  }
+})
+
+await import('@tauri-apps/api/event')
+installTauriEventMock({
+  emit: bus.emit,
+  listen: bus.listen as TauriEventMock['listen']
+})
 
 const { onComposerDraftSyncRequest } = await import('@/lib/composer-draft-bus')
 
@@ -76,6 +93,11 @@ const {
   stashSessionDraft,
   takeSessionDraft
 } = await import('./composer')
+
+const { absorbPeerDraftSnapshot } = await import('./composer-draft-transport')
+
+/** `composer.ts` and the transport reach Tauri through dynamic `import()`. */
+const settleTransport = () => new Promise<void>(resolve => setTimeout(resolve, 30))
 
 const STASH_EVENT = 'composer-draft://changed'
 const FLUSH_EVENT = 'composer-draft://flush'
@@ -98,25 +120,38 @@ function lastFlushNonce(): string {
   return requests[requests.length - 1]?.nonce as string
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  installTauriEventMock({
+    emit: bus.emit,
+    listen: bus.listen as TauriEventMock['listen']
+  })
+  bus.reset()
+
   window.localStorage.clear()
 
   for (const scope of ['a', 'b']) {
     stashSessionDraft(scope, '', [])
   }
 
+  await settleTransport()
   window.localStorage.clear()
   // Storage is empty again, so the dedupe baseline has to be too — otherwise the
   // first stash of a case compares equal to the previous case's and says nothing.
   reloadPersistedDrafts()
+  absorbPeerDraftSnapshot()
   here.surface = null
   here.tile = null
   bus.emit.mockClear()
 })
 
+afterEach(() => {
+  resetTauriEventMock()
+})
+
 describe('announcing a draft this window wrote', () => {
-  it('tells the other windows, stamped with who said it', () => {
+  it('tells the other windows, stamped with who said it', async () => {
     stashSessionDraft('a', 'typed here', [])
+    await settleTransport()
 
     const said = emitted(STASH_EVENT)
 
@@ -127,17 +162,20 @@ describe('announcing a draft this window wrote', () => {
     expect(said[0].origin).toBeTruthy()
   })
 
-  it('carries no draft in the payload', () => {
+  it('carries no draft in the payload', async () => {
     stashSessionDraft('a', 'typed here', [])
+    await settleTransport()
 
     // The text is already on disk. A copy on the wire could only disagree with
     // it, and would be the version a peer painted.
     expect(Object.keys(emitted(STASH_EVENT)[0])).toEqual(['origin'])
   })
 
-  it('says nothing when the stash did not actually change', () => {
+  it('says nothing when the stash did not actually change', async () => {
     stashSessionDraft('a', 'typed here', [])
+    await settleTransport()
     stashSessionDraft('a', 'typed here', [])
+    await settleTransport()
 
     // This is the loop-breaker: a peer that reloads paints its composer, and
     // painting schedules that composer's own debounced re-stash of the text it
@@ -145,18 +183,22 @@ describe('announcing a draft this window wrote', () => {
     expect(emitted(STASH_EVENT)).toHaveLength(1)
   })
 
-  it('says something again once the text really moves on', () => {
+  it('says something again once the text really moves on', async () => {
     stashSessionDraft('a', 'typed here', [])
+    await settleTransport()
     stashSessionDraft('a', 'typed here too', [])
+    await settleTransport()
 
     expect(emitted(STASH_EVENT)).toHaveLength(2)
   })
 
-  it('announces a draft being cleared', () => {
+  it('announces a draft being cleared', async () => {
     stashSessionDraft('a', 'typed here', [])
+    await settleTransport()
     bus.emit.mockClear()
 
     stashSessionDraft('a', '', [])
+    await settleTransport()
 
     // A send in one window has to empty the box in the other.
     expect(emitted(STASH_EVENT)).toHaveLength(1)
@@ -193,8 +235,10 @@ describe('hearing a draft another window wrote', () => {
     off()
   })
 
-  it('ignores its own echo', () => {
-    const ourOrigin = emitted(STASH_EVENT)[0]?.origin ?? stashOrigin()
+  it('ignores its own echo', async () => {
+    stashSessionDraft('a', 'seed', [])
+    await settleTransport()
+    const ourOrigin = emitted(STASH_EVENT)[0]?.origin ?? (await stashOrigin())
     const heard = vi.fn()
     const off = onComposerDraftSyncRequest(heard)
 
@@ -231,18 +275,20 @@ describe('hearing a draft another window wrote', () => {
 })
 
 /** This window's identity, read off anything it has already put on the bus. */
-function stashOrigin(): unknown {
+async function stashOrigin(): Promise<unknown> {
   stashSessionDraft('a', `origin probe ${Math.random()}`, [])
+  await settleTransport()
 
   return emitted(STASH_EVENT).at(-1)?.origin
 }
 
 describe('serving a flush another window asked for', () => {
-  it('writes the editor down and says so, quoting the request', () => {
+  it('writes the editor down and says so, quoting the request', async () => {
     const heard = vi.fn()
     const off = onComposerDraftSyncRequest(heard)
 
     bus.deliver(FLUSH_EVENT, { nonce: 'n-1', origin: 'another-webview', surface: null, tile: null })
+    await settleTransport()
 
     expect(heard).toHaveBeenCalledWith('flush')
     expect(emitted(FLUSHED_EVENT)).toHaveLength(1)
@@ -253,7 +299,7 @@ describe('serving a flush another window asked for', () => {
     off()
   })
 
-  it('flushes BEFORE answering', () => {
+  it('flushes BEFORE answering', async () => {
     const order: string[] = []
     const off = onComposerDraftSyncRequest(mode => order.push(`sync:${mode}`))
 
@@ -262,6 +308,7 @@ describe('serving a flush another window asked for', () => {
     })
 
     bus.deliver(FLUSH_EVENT, { nonce: 'n-1', origin: 'another-webview', surface: null, tile: null })
+    await settleTransport()
 
     // "Acknowledged" has to mean "the text is on disk". The asker is about to
     // destroy this window on the strength of it.
@@ -285,13 +332,14 @@ describe('serving a flush another window asked for', () => {
     off()
   })
 
-  it('answers when it IS the surface addressed', () => {
+  it('answers when it IS the surface addressed', async () => {
     here.surface = 'hud'
 
     const heard = vi.fn()
     const off = onComposerDraftSyncRequest(heard)
 
     bus.deliver(FLUSH_EVENT, { nonce: 'n-1', origin: 'another-webview', surface: 'hud', tile: null })
+    await settleTransport()
 
     expect(heard).toHaveBeenCalledWith('flush')
     expect(emitted(FLUSHED_EVENT)).toHaveLength(1)
@@ -299,13 +347,14 @@ describe('serving a flush another window asked for', () => {
     off()
   })
 
-  it('answers when it is the detached tile window addressed', () => {
+  it('answers when it is the detached tile window addressed', async () => {
     here.tile = 'session-tile:abc'
 
     const heard = vi.fn()
     const off = onComposerDraftSyncRequest(heard)
 
     bus.deliver(FLUSH_EVENT, { nonce: 'n-1', origin: 'the-main-window', ...TILE })
+    await settleTransport()
 
     // A tile window is not a satellite, so a surface alone could never have
     // reached it — which is why reattach used to have nothing to ask
@@ -352,9 +401,7 @@ describe('asking another window to flush', () => {
   it('reports success only when that window answered', async () => {
     const pending = requestPeerComposerFlush(HUD, 200)
 
-    // Let the listener registration round trip resolve before the peer answers.
-    await Promise.resolve()
-    await Promise.resolve()
+    await settleTransport()
 
     window.localStorage.setItem(SESSION_DRAFTS_STORAGE_KEY, JSON.stringify({ b: 'typed in the HUD' }))
     bus.deliver(FLUSHED_EVENT, { nonce: lastFlushNonce(), origin: 'the-hud' })
@@ -374,8 +421,7 @@ describe('asking another window to flush', () => {
   it('does not count an answer to somebody else’s question', async () => {
     const pending = requestPeerComposerFlush(HUD, 20)
 
-    await Promise.resolve()
-    await Promise.resolve()
+    await settleTransport()
 
     bus.deliver(FLUSHED_EVENT, { nonce: 'a-different-request', origin: 'the-hud' })
 
@@ -385,8 +431,7 @@ describe('asking another window to flush', () => {
   it('addresses the surface it was asked about', async () => {
     const pending = requestPeerComposerFlush(HUD, 10)
 
-    await Promise.resolve()
-    await Promise.resolve()
+    await settleTransport()
 
     expect(emitted(FLUSH_EVENT).at(-1)?.surface).toBe('hud')
     // Carried even when it is null: the address is compared field by field, so a
@@ -399,8 +444,7 @@ describe('asking another window to flush', () => {
   it('addresses the tile it was asked about', async () => {
     const pending = requestPeerComposerFlush(TILE, 10)
 
-    await Promise.resolve()
-    await Promise.resolve()
+    await settleTransport()
 
     expect(emitted(FLUSH_EVENT).at(-1)?.tile).toBe('session-tile:abc')
     expect(emitted(FLUSH_EVENT).at(-1)?.surface).toBeNull()
@@ -413,8 +457,7 @@ describe('asking another window to flush', () => {
 
     const answered = requestPeerComposerFlush(HUD, 200)
 
-    await Promise.resolve()
-    await Promise.resolve()
+    await settleTransport()
 
     expect(bus.listenerCount(FLUSHED_EVENT)).toBe(before + 1)
 

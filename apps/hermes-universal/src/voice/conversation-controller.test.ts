@@ -65,12 +65,7 @@ vi.mock('@/voice/engine', () => ({
 }))
 
 import { $voiceConversation } from '@/store/voice-conversation'
-import {
-  $voiceBargeinThreshold,
-  $voiceInputGain,
-  $voiceInputThreshold,
-  DEFAULT_VOICE_LEVELS
-} from '@/store/voice-prefs'
+import { $voiceBargeinThreshold, $voiceInputGain, $voiceInputThreshold, DEFAULT_VOICE_LEVELS } from '@/store/voice-levels'
 
 import { type ConversationBinding, voiceConversation } from './conversation-controller'
 

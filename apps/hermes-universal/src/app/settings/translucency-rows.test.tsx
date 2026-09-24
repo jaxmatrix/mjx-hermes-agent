@@ -17,7 +17,7 @@ import {
   $translucencyBook,
   $translucencyPeek,
   resetTranslucencyPeek,
-  setGlassAppearance
+  setAppearance
 } from '@/store/translucency'
 
 import { TranslucencySettings } from './translucency-rows'
@@ -45,7 +45,7 @@ const rowCount = (): number => document.querySelectorAll('[id^="setting-row-appe
 
 beforeEach(() => {
   resetTranslucencyPeek()
-  setGlassAppearance('dark')
+  setAppearance('dark')
   $glassCapabilities.set(caps())
   $translucencyBook.set({ base: { intensity: 40 }, dark: {}, light: {}, mode: 'glass' })
 })
@@ -81,7 +81,7 @@ describe('gating', () => {
 
     expect(rowCount()).toBe(2)
     expect(document.querySelector('#setting-row-appearance\\.frost')).toBeNull()
-    expect(screen.getByText(/window material this desktop does not provide/i)).toBeTruthy()
+    expect(screen.getByText(/Glass is not available on this platform/i)).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Glass' })).toBeNull()
   })
 
@@ -131,11 +131,11 @@ describe('editing', () => {
 
     fireEvent.pointerDown(slider)
 
-    expect($translucencyPeek.get()).toBe(true)
+    expect($translucencyPeek.get()).toBeGreaterThan(0)
 
     fireEvent.pointerUp(slider)
 
-    expect($translucencyPeek.get()).toBe(false)
+    expect($translucencyPeek.get()).toBe(0)
   })
 
   it('resets a stuck hold when the surface unmounts', () => {
@@ -143,12 +143,12 @@ describe('editing', () => {
 
     fireEvent.pointerDown(screen.getByLabelText('Tint'))
 
-    expect($translucencyPeek.get()).toBe(true)
+    expect($translucencyPeek.get()).toBeGreaterThan(0)
 
     // A pointer held when Escape closes the overlay never delivers its
     // `pointerup`, and a stuck counter would ghost the NEXT overlay too.
     view.unmount()
 
-    expect($translucencyPeek.get()).toBe(false)
+    expect($translucencyPeek.get()).toBe(0)
   })
 })

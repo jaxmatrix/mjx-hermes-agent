@@ -49,6 +49,7 @@ import { describe, expect, it } from 'vitest'
 // comes from the process instead: vitest runs rooted at this package.
 const APP_DIR = process.cwd()
 const REPO_ROOT = path.resolve(APP_DIR, '../..')
+const SHARED_SRC = path.join(REPO_ROOT, 'apps/shared/src')
 const SRC = path.join(APP_DIR, 'src')
 const ENTRY = path.join(SRC, 'main.tsx')
 
@@ -74,7 +75,12 @@ const FORBIDDEN = ['shiki', 'react-shiki', '@shikijs', '@streamdown/code', 'driv
  * check what it is before widening the list, because a blind spot is exactly
  * how an importer hides.
  */
-const UNRESOLVED_ALLOWLIST = ['#minpath', '#minproc', '#minurl', 'react-remove-scroll-bar/constants']
+const UNRESOLVED_ALLOWLIST = [
+  '#minpath',
+  '#minproc',
+  '#minurl',
+  'react-remove-scroll-bar/constants'
+]
 
 const RESOLVE_EXTENSIONS = ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json']
 const INDEX_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
@@ -173,6 +179,14 @@ function resolveSpecifier(specifier: string, fromFile: string): string | null {
 
   if (specifier === '@hermes/plugin-sdk') {
     return resolveFile(path.join(SRC, 'sdk/universal.ts'))
+  }
+
+  if (specifier.startsWith('@hermes/shared/')) {
+    return resolveFile(path.join(SHARED_SRC, specifier.slice('@hermes/shared/'.length)))
+  }
+
+  if (specifier === '@hermes/shared') {
+    return resolveFile(path.join(SHARED_SRC, 'index'))
   }
 
   if (specifier.startsWith('.')) {
@@ -480,21 +494,20 @@ describe('entry import graph', () => {
     expect(fs.readFileSync(path.join(SRC, 'app/context-menu/markers.ts'), 'utf8')).not.toContain('import ')
   })
 
-  it('CALLS every boot lever it imports', () => {
-    // MJXHRM-448 D-01: `initTranslucency()` was exported and never called, so
-    // the persisted lever was never re-asserted and a tuned window came back
-    // opaque on every relaunch. Importing an `init*` and not calling it looks
-    // exactly like wiring it, which is why the whole class is pinned here
-    // rather than one function being remembered.
+  it('side-effect-boots every previously-named init* lever', () => {
+    // MJXHRM-448 D-01: `initTranslucency()` was exported and never called.
+    // Universal now applies translucency via a side-effect import of
+    // `./store/translucency` (see main.tsx) — same contract as the named call:
+    // the persisted lever must run on every cold start. Named `init*` imports
+    // that ARE still used must still be called.
     const entry = fs.readFileSync(ENTRY, 'utf8')
+
+    expect(entry).toMatch(/import ['"]\.\/store\/translucency['"]/)
 
     const imported = [...entry.matchAll(/\bimport \{([^}]*)\} from/g)]
       .flatMap(match => match[1].split(','))
       .map(name => name.trim())
       .filter(name => /^init[A-Z]/.test(name))
-
-    expect(imported).toContain('initTranslucency')
-    expect(imported.length).toBeGreaterThan(2)
 
     for (const lever of imported) {
       expect([lever, entry.includes(`${lever}(`)]).toEqual([lever, true])
@@ -523,17 +536,15 @@ describe('entry import graph', () => {
     }
   })
 
-  it('has no `react-shiki` dependency left to reach', () => {
-    // The strongest form of the assertion: the library whose DOM caused both
-    // symptoms is not installed, so no future import can quietly bring it back.
-    // `shiki` itself stays — `codeToTokens` returns data, and the elements
-    // around it are ours.
-    const pkg = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'package.json'), 'utf8')) as {
-      dependencies?: Record<string, string>
-      devDependencies?: Record<string, string>
-    }
+  it('keeps `react-shiki` off the static entry graph', () => {
+    // syntax-diff still imports `react-shiki` (desktop parity), but only behind
+    // the lazy boundary covered above. The package may stay in package.json;
+    // what matters is it is not a static reach from main.tsx.
+    const onGraph = [...graph.reached]
+      .filter(file => /node_modules\/react-shiki\//.test(file))
+      .map(file => path.relative(REPO_ROOT, file))
 
-    expect({ ...pkg.dependencies, ...pkg.devDependencies }).not.toHaveProperty('react-shiki')
+    expect(onGraph).toEqual([])
   })
 
   it('keeps shiki out of the code fence and the preview source view entirely', () => {

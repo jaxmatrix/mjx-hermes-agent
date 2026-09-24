@@ -366,10 +366,10 @@ const PaletteRow = memo(function PaletteRow({
         <span className={cn(HUD_NOTE, HUD_NOTE_VARIANT[item.detailVariant ?? 'muted'])}>{item.detail}</span>
       )}
       {combo && (
-        <KbdCombo className={cn('ml-auto', modPreview ? 'opacity-90' : 'opacity-55')} combo={combo} size="sm" />
+        <KbdCombo className={cn('ms-auto', modPreview ? 'opacity-90' : 'opacity-55')} combo={combo} size="sm" />
       )}
-      {item.to && <ChevronRight className={cn('size-3.5 shrink-0 text-muted-foreground/70', !combo && 'ml-auto')} />}
-      {item.active && <Check className={cn('size-3.5 shrink-0 text-primary', !combo && !item.to && 'ml-auto')} />}
+      {item.to && <ChevronRight className={cn('size-3.5 shrink-0 text-muted-foreground/70', !combo && 'ms-auto')} />}
+      {item.active && <Check className={cn('size-3.5 shrink-0 text-primary', !combo && !item.to && 'ms-auto')} />}
     </CommandItem>
   )
 })
@@ -1553,7 +1553,7 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
           <HighlightWatcher onValue={handleHighlight} />
           {activePage && (
             <button
-              className="flex w-full items-center gap-1.5 border-b border-border px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+              className="flex w-full items-center gap-1.5 border-b border-border px-3 py-1.5 text-start text-xs text-muted-foreground transition-colors hover:text-foreground"
               onClick={goBack}
               type="button"
             >

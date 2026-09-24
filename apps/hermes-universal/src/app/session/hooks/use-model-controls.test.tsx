@@ -27,6 +27,8 @@ const notifyError = vi.fn()
 const dismissNotification = vi.fn()
 
 vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getGlobalModelInfo: vi.fn(),
   setApiRequestProfile: vi.fn(),
   setGlobalModel: (...args: Parameters<typeof setGlobalModel>) => setGlobalModel(...args)

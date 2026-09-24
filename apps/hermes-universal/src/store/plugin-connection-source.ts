@@ -1,5 +1,7 @@
+import type { ProfilesListResult } from '@hermes/shared/gateway-events'
+
 import { connectionIdOf } from '@/lib/backend-scope'
-import { listProfilesRich } from '@/lib/gateway-rpc'
+import { requestGateway } from '@/store/gateway-client'
 
 import { $connection } from './connection'
 import { $connectionReady } from './connection-ready'
@@ -102,12 +104,12 @@ const singleConnectionSource: PluginConnectionSource = {
     }
 
     try {
-      const roster = await listProfilesRich({ includeSessions: false })
+      const roster = await requestGateway<ProfilesListResult>('profiles.list', { include_sessions: false })
 
       return {
-        agents: roster.profiles.map(profile => ({
+        agents: (roster.profiles ?? []).map(profile => ({
           connectionId,
-          isDefault: profile.is_default,
+          isDefault: profile.is_default ?? false,
           label: profile.display_name || profile.name,
           profile: profile.name
         })),

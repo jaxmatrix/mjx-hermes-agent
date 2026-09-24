@@ -15,6 +15,8 @@ vi.mock('@/lib/storage', () => ({
       storage.set(key, value)
     }
   },
+  // persistentAtom (gateway-mode → active-connection) boots through readKey.
+  readKey: (key: string) => storage.get(key) ?? null,
   // store/session persists its exact owner hints through the JSON helpers.
   readJson: (key: string) => {
     const value = storage.get(key)
@@ -64,6 +66,9 @@ const updateHermesSpy = vi.fn()
 const getActionStatusSpy = vi.fn()
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   checkHermesUpdate: (...args: unknown[]) => checkHermesUpdateSpy(...args),
   updateHermes: (...args: unknown[]) => updateHermesSpy(...args),
   getActionStatus: (...args: unknown[]) => getActionStatusSpy(...args)

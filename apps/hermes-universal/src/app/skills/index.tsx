@@ -288,9 +288,9 @@ export function SkillsView({
   // the wrong machine — withhold it for cross-backend scopes.
   const crossBackendScope = scopeConnectionId !== null && scopeConnectionId !== (activeGatewayConnectionId() ?? 'local')
 
-  const { data: profilesData } = useQuery({
+  const { data: profilesData } = useQuery<Awaited<ReturnType<typeof getProfiles>>>({
     queryKey: ['capabilities-profiles'],
-    queryFn: getProfiles,
+    queryFn: () => getProfiles(),
     staleTime: 60_000,
     // Pinned scope never shows the selector, so don't fetch the roster for it.
     enabled: !fixedProfile
@@ -796,7 +796,7 @@ export function SkillsView({
       }))
     }
 
-    return (profilesData?.profiles ?? []).map(p => ({
+    return (profilesData?.profiles ?? []).map((p: { name: string; is_default?: boolean }) => ({
       key: p.name,
       label: p.is_default ? 'Hermes (default)' : p.name,
       value: p.name
@@ -1361,7 +1361,7 @@ function ToolsetDetail({
             <ToolChip key={name}>
               {name}
               {(toolCalls[name] ?? 0) > 0 && (
-                <span className="ml-1 text-(--ui-text-quaternary)">×{compactNumber(toolCalls[name])}</span>
+                <span className="ms-1 text-(--ui-text-quaternary)">×{compactNumber(toolCalls[name])}</span>
               )}
             </ToolChip>
           ))}

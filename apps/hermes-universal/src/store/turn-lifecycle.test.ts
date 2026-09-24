@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GatewayEvent } from '@/gateway'
-import { sessionApprovalRequest } from '@/store/prompts'
-import { clearSessionClarify, setSessionClarify } from '@/store/prompt-session-bridge'
 import { sessionClarifyRequest } from '@/store/clarify'
+import { clearSessionClarify, setSessionClarify } from '@/store/prompt-session-bridge'
+import { sessionApprovalRequest } from '@/store/prompts'
 import {
   $activeSessionKey,
   $sessionKeyStates,
@@ -32,7 +32,7 @@ import {
   setTurnCompacting,
   STALE_TURN_MS
 } from '@/store/turn-lifecycle'
-import type { SessionInfo, SessionResumeResult } from '@/types/hermes'
+import type { SessionResumeResult } from '@/types/hermes'
 
 const event = (type: string): GatewayEvent => ({ type }) as GatewayEvent
 
@@ -172,7 +172,13 @@ describe('hydration safety', () => {
   // finds nothing, and the turn hangs until the tool's own timeout.
   it('carries a pending clarify across a runtime-id rotation', () => {
     publishSessionState('hydrating:stored-1', emptySessionState('stored-1'))
-    setSessionClarify('hydrating:stored-1', { requestId: 'req-1', question: 'which?', choices: ['a', 'b'] })
+    setSessionClarify('hydrating:stored-1', {
+      choices: ['a', 'b'],
+      multiSelect: false,
+      question: 'which?',
+      requestId: 'req-1',
+      sessionId: 'hydrating:stored-1'
+    })
 
     rekeySession('hydrating:stored-1', 'runtime-9', { runtimeSessionId: 'runtime-9' })
 
@@ -376,13 +382,10 @@ describe('reconcileSessionTurn', () => {
     await Promise.all([lifecycle.reconcileSessionTurn('runtime-1'), lifecycle.reconcileSessionTurn('runtime-1')])
 
     expect(requestGateway).toHaveBeenCalledTimes(1)
-    // No `source`: it is the gateway's PLATFORM field, and anything other than
-    // "desktop" strips the whole desktop_ui toolset from the rebuilt agent
-    // (MJXHRM-472). `session.create` sends none either — the two must agree, or
-    // a cold resume silently costs the session nine tools.
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-1',
-      omit_messages: true
+      omit_messages: true,
+      source: 'desktop'
     })
     // Gateway says idle → the turn we thought was live is settled, not stranded.
     expect(lifecycle.isTurnLive('runtime-1')).toBe(false)
@@ -410,11 +413,15 @@ describe('reconcileSessionTurn', () => {
 
     vi.resetModules()
     const states = await import('@/store/session-state-types')
-    const session = await import('@/store/session')
+    const route = await import('@/store/session-route-dispatch')
     const lifecycle = await import('@/store/turn-lifecycle')
 
-    session.$sessions.set([{ id: 'stored-10', profile: 'research' } as unknown as SessionInfo])
-    states.publishSessionState('runtime-10', { ...emptySessionState('stored-10'), runtimeSessionId: 'runtime-10' })
+    route.setSessionOwnerResolver(() => 'research')
+    states.publishSessionState('runtime-10', {
+      ...emptySessionState('stored-10'),
+      profile: 'research',
+      runtimeSessionId: 'runtime-10'
+    })
     lifecycle.beginTurn('runtime-10', { prompt: 'a' })
 
     await lifecycle.reconcileSessionTurn('runtime-10')

@@ -25,7 +25,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
     Tip: ({ children }: { children: ReactNode }) => <>{children}</>,
     EmptyState: () => null,
     useValue: useStore,
-    host: { onEvent: onGatewayEvent }
+    universalHost: { onEvent: onGatewayEvent }
   }
 })
 vi.mock('./data', () => ({ botSelectionKey: (bot: RosterRow) => bot.name }))
@@ -60,7 +60,7 @@ vi.mock('@novnc/novnc', () => ({
 }))
 
 // Real event bus, so the pane's listener path is the one under test.
-// eslint-disable-next-line no-restricted-imports
+ 
 import { emitGatewayEvent } from '../../contrib/events'
 
 import { displayRequest, viewerHash } from './screen-connection'

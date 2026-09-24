@@ -27,6 +27,10 @@ vi.mock('@/store/windows', () => ({
     return close(surface)
   },
   HUD_SURFACE: 'hud',
+  // interface-mode → pane-shell tree reads these at import.
+  isBrowserWindow: () => false,
+  isHudWindow: () => false,
+  isSecondaryWindow: () => false,
   isSatelliteWindow: () => inSatellite,
   isSatelliteWindowOpen: (surface: string) => isOpen(surface),
   openSatelliteWindow: (surface: string, route?: string) => {

@@ -1,4 +1,4 @@
-import { host } from '@hermes/plugin-sdk'
+import { universalHost as host } from '@hermes/plugin-sdk'
 
 import { botsText } from './i18n'
 

@@ -66,6 +66,8 @@ vi.mock('@/lib/desktop-git', async importOriginal => ({
 }))
 
 vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getHermesConfig: vi.fn(),
   getProfiles: vi.fn(),
   hermesApi: vi.fn(),

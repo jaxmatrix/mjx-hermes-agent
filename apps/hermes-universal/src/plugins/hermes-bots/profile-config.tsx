@@ -9,15 +9,7 @@
  */
 
 import * as sdk from '@hermes/plugin-sdk'
-import {
-  Checkbox,
-  GlyphSpinner,
-  host,
-  Input,
-  queryClient,
-  surfaceModelSwitchConfirm,
-  Textarea
-} from '@hermes/plugin-sdk'
+import { Checkbox, GlyphSpinner, universalHost as host, Input, queryClient, surfaceModelSwitchConfirm, Textarea } from '@hermes/plugin-sdk'
 import { useState } from 'react'
 
 import { $lastRoster, ROSTER_KEY } from './data'
@@ -469,7 +461,7 @@ export function AdvancedProfileConfig({ bot, state, setState }: AdvancedProfileC
                       <span className="min-w-0">
                         <span>{m.name}</span>
                         {m.fromCatalog && !needsSetup ? (
-                          <span className="ml-1.5 text-[0.65rem] text-(--ui-text-quaternary)">
+                          <span className="ms-1.5 text-[0.65rem] text-(--ui-text-quaternary)">
                             {m.installed ? 'catalog · installed' : 'catalog'}
                           </span>
                         ) : null}

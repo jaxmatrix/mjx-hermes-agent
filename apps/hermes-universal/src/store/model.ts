@@ -1,3 +1,4 @@
+import type { ModelOptionsResult } from '@hermes/shared'
 import { atom } from 'nanostores'
 
 import { getGlobalModelInfo } from '@/hermes'
@@ -11,7 +12,6 @@ import { notify, notifyError } from '@/store/notifications'
 import { $activeGatewayProfile } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
 import { $sessionKeyStates, updateSession } from '@/store/session-state-types'
-import type { ModelOptionsResponse } from '@/types/hermes'
 
 // Composer model state (ported from desktop's session-store model atoms +
 // use-model-controls). The current model/provider drives the composer model
@@ -102,9 +102,9 @@ function writeModelOptionsCache(
   model: string,
   profile: null | string | undefined
 ): void {
-  queryClient.setQueryData<ModelOptionsResponse>(
+  queryClient.setQueryData<ModelOptionsResult>(
     modelOptionsQueryKey(profile, sessionId),
-    prev => ({ ...(prev ?? {}), model, provider }) as ModelOptionsResponse
+    prev => ({ ...(prev ?? {}), model, provider }) as ModelOptionsResult
   )
 }
 

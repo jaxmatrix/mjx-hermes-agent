@@ -28,6 +28,9 @@ vi.mock('@/components/chat/code-editor', () => ({
 }))
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   createProfile: vi.fn(async () => ({ name: 'x', ok: true, path: '/x' })),
   deleteProfile: vi.fn(async () => ({ ok: true, path: '/x' })),
   getProfileSoul: vi.fn(async () => ({ content: '', exists: true })),

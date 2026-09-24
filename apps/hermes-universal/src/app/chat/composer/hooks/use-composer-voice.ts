@@ -93,7 +93,7 @@ export function useComposerVoice({
   const previousSessionIdRef = useRef(sessionId)
   const voiceStartRequest = useStore($voiceConversationStartRequest)
 
-  // eslint-disable-next-line no-restricted-syntax -- session-id adopt token, not an atom mirror
+   
   useEffect(() => {
     adoptSpokenReplySession(previousSessionIdRef.current, sessionId)
     previousSessionIdRef.current = sessionId
@@ -272,7 +272,7 @@ export function useComposerVoice({
     }
   }, [voiceConversationActive])
 
-  // eslint-disable-next-line no-restricted-syntax -- ownership token used only by unmount cleanup
+   
   useEffect(() => {
     if (target !== 'main') {
       return

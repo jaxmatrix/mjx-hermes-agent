@@ -126,7 +126,7 @@ function AppUpdatesSettings({ includeUninstall }: { includeUninstall: boolean })
           </p>
         </div>
         {(version?.bundleOutOfSync || version?.bundleSwapPending) && (
-          <div className="mx-auto w-full max-w-2xl rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-left text-sm">
+          <div className="mx-auto w-full max-w-2xl rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-start text-sm">
             <div className="flex items-start gap-2">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
               <div className="min-w-0">
@@ -223,7 +223,7 @@ function AppUpdatesSettings({ includeUninstall }: { includeUninstall: boolean })
               </>
             )}
 
-            <Button asChild className="ml-auto" size="sm" variant="text">
+            <Button asChild className="ms-auto" size="sm" variant="text">
               <a
                 href={RELEASE_NOTES_URL}
                 onClick={event => {

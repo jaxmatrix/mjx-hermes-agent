@@ -217,7 +217,7 @@ export function useComposerDraft({
   }, [floating, focusInput, focusKey, inputDisabled, paneVisible])
 
   const previousFocusRequest = useRef(focusRequestId)
-  // eslint-disable-next-line no-restricted-syntax -- handled request token, not a mirrored atom
+   
   useEffect(() => {
     if (previousFocusRequest.current === focusRequestId) {
       return
@@ -343,7 +343,7 @@ export function useComposerDraft({
   // source otherwise), and (3) schedule the debounced per-session stash.
   // Browsing history / editing a queued prompt suppress the stash so recalled
   // text never clobbers the draft.
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     const sync = () => {
       const text = composerRuntime.getState().text
@@ -532,7 +532,7 @@ export function useComposerDraft({
 
   // pagehide is load-bearing: React skips effect cleanups on reload, so Cmd+R
   // inside the debounce/rAF window would drop trailing keystrokes without this.
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     const flushPendingDraftPersist = () => {
       const scope = draftScopeRef.current

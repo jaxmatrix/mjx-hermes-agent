@@ -123,7 +123,7 @@ export function useOnboardingHandoff({
   }, [selectedStoredId])
 
   // Rebind the runtime pointer after session.resume; this is not an atom-to-ref mirror.
-  // eslint-disable-next-line no-restricted-syntax
+   
   useEffect(() => {
     if (!isOnboardingEnabled() || setupHandoff?.phase !== 'pending' || $setupHandoff.get() !== setupHandoff) {
       return

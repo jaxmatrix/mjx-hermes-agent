@@ -59,7 +59,10 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
 
-vi.mock('@/store/connection-tunnels', () => ({ acquireTunnel: acquireMock }))
+vi.mock('@/store/connection-tunnels', () => ({
+  acquireTunnel: acquireMock,
+  setTunnelAnswerSaver: vi.fn(() => () => {})
+}))
 
 import { HermesGateway as DesktopGateway } from '@/api/client'
 import { HermesGateway } from '@/hermes'
@@ -417,14 +420,29 @@ describe('a tunnelled socket', () => {
 describe('HermesGateway', () => {
   it("is desktop's client, option for option", () => {
     const options = (gateway: object) => {
-      const { createRequestId, onSocketClose, socketFactory, ...rest } = (
-        gateway as unknown as { options: Record<string, unknown> & { createRequestId: (next: number) => unknown } }
+      const {
+        createRequestId,
+        onRequestHandlerError,
+        onSocketClose,
+        onUnhandledRequest,
+        socketFactory,
+        ...rest
+      } = (
+        gateway as unknown as {
+          options: Record<string, unknown> & { createRequestId: (next: number) => unknown }
+        }
       ).options
 
       void onSocketClose
       void socketFactory
 
-      return { ...rest, requestId: createRequestId(7) }
+      return {
+        ...rest,
+        // Handlers are per-constructor closures — same shape, not same reference.
+        hasRequestHandlerError: typeof onRequestHandlerError === 'function',
+        hasUnhandledRequest: typeof onUnhandledRequest === 'function',
+        requestId: createRequestId(7)
+      }
     }
 
     expect(options(new HermesGateway())).toEqual(options(new DesktopGateway()))

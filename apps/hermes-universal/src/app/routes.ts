@@ -1,26 +1,49 @@
 import { atom, onMount } from 'nanostores'
 import type { ReactNode } from 'react'
 
+import {
+  AGENTS_ROUTE,
+  ARTIFACTS_ROUTE,
+  CAPABILITIES_ROUTE,
+  COMMAND_CENTER_ROUTE,
+  CRON_ROUTE,
+  GATEWAY_SETTINGS_ROUTE,
+  mcpServerRoute,
+  MESSAGING_ROUTE,
+  NEW_CHAT_ROUTE,
+  PROFILES_ROUTE,
+  SESSION_IMPORT_ROUTE,
+  SESSION_ROUTE_PREFIX,
+  SETTINGS_ROUTE,
+  SKILLS_ROUTE,
+  STARMAP_ROUTE,
+  WEBHOOKS_ROUTE
+} from '@/app/route-paths'
 import { noteActiveTreeGroup, revealTreePane } from '@/components/pane-shell/tree/store'
 import { registry } from '@/contrib/registry'
 import type { Contribution } from '@/contrib/types'
 import type { InterfaceTier } from '@/store/interface-mode'
 
-type NavigateLike = (to: string, options?: { replace?: boolean }) => void
+export {
+  AGENTS_ROUTE,
+  ARTIFACTS_ROUTE,
+  CAPABILITIES_ROUTE,
+  COMMAND_CENTER_ROUTE,
+  CRON_ROUTE,
+  GATEWAY_SETTINGS_ROUTE,
+  mcpServerRoute,
+  MESSAGING_ROUTE,
+  NEW_CHAT_ROUTE,
+  PROFILES_ROUTE,
+  SESSION_IMPORT_ROUTE,
+  SESSION_ROUTE_PREFIX,
+  SETTINGS_ROUTE,
+  SKILLS_ROUTE,
+  STARMAP_ROUTE,
+  WEBHOOKS_ROUTE
+}
 
-export const SESSION_ROUTE_PREFIX = '/'
-export const NEW_CHAT_ROUTE = '/'
-export const SETTINGS_ROUTE = '/settings'
-export const COMMAND_CENTER_ROUTE = '/command-center'
-export const SESSION_IMPORT_ROUTE = '/session-import'
-export const CAPABILITIES_ROUTE = '/capabilities'
-export const MESSAGING_ROUTE = '/messaging'
-export const WEBHOOKS_ROUTE = '/webhooks'
-export const ARTIFACTS_ROUTE = '/artifacts'
-export const CRON_ROUTE = '/cron'
-export const PROFILES_ROUTE = '/profiles'
-export const AGENTS_ROUTE = '/agents'
-export const STARMAP_ROUTE = '/starmap'
+type NavigateLike = (to: string, options?: { replace?: boolean }) => void
 
 export type AppView =
   | 'session-import'
@@ -38,6 +61,7 @@ export type AppView =
   | 'messaging'
   | 'profiles'
   | 'settings'
+  | 'skills'
   | 'starmap'
   | 'webhooks'
 
@@ -52,6 +76,7 @@ export type AppRouteId =
   | 'new'
   | 'profiles'
   | 'settings'
+  | 'skills'
   | 'starmap'
   | 'webhooks'
 
@@ -71,6 +96,7 @@ export const APP_ROUTES = [
   { id: 'webhooks', path: WEBHOOKS_ROUTE, view: 'webhooks' },
   { id: 'artifacts', path: ARTIFACTS_ROUTE, view: 'artifacts' },
   { id: 'cron', path: CRON_ROUTE, view: 'cron' },
+  { id: 'skills', path: SKILLS_ROUTE, view: 'skills' },
   { id: 'profiles', path: PROFILES_ROUTE, view: 'profiles' },
   { id: 'agents', path: AGENTS_ROUTE, view: 'agents' },
   { id: 'starmap', path: STARMAP_ROUTE, view: 'starmap' }
@@ -131,9 +157,14 @@ export const SIDEBAR_NAV_AREA = 'sidebar.nav'
 export interface SidebarNavContribution {
   /** Codicon name, e.g. `'project'`. */
   codicon: string
-  label: string
+  /** Static label when set; otherwise `labelKey` indexes `sidebar.nav`. */
+  label?: string
+  labelKey?: string
   /** Route to navigate to (usually a contributed page's path). */
-  path: string
+  path?: string
+  /** Action row (e.g. New session) instead of navigation. */
+  run?: () => void
+  view?: AppView
   /** `'advanced'` keeps the row out of Simple mode; unset shows it everywhere. */
   tier?: InterfaceTier
 }
@@ -232,6 +263,13 @@ export function primaryRouteSelectedSessionId(pathname: string, storeSelectedSes
 
 export function sessionRoute(sessionId: string): string {
   return `${SESSION_ROUTE_PREFIX}${encodeURIComponent(sessionId)}`
+}
+
+/** Open the cron overlay focused on one job (sidebar kebab → Manage). */
+export function cronJobRoute(jobId: string): string {
+  const params = new URLSearchParams({ job: jobId })
+
+  return `${CRON_ROUTE}?${params.toString()}`
 }
 
 export function appViewForPath(pathname: string): AppView {

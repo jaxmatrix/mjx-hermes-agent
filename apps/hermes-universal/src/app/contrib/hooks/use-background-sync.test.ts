@@ -569,6 +569,8 @@ describe('active transcript refresh', () => {
 
   it('only defers an external tick while busy, then refreshes once after idle', async () => {
     $changeEventsAvailable.set(true)
+    $activeSessionId.set(ACTIVE_RUNTIME_ID)
+    $selectedStoredSessionId.set(ACTIVE_STORED_ID)
     const refresh = vi.fn(async () => undefined)
 
     renderSync(refresh)

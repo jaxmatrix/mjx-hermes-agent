@@ -33,6 +33,8 @@ vi.mock('@/store/pool-limits', async () => {
   return { $poolLimits: atom({ idleMs: 600_000, maxBackends: 3 }) }
 })
 vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getProfiles: vi.fn(async () => ({ profiles: [] })),
   setApiRequestProfile: vi.fn()
 }))

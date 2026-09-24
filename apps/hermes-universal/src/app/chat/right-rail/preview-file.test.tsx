@@ -14,14 +14,19 @@ describe('MarkdownPreview', () => {
   })
 
   it('renders block and inline math through KaTeX', () => {
-    // KaTeX marks its output; raw "$" delimiters must be gone.
+    // The math plugin emits `<katex-html>` (see katex-memo). The chat transcript
+    // mounts a KatexHtml host that expands it to `.katex`; the file preview is
+    // desktop-shaped and leaves the custom element. Either way the `$` source
+    // must be gone.
     const { container } = render(
       <MarkdownPreview
         text={'Formula:\n\n$$\nx = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}\n$$\n\nInline $a^2 + b^2 = c^2$ too.'}
       />
     )
 
-    expect(container.querySelector('.katex')).not.toBeNull()
+    expect(
+      container.querySelector('.katex, katex-html, .katex-host')
+    ).not.toBeNull()
     expect(screen.queryByText(/\$\$/)).toBeNull()
   })
 

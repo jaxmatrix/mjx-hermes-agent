@@ -7,20 +7,7 @@
  * through whichever source the edit skipped.
  */
 
-import {
-  Button,
-  cn,
-  Codicon,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  host,
-  RowButton,
-  useValue
-} from '@hermes/plugin-sdk'
+import { Button, cn, Codicon, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, universalHost as host, RowButton, useValue } from '@hermes/plugin-sdk'
 import { useEffect, useMemo, useState } from 'react'
 
 import { $botMeta, $lastRoster, botHandle, botRosterKey, saveBotMeta } from './data'
@@ -217,7 +204,7 @@ export function GroupMemberPicker({ group, members, open, onClose }: GroupMember
                   className={cn(checked ? 'text-(--ui-accent)' : 'text-(--ui-text-quaternary)')}
                   name={checked ? 'pass-filled' : 'circle-large-outline'}
                 />
-                <div className="min-w-0 flex-1 text-left">
+                <div className="min-w-0 flex-1 text-start">
                   <div className="truncate text-xs text-foreground">{displayName(bot, meta)}</div>
                   <div className="truncate text-[0.625rem] text-(--ui-text-quaternary)">
                     {`@${botHandle(bot.name, bot)}${bot.remoteSource && bot.connectionLabel ? ` · ${bot.connectionLabel}` : ''}`}

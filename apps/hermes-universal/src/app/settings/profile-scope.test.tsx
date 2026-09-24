@@ -14,6 +14,9 @@ vi.mock('@/store/gateway', () => ({
   openGatewayForProfile: vi.fn(async () => undefined)
 }))
 vi.mock('@/hermes', () => ({
+  profileScopeKey: (profile?: string | null) => (profile ?? '').trim() || 'default',
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getProfiles: vi.fn(async () => ({ profiles: [] })),
   setApiRequestProfile: vi.fn()
 }))

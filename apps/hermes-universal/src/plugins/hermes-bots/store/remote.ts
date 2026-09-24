@@ -19,7 +19,7 @@
  * that gateway — which is the honest answer (rule 9).
  */
 
-import { host } from '@hermes/plugin-sdk'
+import { universalHost as host } from '@hermes/plugin-sdk'
 
 import { REMOTE_DM_TIMEOUT_MS } from '../driver/types'
 import { BOT_CHAT_TITLE, botDisplayName, botHandle } from '../ids'

@@ -10,7 +10,7 @@
  * voice playback opens `/api/audio/speak-stream` beside `/api/ws`.
  */
 
-import { host, resolveSiblingWsUrl } from '@hermes/plugin-sdk'
+import { universalHost as host, resolveSiblingWsUrl } from '@hermes/plugin-sdk'
 import type { DisplayLease, PluginProfileRoute, RpcEvent } from '@hermes/plugin-sdk'
 
 import { resolveBotConnectionRoute } from './routing'

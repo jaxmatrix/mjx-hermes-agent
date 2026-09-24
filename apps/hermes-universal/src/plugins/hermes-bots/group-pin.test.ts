@@ -12,7 +12,7 @@ const { storage } = vi.hoisted(() => ({ storage: new Map<string, unknown>() }))
 vi.mock('@hermes/plugin-sdk', async () => {
   const { atom } = await import('nanostores')
 
-  return { atom, host: {} }
+  return { atom, host: {}, universalHost: {} }
 })
 
 vi.mock('./data', async () => {

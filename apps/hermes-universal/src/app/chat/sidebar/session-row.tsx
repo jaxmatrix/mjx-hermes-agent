@@ -224,7 +224,7 @@ function SidebarSessionRowImpl({
         <span className="pointer-events-none whitespace-nowrap text-[0.625rem] leading-none text-(--ui-text-tertiary)">
           {head}
           {/* The figures own their tail: the separator goes with it. */}
-          <span className={cn('inline-block text-right', TAIL_HIDES)}>
+          <span className={cn('inline-block text-end', TAIL_HIDES)}>
             {head && sep}
             {showAge ? (
               <Tip label={absoluteAge} side="top">
@@ -324,7 +324,7 @@ function SidebarSessionRowImpl({
           aria-label={r.sessionActions}
           className={cn(
             'size-5 rounded-[4px] bg-transparent text-transparent transition-colors duration-100 hover:bg-(--ui-control-active-background) hover:text-foreground focus-visible:bg-(--ui-control-active-background) focus-visible:text-foreground focus-visible:ring-0 data-[state=open]:bg-(--ui-control-active-background) data-[state=open]:text-foreground group-hover:text-(--ui-text-tertiary) [&_svg]:size-3.5!',
-            trailing.length > 0 && 'absolute right-0',
+            trailing.length > 0 && 'absolute end-0',
             pr && KEBAB_YIELDS
           )}
           size="icon"
@@ -420,8 +420,8 @@ function SidebarSessionRowImpl({
           // would pull the header in past every line below it.
           className={cn(
             'z-0',
-            card && 'pr-0',
-            branchStem && 'pl-3.5',
+            card && 'pe-0',
+            branchStem && 'ps-3.5',
             // The card is a grid with ONE spacing knob: --card-gap. Every row
             // gap is gap-y-(--card-gap); the title/preview group opts out
             // with its own tighter internal flex gap.
@@ -594,7 +594,7 @@ function SidebarSessionRowImpl({
                     {model ? <span className="min-w-0 truncate">{model}</span> : null}
                     {size ? <span className="shrink-0 tabular-nums">{size}</span> : null}
                     {todoProgress ? (
-                      <span className="ml-auto shrink-0 tabular-nums" title={r.todoProgress}>
+                      <span className="ms-auto shrink-0 tabular-nums" title={r.todoProgress}>
                         {todoProgress}
                       </span>
                     ) : null}

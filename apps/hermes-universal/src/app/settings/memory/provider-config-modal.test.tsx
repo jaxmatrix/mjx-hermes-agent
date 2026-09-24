@@ -6,6 +6,9 @@ import type { MemoryProviderConfig, MemoryProviderField } from '@/types/hermes'
 const saveMemoryProviderConfig = vi.fn()
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   saveMemoryProviderConfig: (provider: string, values: unknown) => saveMemoryProviderConfig(provider, values)
 }))
 

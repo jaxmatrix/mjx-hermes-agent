@@ -3618,6 +3618,8 @@ export const zhHant = defineLocale({
     stopFailed: '停止失敗',
     regenerateFailed: '重新生成失敗',
     editFailed: '編輯失敗',
+    restoreMissing: '找不到要還原的訊息。',
+    restoreEmpty: '該訊息沒有可還原的文字。',
     editTurnUnavailable: '此回合已不在伺服器歷史中（可能已被壓縮移除）。',
     resumeFailed: '繼續失敗',
     readOnlyTranscriptTitle: '已以唯讀方式開啟',

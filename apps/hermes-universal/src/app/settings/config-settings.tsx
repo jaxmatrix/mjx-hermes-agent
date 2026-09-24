@@ -148,7 +148,7 @@ function ConfigSettingsInner({
   // data — each save's diff+request only starts once the previous one lands.
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (loadedConfig && !configSeeded.current) {
       configSeeded.current = true
@@ -195,7 +195,7 @@ function ConfigSettingsInner({
     // scopeProfile is constant per mount (the inner component is keyed on it).
   }, [scopeProfile])
 
-  // eslint-disable-next-line no-restricted-syntax -- autosave bookkeeping refs, not an atom mirror
+   
   useEffect(() => {
     if (!config || saveVersion === 0) {
       return

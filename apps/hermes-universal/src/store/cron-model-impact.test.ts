@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setRuntimeI18nLocale } from '@/i18n'
 import { $cronReviewRequest } from '@/store/cron'
 import { $notifications, clearNotifications, dismissNotification } from '@/store/notifications'
 import type { ModelAssignmentResponse } from '@/types/hermes'
@@ -8,6 +9,8 @@ const setModelAssignment = vi.fn()
 const getApiRequestProfile = vi.fn<() => string | null>(() => 'default')
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
   setModelAssignment: (...args: unknown[]) => setModelAssignment(...args),
   getApiRequestProfile: () => getApiRequestProfile()
 }))
@@ -50,6 +53,7 @@ function positive(name = 'Morning summary'): ModelAssignmentResponse['cron_model
 }
 
 beforeEach(() => {
+  setRuntimeI18nLocale('en')
   setModelAssignment.mockReset()
   getApiRequestProfile.mockReset()
   getApiRequestProfile.mockReturnValue('default')

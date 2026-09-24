@@ -21,6 +21,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
     atom: nanostores.atom,
     computed: nanostores.computed,
     host,
+    universalHost: host,
     queryClient: { invalidateQueries: vi.fn() },
     useQuery: () => ({ data: [], isLoading: false }),
     useValue: <T>(store: { get: () => T }) => store.get()

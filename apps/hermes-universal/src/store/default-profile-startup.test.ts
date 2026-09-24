@@ -111,7 +111,7 @@ describe('startup default route', () => {
     expect(ensureGatewayForAgent).not.toHaveBeenCalled()
   })
 
-  it('restores the saved profile, not last-used source/profile, across local → remote → local', async () => {
+  it('does not re-home via initializeConnectionsRegistry — launch restore is Rust/boot.ts', async () => {
     for (const route of [
       { connectionId: 'local', profile: 'personal' },
       { connectionId: 'lab', profile: 'research' },
@@ -120,12 +120,12 @@ describe('startup default route', () => {
       _resetConnectionsForTests()
       window.hermesDesktop.profile.getDefault = async () => route
       await initializeConnectionsRegistry()
-      expect($connection.get()).toMatchObject({ connectionId: route.connectionId ?? 'local', profile: route.profile })
-      expect($activeGatewayProfile.get()).toBe(route.profile)
+      // Still on the descriptor beforeEach published; initialize is refresh-only.
+      expect($connection.get()).toMatchObject({ connectionId: 'local', profile: 'personal' })
+      expect($activeGatewayProfile.get()).toBe('personal')
     }
 
-    expect(ensureGatewayForAgent).toHaveBeenCalledWith('lab', 'research', expect.anything())
-    expect(ensureGatewayForAgent).toHaveBeenCalledWith('local', 'personal', expect.anything())
+    expect(ensureGatewayForAgent).not.toHaveBeenCalled()
   })
 
   it('leaves profile peer windows on their requested source rather than restoring the application default', async () => {

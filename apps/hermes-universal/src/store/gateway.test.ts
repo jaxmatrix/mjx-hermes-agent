@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type * as ModSession from '@/store/session'
+
 // Connection lifecycle for registry-scoped secondary gateways:
 //
 //  1. Removing a connection must dispose its secondaries — remote/cloud
@@ -26,6 +28,9 @@ const gatewayMocks = vi.hoisted(() => {
 })
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   setApiRequestConnection: vi.fn(),
   HermesGateway: class {
     connectionState = 'closed'
@@ -64,10 +69,15 @@ vi.mock('@/hermes', () => ({
     }
   }
 }))
-vi.mock('@/store/session', () => ({
-  setConnection: vi.fn(),
-  setGatewayState: vi.fn()
-}))
+vi.mock('@/store/session', async importOriginal => {
+  const actual = await importOriginal<typeof ModSession>()
+
+  return {
+    ...actual,
+    setConnection: vi.fn(),
+    setGatewayState: vi.fn()
+  }
+})
 vi.mock('@/store/notify-baseline', () => ({ markNativeNotifyBaseline: vi.fn() }))
 
 const {

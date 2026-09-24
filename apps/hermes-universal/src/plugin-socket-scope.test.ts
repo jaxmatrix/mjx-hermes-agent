@@ -15,6 +15,8 @@ vi.mock('@/hermes', async importOriginal => {
   const actual = await importOriginal<Record<string, unknown>>()
 
   return {
+    getApiRequestConnection: () => null,
+    getApiRequestProfile: () => 'default',
     ...actual,
     // Stub only the socket class so gateway activations don't dial real WS.
     HermesGateway: class {

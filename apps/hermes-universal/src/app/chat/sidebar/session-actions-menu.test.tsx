@@ -17,6 +17,8 @@ vi.mock('@/components/pane-shell/tree/store', () => ({
   treeTabCloseTargets: vi.fn(() => null)
 }))
 vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   renameSession: vi.fn(),
   setApiRequestProfile: vi.fn(),
   setSessionUnreadRemote: vi.fn(() => Promise.resolve({ ok: true }))
@@ -158,9 +160,9 @@ describe('SessionActionsMenu', () => {
     const dialog = await screen.findByRole('dialog')
     const input = within(dialog).getByRole('textbox')
 
-    // eslint-disable-next-line no-restricted-globals -- asserting real focus requires the live document
+     
     await waitFor(() => expect(document.activeElement).toBe(input))
-    // eslint-disable-next-line no-restricted-globals -- asserting real focus requires the live document
+     
     expect(document.activeElement).not.toBe(trigger)
   })
 
@@ -256,9 +258,9 @@ describe('SessionActionsMenu', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: /delete/i }))
 
     const reopened = await screen.findByRole('dialog')
-    // eslint-disable-next-line no-restricted-globals -- asserting real focus requires the live document
+     
     await waitFor(() => expect(reopened.contains(document.activeElement)).toBe(true))
-    // eslint-disable-next-line no-restricted-globals -- asserting real focus requires the live document
+     
     fireEvent.keyDown(document.activeElement!, { key: 'Enter' })
 
     expect(await screen.findByText('Session deleted')).toBeTruthy()

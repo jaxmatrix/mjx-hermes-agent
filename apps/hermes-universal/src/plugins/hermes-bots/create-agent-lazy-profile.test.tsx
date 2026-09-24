@@ -56,7 +56,7 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => {
 
   const mocked: Record<string, unknown> = {
     ...original,
-    host: {
+    universalHost: {
       ...original.host,
       connections: mocks.connections,
       notify: mocks.notify,

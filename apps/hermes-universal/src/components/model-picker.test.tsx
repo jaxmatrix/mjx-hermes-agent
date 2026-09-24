@@ -14,6 +14,9 @@ import type { LocalRuntimeJob } from '@/types/hermes'
 import { ModelPickerDialog } from './model-picker'
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getLocalModelsStatus: vi.fn().mockResolvedValue({ loading: {} })
 }))
 vi.mock('@/lib/model-options', async importOriginal => ({

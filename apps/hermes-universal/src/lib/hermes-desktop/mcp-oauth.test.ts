@@ -7,12 +7,15 @@ const native = vi.hoisted(() => ({
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (command: string, args?: Record<string, unknown>) => {
     native.calls.push([command, args])
+
     if (command === 'mcp_oauth_listen') {
       return { id: '1', redirectUri: 'http://127.0.0.1:9/callback' }
     }
+
     if (command === 'mcp_oauth_wait') {
       return { code: 'c', error: null, iss: null, state: 's' }
     }
+
     return true
   })
 }))

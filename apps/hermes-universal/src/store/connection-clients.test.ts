@@ -32,7 +32,8 @@ vi.mock('@/store/connection-tunnels', () => ({
   acquireTunnel,
   // 592's two "retrying cannot fix this" reads.
   isTunnelSignInError: (error: unknown) => (error as { kind?: string })?.kind === 'credentials-needed',
-  needsInteraction: () => false
+  needsInteraction: () => false,
+  setTunnelAnswerSaver: vi.fn(() => () => {})
 }))
 vi.mock('@/store/session-route-dispatch', async importActual => ({
   ...(await importActual<Record<string, unknown>>()),

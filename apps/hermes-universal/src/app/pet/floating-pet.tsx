@@ -99,7 +99,7 @@ function loadPosition(): Point {
  * Promotion to a separate frameless OS-level window is a follow-up — the
  * sprite + state logic here is reused as-is, only the host changes.
  */
-export function FloatingPet() {
+export function FloatingPet({ overlayOpen = false }: { overlayOpen?: boolean }) {
   const { requestGateway } = useGatewayRequest()
   const { resolvedMode } = useTheme()
   const gatewayState = useStore($gatewayState)
@@ -303,7 +303,7 @@ export function FloatingPet() {
   // Restore a popped-out pet on boot, once the pet has loaded (so we never spawn
   // an empty overlay window). Primary window only; runs at most once.
   const restoredRef = useRef(false)
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (isSecondaryWindow() || restoredRef.current || !active) {
       return
@@ -448,7 +448,7 @@ export function FloatingPet() {
     enabled: roamEnabled && active && !overlayActive && atRest,
     isInteracting: isDragging,
     loopMs: info.loopMs ?? 1100,
-    overlayOpen: routeOverlayOpen,
+    overlayOpen: overlayOpen || routeOverlayOpen,
     petH,
     petW
   })

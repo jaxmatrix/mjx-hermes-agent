@@ -8,7 +8,7 @@
  * told which members did not take it.
  */
 
-import { confirm, holdKeepAwake, host } from '@hermes/plugin-sdk'
+import { confirm, holdKeepAwake, universalHost as host } from '@hermes/plugin-sdk'
 
 import { type DriveMember, type RoomDriveDeps, runRoomDrive } from '../driver/rounds'
 import { GROUP_LOG_FETCH_LIMIT, type PauseReason } from '../driver/types'

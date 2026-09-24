@@ -38,6 +38,9 @@ function pluginNamespaces() {
 type PluginGlobalKey = keyof ReturnType<typeof pluginNamespaces>
 
 export function installPluginSdk(): void {
+  // Finish universal host doors if the index↔runtime↔universal cycle deferred
+  // them past module evaluation.
+  void import('./plugin-host-universal').then(m => m.installUniversalHost())
   Object.assign(globalThis, pluginNamespaces())
 }
 

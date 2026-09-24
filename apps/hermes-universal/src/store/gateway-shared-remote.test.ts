@@ -1,3 +1,4 @@
+import { atom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The global-remote share (backend routing case 3): every profile is served
@@ -19,6 +20,9 @@ const gatewayMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   setApiRequestConnection: vi.fn(),
   HermesGateway: class {
     connectionState = 'closed'
@@ -33,7 +37,8 @@ vi.mock('@/hermes', () => ({
 }))
 vi.mock('@/store/session', () => ({
   setConnection: gatewayMocks.setConnection,
-  setGatewayState: vi.fn()
+  setGatewayState: vi.fn(),
+  $gatewayState: atom('closed')
 }))
 vi.mock('@/store/notify-baseline', () => ({ markNativeNotifyBaseline: vi.fn() }))
 

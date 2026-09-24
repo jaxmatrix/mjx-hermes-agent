@@ -81,12 +81,12 @@ export function FirstBuildConnectorOffer({
               t.connectors.notConnected
             ) : row.phase === 'error' ? (
               row.error === 'unavailable' ? (
-                t.connectors.notAvailable
+                t.connectors.unavailable
               ) : (
-                t.connectors.statusError
+                t.connectors.failed
               )
             ) : (
-              t.connectors.waitingSignIn
+              t.connectors.waiting
             )}
           </span>
           {row.connectUrl && row.phase !== 'connected' && !window.hermesDesktop?.openExternal ? (

@@ -16,7 +16,7 @@ const { bindSession, requestProfile } = vi.hoisted(() => ({
 
 vi.mock('@hermes/plugin-sdk', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  host: {
+  universalHost: {
     bindSession,
     request: vi.fn(),
     requestProfile,

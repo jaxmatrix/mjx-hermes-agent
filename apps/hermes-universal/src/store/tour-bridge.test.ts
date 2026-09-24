@@ -15,39 +15,60 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type * as ModGatewayClient from '@/store/gateway-client'
+import type * as ModPaneFocus from '@/store/pane-focus'
+import type * as ModWindows from '@/store/windows'
+
 // vi.hoisted, not a bare `let`: agent-read-requests registers its listener at
 // IMPORT time, so the mock factory runs before a normal binding is initialised.
 const stream = vi.hoisted(() => ({ route: null as ((event: { payload?: unknown; type: string }) => void) | null }))
 
 const windows = vi.hoisted(() => ({ owns: true }))
 
-vi.mock('@/store/gateway-client', () => ({
-  addGatewayEventListener: (listener: (event: { payload?: unknown; type: string }) => void) => {
-    stream.route = listener
+vi.mock('@/store/gateway-client', async importOriginal => {
+  const { atom } = await import('@/store/atom')
+  const actual = await importOriginal<typeof ModGatewayClient>()
 
-    return () => {
-      stream.route = null
-    }
-  },
-  requestGateway: vi.fn().mockResolvedValue({ status: 'ok' })
-}))
+  return {
+    ...actual,
+    $gatewayState: actual.$gatewayState ?? atom('open'),
+    addGatewayEventListener: (listener: (event: { payload?: unknown; type: string }) => void) => {
+      stream.route = listener
 
-vi.mock('@/store/windows', () => ({
-  isSecondaryWindow: () => !windows.owns,
-  ownsPersistedAppState: () => windows.owns
-}))
+      return () => {
+        stream.route = null
+      }
+    },
+    requestGateway: vi.fn().mockResolvedValue({ status: 'ok' })
+  }
+})
+
+vi.mock('@/store/windows', async importOriginal => {
+  const actual = await importOriginal<typeof ModWindows>()
+
+  return {
+    ...actual,
+    isSecondaryWindow: () => !windows.owns,
+    ownsPersistedAppState: () => windows.owns
+  }
+})
 
 // The engine reveals panes through MJXHRM-472's bridge; the tree it drives is
 // not what this file is about, so record the call instead of mounting a shell.
 const panes = vi.hoisted(() => ({ revealed: [] as string[] }))
 
-vi.mock('@/store/pane-focus', () => ({
-  revealBridgePane: (pane: string) => {
-    panes.revealed.push(pane)
+vi.mock('@/store/pane-focus', async importOriginal => {
+  const actual = await importOriginal<typeof ModPaneFocus>()
 
-    return true
+  return {
+    ...actual,
+    revealDesktopPane: (pane: string) => {
+      panes.revealed.push(pane)
+
+      return true
+    }
   }
-}))
+})
 
 import { requestGateway } from '@/store/gateway-client'
 
@@ -180,7 +201,7 @@ describe('tour.request → the app-surface engine', () => {
     // A wrong answer is worse than a refusal: `surface='preview'` means the
     // agent believes it is looking at a web page. MJXHRM-447 replaces this.
     expect(result.success).toBe(false)
-    expect(result.error).toContain('no in-app browser pane')
+    expect(result.error).toContain('No live page is open in the preview pane')
     expect(result.targets).toBeUndefined()
   })
 

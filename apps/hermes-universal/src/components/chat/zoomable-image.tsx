@@ -117,7 +117,7 @@ export function ImageActionButton({
     <button
       aria-label={saving ? copy.savingImage : copy.downloadImage}
       className={cn(
-        'absolute right-2 top-2 grid size-8 place-items-center rounded-full border border-border/70 bg-background/80 text-muted-foreground opacity-0 shadow-sm backdrop-blur transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 disabled:opacity-50',
+        'absolute end-2 top-2 grid size-8 place-items-center rounded-full border border-(--ui-stroke-tertiary) bg-background/80 text-muted-foreground opacity-0 shadow-sm backdrop-blur transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 disabled:opacity-50',
         className
       )}
       disabled={saving}

@@ -76,13 +76,13 @@ it.each([
 
   await vi.waitFor(
     () => {
-      // eslint-disable-next-line no-restricted-globals -- the portal mounts on the live document
+       
       expect(document.querySelector('[data-slot="tooltip-content"]')).not.toBeNull()
     },
     { timeout: 2000 }
   )
 
-  // eslint-disable-next-line no-restricted-globals -- the portal mounts on the live document
+   
   const wrapper = document.querySelector<HTMLElement>('[data-radix-popper-content-wrapper]')
 
   expect(wrapper).not.toBeNull()

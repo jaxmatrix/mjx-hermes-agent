@@ -40,6 +40,19 @@ export function mediaKind(path: string): MediaKind {
   return mediaInfo(path)?.kind ?? 'file'
 }
 
+/** Images still loading in the scroll viewport — turn landing waits for these. */
+export function pendingMediaCount(root: ParentNode = document): number {
+  let pending = 0
+
+  root.querySelectorAll('img').forEach(img => {
+    if (!img.complete) {
+      pending += 1
+    }
+  })
+
+  return pending
+}
+
 // Markdown is renderable content, not an opaque download: the preview rail
 // already knows how to render a `.md` file (rendered/source toggle), so the
 // MEDIA delivery path routes these to a preview instead of a download link.

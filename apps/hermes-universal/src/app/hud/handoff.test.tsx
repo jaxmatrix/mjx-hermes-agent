@@ -11,7 +11,15 @@ vi.mock('../chat/composer/focus', () => ({
 
 vi.mock('../open-session', () => ({ openSession: vi.fn() }))
 vi.mock('@/store/composer', () => ({ reloadPersistedDrafts: vi.fn(), requestComposerDraftSync: vi.fn() }))
-vi.mock('@/store/session-states', () => ({ focusOpenSession: () => 'main', sessionTileDelegate: () => null }))
+vi.mock('@/store/session-states', async () => {
+  const { atom } = await import('nanostores')
+
+  return {
+    $sessionStates: atom({}),
+    focusOpenSession: () => 'main',
+    sessionTileDelegate: () => null
+  }
+})
 
 import { useHudHandoff } from './handoff'
 

@@ -1,9 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const listProfilesRich = vi.fn()
+import type * as GatewayClient from '@/store/gateway-client'
 
-vi.mock('@/lib/gateway-rpc', () => ({ listProfilesRich: () => listProfilesRich() }))
-vi.mock('@/hermes', () => ({ getStatus: vi.fn(), setApiRequestProfile: vi.fn() }))
+const requestGateway = vi.fn()
+
+vi.mock('@/store/gateway-client', async importOriginal => {
+  const actual = await importOriginal<typeof GatewayClient>()
+
+  return {
+    ...actual,
+    requestGateway: (...args: unknown[]) => requestGateway(...args)
+  }
+})
+vi.mock('@/hermes', () => ({  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+ getStatus: vi.fn(), setApiRequestProfile: vi.fn() }))
 
 import { describeConnection, publishActiveConnection } from './active-connection'
 import { $connectionPhase, $hasConnected } from './connection'
@@ -38,7 +49,7 @@ function connect() {
 
 beforeEach(() => {
   connect()
-  listProfilesRich.mockReset().mockResolvedValue(ROSTER)
+  requestGateway.mockReset().mockResolvedValue(ROSTER)
 })
 
 describe('the single-connection source', () => {
@@ -71,7 +82,7 @@ describe('the single-connection source', () => {
   // A connection that failed carries its error rather than vanishing: a missing
   // row and a broken row are different facts.
   it('keeps a failed connection on the roster, with its reason', async () => {
-    listProfilesRich.mockRejectedValue(new Error('gateway said no'))
+    requestGateway.mockRejectedValue(new Error('gateway said no'))
 
     const roster = await pluginConnectionSource().agents()
 

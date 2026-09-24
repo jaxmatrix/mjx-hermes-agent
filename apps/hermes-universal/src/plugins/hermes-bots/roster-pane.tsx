@@ -1,4 +1,4 @@
-import { host, useI18n, useValue } from '@hermes/plugin-sdk'
+import { universalHost as host, useI18n, useValue } from '@hermes/plugin-sdk'
 import { useEffect, useRef, useState } from 'react'
 
 import { BotRow } from './bot-row'

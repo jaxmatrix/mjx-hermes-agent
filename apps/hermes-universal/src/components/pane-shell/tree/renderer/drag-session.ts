@@ -30,13 +30,16 @@
 
 import type { PointerEvent as ReactPointerEvent } from 'react'
 
+/** Optional double-tap metadata for tab-strip gestures (hide/show strip). */
+export type DoubleTapContext = { target: HTMLElement }
+
 import { createDragGhost, type DragGhost } from '@/lib/drag-ghost'
 import { ESCAPE_PRIORITY, pushEscapeLayer } from '@/lib/escape-layers'
 import { guardGuestPointers } from '@/lib/guest-pointer-guard'
 import { reorderCommitHaptic, reorderStepHaptic } from '@/lib/reorder'
 
-import type { DropPosition } from '../model'
-import { $dropHint, $treeDragging, type DropHint, mergeTreeZones, moveTreePanes, reorderTreePanes } from '../store'
+import { type DropPosition, findGroup } from '../model'
+import { $dropHint, $layoutTree, $treeDragging, type DropHint, mergeTreeZones, moveTreePanes, reorderTreePanes } from '../store'
 import { clearTabSelection } from '../tab-selection'
 import { type EngineZone, HighlightedZones, primaryZone, type ZoneRect } from '../zones-engine'
 
@@ -237,6 +240,7 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
   // point; all hit testing happens at most once per frame.
   let pending: { x: number; y: number; shift: boolean } | null = null
   let raf = 0
+  let ended = false
 
   // Cursor writes are per-frame; only touch the style when the value changes.
   const setCursor = (value: string) => {
@@ -320,6 +324,12 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
   }
 
   const finish = (commit: boolean) => {
+    if (ended) {
+      return
+    }
+
+    ended = true
+
     if (raf) {
       cancelAnimationFrame(raf)
       raf = 0
@@ -351,6 +361,8 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
     window.removeEventListener('pointerup', onUp, true)
     window.removeEventListener('pointercancel', onCancel, true)
     window.removeEventListener('keydown', onKey, true)
+    window.removeEventListener('blur', onAbort)
+    handle.removeEventListener('lostpointercapture', onAbort)
 
     if (engaged) {
       suppressDragClick(commit)
@@ -369,6 +381,7 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
 
   const onUp = () => finish(true)
   const onCancel = () => finish(false)
+  const onAbort = () => finish(false)
 
   // Esc aborts the drag — the target selection vanishes and nothing moves,
   // the universal "never mind" for an in-flight drag. Capture-phase + stop so
@@ -386,6 +399,8 @@ export function startDragSession(e: ReactPointerEvent<HTMLElement>, spec: DragSe
   window.addEventListener('pointerup', onUp, true)
   window.addEventListener('pointercancel', onCancel, true)
   window.addEventListener('keydown', onKey, true)
+  window.addEventListener('blur', onAbort)
+  handle.addEventListener('lostpointercapture', onAbort)
 }
 
 // ---------------------------------------------------------------------------
@@ -574,12 +589,13 @@ export function startPaneDrag(
       }
 
       if (mode === 'reorder' && reorder && hint?.stack !== undefined) {
-        // Slot -> index among the OTHER tabs (the block re-inserts there).
-        const others = [...reorder.strip.querySelectorAll<HTMLElement>('[data-tree-tab]')]
-          .map(el => el.dataset.treeTab)
-          .filter((id): id is string => Boolean(id) && !moving.includes(id!))
-
-        const toIndex = hint.stack.before ? others.indexOf(hint.stack.before) : others.length
+        // The caret reads off strip DOM; the tree may hold panes the strip never
+        // draws (hidden / disabled plugin). Map the slot to an index in the
+        // group's full pane list, not the strip's tab list.
+        const tree = $layoutTree.get()
+        const group = tree ? findGroup(tree, reorder.groupId) : null
+        const without = group?.panes.filter(p => !moving.includes(p)) ?? []
+        const toIndex = hint.stack.before ? without.indexOf(hint.stack.before) : without.length
 
         if (toIndex >= 0) {
           reorderTreePanes(reorder.groupId, moving, toIndex)

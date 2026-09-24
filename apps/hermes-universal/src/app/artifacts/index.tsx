@@ -362,7 +362,7 @@ export function ArtifactsView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
               <section className="flex flex-col">
                 <div className="sticky top-0 z-10 -mx-3 flex h-7 items-center gap-3 overflow-x-auto bg-background px-3">
                   <ArtifactsPagination
-                    className="ml-auto justify-end px-0"
+                    className="ms-auto justify-end px-0"
                     itemLabel={a.itemsImage}
                     onPageChange={setImagePage}
                     page={currentImagePage}
@@ -388,7 +388,7 @@ export function ArtifactsView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
               <section className="flex flex-col">
                 <div className="sticky top-0 z-10 -mx-3 flex h-7 items-center gap-3 overflow-x-auto bg-background px-3">
                   <ArtifactsPagination
-                    className="ml-auto justify-end px-0"
+                    className="ms-auto justify-end px-0"
                     itemLabel={itemsLabel(kindFilter, a)}
                     onPageChange={setFilePage}
                     page={currentFilePage}
@@ -564,7 +564,7 @@ function ArtifactCellAction({
   if (href) {
     return (
       <ExternalLink
-        className="flex h-full w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) font-normal text-(--ui-text-secondary) no-underline underline-offset-4 decoration-current/20 transition-colors hover:text-foreground hover:underline"
+        className="flex h-full w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-start text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) font-normal text-(--ui-text-secondary) no-underline underline-offset-4 decoration-current/20 transition-colors hover:text-foreground hover:underline"
         href={href}
         showExternalIcon={false}
         title={title}
@@ -576,7 +576,7 @@ function ArtifactCellAction({
 
   return (
     <RowButton
-      className="flex h-full w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) font-normal text-(--ui-text-secondary) no-underline underline-offset-4 decoration-current/20 transition-colors hover:text-foreground hover:underline"
+      className="flex h-full w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-start text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) font-normal text-(--ui-text-secondary) no-underline underline-offset-4 decoration-current/20 transition-colors hover:text-foreground hover:underline"
       onClick={onClick}
     >
       {children}
@@ -690,7 +690,7 @@ function ArtifactTable({
   const { t } = useI18n()
 
   return (
-    <table className="w-full min-w-176 table-fixed text-left text-[length:var(--conversation-caption-font-size)]">
+    <table className="w-full min-w-176 table-fixed text-start text-[length:var(--conversation-caption-font-size)]">
       <thead className="border-b border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) text-[0.625rem] uppercase tracking-[0.08em] text-(--ui-text-tertiary)">
         <tr>
           {ARTIFACT_COLUMNS.map(col => (

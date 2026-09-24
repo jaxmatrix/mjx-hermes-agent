@@ -11,29 +11,7 @@
  */
 
 import * as sdk from '@hermes/plugin-sdk'
-import {
-  atom,
-  Button,
-  cn,
-  Codicon,
-  ConfirmDialog,
-  CopyButton,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  host,
-  Input,
-  queryClient,
-  relativeTime,
-  RowButton,
-  Switch,
-  Tip,
-  useI18n,
-  useValue
-} from '@hermes/plugin-sdk'
+import { atom, Button, cn, Codicon, ConfirmDialog, CopyButton, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, universalHost as host, Input, queryClient, relativeTime, RowButton, Switch, Tip, useI18n, useValue } from '@hermes/plugin-sdk'
 import type { ClipboardEvent, DragEvent, ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
@@ -641,7 +619,7 @@ export function GroupChatWorkspace({ group, members, onBack, visible = true }: G
   // already near the bottom, so reading history is never yanked away.
   const bottomSentinelRef = useRef<HTMLDivElement | null>(null)
   const stickToBottomRef = useRef(true)
-  // eslint-disable-next-line no-restricted-syntax -- tracks live scroll position from a DOM listener, not an atom
+   
   useEffect(() => {
     const sentinel = bottomSentinelRef.current
 
@@ -677,7 +655,7 @@ export function GroupChatWorkspace({ group, members, onBack, visible = true }: G
   // hidden → visible edge — an explicit reopen, so it overrides a stale
   // read-position and mirrors what a fresh open does.
   const wasVisibleRef = useRef(visible)
-  // eslint-disable-next-line no-restricted-syntax -- previous-value tracker for the hidden → visible edge; lagging a render IS the contract
+   
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
       stickToBottomRef.current = true
@@ -879,7 +857,7 @@ export function GroupChatWorkspace({ group, members, onBack, visible = true }: G
         <RowButton
           aria-controls={`group-activity:${group}`}
           aria-expanded={activityOpen}
-          className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1 text-left text-[0.7rem] text-(--ui-text-quaternary) transition-colors hover:text-foreground"
+          className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1 text-start text-[0.7rem] text-(--ui-text-quaternary) transition-colors hover:text-foreground"
           onClick={() => setActivityOpen(prev => !prev)}
           title={activityOpen ? b.group.hideActivity : b.group.showActivity}
         >
@@ -1172,7 +1150,7 @@ export function GroupChatWorkspace({ group, members, onBack, visible = true }: G
             ) : (
               <Tip label={revealed ? 'Hide full handle' : 'Show full handle'}>
                 <Button
-                  className="text-left text-[0.7rem] font-semibold text-(--ui-accent)"
+                  className="text-start text-[0.7rem] font-semibold text-(--ui-accent)"
                   onClick={() => setRevealedSpeaker(revealed ? null : entryKey)}
                   size="inline"
                   variant="text"
@@ -1183,7 +1161,7 @@ export function GroupChatWorkspace({ group, members, onBack, visible = true }: G
             )}
             <span className="text-[0.625rem] text-(--ui-text-quaternary)">{relativeTime(entry.at)}</span>
             {entry.text.trim() || !isUser ? (
-              <div className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+              <div className="ms-auto flex shrink-0 items-center gap-0.5 opacity-0 pointer-events-none group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
                 {isUser ? null : (
                   <Tip label={`Reply to @${replyMentionTag(entry, member)}`}>
                     <Button
@@ -1204,7 +1182,7 @@ export function GroupChatWorkspace({ group, members, onBack, visible = true }: G
             ) : null}
           </div>
           <div
-            className="min-w-0 text-xs text-(--ui-text-secondary) [&_p]:mb-1 [&_p:last-child]:mb-0 [&_ul]:mb-1 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:mb-1 [&_ol]:list-decimal [&_ol]:pl-4 [&_pre]:overflow-x-auto" // The app shell sets user-select: none globally; message bodies opt
+            className="min-w-0 text-xs text-(--ui-text-secondary) [&_p]:mb-1 [&_p:last-child]:mb-0 [&_ul]:mb-1 [&_ul]:list-disc [&_ul]:ps-4 [&_ol]:mb-1 [&_ol]:list-decimal [&_ol]:ps-4 [&_pre]:overflow-x-auto" // The app shell sets user-select: none globally; message bodies opt
             // back in so drag-select and ⌘C work in group chat logs.
             data-selectable-text="true"
             data-slot="group-chat-message-content"
@@ -1300,7 +1278,7 @@ export function GroupChatWorkspace({ group, members, onBack, visible = true }: G
         </form>
       ) : (
         <Button
-          className="w-fit px-2 pb-1 text-left text-[0.65rem] text-(--ui-accent) transition-colors"
+          className="w-fit px-2 pb-1 text-start text-[0.65rem] text-(--ui-accent) transition-colors"
           key={`replylink:${id}`}
           onClick={() => setReplyThread(id)}
           size="inline"

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 
+import { useGatewayRequest } from '@/app/gateway/hooks/use-gateway-request'
 import { EmptyState, ListRow, Pill, SectionHeading, SettingsContent } from '@/app/settings/primitives'
 import { Button } from '@/components/ui/button'
 import { SegmentedControl } from '@/components/ui/segmented-control'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useI18n } from '@/i18n'
-import { Loader2, Paw } from '@/lib/icons'
+import { Loader2 } from '@/lib/icons'
+import { Paw } from '@/lib/icons-extra'
 import { selectableCardClass } from '@/lib/selectable-card'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
@@ -17,6 +19,7 @@ import {
   $petGalleryStatus,
   adoptPet,
   loadPetGallery,
+  loadPetThumb,
   PET_SCALE_DEFAULT,
   PET_SCALE_MAX,
   PET_SCALE_MIN,
@@ -24,7 +27,7 @@ import {
   setPetEnabled,
   setPetScale
 } from '@/store/pet-gallery'
-import { $petGenOpen } from '@/store/pet-generate'
+import { $petGenOpen } from '@/store/pet-generate-universal'
 
 import { PetGenerateSheet } from './pet-generate-sheet'
 import { PetSprite } from './pet-sprite'
@@ -48,9 +51,15 @@ const RENDER_PAGE = 60
 // which is indistinguishable from "the size change didn't take". The box clips:
 // past roughly half scale the pet outgrows it, which is itself the signal.
 function PetScalePreview() {
+  const petInfo = useStore($petInfo)
+
+  if (!petInfo?.spritesheetBase64) {
+    return null
+  }
+
   return (
     <div className="mt-2 flex h-24 items-center justify-center overflow-hidden rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary)">
-      <PetSprite />
+      <PetSprite info={petInfo} stateOverride="idle" zoom={1.2} />
     </div>
   )
 }
@@ -60,6 +69,7 @@ function PetScalePreview() {
 // is chrome-free so it can nest inside another SettingsContent.
 export function PetPanel() {
   const { t } = useI18n()
+  const { requestGateway } = useGatewayRequest()
   const p = t.settings.appearance.pet
   const gallery = useStore($petGallery)
   const status = useStore($petGalleryStatus)
@@ -78,9 +88,9 @@ export function PetPanel() {
   // the status atom on 'loading' until the user navigated away and back.
   useEffect(() => {
     if (gatewayState === 'open') {
-      void loadPetGallery()
+      void loadPetGallery(requestGateway)
     }
-  }, [gatewayState])
+  }, [gatewayState, requestGateway])
 
   const enabled = gallery?.enabled ?? false
   const scale = petInfo.scale ?? PET_SCALE_DEFAULT
@@ -155,10 +165,15 @@ export function PetPanel() {
                           )}
                           disabled={isBusy}
                           key={pet.slug}
-                          onClick={() => void adoptPet(pet.slug)}
+                          onClick={() => void adoptPet(requestGateway, pet.slug, pet.displayName)}
                           type="button"
                         >
-                          <PetThumb slug={pet.slug} url={pet.spritesheetUrl} />
+                          <PetThumb
+                            alt={pet.displayName}
+                            load={(slug, url) => loadPetThumb(requestGateway, slug, url)}
+                            slug={pet.slug}
+                            url={pet.spritesheetUrl}
+                          />
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-sm font-medium text-foreground">
                               {pet.displayName}
@@ -195,7 +210,12 @@ export function PetPanel() {
             <div className="flex items-center justify-between gap-3">
               <span>{p.chooseTitle}</span>
               <SegmentedControl
-                onChange={id => void setPetEnabled(id === 'on')}
+                onChange={id =>
+                  void setPetEnabled(requestGateway, id === 'on', {
+                    fallback: p.turnOffFailed,
+                    noneAvailable: p.noneAvailable
+                  })
+                }
                 options={onOff}
                 value={enabled ? 'on' : 'off'}
               />
@@ -213,7 +233,7 @@ export function PetPanel() {
                   className="h-1 w-40 cursor-pointer appearance-none rounded-full bg-(--ui-stroke-tertiary)"
                   max={PET_SCALE_MAX}
                   min={PET_SCALE_MIN}
-                  onChange={event => setPetScale(Number(event.target.value))}
+                  onChange={event => setPetScale(requestGateway, Number(event.target.value))}
                   step={0.05}
                   style={{ accentColor: 'var(--dt-primary)' }}
                   type="range"

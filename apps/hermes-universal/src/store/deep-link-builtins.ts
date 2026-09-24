@@ -81,7 +81,6 @@ export function registerBuiltinDeepLinkRoutes(): void {
           enable: action.enable,
           force: action.force,
           legacyHint: action.legacyHint,
-          origin: 'deep-link',
           repo: action.repo
         })
 

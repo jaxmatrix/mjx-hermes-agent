@@ -75,6 +75,7 @@ describe('introRevealBridge', () => {
 
     const { introRevealBridge } = await import('./intro-reveal')
     const seen: string[] = []
+
     const off = introRevealBridge.introReveal!.onSkip(() => {
       seen.push('skip')
     })
@@ -96,6 +97,7 @@ describe('introRevealBridge', () => {
 
     const { introRevealBridge } = await import('./intro-reveal')
     const seen: string[] = []
+
     const off = introRevealBridge.introReveal!.onClosed(() => {
       seen.push('closed')
     })

@@ -31,7 +31,7 @@ export function useGatewayRequest() {
   // message instead of the opaque "connection closed" that triggered the retry.
   const reauthErrorRef = useRef<unknown>(null)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     gatewayStateRef.current = gatewayState
   }, [gatewayState])

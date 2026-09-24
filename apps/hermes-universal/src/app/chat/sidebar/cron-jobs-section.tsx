@@ -3,7 +3,7 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { usePaneVisible } from '@/components/pane-shell/pane-visibility'
-import { ActionsContextMenu, type MenuKit, renderActionItem } from '@/components/ui/actions-menu'
+import { ActionsContextMenu, ActionsMenu, type MenuKit, renderActionItem } from '@/components/ui/actions-menu'
 import { Codicon } from '@/components/ui/codicon'
 import { DisclosureCaret } from '@/components/ui/disclosure-caret'
 import { GlyphSpinner } from '@/components/ui/glyph-spinner'
@@ -98,7 +98,7 @@ export function SidebarCronJobsSection({
   const [triggeringJobIds, setTriggeringJobIds] = useState<ReadonlySet<string>>(() => new Set())
   const triggerControllerRef = useRef<CronTriggerController | null>(null)
 
-  // eslint-disable-next-line no-restricted-syntax -- controller mount identity, not an atom mirror
+   
   useEffect(() => {
     const controller = createCronTriggerController((jobId, running) => {
       if (triggerControllerRef.current !== controller) {
@@ -180,7 +180,7 @@ export function SidebarCronJobsSection({
     <SidebarGroup className="shrink-0 p-0 pb-1">
       <div className="group/section flex shrink-0 items-center justify-between pb-1 pt-1.5">
         <button
-          className="group/section-label flex w-fit min-w-0 items-center gap-1 bg-transparent text-left leading-none"
+          className="group/section-label flex w-fit min-w-0 items-center gap-1 bg-transparent text-start leading-none"
           onClick={onToggle}
           type="button"
         >
@@ -316,12 +316,26 @@ function CronJobSidebarRow({
       <ActionsContextMenu ariaLabel={c.actionsTitle} contentClassName="w-44" items={items}>
         <SidebarRowShell
           actions={
-            /* Trailing cluster: countdown by default, quick actions on hover. */
+            /* Trailing cluster: countdown by default; touch gets a kebab (the
+               only pause/delete door without a right-click); fine pointers get
+               hover quick-actions instead. */
             <div className="flex items-center gap-0.5">
               <span className="text-[0.6875rem] text-(--ui-text-tertiary) tabular-nums group-hover/cron:hidden">
                 {meta}
               </span>
-              <div className="hidden items-center gap-0.5 group-hover/cron:flex">
+              <div className="flex items-center gap-0.5 fine:hidden">
+                <ActionsMenu ariaLabel={c.actionsTitle} contentClassName="w-44" items={items}>
+                  <button
+                    aria-label={c.actionsTitle}
+                    className="grid size-5 place-items-center rounded-sm text-(--ui-text-tertiary) hover:bg-(--ui-control-hover-background) hover:text-foreground"
+                    onClick={event => event.stopPropagation()}
+                    type="button"
+                  >
+                    <Codicon name="kebab-vertical" size="0.75rem" />
+                  </button>
+                </ActionsMenu>
+              </div>
+              <div className="hidden items-center gap-0.5 fine:group-hover/cron:flex">
                 <Tip label={c.triggerNow}>
                   <button
                     aria-label={c.triggerNow}
@@ -441,19 +455,19 @@ function CronJobSidebarRuns({ jobId, onOpenRun }: { jobId: string; onOpenRun: (s
   }, [changeEventsAvailable, cronChangeTick, jobId, visible])
 
   return (
-    <div className="mb-1 ml-[1.375rem] flex flex-col gap-px">
+    <div className="mb-1 ms-[1.375rem] flex flex-col gap-px">
       {runs === null ? (
-        <div className="flex items-center gap-1.5 py-1 pl-1 text-[0.6875rem] text-(--ui-text-tertiary)">
+        <div className="flex items-center gap-1.5 py-1 ps-1 text-[0.6875rem] text-(--ui-text-tertiary)">
           <GlyphSpinner ariaLabel={c.loading} className="text-[0.75rem]" />
         </div>
       ) : runs.length === 0 ? (
-        <div className="py-1 pl-1 text-[0.6875rem] text-(--ui-text-tertiary)">{c.noRuns}</div>
+        <div className="py-1 ps-1 text-[0.6875rem] text-(--ui-text-tertiary)">{c.noRuns}</div>
       ) : (
         <>
           {runs.map(run => (
             <button
               className={cn(
-                'truncate rounded-md px-1.5 py-0.5 text-left text-[0.6875rem] tabular-nums focus-visible:bg-(--chrome-action-hover) focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                'truncate rounded-md px-1.5 py-0.5 text-start text-[0.6875rem] tabular-nums focus-visible:bg-(--chrome-action-hover) focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
                 run.id === selectedSessionId
                   ? 'bg-(--ui-row-active-background) text-foreground'
                   : 'text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground'

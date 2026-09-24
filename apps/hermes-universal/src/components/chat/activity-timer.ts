@@ -55,7 +55,7 @@ export function useElapsedSeconds(active = true, timerKey?: string, since?: numb
     lastKey.current = timerKey
   }
 
-  // eslint-disable-next-line no-restricted-syntax -- timer origin is imperative state, not an atom mirror
+   
   useEffect(() => {
     if (since !== undefined) {
       start.current = since

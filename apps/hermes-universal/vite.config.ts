@@ -228,6 +228,12 @@ export default defineConfig(({ command }) => ({
             'nanostores-real': require.resolve('nanostores')
           }
         : {}),
+      ...(process.env.VITEST
+        ? {
+            '@novnc/novnc': fileURLToPath(new URL('./src/dev/novnc-test-stub.ts', import.meta.url)),
+            '@tauri-apps/api/event': fileURLToPath(new URL('./src/test/tauri-event.ts', import.meta.url))
+          }
+        : {}),
       // IPC trace propagation — see IPC_TRACING above. Declared BEFORE the `@`
       // alias for the same reason the nanostores pair is: these keys are exact
       // matches, and reading them together keeps the two escape hatches in one
@@ -440,9 +446,13 @@ export default defineConfig(({ command }) => ({
     ]
   },
   build: {
-    // Android System WebView baseline — keep the transpile target conservative.
+    // Android System WebView baseline — keep the transpile target conservative,
+    // but not below ES2022: `@novnc/novnc` ships a top-level await (H264 probe)
+    // that esbuild refuses to lower further. Chrome 89+ / WebView that age
+    // already have TLA; staying on es2021 broke `vite build` the moment the
+    // Bot Screen pane pulled noVNC into the graph.
     // This is a JS concern and must NOT reach the CSS, hence `cssTarget` below.
-    target: 'es2021',
+    target: 'es2022',
     // CSS gets its OWN target, and needs one. Vite 8 changed `cssMinify` to
     // default to Lightning CSS (it used to follow `build.minify`, which is
     // esbuild here), and Lightning takes its targets from `cssTarget` — which
@@ -469,6 +479,9 @@ export default defineConfig(({ command }) => ({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test-setup.ts'],
+    // Full-suite runs can leave a forks worker briefly busy on teardown (heavy
+    // hermes mocks). Default 10s then reports a false-positive unhandled error.
+    teardownTimeout: 30_000,
     // Vitest's default `include` is rooted at this config's directory, so it
     // never reaches the shared sample plugins — which tsconfig and eslint DO
     // cover. A bundled plugin ships in this app's build; its tests belong in

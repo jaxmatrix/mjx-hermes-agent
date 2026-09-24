@@ -6,29 +6,7 @@
  * and the row decides only how it reads.
  */
 
-import {
-  cn,
-  coarseElapsed,
-  Codicon,
-  ContextMenu,
-  ContextMenuCheckboxItem,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-  haptic,
-  host,
-  queryClient,
-  RowButton,
-  SessionStatusDot,
-  SidebarRowLead,
-  Tip,
-  useI18n,
-  useValue
-} from '@hermes/plugin-sdk'
+import { cn, coarseElapsed, Codicon, ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger, haptic, universalHost as host, queryClient, RowButton, SessionStatusDot, SidebarRowLead, Tip, useI18n, useValue } from '@hermes/plugin-sdk'
 
 import { avatarColor, botAppearance, BotFace } from './avatar'
 import { isBackfilledFacePng } from './avatar-image'
@@ -238,7 +216,7 @@ export function BotRow({ bot, onDelete, onEdit, onGroup, onNewSection, showHandl
     <RowButton
       aria-label={rowTooltip}
       className={cn(
-        'flex w-full min-w-0 max-w-full items-center gap-2.5 overflow-hidden rounded-md px-2 py-2 text-left transition-colors',
+        'flex w-full min-w-0 max-w-full items-center gap-2.5 overflow-hidden rounded-md px-2 py-2 text-start transition-colors',
         'hover:bg-(--chrome-action-hover)',
         isActive && 'bg-(--ui-row-active-background)',
         // The row being dragged fades in place; the browser's drag image is
@@ -456,18 +434,18 @@ export function BotRow({ bot, onDelete, onEdit, onGroup, onNewSection, showHandl
                 key={section.id}
                 onSelect={() => void moveBotsToSection([bot], section.id)}
               >
-                <Codicon className="mr-1.5" name="folder" />
+                <Codicon className="me-1.5" name="folder" />
                 {section.name}
               </ContextMenuItem>
             ))}
             {sections.length ? <ContextMenuSeparator /> : null}
             <ContextMenuItem onSelect={() => onNewSection(bot)}>
-              <Codicon className="mr-1.5" name="new-folder" />
+              <Codicon className="me-1.5" name="new-folder" />
               {b.sections.newSectionEllipsis}
             </ContextMenuItem>
             {currentSectionId ? (
               <ContextMenuItem onSelect={() => void moveBotsToSection([bot], null)}>
-                <Codicon className="mr-1.5" name="inbox" />
+                <Codicon className="me-1.5" name="inbox" />
                 {b.sections.removeFromSection}
               </ContextMenuItem>
             ) : null}
@@ -537,7 +515,7 @@ export function GroupRow({ active, group, members, needsYou, onOpen, onDisband, 
     <RowButton
       aria-label={`${group}, ${b.group.memberCount(members.length)}, ${availabilityLabel}`}
       className={cn(
-        'flex w-full min-w-0 max-w-full items-center gap-2.5 overflow-hidden rounded-md px-2 py-2 text-left transition-colors',
+        'flex w-full min-w-0 max-w-full items-center gap-2.5 overflow-hidden rounded-md px-2 py-2 text-start transition-colors',
         'hover:bg-(--chrome-action-hover)',
         active && 'bg-(--ui-row-active-background)',
         dragging && 'opacity-40'
@@ -639,18 +617,18 @@ export function GroupRow({ active, group, members, needsYou, onOpen, onDisband, 
                 key={section.id}
                 onSelect={() => moveGroupChatsToSection([group], section.id)}
               >
-                <Codicon className="mr-1.5" name="folder" />
+                <Codicon className="me-1.5" name="folder" />
                 {section.name}
               </ContextMenuItem>
             ))}
             {sections.length ? <ContextMenuSeparator /> : null}
             <ContextMenuItem onSelect={() => onNewSection(group)}>
-              <Codicon className="mr-1.5" name="new-folder" />
+              <Codicon className="me-1.5" name="new-folder" />
               {b.sections.newSectionEllipsis}
             </ContextMenuItem>
             {currentSectionId ? (
               <ContextMenuItem onSelect={() => moveGroupChatsToSection([group], null)}>
-                <Codicon className="mr-1.5" name="inbox" />
+                <Codicon className="me-1.5" name="inbox" />
                 {b.sections.removeFromSection}
               </ContextMenuItem>
             ) : null}

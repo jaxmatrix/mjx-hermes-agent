@@ -35,6 +35,7 @@ export function validateCronEditor(input: CronEditorValidationInput): CronEditor
 }
 
 export interface CronEditorSaveValues {
+  continuity: boolean
   deliver: string
   /** Per-job model override ('' = follow the global default at fire time). */
   model: string
@@ -43,6 +44,39 @@ export interface CronEditorSaveValues {
   /** Provider for the model override ('' = none). Always paired with model. */
   provider: string
   schedule: string
+}
+
+/** Split a comma/newline list (or array) into trimmed, non-empty items. */
+export function splitCronList(value: unknown): string[] {
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/[\n,]/)
+      : []
+
+  return items.map(item => String(item).trim()).filter(Boolean)
+}
+
+/** Whether continuity (feed on this job's previous output) is enabled. */
+export function cronJobContinuityEnabled(job: Pick<CronJob, 'context_from' | 'continuity'>): boolean {
+  return (
+    Boolean(job.continuity) || splitCronList(job.context_from).some(item => item.toLowerCase() === 'self')
+  )
+}
+
+/** External refs only — never includes the reserved `self` entry. */
+export function cronJobExternalContextRefs(job: Pick<CronJob, 'context_from'>): string[] {
+  return splitCronList(job.context_from).filter(item => item.toLowerCase() !== 'self')
+}
+
+export function cronEditorContextFrom(continuity: boolean, storedContextFrom: unknown): null | string[] {
+  const refs = splitCronList(storedContextFrom).filter(item => item.toLowerCase() !== 'self')
+
+  if (continuity) {
+    refs.push('self')
+  }
+
+  return refs.length > 0 ? refs : null
 }
 
 export interface CronModelChoice {
@@ -122,8 +156,12 @@ export function lastErrorSummary(lastError: string | null | undefined): string {
 }
 
 /** Build the API update payload, preserving an empty prompt on script-only jobs. */
-export function cronEditorUpdates(values: CronEditorSaveValues, options: { scriptOnlyJob: boolean }): CronJobUpdates {
+export function cronEditorUpdates(
+  values: CronEditorSaveValues,
+  options: { scriptOnlyJob: boolean; storedContextFrom?: unknown }
+): CronJobUpdates {
   const updates: CronJobUpdates = {
+    context_from: cronEditorContextFrom(values.continuity, options.storedContextFrom),
     deliver: values.deliver,
     name: values.name,
     schedule: values.schedule.trim()

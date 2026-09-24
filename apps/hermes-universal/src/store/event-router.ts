@@ -25,6 +25,8 @@
 // module guaranteed to be loaded whenever a turn can run.
 import '@/store/turn-hydration'
 
+import type { BillingBlock } from '@hermes/shared'
+
 import { burstVibeHearts } from '@/components/chat/vibe-hearts'
 import type { GatewayEvent } from '@/gateway'
 import { translateNow } from '@/i18n'
@@ -44,9 +46,9 @@ import { $activeConnectionId } from '@/store/active-connection'
 import { type AgentNoticePayload, clearAgentNotice, nativeNoticeInput, showAgentNotice } from '@/store/agent-notices'
 import { reconcileApprovalModeForProfile } from '@/store/approval-mode'
 import { ackApprovalReceived, readApprovalPayload } from '@/store/approvals'
-import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block'
+import { clearBillingBlock, surfaceBillingBlock } from '@/store/billing-block-universal'
 import { noteMissedSteer } from '@/store/chat'
-import { normalizeQuestions, readChoices, readLockedAnswers } from '@/store/clarify'
+import { normalizeQuestions } from '@/store/clarify'
 import { setConnectionEventSink, setConnectionStreamReset } from '@/store/connection-clients'
 import { addGatewayEventListener, requestGateway } from '@/store/gateway-client'
 import {
@@ -54,18 +56,17 @@ import {
   notifyPairingChanged,
   notifyPetChanged,
   notifyPlatformsChanged,
-  notifyPluginsChanged,
   notifySessionsChanged,
   type PetChangeMeta,
   setChangeEventsAvailable
 } from '@/store/live-sync'
-import { readMcpSetupRequest } from '@/store/mcp-setup'
+import { notifyPluginsChanged } from '@/store/live-sync-universal'
+import { sessionMcpSetupRequest } from '@/store/mcp-setup'
 import { dispatchNativeNotification } from '@/store/native-notifications'
 import { notify } from '@/store/notifications'
-import { applyBridgeLayoutPreset, revealBridgePane } from '@/store/pane-focus'
+import { applyBridgeLayoutPreset, revealBridgePane } from '@/store/pane-focus-universal'
 import { flashPetActivity, setPetActivity } from '@/store/pet'
 import { $activeGatewayProfile } from '@/store/profile'
-import { clearAllPrompts, sessionAwaitingInput, sessionMcpSetupRequest, sessionSecretRequest, sessionSudoRequest } from '@/store/prompts'
 import {
   clearSessionClarify,
   clearSessionMcpSetup,
@@ -77,7 +78,9 @@ import {
   setSessionSecret,
   setSessionSudo
 } from '@/store/prompt-session-bridge'
-import { applyReactionEvent } from '@/store/reactions'
+import { clearAllPrompts, sessionAwaitingInput, sessionSecretRequest, sessionSudoRequest } from '@/store/prompts'
+import { applyReactionEvent } from '@/store/reactions-universal'
+import { readChoices, readLockedAnswers, readMcpSetupRequest } from '@/store/resume-prompts'
 import { EMPTY_USAGE, reduceSessionState } from '@/store/session-reducer'
 import { connectionEpoch, noteConnectionEpoch, noteReplaySeq } from '@/store/session-replay'
 import {
@@ -457,7 +460,7 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       // (`_approval_request_payload`), and a client that parsed them
       // differently would answer a replayed approval with a different
       // request_id than the live one.
-      const approval = readApprovalPayload(payload)
+      const approval = readApprovalPayload(payload, key)
 
       setSessionApproval(key, approval)
       // Session-scoped: `approval.received` resolves through `_sess()`, so it
@@ -498,7 +501,8 @@ export function routeGatewayEvent(event: GatewayEvent): void {
             ? {
                 requestId,
                 question: '',
-                choices: null,
+                choices: [],
+                multiSelect: false,
                 questions,
                 // Present only on a resume replay of a partly-answered batch
                 // (`_pending_clarify_request_payload`), never on a live event.
@@ -508,7 +512,7 @@ export function routeGatewayEvent(event: GatewayEvent): void {
                 requestId,
                 question,
                 choices: readChoices('gateway', question, payload.choices),
-                ...(payload.multi_select === true ? { multiSelect: true } : {})
+                multiSelect: payload.multi_select === true
               }
         )
         dispatchNativeNotification({
@@ -547,7 +551,8 @@ export function routeGatewayEvent(event: GatewayEvent): void {
     case 'sudo.request':
       setSessionSudo(key, {
         requestId: coerceText(payload.request_id),
-        prompt: coerceText(payload.prompt) || coerceText(payload.command) || 'Enter your sudo password'
+        command: coerceText(payload.command) || coerceText(payload.prompt),
+        description: coerceText(payload.prompt) || coerceText(payload.message) || 'Enter your sudo password'
       })
 
       break
@@ -645,8 +650,8 @@ export function routeGatewayEvent(event: GatewayEvent): void {
       // payment required) — `tui_gateway/server.py` attaches the descriptor built
       // by `agent/billing_links.py` as `payload.billing`. Cached + toasted by the
       // store; detection stays backend-only, we never re-classify error prose.
-      if (payload.billing) {
-        surfaceBillingBlock(key, payload.billing)
+      if (payload.billing && typeof payload.billing === 'object') {
+        surfaceBillingBlock(key, payload.billing as BillingBlock)
       }
 
       dispatchNativeNotification({

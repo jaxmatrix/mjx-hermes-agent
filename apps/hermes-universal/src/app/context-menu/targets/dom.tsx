@@ -25,7 +25,7 @@ import { openCommandPalette } from '@/store/command-palette'
 import { startNewSession } from '@/store/new-session'
 import { notifyError } from '@/store/notifications'
 import { toggleStatusbarVisible } from '@/store/statusbar-prefs'
-import { runUpdateCheck } from '@/store/updates'
+import { runUpdateCheck } from '@/store/tauri-app-update'
 import { canOpenNewWindow, openAppRoute, openNewWindow } from '@/store/windows'
 
 // The `dom` target: the app's own DOM, and the LAST classifier by design.
@@ -90,7 +90,7 @@ function imageSection(
       label: t.contextMenu.image.copyImage,
       onSelect: () => {
         close()
-        void copyImageFrom(src, image).catch(error => notifyError(error, t.contextMenu.image.copyFailed))
+        void copyImageFrom(src, image).catch(error => notifyError(error, t.common.copyFailed))
       }
     })
   }
@@ -114,7 +114,7 @@ function imageSection(
       label: t.contextMenu.image.saveImageAs,
       onSelect: () => {
         close()
-        void saveImageFrom(src).catch(error => notifyError(error, t.contextMenu.image.saveFailed))
+        void saveImageFrom(src).catch(error => notifyError(error, t.contextMenu.imageSaveFailed))
       }
     })
   }

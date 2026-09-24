@@ -274,7 +274,7 @@ function PostSetupRunner({ toolset, postSetupKey, installed = false, onComplete,
   // Guard against overlapping polls / state updates after unmount.
   const activeRef = useRef(false)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     return () => {
       activeRef.current = false
@@ -488,7 +488,7 @@ function ModelCatalogPicker({ toolset, providerName, isActiveBackend, profile }:
             <button
               aria-pressed={isSelected}
               className={cn(
-                'grid gap-0.5 rounded-lg border px-2.5 py-2 text-left transition',
+                'grid gap-0.5 rounded-lg border px-2.5 py-2 text-start transition',
                 isSelected
                   ? 'border-(--ui-stroke-secondary) bg-(--ui-bg-tertiary)'
                   : 'border-transparent bg-background/55 hover:bg-accent/40',
@@ -540,7 +540,7 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange, profile }: Too
   // Guard the Nous Portal sign-in poll loop against unmount/state updates.
   const mountedRef = useRef(true)
 
-  // eslint-disable-next-line no-restricted-syntax -- mount flag guarding an async poll loop, not an atom mirror
+   
   useEffect(() => {
     mountedRef.current = true
 
@@ -582,7 +582,7 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange, profile }: Too
   // first fully-configured provider, else the first provider. Without this the
   // panel highlighted the first keyless provider (e.g. Nous Portal) even when
   // the user had already selected another (e.g. DuckDuckGo).
-  // eslint-disable-next-line no-restricted-syntax -- one-shot provider-choice claim flag, not an atom mirror
+   
   useEffect(() => {
     if (providerChoiceClaimedRef.current || expandedProvider || providers.length === 0) {
       return
@@ -798,7 +798,7 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange, profile }: Too
             <button
               aria-expanded={isExpanded}
               className={cn(
-                'flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition hover:bg-accent/50',
+                'flex w-full items-center justify-between gap-3 px-3 py-2.5 text-start transition hover:bg-accent/50',
                 isExpanded && 'bg-accent/40'
               )}
               onClick={() => {

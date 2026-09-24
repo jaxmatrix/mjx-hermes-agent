@@ -10,6 +10,8 @@ const patch = vi.fn<(id: string, pinned: boolean, profile?: null | string) => Pr
 )
 
 vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   setApiRequestProfile: () => {},
   setSessionPinnedRemote: (id: string, pinned: boolean, profile?: null | string) => patch(id, pinned, profile)
 }))

@@ -61,6 +61,17 @@ export {
 
 export type { Appearance }
 
+export type AppearanceCapabilities = {
+  glass: 'supported' | 'unsupported'
+  materials: readonly GlassMaterial[]
+  notes: readonly string[]
+  osBuild: null | number
+  platform: string
+  translucency: 'supported' | 'unsupported'
+}
+
+export const $glassCapabilities = atom<null | AppearanceCapabilities>(null)
+
 /**
  * Glass needs a native window material. Electron is authoritative (preload
  * sets `hermesDesktop.glassSupported` from `os.release()` so Win10 cannot
@@ -82,6 +93,14 @@ export const TRANSLUCENCY_SUPPORTED =
   typeof window !== 'undefined' && typeof window.hermesDesktop?.translucencySupported === 'boolean'
     ? window.hermesDesktop.translucencySupported
     : isMacPlatform() || isWindowsPlatform()
+
+export function translucencyAvailable(capabilities: null | AppearanceCapabilities): boolean {
+  return capabilities ? capabilities.translucency === 'supported' : TRANSLUCENCY_SUPPORTED
+}
+
+export function glassAvailable(capabilities: null | AppearanceCapabilities): boolean {
+  return capabilities ? capabilities.glass === 'supported' : GLASS_SUPPORTED
+}
 
 /** Windows collapses the frost ladder — see `glassMaterialsFor`. */
 export const GLASS_IS_WINDOWS = GLASS_SUPPORTED && !isMacPlatform()

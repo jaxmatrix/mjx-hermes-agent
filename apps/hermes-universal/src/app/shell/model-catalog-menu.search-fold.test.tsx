@@ -19,6 +19,8 @@ beforeAll(() => {
 const getGlobalModelOptions = vi.fn()
 
 vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getGlobalModelOptions: (...args: unknown[]) => getGlobalModelOptions(...args),
   getLocalModelsJobs: vi.fn(async () => ({ jobs: [] })),
   getLocalModelsStatus: vi.fn().mockResolvedValue({ loading: {} }),

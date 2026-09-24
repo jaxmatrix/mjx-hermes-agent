@@ -125,7 +125,7 @@ function CatalogAdvancedForm({ entry, fields, kind, onCancel, onInstall }: Catal
                 <Checkbox checked={agentHalf} onCheckedChange={value => setAgentHalf(value === true)} />
                 <span className="font-medium text-foreground">{m.agentLabel}</span>
               </label>
-              <label className="grid gap-1 pl-7">
+              <label className="grid gap-1 ps-7">
                 <span className={cn(CAPTION, 'text-foreground')}>{m.profileLabel}</span>
                 {profileSelect}
               </label>

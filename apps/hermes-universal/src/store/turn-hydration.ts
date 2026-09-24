@@ -19,10 +19,11 @@
  * fold the journal's rows in and then compare them against themselves.
  */
 
+import type { ChatMessage as JournalMessage } from '@/lib/chat-messages'
 import {
+  clearInFlightTurnJournal,
   persistInFlightTurnState,
-  recoverInFlightTurnJournal,
-  releaseInFlightTurnJournal
+  recoverInFlightTurnJournal
 } from '@/lib/inflight-turn-journal'
 import { reconcileLiveTail } from '@/lib/live-tail'
 import {
@@ -58,7 +59,7 @@ function runJournalPass(): void {
     persistInFlightTurnState({
       awaitingResponse: state.awaitingResponse,
       busy: state.busy,
-      messages: state.messages,
+      messages: state.messages as JournalMessage[],
       storedSessionId: state.storedSessionId,
       streamId: state.streamId,
       turnStartedAt: state.turnStartedAt
@@ -140,9 +141,9 @@ addSessionKeyHooks({
 
     const result = alreadyRecovered
       ? { applied: false, messages: reconciled, streamId: null, turnStartedAt: null }
-      : recoverInFlightTurnJournal(storedSessionId, reconciled, { keepPending: stillRunning })
+      : recoverInFlightTurnJournal(storedSessionId, reconciled as JournalMessage[], { keepPending: stillRunning })
 
-    const messages = result.applied ? result.messages : reconciled
+    const messages = (result.applied ? result.messages : reconciled) as typeof state.messages
 
     if (messages === state.messages && !result.applied) {
       return
@@ -184,6 +185,6 @@ observeTurnLifecycle(({ key, turn }) => {
   const storedSessionId = $sessionKeyStates.get()[key]?.storedSessionId
 
   if (storedSessionId) {
-    releaseInFlightTurnJournal(storedSessionId)
+    clearInFlightTurnJournal(storedSessionId)
   }
 })

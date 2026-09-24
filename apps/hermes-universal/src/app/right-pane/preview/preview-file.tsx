@@ -15,11 +15,12 @@ import { IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { useDisplayPath } from '@/store/display-home'
+import { $workspaceCwd } from '@/store/effective-cwd'
 import { notifyError } from '@/store/notifications'
-import { $previewReloadNonce, type PreviewTarget, requestPreviewReload } from '@/store/preview'
+import { $previewReloadRequest, type PreviewTarget, requestPreviewReload } from '@/store/preview'
 import { setPreviewDirty } from '@/store/preview-edit'
 import { $previewModes, seedPreviewMode, setPreviewCaps, setPreviewMode } from '@/store/preview-view'
-import { $workspaceCwd, notifyWorkspaceChanged } from '@/store/workspace-events'
+import { notifyWorkspaceChanged } from '@/store/workspace-events'
 
 import { MobileKeyRow } from './mobile-key-row'
 import { PreviewSource } from './preview-source'
@@ -79,6 +80,20 @@ const EXT_LANG: Record<string, string> = {
   yml: 'yaml'
 }
 
+function filePathForTarget(target: PreviewTarget): string {
+  if (target.path) {
+    return target.path
+  }
+
+  try {
+    const url = new URL(target.url)
+
+    return url.protocol === 'file:' ? decodeURIComponent(url.pathname) : target.url
+  } catch {
+    return target.url
+  }
+}
+
 function extOf(path: string): string {
   const name = path.slice(path.lastIndexOf('/') + 1)
   const dot = name.lastIndexOf('.')
@@ -118,7 +133,7 @@ interface Loaded {
 export function PreviewFile({ target, variant = 'rail' }: { target: PreviewTarget; variant?: 'rail' | 'tile' }) {
   const { t } = useI18n()
   const copy = t.preview
-  const reloadNonce = useStore($previewReloadNonce)
+  const reloadNonce = useStore($previewReloadRequest)
   const workspaceCwd = useStore($workspaceCwd)
 
   const [loaded, setLoaded] = useState<Loaded | null>(null)
@@ -134,7 +149,7 @@ export function PreviewFile({ target, variant = 'rail' }: { target: PreviewTarge
   const baselineRef = useRef('')
   const draftRef = useRef('')
 
-  const path = target.path
+  const path = filePathForTarget(target)
   const ext = extOf(path)
   // The header tooltip is the file's absolute path on the GATEWAY (MJXHRM-394).
   const displayPath = useDisplayPath()
@@ -283,7 +298,7 @@ export function PreviewFile({ target, variant = 'rail' }: { target: PreviewTarge
     >
       {railChrome ? (
         <span className="min-w-0 flex-1 truncate text-(--ui-text-secondary)" title={displayPath(path)}>
-          {target.name}
+          {target.label}
         </span>
       ) : (
         <span className="flex-1" />
@@ -398,13 +413,13 @@ export function PreviewFile({ target, variant = 'rail' }: { target: PreviewTarge
         ) : loaded.image ? (
           <div className="flex h-full items-center justify-center overflow-auto p-4">
             {loaded.dataUrl ? (
-              <img alt={target.name} className="max-h-full max-w-full object-contain" src={loaded.dataUrl} />
+              <img alt={target.label} className="max-h-full max-w-full object-contain" src={loaded.dataUrl} />
             ) : (
               <Centered>{copy.unavailable}</Centered>
             )}
           </div>
         ) : loaded.binary ? (
-          <Centered>{copy.binaryBody(target.name)}</Centered>
+          <Centered>{copy.binaryBody(target.label)}</Centered>
         ) : mode === 'rendered' ? (
           <div className="h-full overflow-auto px-4 py-3 text-sm">
             <Streamdown>{loaded.text}</Streamdown>

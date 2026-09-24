@@ -8,7 +8,7 @@ import {
   PROFILES_ROUTE,
   SETTINGS_ROUTE,
   WEBHOOKS_ROUTE
-} from '@/app/routes'
+} from '@/app/route-paths'
 import { requestComposerDraftSync } from '@/lib/composer-draft-bus'
 import { IS_ANDROID, IS_DESKTOP, IS_IOS, IS_TAURI } from '@/lib/platform'
 import { navigateTo } from '@/lib/route-nav'
@@ -321,7 +321,17 @@ export function canOpenSessionWindow(): boolean {
 }
 
 export function canOpenNewWindow(): boolean {
-  return multiWindowSupported() && !isSecondaryWindow()
+  if (isSecondaryWindow()) {
+    return false
+  }
+
+  // Desktop-shaped bridge (tests + Electron shim): presence of openWindow is
+  // the affordance, same gate desktop uses.
+  if (typeof window !== 'undefined' && typeof window.hermesDesktop?.openWindow === 'function') {
+    return true
+  }
+
+  return multiWindowSupported()
 }
 
 async function runWindowOpen(call: () => Promise<unknown>, failMessage: string): Promise<void> {
@@ -460,12 +470,24 @@ export async function closeTileWindow(label: string): Promise<void> {
  *  is the least reliable place to send a message from. */
 export const TILE_WINDOW_CLOSED_EVENT = 'hermes://tile-window-closed'
 
-export async function openNewWindow(): Promise<void> {
+export async function openNewWindow(route?: {
+  connectionId: null | string
+  profile: string
+}): Promise<void> {
   if (!canOpenNewWindow()) {
     return
   }
 
   flushComposerDraftsBeforeOpen()
+
+  // Prefer the desktop-shaped bridge when present (tests + Electron shim). The
+  // Tauri path opens a blank peer instance — profile routing lives in the
+  // bridge's `openWindow(route)` when the host exposes it.
+  if (typeof window !== 'undefined' && typeof window.hermesDesktop?.openWindow === 'function') {
+    await runWindowOpen(() => window.hermesDesktop.openWindow(route), 'Could not open a new window')
+
+    return
+  }
 
   await runWindowOpen(() => invoke('open_instance_window'), 'Could not open a new window')
 }
@@ -758,6 +780,22 @@ export function isPeerInstanceWindow(search = typeof window === 'undefined' ? ''
 // the primary's profile.
 export function windowProfileOverride(): null | string {
   return queryParam('profile')
+}
+
+export function isProfilePinnedWindow(search = typeof window === 'undefined' ? '' : window.location.search): boolean {
+  try {
+    return new URLSearchParams(search).get('profileWindow') === '1'
+  } catch {
+    return false
+  }
+}
+
+export function windowConnectionOverride(): null | string {
+  try {
+    return new URLSearchParams(window.location.search).get('connectionId') || null
+  } catch {
+    return null
+  }
 }
 
 function queryParam(name: string): null | string {

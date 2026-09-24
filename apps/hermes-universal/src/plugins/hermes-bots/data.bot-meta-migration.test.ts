@@ -29,7 +29,7 @@ const { hostMock } = vi.hoisted(() => ({
 vi.mock('@hermes/plugin-sdk', async () => {
   const { atom } = await import('nanostores')
 
-  return { atom, host: hostMock, queryClient: undefined, useQuery: vi.fn(), useValue: vi.fn() }
+  return { atom, host: hostMock, universalHost: hostMock, queryClient: undefined, useQuery: vi.fn(), useValue: vi.fn() }
 })
 
 vi.mock('./shared', () => ({ getPluginCtx: () => null, ID: 'hermes-bots' }))

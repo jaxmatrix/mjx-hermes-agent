@@ -210,7 +210,7 @@ describe('saveConnectionConfig', () => {
 
   it('refuses a gateway of a profile’s own, and treats "local" for a profile as already true', async () => {
     await expect(bridge.saveConnectionConfig({ ...payload, profile: 'work' })).rejects.toThrow(
-      'A profile cannot have a gateway of its own here'
+      'Named profiles cannot host a non-local gateway configuration.'
     )
     expect(await bridge.saveConnectionConfig({ mode: 'local', profile: 'work' })).toMatchObject({
       mode: 'local',
@@ -468,11 +468,15 @@ describe('secret storage', () => {
   })
 
   it('refuses the one change it could make, either way', async () => {
-    await expect(bridge.setSecretStorageEncryption(false)).rejects.toThrow('cannot be turned off')
+    await expect(bridge.setSecretStorageEncryption(false)).rejects.toThrow(
+      'Secrets are stored on disk for this platform.'
+    )
 
     rows.view = { ...view([LOCAL]), keyringAvailable: false }
 
     expect(await bridge.getSecretStorageEncryption!()).toEqual({ on: false })
-    await expect(bridge.setSecretStorageEncryption(true)).rejects.toThrow('no credential store')
+    await expect(bridge.setSecretStorageEncryption(true)).rejects.toThrow(
+      'No OS keyring is available — secrets will be stored on disk.'
+    )
   })
 })

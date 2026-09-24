@@ -27,6 +27,11 @@ const envVar = (over: Partial<EnvVarInfo>): EnvVarInfo => ({
 })
 
 vi.mock('@/hermes', () => ({
+  profileScopeKey: (profile?: string | null) => (profile ?? '').trim() || 'default',
+  peekConfigReadOrigin: () => undefined,
+  retainConfigReadOrigin: (record: object) => record,
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   deleteEnvVar: vi.fn(async () => ({ ok: true })),
   getEnvVars: vi.fn(async () => ({
     GATEWAY_PROXY: envVar({ category: 'setting', is_password: false }),
@@ -45,11 +50,11 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (_cmd: string, args: { maxMb?: number }) => args.maxMb ?? 16)
 }))
 
+import { credentialRowElementId, settingRowElementId } from '@/app/settings/setting-row-id'
 import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 
 import { KeysSection } from './keys-section'
-import { credentialRowElementId, settingRowElementId } from '@/app/settings/setting-row-id'
 import { SectionBody } from './settings-section'
 
 function Search() {

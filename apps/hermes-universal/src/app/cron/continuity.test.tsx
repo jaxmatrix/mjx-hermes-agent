@@ -15,6 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CronJob } from '@/types/hermes'
 
 const hermes = vi.hoisted(() => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   createCronJob: vi.fn(),
   deleteCronJob: vi.fn(),
   getAutomationBlueprints: vi.fn(async () => []),
@@ -54,7 +56,7 @@ async function openEditor(title: string) {
     .find(Boolean) as HTMLElement
 
   const kebab = Array.from(row.querySelectorAll('button')).find(
-    button => button.getAttribute('aria-label') === 'Cron job actions'
+    button => button.getAttribute('aria-label') === 'Manage'
   )!
 
   fireEvent.pointerDown(kebab, { button: 0, pointerType: 'mouse' })
@@ -154,8 +156,7 @@ describe('continuity toggle', () => {
     await waitFor(() =>
       expect(hermes.updateCronJob).toHaveBeenCalledWith(
         'j1',
-        expect.objectContaining({ context_from: ['upstream-a', 'self'] }),
-        undefined
+        expect.objectContaining({ context_from: ['upstream-a', 'self'] })
       )
     )
   })
@@ -182,11 +183,7 @@ describe('continuity toggle', () => {
     fireEvent.click(screen.getByText('Save changes'))
 
     await waitFor(() =>
-      expect(hermes.updateCronJob).toHaveBeenCalledWith(
-        'j1',
-        expect.objectContaining({ context_from: null }),
-        undefined
-      )
+      expect(hermes.updateCronJob).toHaveBeenCalledWith('j1', expect.objectContaining({ context_from: null }))
     )
   })
 })

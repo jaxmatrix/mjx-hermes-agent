@@ -104,7 +104,7 @@ describe('the app reads the published safe-area vars, never raw env()', () => {
     const reads = (rel: string, side: string) =>
       expect(fs.readFileSync(path.join(SRC, rel), 'utf8')).toContain(`var(--safe-area-inset-${side})`)
 
-    reads('app/onboarding/onboarding-screen.tsx', 'top')
+    reads('app/shell/mobile-chrome-bar.tsx', 'top')
     reads('app/shell/sidebar.tsx', 'top')
     reads('app/shell/statusbar-controls.tsx', 'bottom')
     reads('components/notifications.tsx', 'top')

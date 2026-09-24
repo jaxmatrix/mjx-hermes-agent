@@ -12,7 +12,7 @@
  * ones in `rpc.contract.test.ts`.
  */
 
-import { host } from '@hermes/plugin-sdk'
+import { universalHost as host } from '@hermes/plugin-sdk'
 
 import { BOT_CHAT_TITLE } from '../ids'
 import type { BotMeta } from '../model/meta'
@@ -37,7 +37,16 @@ const isRemote = (route?: AgentRoute): route is AgentRoute & { connectionId: str
  */
 async function call<T>(method: string, params: Record<string, unknown>, route?: AgentRoute): Promise<T> {
   if (isRemote(route)) {
-    return host.requestProfile<T>({ connectionId: route.connectionId, profile: route.profile }, method, params)
+    return host.requestProfile<T>(
+      {
+        connectionId: route.connectionId,
+        mode: 'remote',
+        profile: route.profile,
+        targetProfile: route.profile
+      },
+      method,
+      params
+    )
   }
 
   return host.request<T>(method, route?.profile ? { ...params, profile: route.profile } : params)

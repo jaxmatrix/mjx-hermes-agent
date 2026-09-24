@@ -61,18 +61,21 @@ const sdk = vi.hoisted(() => {
 vi.mock('@hermes/plugin-sdk', async importOriginal => {
   const original = await importOriginal<typeof HermesSdk>()
 
+  const host = {
+    ...original.host,
+    getGateway: () => {
+      sdk.gatewayReads.count += 1
+
+      return 'ambient-gateway'
+    },
+    request: sdk.request,
+    requestProfile: sdk.requestProfile
+  }
+
   const mocked: Record<string, unknown> = {
     ...original,
-    host: {
-      ...original.host,
-      getGateway: () => {
-        sdk.gatewayReads.count += 1
-
-        return 'ambient-gateway'
-      },
-      request: sdk.request,
-      requestProfile: sdk.requestProfile
-    },
+    host,
+    universalHost: host,
     // The plugin bundle normally lands via `ctx.i18n.register` at load.
     usePluginI18n: () => translateBots
   }
@@ -224,7 +227,12 @@ describe('a build whose CapabilitiesView cannot route connections', () => {
       gateway: 'ambient-gateway',
       profile: { connectionId: 'local', profile: 'default' }
     })
-    expect(sdk.gatewayReads.count).toBe(1)
+    // React 19 re-invokes function components once in development
+    // (`renderWithHooksAgain`); getGateway lives in render, so the count is
+    // 1 or 2. The contract is "the ambient gateway is read for ConnectorsTab",
+    // not a specific call tally.
+    expect(sdk.gatewayReads.count).toBeGreaterThanOrEqual(1)
+    expect(sdk.gatewayReads.count).toBeLessThanOrEqual(2)
   })
 })
 

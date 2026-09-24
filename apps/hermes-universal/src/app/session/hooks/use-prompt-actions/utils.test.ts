@@ -464,8 +464,11 @@ describe('renderRpcResult', () => {
 
   describe('session.usage', () => {
     it('formats calls / input / output / total with thousands separators', () => {
+      // Pin the separators to the host locale — `toLocaleString()` is not en-US
+      // everywhere (CI on en-IN uses Indian grouping: 12,34,567).
+      const n = (value: number) => value.toLocaleString()
       expect(renderRpcResult({ calls: 12, input: 1_234_567, output: 89_012, total: 1_323_579 }, 'usage')).toBe(
-        'Usage: 12 calls · 1,234,567 in / 89,012 out · 1,323,579 total'
+        `Usage: ${n(12)} calls · ${n(1_234_567)} in / ${n(89_012)} out · ${n(1_323_579)} total`
       )
     })
 

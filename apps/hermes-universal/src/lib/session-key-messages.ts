@@ -110,7 +110,10 @@ export function chatMessageText(message: ChatMessage): string {
  * `truncate_before_user_ordinal` rewinds the session to a turn the user never
  * pointed at. Returns null when the id names no user turn.
  */
-export function userTurnOrdinal(messages: readonly ChatMessage[], messageId: string): null | number {
+export function userTurnOrdinal(
+  messages: readonly { id?: string; role: string }[],
+  messageId: string
+): null | number {
   let ordinal = 0
 
   for (const message of messages) {

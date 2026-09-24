@@ -21,7 +21,7 @@
  * viewer only grabs keys when the human takes over.
  */
 
-import { host } from '@hermes/plugin-sdk'
+import { universalHost as host } from '@hermes/plugin-sdk'
 import type { RpcEvent } from '@hermes/plugin-sdk'
 
 import { $botMeta, $lastRoster, botSelectionKey } from './data'

@@ -327,7 +327,7 @@ describe('the windowable-surface table', () => {
     openAppRoute(cronJobRoute('nightly digest'))
     await Promise.resolve()
 
-    expect(invoke).toHaveBeenLastCalledWith('open_screen_window', { route: '/cron?job=nightly%20digest' })
+    expect(invoke).toHaveBeenLastCalledWith('open_screen_window', { route: '/cron?job=nightly+digest' })
     expect(navigateTo).toHaveBeenCalledTimes(1)
 
     vi.doUnmock('@tauri-apps/api/core')

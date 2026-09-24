@@ -221,7 +221,7 @@ export function PetGenerateContent() {
             <div className="relative">
               <Input
                 autoFocus
-                className="pr-9"
+                className="pe-9"
                 onChange={event => $petGenInput.set(event.target.value)}
                 onKeyDown={event => {
                   if (isSubmitEnter(event)) {
@@ -233,7 +233,7 @@ export function PetGenerateContent() {
                 value={prompt}
               />
               <GenerateButton
-                className="absolute right-1 top-1/2 -translate-y-1/2"
+                className="absolute end-1 top-1/2 -translate-y-1/2"
                 disabled={!prompt.trim() && !refImage}
                 generating={generating}
                 generatingLabel={t.common.cancel}
@@ -251,7 +251,7 @@ export function PetGenerateContent() {
                 <ReferenceChip name={refName} onRemove={clearReference} src={refImage} />
               ) : (
                 <button
-                  className="ml-auto flex h-6 items-center gap-1.5 text-[0.6875rem] text-(--ui-text-tertiary) transition hover:text-foreground"
+                  className="ms-auto flex h-6 items-center gap-1.5 text-[0.6875rem] text-(--ui-text-tertiary) transition hover:text-foreground"
                   onClick={() => fileRef.current?.click()}
                   type="button"
                 >

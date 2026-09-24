@@ -88,7 +88,7 @@ function ConsoleRow({ copyText, log, onSend, onToggleSelect, selected }: Console
       <Tip label={selected ? copy.deselect : copy.select}>
         <button
           className={cn(
-            'mt-0.5 text-left uppercase opacity-70 transition-colors hover:opacity-100',
+            'mt-0.5 text-start uppercase opacity-70 transition-colors hover:opacity-100',
             consoleLevelClass[log.level] ?? consoleLevelClass[0]
           )}
           onClick={onToggleSelect}
@@ -154,7 +154,7 @@ export function PreviewConsolePanel({
   const sendableLogs = visibleSelection.length > 0 ? visibleSelection : logs
   const stickScrollRafRef = useRef<number | null>(null)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (!consoleShouldStickRef.current) {
       return
@@ -207,7 +207,7 @@ export function PreviewConsolePanel({
         onPointerDown={startConsoleResize}
         role="separator"
       >
-        <span className="absolute left-1/2 top-1/2 h-0.75 w-23 -translate-x-1/2 -translate-y-1/2 rounded-full bg-muted-foreground/80 opacity-0 transition-opacity duration-100 group-hover:opacity-[0.5]" />
+        <span className="absolute start-1/2 top-1/2 h-0.75 w-23 -translate-x-1/2 -translate-y-1/2 rounded-full bg-muted-foreground/80 opacity-0 transition-opacity duration-100 group-hover:opacity-[0.5]" />
       </div>
       <div className="flex h-8 shrink-0 items-center justify-between border-b border-border/50 px-2">
         <div className="flex items-center gap-2 text-[0.6875rem] font-medium text-muted-foreground">

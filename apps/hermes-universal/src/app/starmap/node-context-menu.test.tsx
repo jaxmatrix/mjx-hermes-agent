@@ -9,6 +9,9 @@ vi.mock('@/app/learning/archive-skill-confirm-dialog', () => ({
 }))
 vi.mock('@/components/chat/code-editor', () => ({ CodeEditor: () => null }))
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   deleteLearningNode: vi.fn(),
   editLearningNode: vi.fn(),
   getLearningNode: vi.fn()

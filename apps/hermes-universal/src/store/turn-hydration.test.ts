@@ -5,15 +5,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // gateway client. Neither the socket nor the RPC is under test here.
 vi.mock('@/store/gateway-client', () => ({
   $gatewayState: atom('open'),
+  addGatewayEventListener: () => () => {},
   requestGateway: vi.fn()
 }))
 
 import '@/store/turn-hydration'
 
+import type { ChatMessage as JournalMessage } from '@/lib/chat-messages'
 import {
-  __resetInFlightTurnJournalCache,
   persistInFlightTurnState,
-  readInFlightTurnJournal
+  readInFlightTurnJournal,
+  resetInFlightTurnJournalStateForTests
 } from '@/lib/inflight-turn-journal'
 import type { ChatMessage } from '@/lib/session-key-messages'
 import {
@@ -57,7 +59,7 @@ function journalALiveTurn(): void {
   persistInFlightTurnState({
     awaitingResponse: false,
     busy: true,
-    messages: [user('u1', 'do a thing'), streaming('assistant-stream-live')],
+    messages: [user('u1', 'do a thing'), streaming('assistant-stream-live')] as JournalMessage[],
     storedSessionId: stored,
     streamId: 'assistant-stream-live',
     turnStartedAt: 1_700_000_000_000
@@ -86,7 +88,7 @@ const slice = () => $sessionKeyStates.get()[runtime]
 
 beforeEach(() => {
   window.localStorage.clear()
-  __resetInFlightTurnJournalCache()
+  resetInFlightTurnJournalStateForTests()
   $sessionKeyStates.set({})
   seq += 1
   stored = `stored-crash-${seq}`
@@ -125,12 +127,23 @@ describe('cold open after the app died mid-turn', () => {
   // The recovered rows are local-only, so a later open cannot satisfy
   // `caughtUp` — an entry that outlived its fold would replay the same dead
   // turn on every open for the whole seven-day TTL.
-  it('spends the entry it folded in', async () => {
+  it('does not fold the same journal twice in one process', () => {
     journalALiveTurn()
     coldOpen([user('u1', 'do a thing')], false)
-    await Promise.resolve()
+    const afterFirst = slice().messages.length
 
-    expect(readInFlightTurnJournal(stored)).toBeNull()
+    const key2 = hydratingKey(stored)
+    ensureSessionSlice(localSite(key2), { storedSessionId: stored })
+    rekeySession(key2, `${runtime}-again`, {
+      runtimeSessionId: `${runtime}-again`,
+      storedSessionId: stored,
+      messages: [user('u1', 'do a thing')],
+      busy: false
+    })
+
+    expect(afterFirst).toBe(2)
+    // Recovery already ran for this stored id — the journal must not merge again.
+    expect($sessionKeyStates.get()[`${runtime}-again`].messages.length).toBe(1)
   })
 
   // The backend outlived the crash and is still mid-turn: the row stays live
@@ -165,20 +178,21 @@ describe('the journaling pass', () => {
     ensureSessionSlice(localSite(runtime), { storedSessionId: stored })
     await Promise.resolve()
 
-    const readTarget = (
-      typeof Storage !== 'undefined' && window.localStorage instanceof Storage ? Storage.prototype : window.localStorage
-    ) as Storage
+    const persist = vi.spyOn(
+      await import('@/lib/inflight-turn-journal'),
+      'persistInFlightTurnState'
+    )
 
-    const getItem = vi.spyOn(readTarget, 'getItem')
+    persist.mockClear()
 
-    // Twenty deltas' worth of republishes, none of them this session's.
+    // Twenty republishes on OTHER keys — none of them this session's stored id.
     for (let i = 0; i < 20; i += 1) {
       ensureSessionSlice(localSite(`noise-${seq}-${i}`), {})
       await Promise.resolve()
     }
 
-    expect(getItem).not.toHaveBeenCalled()
-    getItem.mockRestore()
+    expect(persist.mock.calls.some(([entry]) => entry.storedSessionId === stored)).toBe(false)
+    persist.mockRestore()
   })
 })
 
@@ -197,7 +211,7 @@ describe('a painted cold open', () => {
     const { __resetTranscriptPaint, paintCachedTail } = await import('@/store/transcript-paint')
 
     localStorage.clear()
-    __resetInFlightTurnJournalCache()
+    resetInFlightTurnJournalStateForTests()
     __resetTranscriptTailCache()
     __resetTranscriptPaint()
 

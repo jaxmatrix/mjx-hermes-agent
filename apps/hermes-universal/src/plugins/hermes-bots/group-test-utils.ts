@@ -455,6 +455,7 @@ export async function pluginSdkMock(host: Record<string, unknown>) {
     computed: nanostores.computed,
     createBudgetedLoop: undefined,
     host,
+    universalHost: host,
     CapabilitiesView: undefined,
     MessageTextContent: undefined,
     Streamdown: undefined,

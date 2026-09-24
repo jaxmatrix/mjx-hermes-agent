@@ -3,6 +3,9 @@ import { atom } from 'nanostores'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type * as ModProfile from '@/store/profile'
+import type * as ModSession from '@/store/session'
+
 import { APP_ROUTES, isOverlayView } from '../routes'
 
 import { ChatRoutesSurface } from './surfaces'
@@ -11,11 +14,27 @@ import type { WiringActions } from './types'
 vi.mock('@/contrib/react/use-contributions', () => ({ useContributions: vi.fn() }))
 vi.mock('@/store/connections', () => ({ $activeConnectionId: atom('local') }))
 vi.mock('@/store/gateway', () => ({ $gateway: atom<unknown>(null) }))
-vi.mock('@/store/profile', () => ({ $activeGatewayProfile: atom('default') }))
-vi.mock('@/store/session', () => ({
-  $freshDraftReady: atom(false),
-  $gatewayState: atom('open')
-}))
+vi.mock('@/store/profile', async importOriginal => {
+  const actual = await importOriginal<typeof ModProfile>()
+  const { atom } = await import('nanostores')
+
+  return {
+    ...actual,
+    $activeGatewayProfile: atom('default'),
+    $showAllProfiles: atom(false)
+  }
+})
+vi.mock('@/store/session', async importOriginal => {
+  const actual = await importOriginal<typeof ModSession>()
+  const { atom } = await import('nanostores')
+
+  return {
+    ...actual,
+    $currentCwd: atom(''),
+    $freshDraftReady: atom(false),
+    $gatewayState: atom('open')
+  }
+})
 vi.mock('../chat', () => ({ ChatView: () => <div data-testid="chat-view" /> }))
 vi.mock('../capabilities', () => ({ CapabilitiesView: () => null }))
 vi.mock('../messaging', () => ({ MessagingView: () => null }))

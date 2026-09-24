@@ -24,7 +24,6 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The app provider the plugin's tab label renders under; a plugin test may reach it.
-// eslint-disable-next-line no-restricted-imports
 import { I18nProvider } from '@/i18n'
 
 import type * as DataModule from './data'
@@ -41,15 +40,18 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@hermes/plugin-sdk', async importOriginal => {
   const original = await importOriginal<typeof HermesSdk>()
 
+  const host = {
+    ...original.host,
+    onEvent: undefined,
+    paneVisibility: mocks.paneVisibility,
+    setWorkspaceScope: mocks.setWorkspaceScope,
+    undismissPane: mocks.undismissPane
+  }
+
   return {
     ...original,
-    host: {
-      ...original.host,
-      onEvent: undefined,
-      paneVisibility: mocks.paneVisibility,
-      setWorkspaceScope: mocks.setWorkspaceScope,
-      undismissPane: mocks.undismissPane
-    }
+    host,
+    universalHost: host
   }
 })
 

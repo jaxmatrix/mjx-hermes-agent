@@ -163,7 +163,7 @@ export function UninstallSection() {
               {visibleOptions.map(opt => (
                 <button
                   className={cn(
-                    'flex items-start gap-3 rounded-lg border border-border/60 bg-background/40 px-3 py-2.5 text-left transition',
+                    'flex items-start gap-3 rounded-lg border border-border/60 bg-background/40 px-3 py-2.5 text-start transition',
                     'hover:border-destructive/40 hover:bg-destructive/5'
                   )}
                   key={opt.mode}

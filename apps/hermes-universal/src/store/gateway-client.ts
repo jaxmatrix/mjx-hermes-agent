@@ -82,7 +82,7 @@ export async function connectGateway(conn: Connection): Promise<void> {
     // never be starved by a listener throwing. Listeners there are try/catch
     // isolated and emit is zero-cost when nobody subscribes. `GatewayEvent` is
     // structurally an `RpcEvent` (its `type` union widens to string).
-    emitGatewayEvent(event)
+    emitGatewayEvent(event as Parameters<typeof emitGatewayEvent>[0])
 
     // Then the app's own: one stream, one set of listeners. THE session event
     // router is registered via addGatewayEventListener rather than imported,

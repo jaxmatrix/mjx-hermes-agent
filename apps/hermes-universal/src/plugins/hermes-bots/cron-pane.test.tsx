@@ -37,15 +37,18 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => {
   const sdk = await importOriginal<typeof HermesSdk>()
   const { atom: nanoAtom } = await import('nanostores')
 
+  const host = {
+    ...sdk.host,
+    request,
+    // The pane's owner ladder starts here, so it has to be a real store:
+    // `$focusedBotOwner` is resolved once at bot-state module load.
+    state: { ...sdk.host.state, focusedSessionOwner: nanoAtom(null) }
+  }
+
   return {
     ...sdk,
-    host: {
-      ...sdk.host,
-      request,
-      // The pane's owner ladder starts here, so it has to be a real store:
-      // `$focusedBotOwner` is resolved once at bot-state module load.
-      state: { ...sdk.host.state, focusedSessionOwner: nanoAtom(null) }
-    },
+    host,
+    universalHost: host,
     // The plugin bundle normally lands via `ctx.i18n.register` at load, so
     // without this every localized label renders empty.
     usePluginI18n: () => translateBots

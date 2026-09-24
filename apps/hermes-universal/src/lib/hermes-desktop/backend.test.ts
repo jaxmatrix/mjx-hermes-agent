@@ -46,7 +46,7 @@ describe('recycleBackend', () => {
   it('refuses an SSH source rather than claim a restart it cannot make', async () => {
     active.kind = 'ssh'
 
-    await expect(bridge.recycleBackend()).rejects.toThrow('cannot be restarted from here')
+    await expect(bridge.recycleBackend()).rejects.toThrow('Restart is not supported for SSH gateways from here.')
     expect(applied).not.toHaveBeenCalled()
   })
 

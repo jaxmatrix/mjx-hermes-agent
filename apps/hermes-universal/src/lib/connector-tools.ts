@@ -2,6 +2,8 @@ import { isRecord } from '@assistant-ui/core/internal'
 import type { ToolCallMessagePart } from '@assistant-ui/react'
 import type { ToolLabel } from '@hermes/shared'
 
+import type { ChatMessage } from '@/lib/chat-messages'
+
 export interface McpTarget {
   name: string
   action: 'authorize' | 'enable' | 'install'
@@ -178,6 +180,48 @@ export function connectorCalls(name: string, args: ToolCallMessagePart['result']
 }
 
 /** Authorization URLs may carry tokens; reject non-HTTPS or embedded credentials. */
+/** Newest manage_connections tool row in the transcript (first-build connect flow). */
+export function latestConnectorPart(messages: readonly ChatMessage[]): ChatMessage['parts'][number] | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+
+    if (message.role !== 'assistant') {
+      continue
+    }
+
+    for (let partIndex = message.parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = message.parts[partIndex]
+
+      if (part.type === 'tool-call' && part.toolName === 'manage_connections') {
+        return part
+      }
+    }
+  }
+
+  return undefined
+}
+
+/** Connector slugs named by a manage_connections tool call, as row seeds. */
+export function connectionRows(
+  args: ToolCallMessagePart['args'] | undefined,
+  _result: ToolCallMessagePart['result']
+): ConnectorRow[] {
+  const input = recordOf(args)
+  const raw = input.connectors
+
+  if (!Array.isArray(raw)) {
+    return []
+  }
+
+  return raw.flatMap(entry => {
+    const slug = typeof entry === 'string' ? entry.trim() : connectorText((entry as { name?: unknown }).name)?.trim()
+
+    return slug
+      ? [{ connector: slug.toLowerCase(), connected: false, enabled: true } satisfies ConnectorRow]
+      : []
+  })
+}
+
 export function connectorAuthorizationUrl(value: ToolCallMessagePart['result']): string | null {
   const text = connectorText(value)
 

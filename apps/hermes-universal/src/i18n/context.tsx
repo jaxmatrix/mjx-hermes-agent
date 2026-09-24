@@ -2,6 +2,7 @@ import { applyDocumentLocale, isRecord } from '@hermes/shared/i18n'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 import { getHermesConfigRecord, type HermesConfigRecord, retainConfigReadOrigin, saveHermesConfig } from '@/hermes'
+import { $appLocale } from '@/store/tray'
 
 import { TRANSLATIONS } from './catalog'
 import {
@@ -103,10 +104,11 @@ export function I18nProvider({ children, configClient = defaultConfigClient, ini
   // resolves (or fails) after that must never overwrite an explicit choice.
   const userLocaleRef = useRef(false)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     localeRef.current = locale
     setRuntimeI18nLocale(locale)
+    $appLocale.set(locale)
     applyDocumentLocale(locale)
   }, [locale])
 

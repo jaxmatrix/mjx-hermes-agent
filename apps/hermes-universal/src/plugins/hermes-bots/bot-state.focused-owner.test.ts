@@ -38,7 +38,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
 
   return {
     atom,
-    host: {
+    universalHost: {
       activeConnectionId: () => state.activeConnectionId,
       state: {
         connectionId: store(() => state.connectionId),

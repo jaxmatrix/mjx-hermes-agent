@@ -1,7 +1,7 @@
 import { IS_TAURI } from '@/lib/platform'
 import { broadcastToPeers, onPeerBroadcast, type PeerBroadcast } from '@/lib/webview-broadcast'
 
-import { $mode, $skin } from './context'
+import { $mode, $skin } from './mode-skin-atoms'
 
 // Cross-WebView appearance repaint.
 //

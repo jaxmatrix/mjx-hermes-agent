@@ -105,6 +105,21 @@ export interface QuickEntrySessionOption {
   title: string
 }
 
+const QUICK_ENTRY_SESSION_OPTIONS = 5
+
+/** Recent non-archived sessions for the quick-window picker (desktop parity). */
+export function quickEntrySessionOptions(
+  sessions: ReadonlyArray<{ archived?: boolean | null; id: string; preview?: string | null; title?: string | null }>
+): QuickEntrySessionOption[] {
+  return sessions
+    .filter(session => !session.archived)
+    .slice(0, QUICK_ENTRY_SESSION_OPTIONS)
+    .map(session => ({
+      id: session.id,
+      title: session.title?.trim() || session.preview?.trim() || session.id
+    }))
+}
+
 /** Send into whatever chat the main window currently has in front. */
 export const QUICK_TARGET_CURRENT = 'current'
 /** Start a brand-new session for this prompt. */
@@ -260,7 +275,7 @@ export function setQuickEntrySubmitHandler(fn: ((payload: QuickEntrySubmitPayloa
   submitHandler = fn
 }
 
-function normalizeSubmitPayload(raw: unknown): null | QuickEntrySubmitPayload {
+export function normalizeQuickEntrySubmit(raw: unknown): null | QuickEntrySubmitPayload {
   // Tolerate the v1 bare-string wire shape (an older quick window after a
   // partial update) by treating it as "send to the current chat".
   if (typeof raw === 'string') {
@@ -296,7 +311,7 @@ export function initQuickEntryBridge(): () => void {
   }
 
   unsubscribeSubmit = api.onSubmit(raw => {
-    const payload = normalizeSubmitPayload(raw)
+    const payload = normalizeQuickEntrySubmit(raw)
 
     if (payload) {
       submitHandler?.(payload)

@@ -94,3 +94,20 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
     unobserve() {}
   } as unknown as typeof ResizeObserver
 }
+
+// Same story for IntersectionObserver — sticky-prompt clip and pet thumbs
+// construct one in a layout effect. Tests that need real intersection delivery
+// stub their own callbacks; ordinary mounts only need the lifecycle.
+if (typeof globalThis.IntersectionObserver === 'undefined') {
+  globalThis.IntersectionObserver = class {
+    readonly root = null
+    readonly rootMargin = '0px'
+    readonly thresholds = [0]
+    disconnect() {}
+    observe() {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return []
+    }
+    unobserve() {}
+  } as unknown as typeof IntersectionObserver
+}

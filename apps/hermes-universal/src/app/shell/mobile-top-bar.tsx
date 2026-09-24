@@ -1,13 +1,13 @@
 import { useLocation, useNavigate } from 'react-router'
 
 import { ChatTitle } from '@/app/chat/chat-title'
-import { TITLEBAR_AREAS } from '@/sdk'
-import { isWorkspacePagePath, NEW_CHAT_ROUTE } from '@/app/routes'
+import { isWorkspacePageRoute, NEW_CHAT_ROUTE } from '@/app/routes'
 import { ConnectionBar } from '@/components/chat/connection-accent'
 import { Codicon } from '@/components/ui/codicon'
 import { Slot } from '@/contrib/react/slot'
 import { useI18n } from '@/i18n'
 import { useStoreSelector } from '@/lib/use-session-slice'
+import { TITLEBAR_AREAS } from '@/sdk'
 import { useStore } from '@/store/atom'
 import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
 
@@ -32,7 +32,7 @@ export function MobileTopBar() {
   const navigate = useNavigate()
   // Derived from the path rather than read off `$workspacePage`: only the
   // desktop controller keeps that atom in sync, and this bar is the phone's.
-  const onPage = isWorkspacePagePath(useLocation().pathname)
+  const onPage = isWorkspacePageRoute(useLocation().pathname)
   // The chat on screen, and the connection it is bound to. Read from the SLICE,
   // which carries its scope from its first write — never from the active
   // connection, which a background chat does not belong to.

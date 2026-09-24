@@ -14,6 +14,8 @@ const profile = (over: Partial<ProfileInfo>): ProfileInfo => ({
 })
 
 vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getProfiles: vi.fn(async () => ({
     profiles: [profile({ name: 'default', is_default: true }), profile({ name: 'research' })]
   })),

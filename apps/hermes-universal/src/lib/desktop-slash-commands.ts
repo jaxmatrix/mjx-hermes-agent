@@ -59,6 +59,7 @@ export type DesktopActionId =
   | 'browser'
   | 'btw'
   | 'compress'
+  | 'focus'
   | 'handoff'
   | 'hatch'
   | 'help'
@@ -255,6 +256,12 @@ const DESKTOP_COMMAND_SPECS: readonly DesktopCommandSpec[] = [
     aliases: ['/compact'],
     surface: action('compress'),
     argumentMode: 'text'
+  },
+  {
+    name: '/focus',
+    description: 'Toggle reduced-output focus mode for this session',
+    surface: action('focus'),
+    argumentMode: 'options'
   },
   // /btw must be an action (prompt.btw RPC), not exec: the slash worker
   // prints the answer after process_command returns, so Desktop only ever

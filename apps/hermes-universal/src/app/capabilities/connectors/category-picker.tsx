@@ -52,17 +52,17 @@ export function CategoryPicker({ categories, onChange, value }: CategoryPickerPr
             <CommandEmpty>{copy.tools.noMatch}</CommandEmpty>
             <CommandGroup>
               <CommandItem onSelect={() => pick(null)} value={copy.categoryAll}>
-                <Codicon className={cn('mr-2 size-4', value === null ? 'opacity-100' : 'opacity-0')} name="check" />
+                <Codicon className={cn('me-2 size-4', value === null ? 'opacity-100' : 'opacity-0')} name="check" />
                 {copy.categoryAll}
               </CommandItem>
               {categories.map(entry => (
                 <CommandItem key={entry.value} onSelect={() => pick(entry.value)} value={labelFor(entry.value)}>
                   <Codicon
-                    className={cn('mr-2 size-4', entry.value === value ? 'opacity-100' : 'opacity-0')}
+                    className={cn('me-2 size-4', entry.value === value ? 'opacity-100' : 'opacity-0')}
                     name="check"
                   />
                   <span className="min-w-0 flex-1 truncate">{labelFor(entry.value)}</span>
-                  <span className="ml-2 shrink-0 tabular-nums text-(--ui-text-tertiary)">{entry.count}</span>
+                  <span className="ms-2 shrink-0 tabular-nums text-(--ui-text-tertiary)">{entry.count}</span>
                 </CommandItem>
               ))}
             </CommandGroup>

@@ -1,24 +1,21 @@
 import { useStore } from '@nanostores/react'
 
 import { ModelVisibilityDialog } from '@/components/model-visibility-dialog'
-import type { HermesGateway } from '@/hermes'
+import { $sessionId } from '@/store/chat'
+import { getGatewayClient } from '@/store/gateway-client'
 import { $modelVisibilityOpen, setModelVisibilityOpen } from '@/store/model-visibility'
-import { $activeSessionId, $gatewayState } from '@/store/session'
+import { $activeGatewayProfile } from '@/store/profile'
+import { $gatewayState } from '@/store/session'
 
 interface ModelVisibilityOverlayProps {
-  gateway?: HermesGateway
-  onOpenProviders: () => void
-  ownerConnectionId?: string
-  profile: string
+  /** Omitted by a host with no provider-setup surface to hand off to (the
+   *  satellite chat window), which stands the "Add provider…" row down. */
+  onOpenProviders?: () => void
 }
 
-export function ModelVisibilityOverlay({
-  gateway,
-  onOpenProviders,
-  ownerConnectionId,
-  profile
-}: ModelVisibilityOverlayProps) {
-  const activeSessionId = useStore($activeSessionId)
+export function ModelVisibilityOverlay({ onOpenProviders }: ModelVisibilityOverlayProps) {
+  const sessionId = useStore($sessionId)
+  const profile = useStore($activeGatewayProfile)
   const gatewayOpen = useStore($gatewayState) === 'open'
   const open = useStore($modelVisibilityOpen)
 
@@ -28,13 +25,12 @@ export function ModelVisibilityOverlay({
 
   return (
     <ModelVisibilityDialog
-      gw={gateway}
+      gw={getGatewayClient() ?? undefined}
       onOpenChange={setModelVisibilityOpen}
-      onOpenProviders={onOpenProviders}
+      onOpenProviders={onOpenProviders ?? (() => {})}
       open={open}
-      ownerConnectionId={ownerConnectionId}
       profile={profile}
-      sessionId={activeSessionId}
+      sessionId={sessionId}
     />
   )
 }

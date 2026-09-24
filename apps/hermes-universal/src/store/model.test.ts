@@ -1,3 +1,4 @@
+import type { ModelOptionsResult } from '@hermes/shared'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/store/gateway-client', async () => {
@@ -25,7 +26,6 @@ import { $activeGatewayProfile } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
 import { $sessionKeyStates } from '@/store/session-state-types'
 import { resetSessionStates, seedActiveSession, seedSession } from '@/test-sessions'
-import type { ModelOptionsResponse } from '@/types/hermes'
 
 import {
   $currentFastMode,
@@ -41,7 +41,7 @@ import {
 const optionsKey = (sessionId: null | string) => modelOptionsQueryKey($activeGatewayProfile.get(), sessionId)
 
 const cachedModel = (sessionId: null | string): string | undefined =>
-  queryClient.getQueryData<ModelOptionsResponse>(optionsKey(sessionId))?.model
+  queryClient.getQueryData<ModelOptionsResult>(optionsKey(sessionId))?.model
 
 // ⌘⇧M opens the picker for the pane under the pointer, so a selection names the
 // session it is meant for. The composer's own dropdown omits it and keeps
@@ -127,7 +127,7 @@ describe('selectModel targeting', () => {
   it('holds a named surface with no runtime as UI state only', async () => {
     seedActiveSession('runtime-1')
     seedSession('draft:2', { runtimeSessionId: '' })
-    queryClient.setQueryData<ModelOptionsResponse>(optionsKey(null), { model: 'profile-model' } as ModelOptionsResponse)
+    queryClient.setQueryData<ModelOptionsResult>(optionsKey(null), { model: 'profile-model' } as ModelOptionsResult)
 
     await expect(selectModel({ model: 'glm-5', provider: 'zai', sessionId: 'draft:2' })).resolves.toBe(true)
 
@@ -159,9 +159,9 @@ describe('selectModel round trip', () => {
 
   it('writes the pick through to the session-scoped model.options cache', async () => {
     seedActiveSession('runtime-1')
-    queryClient.setQueryData<ModelOptionsResponse>(optionsKey('runtime-1'), {
+    queryClient.setQueryData<ModelOptionsResult>(optionsKey('runtime-1'), {
       model: 'old-model'
-    } as ModelOptionsResponse)
+    } as ModelOptionsResult)
 
     await selectModel({ model: 'glm-5', provider: 'zai' })
 
@@ -200,9 +200,9 @@ describe('selectModel round trip', () => {
   // the session is not running.
   it('rolls back and reports failure when the gateway refuses with confirm_required', async () => {
     seedActiveSession('runtime-1')
-    queryClient.setQueryData<ModelOptionsResponse>(optionsKey('runtime-1'), {
+    queryClient.setQueryData<ModelOptionsResult>(optionsKey('runtime-1'), {
       model: 'primary-model'
-    } as ModelOptionsResponse)
+    } as ModelOptionsResult)
     vi.mocked(requestGateway).mockResolvedValue({
       confirm_required: true,
       confirm_message: 'Opus 5 costs $15/Mtok.',
@@ -248,9 +248,9 @@ describe('selectModel round trip', () => {
 
   it('rolls the cache back with the pill when the RPC throws', async () => {
     seedActiveSession('runtime-1')
-    queryClient.setQueryData<ModelOptionsResponse>(optionsKey('runtime-1'), {
+    queryClient.setQueryData<ModelOptionsResult>(optionsKey('runtime-1'), {
       model: 'primary-model'
-    } as ModelOptionsResponse)
+    } as ModelOptionsResult)
     vi.mocked(requestGateway).mockRejectedValue(new Error('nope'))
 
     await expect(selectModel({ model: 'glm-5', provider: 'zai' })).resolves.toBe(false)

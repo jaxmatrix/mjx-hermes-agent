@@ -18,7 +18,9 @@ vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undef
 
 import type { ToolCallPart } from '@/lib/session-key-messages'
 import { routeGatewayEvent } from '@/store/event-router'
-import { clearAllPrompts, sessionAwaitingInput, sessionMcpSetupRequest } from '@/store/prompts'
+import { sessionMcpSetupRequest } from '@/store/mcp-setup'
+import { clearSessionMcpSetup } from '@/store/prompt-session-bridge'
+import { clearAllPrompts } from '@/store/prompts'
 import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
 
 const event = (type: string, payload: Record<string, unknown>, sessionId = 's1'): GatewayEvent =>
@@ -39,6 +41,7 @@ const toolParts = (key: string): ToolCallPart[] =>
 describe('event-router → mcp.setup lifecycle', () => {
   beforeEach(() => {
     clearAllPrompts()
+    clearSessionMcpSetup()
     $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
   })
@@ -59,7 +62,8 @@ describe('event-router → mcp.setup lifecycle', () => {
       requestId: 'req-1',
       server: 'linear',
       action: 'install',
-      reason: 'To read the ticket'
+      reason: 'To read the ticket',
+      sessionId: 's1'
     })
   })
 
@@ -120,7 +124,8 @@ describe('event-router → mcp.setup lifecycle', () => {
   it('parks the turn on the user so Esc will not interrupt it', () => {
     raise()
 
-    expect(sessionAwaitingInput('s1').get()).toBe(true)
+    expect(sessionMcpSetupRequest('s1').get()).not.toBeNull()
+    expect($sessionKeyStates.get().s1?.needsInput).toBe(true)
   })
 
   // Unlike `clarify.expire`, this one IS consumed: an expired setup card can

@@ -1,7 +1,7 @@
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type * as ClipboardModule from '@/lib/clipboard'
+import type * as ClipboardModule from '@/lib/clipboard-universal'
 
 // The composer's image-paste props are the whole subject here, so ChatBar is a
 // prop recorder rather than the real 900-line composer.
@@ -19,7 +19,7 @@ vi.mock('@/app/shell/model-menu-panel', () => ({ ModelMenuPanel: () => null }))
 
 const clipboard = { canRead: true }
 
-vi.mock('@/lib/clipboard', async importOriginal => ({
+vi.mock('@/lib/clipboard-universal', async importOriginal => ({
   ...(await importOriginal<typeof ClipboardModule>()),
   canReadClipboardImage: () => clipboard.canRead,
   readClipboardImage: vi.fn()
@@ -39,7 +39,7 @@ vi.mock('@/app/chat/attachments', () => ({
 }))
 
 import { stageAttachmentFromBlob } from '@/app/chat/attachments'
-import { readClipboardImage } from '@/lib/clipboard'
+import { readClipboardImage } from '@/lib/clipboard-universal'
 
 import { ChatComposer } from './chat-composer'
 import { type ComposerScope, ComposerScopeProvider, MAIN_COMPOSER_SCOPE } from './composer/scope'

@@ -6,6 +6,16 @@ const STORAGE_KEY = 'hermes.desktop.terminals.v1'
 async function loadTerminalStore() {
   const $currentCwd = atom('/workspace')
 
+  vi.doMock('@/store/gateway-client', async () => {
+    const { atom: atomFn } = await import('nanostores')
+
+    return {
+      $gatewayState: atomFn('open'),
+      addGatewayEventListener: () => () => {},
+      requestGateway: vi.fn()
+    }
+  })
+
   vi.doMock('@/store/session', () => ({
     $currentCwd
   }))

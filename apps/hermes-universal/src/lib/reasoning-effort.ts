@@ -1,5 +1,7 @@
 import { DEFAULT_REASONING_EFFORT, isReasoningEffort, type ReasoningEffort } from '@hermes/shared'
 
+export { DEFAULT_REASONING_EFFORT }
+
 import { normalize } from '@/lib/text'
 
 /** Compact labels for chrome where space is tight (pill, picker rows). Menus

@@ -1,3 +1,4 @@
+import { atom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { isSessionGone, latchSessionGone, resetBackgroundPollingGuard } from './session-gone-latch'
@@ -23,6 +24,9 @@ const secondaryGateways: Array<{
 let promptAckStatus: null | string = null
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   HermesGateway: class {
     connectionState = 'closed'
     eventHandler: ((event: { payload?: Record<string, unknown>; session_id?: string; type: string }) => void) | null =
@@ -65,7 +69,10 @@ vi.mock('@/hermes', () => ({
   },
   setApiRequestConnection: vi.fn()
 }))
-vi.mock('@/store/session', () => ({ setConnection: vi.fn(), setGatewayState: vi.fn() }))
+vi.mock('@/store/session', () => ({
+  setConnection: vi.fn(), setGatewayState: vi.fn(),
+  $gatewayState: atom('closed')
+}))
 vi.mock('@/store/notify-baseline', () => ({ markNativeNotifyBaseline: vi.fn() }))
 
 const {

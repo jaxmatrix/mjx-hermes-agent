@@ -1,3 +1,4 @@
+import { atom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #102281: a user-initiated open must reach Electron main as a FOREGROUND dial
@@ -8,6 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // timeout before anything promotes it.
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   setApiRequestConnection: vi.fn(),
   HermesGateway: class {
     connectionState = 'closed'
@@ -22,7 +26,10 @@ vi.mock('@/hermes', () => ({
     request = vi.fn(async () => ({}))
   }
 }))
-vi.mock('@/store/session', () => ({ setConnection: vi.fn(), setGatewayState: vi.fn() }))
+vi.mock('@/store/session', () => ({
+  setConnection: vi.fn(), setGatewayState: vi.fn(),
+  $gatewayState: atom('closed')
+}))
 vi.mock('@/store/notify-baseline', () => ({ markNativeNotifyBaseline: vi.fn() }))
 
 const {

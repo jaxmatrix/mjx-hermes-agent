@@ -90,12 +90,30 @@ store/terminal-open.ts
 store/layout-edges.ts
 store/live-poll.ts
 store/pane-geometry.ts
+store/voice-levels.ts
 store/transcript-paint.*
+store/effective-cwd.ts
+store/reactions-universal.ts
+store/billing-block-universal.ts
+store/pane-focus-universal.ts
+store/resume-prompts.ts
+store/tauri-app-update.ts
+lib/desktop-fs-universal.ts
+lib/clipboard-universal.ts
+voice/wake-pause.ts
+store/wake-word-universal.ts
+store/live-sync-universal.ts
+store/pet-generate-universal.ts
+store/composer-hud-universal.ts
+# Universal-only theme peer sync atoms (desktop uses profile prefs instead).
+themes/appearance-sync.ts
+themes/mode-skin-atoms.ts
 store/artifacts.*
 store/windows.ts
 store/windows.test.ts
 store/windows-kind.test.ts
 lib/connection-color.*
+lib/icons-extra.ts
 components/chat/chat-connection-banner.*
 components/chat/connection-accent.*
 app/chat/use-tab-connection.*
@@ -127,6 +145,10 @@ main.tsx
 # make universal work on a touch device at all.
 # ---------------------------------------------------------------------------
 app/mobile-controller.tsx
+app/model-picker-overlay.tsx
+app/model-visibility-overlay.tsx
+app/shell/model-drawer-grouping.ts
+store/zoom-universal.ts
 app/shell/mobile-*.*
 app/right-pane/**/mobile-*.*
 app/chat/composer/bubble-row.tsx
@@ -172,3 +194,24 @@ i18n/ja.ts
 i18n/zh.ts
 i18n/zh-hant.ts
 i18n/types.ts
+
+# Universal host glue (Tauri HUD handoff, workspace route table, composer draft bus).
+app/hud/handoff-satellite.ts
+app/contrib/workspace-routes.tsx
+store/composer-draft-transport.ts
+app/contrib/handoff-receipt.ts
+lib/connector-tools.ts
+components/pane-shell/tree/renderer/track-model.ts
+store/translucency.ts
+
+# Universal markdown math collapse (katex-html host) + touch column resize.
+# Desktop's katex-memo expands KaTeX into a hast subtree; universal caches the
+# HTML string and mounts one host node. Desktop's markdown-table lacks
+# startPointerDrag / touch-none / unmount teardown the mobile tests pin.
+lib/katex-memo.ts
+lib/markdown-preprocess.ts
+components/assistant-ui/markdown-table.tsx
+components/assistant-ui/markdown-text.tsx
+components/assistant-ui/directive-text.tsx
+components/chat/shiki-highlighter.tsx
+app/contrib/surfaces.tsx

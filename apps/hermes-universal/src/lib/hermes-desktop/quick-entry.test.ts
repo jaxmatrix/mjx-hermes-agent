@@ -26,6 +26,15 @@ vi.mock('@/app/quick-entry/channel', () => ({
   onQuickEntryShown: vi.fn(async () => () => undefined)
 }))
 
+// submit/dismiss fire-and-forget `import('@/app/quick-entry/quick-entry')` to
+// close the window. Without this stub the import keeps resolving after the
+// suite tears down (pulling store → nanostores autocapture) and Vitest reports
+// EnvironmentTeardownError even though every assertion already passed.
+vi.mock('@/app/quick-entry/quick-entry', () => ({
+  closeQuickEntry: vi.fn(),
+  toggleQuickEntry: vi.fn()
+}))
+
 describe('quickEntryBridge', () => {
   beforeEach(() => {
     invoke.mockReset()

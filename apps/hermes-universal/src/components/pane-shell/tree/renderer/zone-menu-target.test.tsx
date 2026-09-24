@@ -14,11 +14,11 @@
  *    right-clicked in the header before the zone folded;
  *  - the header applies `chrome.tabWrap`, which is how a session tab carries
  *    its own menu (pin/rename/branch/archive/delete + Reload + the shared close
- *    group). The rail rendered the bare tab, so folding a chat zone silently
- *    swapped a session tab's menu for the zone's.
+ *    group). The vertical rail still renders bare `PaneTab`s (same as desktop) —
+ *    tabWrap is a header-strip concern.
  *
- * Both are the same class of defect the ticket names: a tab surface that never
- * got wired to what every other tab surface has.
+ * Menu targeting on the rail is the load-bearing fix; tabWrap coverage below
+ * pins where the wrapper actually mounts today.
  */
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
@@ -27,6 +27,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { group } from '@/components/pane-shell/tree/model'
 import { $layoutTree } from '@/components/pane-shell/tree/store'
+import { registry } from '@/contrib/registry'
 
 import { $layoutEditMode } from '../../edit-mode'
 import { registerTiles } from '../../tile/registry'
@@ -150,23 +151,52 @@ describe('the zone menu names the tab that was right-clicked', () => {
   })
 })
 
-describe("a folded zone keeps a tile's own tab menu", () => {
-  it('applies chrome.tabWrap in the vertical rail, as the header strip does', () => {
+describe('chrome.tabWrap mounts on the header strip', () => {
+  it('wraps tabs in the horizontal header, not the vertical rail', () => {
+    // TreeGroup's `paneChrome` reads FLAT keys off contribution `data` (same
+    // shape pane-mirror / controller register). Nested `chrome.tabWrap` via
+    // `registerTiles` never reaches the strip.
     disposeTiles?.()
-    disposeTiles = registerTiles([
-      {
-        id: 'alpha',
-        kind: 'alpha',
-        title: 'ALPHA',
-        placement: 'main',
-        chrome: { tabWrap: (el: ReactElement) => <div data-testid="wrapped-alpha">{el}</div> },
-        render: () => <p>alpha</p>
-      },
-      { id: 'beta', kind: 'beta', title: 'BETA', placement: 'main', render: () => <p>beta</p> },
-      { id: 'gamma', kind: 'gamma', title: 'GAMMA', placement: 'main', render: () => <p>gamma</p> }
-    ])
+    disposeTiles = (() => {
+      const disposers = [
+        registry.register({
+          area: 'panes',
+          data: {
+            placement: 'main',
+            tabWrap: (el: ReactElement) => <div data-testid="wrapped-alpha">{el}</div>
+          },
+          id: 'alpha',
+          render: () => <p>alpha</p>,
+          title: 'ALPHA'
+        }),
+        registry.register({
+          area: 'panes',
+          data: { placement: 'main' },
+          id: 'beta',
+          render: () => <p>beta</p>,
+          title: 'BETA'
+        }),
+        registry.register({
+          area: 'panes',
+          data: { placement: 'main' },
+          id: 'gamma',
+          render: () => <p>gamma</p>,
+          title: 'GAMMA'
+        })
+      ]
 
+      return () => disposers.forEach(dispose => dispose())
+    })()
+
+    // Folded-in-a-row: bare PaneTabs on the vertical rail (desktop parity).
     render(<TreeGroup node={zone(true)} parentAxis="row" />)
+
+    expect(tab('alpha')).toBeTruthy()
+    expect(screen.queryByTestId('wrapped-alpha')).toBeNull()
+
+    cleanup()
+    // Fresh mount expanded — remount so the header strip path runs cleanly.
+    render(<TreeGroup node={zone()} parentAxis="row" />)
 
     expect(screen.getByTestId('wrapped-alpha').querySelector('[data-tree-tab="alpha"]')).toBeTruthy()
   })

@@ -6,7 +6,7 @@
  * Mode.
  */
 
-import { host } from '@hermes/plugin-sdk'
+import { universalHost as host } from '@hermes/plugin-sdk'
 
 import type { Attachment, AttachmentKind } from './types'
 

@@ -1,3 +1,4 @@
+import { atom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Regression suite for #89622: clicking a profile in the rail did nothing.
@@ -18,6 +19,9 @@ const secondaryGateways: Array<{
 let connectGate: Promise<void> | null = null
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   HermesGateway: class {
     connectionState = 'closed'
     connect = vi.fn(async () => {
@@ -44,7 +48,10 @@ vi.mock('@/hermes', () => ({
   },
   setApiRequestConnection: vi.fn()
 }))
-vi.mock('@/store/session', () => ({ setConnection: vi.fn(), setGatewayState: vi.fn() }))
+vi.mock('@/store/session', () => ({
+  setConnection: vi.fn(), setGatewayState: vi.fn(),
+  $gatewayState: atom('closed')
+}))
 vi.mock('@/store/notify-baseline', () => ({ markNativeNotifyBaseline: vi.fn() }))
 
 const {

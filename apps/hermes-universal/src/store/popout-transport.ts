@@ -57,7 +57,7 @@ async function reclaim(storedSessionId: string): Promise<void> {
     // Lazily, for the reason `app/hud/handoff.ts` documents: the window layer
     // must not gain a static edge to the session store to hold a reference used
     // only when a pop-out closes.
-    const { reclaimSessionTransport } = await import('@/store/session')
+    const { reclaimSessionTransport } = await import('@/store/session-lifecycle')
 
     await reclaimSessionTransport(storedSessionId)
   } catch (err) {

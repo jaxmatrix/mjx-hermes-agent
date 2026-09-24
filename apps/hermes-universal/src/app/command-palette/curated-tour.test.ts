@@ -43,7 +43,16 @@ function declaredHandles(): Set<string> {
       if (entry.isDirectory()) {
         walk(full)
       } else if (/\.tsx$/.test(entry.name) && !/\.test\.tsx$/.test(entry.name)) {
-        for (const match of fs.readFileSync(full, 'utf8').matchAll(/data-tour="([^"]+)"/g)) {
+        const source = fs.readFileSync(full, 'utf8')
+
+        for (const match of source.matchAll(/data-tour="([^"]+)"/g)) {
+          handles.add(match[1] as string)
+        }
+
+        // Primary-chat markers are written as `data-tour={useTourMarker('…')}` —
+        // the static attribute form never appears, so pick the name out of the
+        // call as well.
+        for (const match of source.matchAll(/useTourMarker\('([^']+)'\)/g)) {
           handles.add(match[1] as string)
         }
       }

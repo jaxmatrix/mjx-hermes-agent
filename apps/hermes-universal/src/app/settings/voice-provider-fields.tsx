@@ -79,7 +79,7 @@ export function VoiceProviderFields({
   const [baseline, setBaseline] = useState<HermesConfigRecord | null>(null)
   const seeded = useRef(false)
 
-  // eslint-disable-next-line no-restricted-syntax -- one-shot config seed flag, not an atom mirror
+   
   useEffect(() => {
     if (loadedConfig && !seeded.current) {
       seeded.current = true

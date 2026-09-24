@@ -29,7 +29,7 @@ export function PreviewAttachment({ target }: { target: string }) {
   cwdRef.current = cwd
   targetRef.current = target
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     mountedRef.current = true
 
@@ -39,7 +39,7 @@ export function PreviewAttachment({ target }: { target: string }) {
     }
   }, [])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     requestTokenRef.current += 1
     setOpening(false)

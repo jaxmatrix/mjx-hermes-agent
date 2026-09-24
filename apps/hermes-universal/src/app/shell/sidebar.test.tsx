@@ -47,8 +47,8 @@ describe('sidebar shell', () => {
     mockViewport(true)
     renderShell()
     expect(screen.getByText('content')).toBeInTheDocument()
-    // The docked pane is open by default, so the sidebar nav rail is present.
-    expect(screen.getByText('New session')).toBeInTheDocument()
-    expect(screen.getByText('Capabilities')).toBeInTheDocument()
+    // The docked pane is open by default — assert the pane chrome, not a
+    // particular nav label (labels move with i18n / mode policy).
+    expect(screen.getByTestId('chat-sidebar-pane')).toBeInTheDocument()
   })
 })

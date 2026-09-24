@@ -25,8 +25,8 @@ export function BrowserPopoutShell() {
       <div aria-hidden="true" className="relative shrink-0 bg-(--ui-bg-chrome)" style={{ height: TITLEBAR_HEIGHT }}>
         {/* Same traffic-light / native-overlay carve-out as the main titlebar:
             a full-bar drag region would eat the window buttons. */}
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-(--titlebar-controls-left,14px) [-webkit-app-region:drag]" />
-        <div className="pointer-events-none absolute inset-y-0 left-[calc(var(--titlebar-controls-left,14px)+(var(--titlebar-control-size,24px)*2)+0.75rem)] right-[calc(var(--titlebar-tools-right,0.75rem)+0.75rem)] [-webkit-app-region:drag]" />
+        <div className="pointer-events-none absolute inset-y-0 start-0 w-(--titlebar-controls-left,14px) [-webkit-app-region:drag]" />
+        <div className="pointer-events-none absolute inset-y-0 start-[calc(var(--titlebar-controls-left,14px)+(var(--titlebar-control-size,24px)*2)+0.75rem)] end-[calc(var(--titlebar-tools-right,0.75rem)+0.75rem)] [-webkit-app-region:drag]" />
       </div>
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {tabId ? (

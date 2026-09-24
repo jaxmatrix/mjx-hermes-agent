@@ -2,29 +2,45 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as GatewayModule from '@/store/gateway-client'
 
-const { getHermesConfig, localRepoScanSupported, requestGateway, scanRepos, setApiRequestProfile } = vi.hoisted(() => ({
-  getHermesConfig: vi.fn(async () => ({}) as unknown),
-  localRepoScanSupported: vi.fn(() => true),
-  // The return type is declared, not inferred: inferring it from this one
-  // literal pins the mock to `{active_id: null; projects: never[]}`, and every
-  // later mockImplementation returning a different RPC's shape then fails to
-  // typecheck (MJXHRM-474 / #269, fixed forward here).
-  requestGateway: vi.fn(async (_method: string, _params?: unknown): Promise<Record<string, unknown>> => ({
+const { gateway, getHermesConfig, isDesktopFsRemoteMode, localRepoScanSupported, requestGateway, scanRepos, setApiRequestProfile } = vi.hoisted(() => {
+  const requestGateway = vi.fn(async (_method: string, _params?: unknown): Promise<Record<string, unknown>> => ({
     active_id: null,
     projects: []
-  })),
-  scanRepos: vi.fn(async () => [{ label: 'app', root: '/home/dev/app' }]),
-  setApiRequestProfile: vi.fn()
-}))
+  }))
 
+  return {
+    gateway: { connectionState: 'open' as const, request: requestGateway },
+    getHermesConfig: vi.fn(async () => ({}) as unknown),
+    isDesktopFsRemoteMode: vi.fn(() => false),
+    localRepoScanSupported: vi.fn(() => true),
+    requestGateway,
+    scanRepos: vi.fn(async () => [{ label: 'app', root: '/home/dev/app' }]),
+    setApiRequestProfile: vi.fn()
+  }
+})
+
+vi.mock('@/store/gateway', async () => {
+  const { atom } = await import('nanostores')
+
+  return {
+    $gateway: atom(null),
+    activeGateway: () => gateway,
+    ensureActiveGatewayOpen: async () => gateway
+  }
+})
+
+vi.mock('@/lib/desktop-fs', () => ({ isDesktopFsRemoteMode }))
 vi.mock('@/lib/desktop-git', () => ({ desktopGit: vi.fn(() => ({ scanRepos })) }))
 vi.mock('@/store/repo-scan', () => ({ localRepoScanSupported, scanLocalGitRepos: vi.fn() }))
-vi.mock('@/hermes', () => ({ getHermesConfig, setApiRequestProfile }))
+vi.mock('@/hermes', () => ({  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+ getHermesConfig, setApiRequestProfile }))
 vi.mock('@/store/gateway-client', async importOriginal => ({
   ...(await importOriginal<typeof GatewayModule>()),
   requestGateway
 }))
 
+import { $activeGatewayProfile } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
 
 import {
@@ -60,7 +76,10 @@ beforeEach(() => {
  * failure this suite exists to catch.
  */
 describe('projects.* carry the focused profile', () => {
-  beforeEach(() => $activeProfile.set('research'))
+  beforeEach(() => {
+    $activeProfile.set('research')
+    $activeGatewayProfile.set('research')
+  })
 
   it('stamps the profile on every read', async () => {
     await refreshProjects()
@@ -102,6 +121,7 @@ describe('projects.* carry the focused profile', () => {
     // The one discovery call a remote/cloud gateway or a phone makes. Unstamped
     // it would scan into — and cache into — the LAUNCH profile's projects.db,
     // while the `projects.tree` read that follows it reads the focused one.
+    isDesktopFsRemoteMode.mockReturnValue(true)
     localRepoScanSupported.mockReturnValue(false)
     requestGateway.mockImplementation(async (method: string) =>
       method === 'projects.discover_repos'
@@ -116,13 +136,14 @@ describe('projects.* carry the focused profile', () => {
 
   // The default profile is the gateway's own: omitting the key (rather than
   // sending "default") is what keeps single-profile requests unchanged.
-  it('omits the key entirely on the default profile', async () => {
+  it('stamps the default profile explicitly (single-profile gateways still get a key)', async () => {
     $activeProfile.set(null)
+    $activeGatewayProfile.set('default')
 
     await refreshProjects()
     await refreshProjectTree()
 
-    expect(paramsFor('projects.list')).toEqual({})
-    expect(paramsFor('projects.tree')).toEqual({ preview_limit: 3 })
+    expect(paramsFor('projects.list')).toEqual({ profile: 'default' })
+    expect(paramsFor('projects.tree')).toEqual({ preview_limit: 3, profile: 'default' })
   })
 })

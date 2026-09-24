@@ -523,6 +523,7 @@ export const SessionRefLink: FC<{
   return (
     <a
       {...refAttrs('session', 'wrap-anywhere')}
+      data-slot="aui_session-ref-link"
       href="#"
       onClick={event => {
         event.preventDefault()

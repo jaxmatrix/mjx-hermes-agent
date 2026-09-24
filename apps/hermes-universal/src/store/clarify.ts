@@ -2,6 +2,7 @@ import { atom, computed } from 'nanostores'
 
 import { respondToServerRequest } from './server-requests'
 import { $activeSessionId } from './session'
+import { addSessionKeyHooks } from './session-state-types'
 
 export interface ClarifyQuestion {
   /** Server-generated wire id (q0..qN) — clarify.respond keys answers by it. */
@@ -190,6 +191,25 @@ export const hasClarifyRequest = (sessionId: string | null | undefined): boolean
  * An empty answer is the same thing the card's own Skip button sends; answering
  * a request that already expired is a no-op, so racing the timeout is harmless.
  */
+function rekeyClarifyRequests(fromKey: string, toKey: string): void {
+  const requests = $clarifyRequests.get()
+  const current = requests[keyFor(fromKey)]
+
+  if (!current) {
+    return
+  }
+
+  const next = { ...requests }
+  delete next[keyFor(fromKey)]
+  next[keyFor(toKey)] = { ...current, sessionId: toKey }
+  $clarifyRequests.set(next)
+}
+
+addSessionKeyHooks({
+  drop: key => clearClarifyRequest(undefined, key),
+  rekey: rekeyClarifyRequests
+})
+
 export async function skipClarifyRequest(sessionId: string | null | undefined): Promise<boolean> {
   const request = $clarifyRequests.get()[keyFor(sessionId)]
 

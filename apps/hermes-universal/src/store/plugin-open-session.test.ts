@@ -53,6 +53,8 @@ vi.mock('./profile', async () => {
 
   return {
     $activeGatewayProfile,
+    // layout.ts reads this at import when preview pulls the pane tree.
+    $showAllProfiles: atom(false),
     normalizeProfileKey: (name?: null | string) => (name ?? '').trim() || 'default',
     selectProfile: (name: string) => {
       selectProfile(name)

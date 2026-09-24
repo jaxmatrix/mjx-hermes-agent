@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { type ComponentProps, memo, type ReactNode, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 
+import { NAV_ROW_BASE } from '@/app/shell/nav-row'
 import {
   ContextMenu,
   ContextMenuCheckboxItem,
@@ -208,7 +209,7 @@ function StatusbarVisibilityMenu({
 function StatusbarHideHint() {
   const hint = useKeybindHint('view.toggleStatusbar')
 
-  return hint ? <span className="ml-auto pl-2 text-(--ui-text-quaternary)">{hint}</span> : null
+  return hint ? <span className="ms-auto ps-2 text-(--ui-text-quaternary)">{hint}</span> : null
 }
 
 /** Memoized: `useStatusbarItems` rebuilds the item array whenever ANY of its
@@ -217,13 +218,17 @@ function StatusbarHideHint() {
  *  re-rendered every other item in the bar — measured at 1,446 wasted renders
  *  of 2,174 during a five-tab streaming run. `navigate` is stable for the
  *  router's lifetime, so item identity is the only real input. */
-const StatusbarItemView = memo(function StatusbarItemView({
+export const StatusbarItemView = memo(function StatusbarItemView({
   item,
-  navigate
+  navigate,
+  row = false
 }: {
   item: StatusbarItem
   navigate: ReturnType<typeof useNavigate>
+  /** Full-width nav row layout (mobile Status tab). */
+  row?: boolean
 }) {
+  const actionClass = row ? NAV_ROW_BASE : STATUSBAR_ACTION_CLASS
   const [menuOpen, setMenuOpen] = useState(false)
 
   // Render escape hatch: the contribution owns its own chrome/state/tooltip.
@@ -249,7 +254,7 @@ const StatusbarItemView = memo(function StatusbarItemView({
     // way profile-switcher.tsx stacks Popover/ContextMenu/Tooltip triggers.
     const trigger = (
       <DropdownMenuTrigger asChild>
-        <button className={cn(STATUSBAR_ACTION_CLASS, item.className)} disabled={item.disabled} type="button">
+        <button className={cn(actionClass, item.className)} disabled={item.disabled} type="button">
           {content}
         </button>
       </DropdownMenuTrigger>
@@ -333,7 +338,7 @@ const StatusbarItemView = memo(function StatusbarItemView({
   if (item.href || item.variant === 'link') {
     return (
       <Tip label={tooltipLabel}>
-        <a className={cn(STATUSBAR_ACTION_CLASS, item.className)} href={item.href} rel="noreferrer" target="_blank">
+        <a className={cn(actionClass, item.className)} href={item.href} rel="noreferrer" target="_blank">
           {content}
         </a>
       </Tip>
@@ -343,7 +348,7 @@ const StatusbarItemView = memo(function StatusbarItemView({
   return (
     <Tip label={tooltipLabel}>
       <button
-        className={cn(STATUSBAR_ACTION_CLASS, item.className)}
+        className={cn(actionClass, item.className)}
         disabled={item.disabled}
         onClick={event => {
           if (item.to) {

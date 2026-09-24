@@ -88,7 +88,7 @@ export function DraftGrid({
                   <Button
                     aria-label={copy.remix}
                     className={cn(
-                      'absolute right-1 top-1 z-20',
+                      'absolute end-1 top-1 z-20',
                       'text-(--ui-text-tertiary) opacity-10 transition',
                       'hover:bg-transparent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100'
                     )}

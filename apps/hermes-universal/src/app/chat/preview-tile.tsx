@@ -33,6 +33,7 @@ import {
   popOutBrowserTab,
   type PreviewTarget
 } from '@/store/preview'
+import { $dirtyPreviewUrls } from '@/store/preview-edit'
 import { canOpenBrowserWindow } from '@/store/windows'
 
 import { paneMirror } from './pane-mirror'
@@ -152,21 +153,30 @@ function BrowserTabLabel({ tabId }: { tabId: string }) {
 /** The tab's lead glyph — the same file/tool icon family the file tree and code
  *  fences resolve through, so a `.tsx` peek and its sidebar row agree. */
 function PreviewTabLead({ tabId }: { tabId: string }) {
+  const dirty = useStore($dirtyPreviewUrls)
   const target = targetFor(tabId)
 
   if (!target) {
     return null
   }
 
-  if (target.kind === 'artifact') {
-    return <ToolIcon className="opacity-70" name="sparkle" size="0.6875rem" />
-  }
+  const lead =
+    target.kind === 'artifact' ? (
+      <ToolIcon className="opacity-70" name="sparkle" size="0.6875rem" />
+    ) : target.kind === 'url' ? (
+      <ToolIcon className="opacity-70" name="globe" size="0.6875rem" />
+    ) : (
+      <FileTypeIcon className="opacity-70" path={target.path || target.url} size="0.6875rem" />
+    )
 
-  if (target.kind === 'url') {
-    return <ToolIcon className="opacity-70" name="globe" size="0.6875rem" />
-  }
-
-  return <FileTypeIcon className="opacity-70" path={target.path || target.url} size="0.6875rem" />
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {lead}
+      {dirty[target.url] ? (
+        <span aria-hidden className="size-1.5 rounded-full bg-(--ui-yellow)" />
+      ) : null}
+    </span>
+  )
 }
 
 const PREVIEW_TILE_PREFIX = 'preview-tile'

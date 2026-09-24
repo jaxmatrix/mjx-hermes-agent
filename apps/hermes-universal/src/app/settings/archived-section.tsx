@@ -6,7 +6,7 @@ import { deleteSession, listSessions, setSessionArchived } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { desktopDefaultCwd } from '@/lib/desktop-fs'
 import { pathLeaf } from '@/lib/display-path'
-import { Archive, ArchiveOff, FolderOpen, Loader2, Trash } from '@/lib/icons'
+import { Archive, ArchiveOff, FolderOpen, Loader2, Trash2 } from '@/lib/icons'
 import { IS_DESKTOP } from '@/lib/platform'
 import { useStore } from '@/store/atom'
 import { confirm } from '@/store/confirm'
@@ -252,7 +252,7 @@ export function ArchivedSection() {
                           type="button"
                           variant="ghost"
                         >
-                          <Trash className="size-3.5" />
+                          <Trash2 className="size-3.5" />
                         </Button>
                       </Tip>
                     </div>

@@ -3944,6 +3944,8 @@ export const ru = defineLocale({
     stopFailed: 'Остановка не удалась',
     regenerateFailed: 'Повторная генерация не удалась',
     editFailed: 'Изменение не удалось',
+    restoreMissing: 'Не удалось найти сообщение для восстановления.',
+    restoreEmpty: 'В этом сообщении нет текста для восстановления.',
     editTurnUnavailable: 'Этого хода больше нет в истории сервера (возможно, он был сжат).',
     resumeFailed: 'Возобновление не удалось',
     resumeStrandedTitle: 'Не удалось загрузить этот сеанс',

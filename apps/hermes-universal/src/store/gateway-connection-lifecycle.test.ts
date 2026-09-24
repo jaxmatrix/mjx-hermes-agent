@@ -1,4 +1,5 @@
 import { JsonRpcGatewayError } from '@hermes/shared'
+import { atom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LIVENESS_REPROBE_DELAY_MS } from '@/lib/gateway-liveness-policy'
@@ -36,6 +37,9 @@ const reconnectStateMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   setApiRequestConnection: vi.fn(),
   HermesGateway: class {
     connectionState = 'closed'
@@ -60,7 +64,8 @@ vi.mock('@/hermes', () => ({
 }))
 vi.mock('@/store/session', () => ({
   setConnection: vi.fn(),
-  setGatewayState: vi.fn()
+  setGatewayState: vi.fn(),
+  $gatewayState: atom('closed')
 }))
 vi.mock('@/store/notify-baseline', () => ({ markNativeNotifyBaseline: vi.fn() }))
 vi.mock('@/store/session-states', () => reconnectStateMocks)

@@ -418,7 +418,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   // setState updater) and hand it straight to the debounced autosave.
   const moaRef = useRef<MoaConfigResponse | null>(null)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     moaRef.current = moa
   }, [moa])

@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   listAllProfileSessions: vi.fn(),
+  listProfileSessionsPage: vi.fn(),
   getSession: vi.fn(),
   getSessionMessages: vi.fn(),
   deleteSession: vi.fn(),
@@ -31,7 +34,7 @@ vi.mock('@/store/gateway-client', async () => {
 })
 
 import { GatewayRpcError } from '@/gateway/rpc-error'
-import { deleteSession, getSession, getSessionMessages, listAllProfileSessions, renameSession } from '@/hermes'
+import { deleteSession, getSession, getSessionMessages, listAllProfileSessions, listProfileSessionsPage, renameSession } from '@/hermes'
 import { ApiError } from '@/lib/api'
 import type { ChatMessage } from '@/lib/session-key-messages'
 import { __resetTranscriptTailCache, readTranscriptTail, saveTranscriptTail } from '@/lib/transcript-tail-cache'
@@ -39,7 +42,7 @@ import { $busy, $currentCwd, $messages, $sessionId } from '@/store/chat'
 import { confirm } from '@/store/confirm'
 import { requestGateway } from '@/store/gateway-client'
 import * as notifications from '@/store/notifications'
-import { $showAllProfiles } from '@/store/profile'
+import { $activeGatewayProfile, $showAllProfiles } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
 import { $sessions, $unreadFinishedSessionIds } from '@/store/session'
 import {
@@ -167,7 +170,7 @@ describe('session store', () => {
       session_id: 'runtime-1'
     })
     await openSession('stored-9')
-    expect(requestGateway).toHaveBeenCalledWith('session.resume', { session_id: 'stored-9', cols: 96 })
+    expect(requestGateway).toHaveBeenCalledWith('session.resume', { session_id: 'stored-9', cols: 96, source: 'desktop' })
     expect($activeStoredSessionId.get()).toBe('stored-9')
     expect($sessionId.get()).toBe('runtime-1')
     expect($busy.get()).toBe(false)
@@ -405,7 +408,7 @@ describe('openSession — forceResume', () => {
     await openSession('stored-warm', { forceResume: true })
 
     expect(requestGateway).toHaveBeenCalledTimes(1)
-    expect(requestGateway).toHaveBeenCalledWith('session.resume', { session_id: 'stored-warm', cols: 96 })
+    expect(requestGateway).toHaveBeenCalledWith('session.resume', { session_id: 'stored-warm', cols: 96, source: 'desktop' })
     expect($activeStoredSessionId.get()).toBe('stored-warm')
   })
 
@@ -463,7 +466,7 @@ describe('reclaimSessionTransport', () => {
 
     await reclaimSessionTransport('stored-popped')
 
-    expect(requestGateway).toHaveBeenCalledWith('session.resume', { session_id: 'stored-popped', cols: 96 })
+    expect(requestGateway).toHaveBeenCalledWith('session.resume', { session_id: 'stored-popped', cols: 96, source: 'desktop' })
     // The pane never moves. `openSession(…, { forceResume: true })` would have
     // dragged it onto a conversation the user closed a window on.
     expect($activeStoredSessionId.get()).toBe('stored-here')
@@ -536,7 +539,8 @@ describe('reclaimSessionTransport', () => {
     // (`legacyRouteNeedsProfileParam`).
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-popped',
-      cols: 96
+      cols: 96,
+      source: 'desktop'
     })
   })
 
@@ -578,7 +582,8 @@ describe('owning profile', () => {
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-9',
       cols: 96,
-      profile: 'work'
+      profile: 'work',
+      source: 'desktop'
     })
   })
 
@@ -1219,7 +1224,7 @@ describe('refreshSessions — profile scope', () => {
     ({ limit: 30, offset: 0, sessions: [row('a', 'A')], total: 7, ...over }) as PaginatedSessions
 
   it('asks the aggregator for the active profile in concrete scope', async () => {
-    $activeProfile.set('research')
+    $activeGatewayProfile.set('research')
     vi.mocked(listAllProfileSessions).mockResolvedValue(page({ profile_totals: { research: 3, default: 40 } }))
 
     await refreshSessions()
@@ -1227,6 +1232,7 @@ describe('refreshSessions — profile scope', () => {
     expect(listAllProfileSessions).toHaveBeenCalledWith($sessionsLimit.get(), 1, 'exclude', 'recent', 'research')
     // The scoped total wins over the aggregate one.
     expect($sessionsTotal.get()).toBe(3)
+    $activeGatewayProfile.set('default')
   })
 
   it("asks for 'all' in the browse scope and keeps the aggregate total", async () => {
@@ -1347,13 +1353,13 @@ describe('loadMoreSessions', () => {
   it('asks for the NEXT page by recency depth and appends it', async () => {
     $sessions.set([row('a', 'A'), row('b', 'B')])
     $sessionsLimit.set(2)
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page([row('c', 'C')]))
+    vi.mocked(listProfileSessionsPage).mockResolvedValue(page([row('c', 'C')]))
 
     await loadMoreSessions()
 
     // offset = how deep into the recency window we have read; the window is not
     // re-fetched.
-    expect(listAllProfileSessions).toHaveBeenCalledWith(30, 1, 'exclude', 'recent', 'default', {}, 2)
+    expect(listProfileSessionsPage).toHaveBeenCalledWith(30, 1, 'exclude', 'recent', 'default', {}, 2)
     expect($sessions.get().map(s => s.id)).toEqual(['a', 'b', 'c'])
     expect($sessionsLimit.get()).toBe(3)
   })
@@ -1369,17 +1375,17 @@ describe('loadMoreSessions', () => {
 
     // A full page of 30, plus two pins the server appended past the window.
     const window30 = Array.from({ length: 30 }, (_, i) => row(`w${i}`, `W${i}`))
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page([...window30, row('pin1', 'P1'), row('pin2', 'P2')]))
+    vi.mocked(listProfileSessionsPage).mockResolvedValue(page([...window30, row('pin1', 'P1'), row('pin2', 'P2')]))
 
     await loadMoreSessions()
 
     // 1 + 30, NOT 1 + 32 — the two pins were not window positions.
     expect($sessionsLimit.get()).toBe(31)
 
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page([]))
+    vi.mocked(listProfileSessionsPage).mockResolvedValue(page([]))
     await loadMoreSessions()
 
-    expect(listAllProfileSessions).toHaveBeenLastCalledWith(30, 1, 'exclude', 'recent', 'default', {}, 31)
+    expect(listProfileSessionsPage).toHaveBeenLastCalledWith(30, 1, 'exclude', 'recent', 'default', {}, 31)
   })
 
   // Ordering is by recency, so a session that gets a message between the two
@@ -1387,7 +1393,7 @@ describe('loadMoreSessions', () => {
   it('drops a row that shifted into the previous page', async () => {
     $sessions.set([row('a', 'A'), row('b', 'B')])
     $sessionsLimit.set(2)
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page([row('b', 'B'), row('c', 'C')]))
+    vi.mocked(listProfileSessionsPage).mockResolvedValue(page([row('b', 'B'), row('c', 'C')]))
 
     await loadMoreSessions()
 
@@ -1397,7 +1403,7 @@ describe('loadMoreSessions', () => {
   it('keeps the loaded rows when the next page comes back empty', async () => {
     $sessions.set([row('a', 'A')])
     $sessionsLimit.set(1)
-    vi.mocked(listAllProfileSessions).mockResolvedValue(page([]))
+    vi.mocked(listProfileSessionsPage).mockResolvedValue(page([]))
 
     await loadMoreSessions()
 
@@ -1407,7 +1413,7 @@ describe('loadMoreSessions', () => {
 
   it('keeps the loaded rows when the fetch fails', async () => {
     $sessions.set([row('a', 'A')])
-    vi.mocked(listAllProfileSessions).mockRejectedValue(new Error('offline'))
+    vi.mocked(listProfileSessionsPage).mockRejectedValue(new Error('offline'))
 
     await loadMoreSessions()
 

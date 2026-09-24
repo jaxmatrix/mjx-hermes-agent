@@ -392,7 +392,7 @@ describe('acquireTunnel', () => {
     const shown = $notifications.get()
 
     expect(shown).toHaveLength(1)
-    expect(shown[0]).toMatchObject({ id: 'tunnel-signin:ssh1', title: 'Box needs sign-in' })
+    expect(shown[0]).toMatchObject({ id: 'tunnel-signin:ssh1', title: 'settings.connections.tunnelSignInTitle' })
 
     invoke.mockClear()
     shown[0]?.action?.onClick()
@@ -529,7 +529,9 @@ describe('acquireTunnel', () => {
 
       await connectTunnel('ssh1', 'Box')
 
-      expect($notifications.get()).toEqual([expect.objectContaining({ kind: 'error', title: 'Box needs sign-in' })])
+      expect($notifications.get()).toEqual([
+        expect.objectContaining({ kind: 'error', title: 'settings.connections.tunnelSignInTitle' })
+      ])
     })
   })
 

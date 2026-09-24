@@ -59,6 +59,26 @@ interface AuxTaskCopy {
 }
 
 export interface Translations {
+  chatConnection: {
+    changedTitle: string
+    changedMessage: string
+    close: string
+    lostTitle: string
+    lostMessage: (label: string) => string
+    notOnThisDevice: string
+    reconnectToLoad: string
+    retry: string
+  }
+
+  explorerPath: {
+    title: string
+    body: string
+    newChatsOnly: string
+    moveChat: string
+    busy: string
+    moveFailed: string
+  }
+
   connectors: {
     title: string
     connect: string
@@ -90,6 +110,8 @@ export interface Translations {
     setupCancel: string
     authorizedToolsUnavailable: string
     required: string
+    startWith: (count: number) => string
+    startWithout: string
   }
   connectorsPage: {
     title: string
@@ -386,6 +408,16 @@ export interface Translations {
     tryHint: (term: string) => string
     on: string
     off: string
+    fileDownload: {
+      tooLarge: string
+      notFound: string
+      forbidden: string
+      unauthorized: string
+      noGateway: string
+      unreachable: string
+      writeFailed: string
+      failed: string
+    }
   }
 
   fileMenu: {
@@ -624,6 +656,10 @@ export interface Translations {
     resetHudLayout: string
     layoutEditor: string
     layoutEditorTitle: (modifier: string) => string
+    minimize: string
+    restore: string
+    maximize: string
+    close: string
   }
 
   keybinds: {
@@ -638,6 +674,9 @@ export interface Translations {
     conflictWith: (label: string) => string
     categories: Record<string, string>
     actions: Record<string, string>
+    globalClaimTitle: string
+    globalClaimMessage: (combos: string) => string
+    globalClaimAction: string
   }
 
   // Find-in-page bar (⌘F). `close` reuses common.close.
@@ -677,6 +716,7 @@ export interface Translations {
       keysTools: string
       keysSettings: string
       mcp: string
+      plugins: string
       archivedChats: string
       about: string
       billing: string
@@ -747,6 +787,32 @@ export interface Translations {
         desktopFailed: string
         missingEnv: (name: string, vars: string) => string
       }
+      gatewayDoor: string
+      gatewayDoorHint: string
+      gatewayDoorUnavailable: string
+    }
+    voiceLevels: {
+      title: string
+      intro: string
+      meterStart: string
+      meterStop: string
+      meterTitle: string
+      meterDesc: string
+      meterRunningDesc: string
+      meterLevel: (pct: string) => string
+      meterPeak: (pct: string) => string
+      meterBusy: string
+      meterFailed: string
+      saveFailed: string
+      gainTitle: string
+      gainDesc: string
+      thresholdTitle: string
+      thresholdDesc: string
+      bargeinTitle: string
+      bargeinDesc: string
+      outputSectionTitle: string
+      outputTitle: string
+      outputDesc: string
     }
     vault: {
       title: string
@@ -836,6 +902,7 @@ export interface Translations {
       completionSoundTitle: string
       completionSoundDesc: string
       completionSoundPreview: string
+      noActionsNotice: string
     }
     sections: Record<string, string>
     searchPlaceholder: Record<'about' | 'config' | 'gateway' | 'keys' | 'mcp' | 'sessions', string>
@@ -883,9 +950,15 @@ export interface Translations {
       translucencyTitle: string
       translucencyDesc: string
       translucencyGlassDesc: string
+      translucencyModeOff: string
       translucencyModeClear: string
       translucencyModeGlass: string
       translucencyTintTitle: string
+      translucencyTintDesc: string
+      translucencyFrostDesc: string
+      translucencyFadeDesc: string
+      translucencyUnsupportedLinux: string
+      translucencyUnsupportedWindows: (build: string) => string
       translucencyFadeTitle: string
       translucencyFrostTitle: string
       translucencyFrost: {
@@ -905,6 +978,8 @@ export interface Translations {
       userBubbleDesc: string
       introSplashTitle: string
       introSplashDesc: string
+      restorePaintTitle: string
+      restorePaintDesc: string
       reactionsTitle: string
       reactionsDesc: string
       tipsTitle: string
@@ -922,6 +997,13 @@ export interface Translations {
       embedsAlways: string
       embedsOff: string
       embedsReset: (count: number) => string
+      resizeRateTitle: string
+      resizeRateDesc: string
+      resizeRateOptions: Record<'balanced' | 'battery' | 'off' | 'smooth', string>
+      resizeRateCaption: (hz: number, ms: number) => string
+      resizeRateUnthrottled: string
+      resizeCalmTitle: string
+      resizeCalmDesc: string
       resumeLastSessionTitle: string
       resumeLastSessionDesc: string
       product: string
@@ -1038,6 +1120,19 @@ export interface Translations {
       minAgo: (count: number) => string
       hoursAgo: (count: number) => string
       daysAgo: (count: number) => string
+      openInPlayStore: string
+      openInAppStore: string
+      downloadUpdate: string
+      preparingDownload: string
+      downloadingPercent: (percent: number) => string
+      installFailed: string
+      storePendingTitle: string
+      cantRead: string
+      newVersion: (version: string) => string
+      storePendingAppStore: string
+      storePendingPlay: string
+      comingSoonSuffix: string
+      updateChannelSigned: string
     }
     config: {
       minimizeToTrayTitle: string
@@ -1128,6 +1223,7 @@ export interface Translations {
     }
     // v2 multi-connection registry: Settings → Connections.
     connections: {
+      managePage: string
       title: string
       intro: string
       stagedNote: string
@@ -1189,6 +1285,12 @@ export interface Translations {
       degradedMessage: string
       latchedTitle: string
       latchedMessage: (reason: string) => string
+      profileGatewayUnsupported: string
+      localNotRunning: string
+      secretsAlwaysStored: string
+      noKeyring: string
+      updateNeedsConnection: string
+      sshRestartUnsupported: string
     }
     managedUpdates: {
       title: string
@@ -1284,6 +1386,19 @@ export interface Translations {
       saveAndReconnect: string
       diagnostics: string
       diagnosticsDesc: string
+      configFloorWarning: (version: number, floor: number) => string
+      connectingTitle: string
+      reconnectingTo: (target: string) => string
+      sessionMissingTitle: string
+      sessionMissingMessage: string
+      connectStoppedTitle: string
+      connectStoppedTo: (target: string) => string
+      useDifferentGateway: string
+      startOver: string
+      sessionKindNative: string
+      sessionKindNativeHint: string
+      sessionKindCookie: string
+      sessionKindCookieHint: string
       openLogs: string
       incompleteTitle: string
       incompleteSignIn: string
@@ -1310,6 +1425,8 @@ export interface Translations {
       sshTrustHint: string
       sshHostTitle: string
       sshHostDesc: string
+      sshHostPlaceholder: string
+      sshUnsupportedDirectives: (names: string) => string
       sshHostPick: string
       sshHostPickTitle: string
       sshHostPickDesc: string
@@ -1321,6 +1438,11 @@ export interface Translations {
       sshPortDesc: string
       sshKeyTitle: string
       sshKeyDesc: string
+      sshKeyPemTitle: string
+      sshKeyPemDesc: string
+      sshPassphraseTitle: string
+      sshPasswordTitle: string
+      sshPasswordDesc: string
       sshHermesPathTitle: string
       sshHermesPathDesc: string
       sshHermesPathPlaceholder: string
@@ -1333,10 +1455,31 @@ export interface Translations {
       sshErrAuth: string
       sshErrHostKey: string
       sshErrNotInstalled: string
+      sshInstallTitle: (host: string) => string
+      sshInstallBody: string
+      sshInstallCancel: string
+      sshInstallDoneTitle: string
+      sshInstallDoneBody: string
+      sshHostKeyTitle: string
+      sshHostKeyDesc: (host: string, fingerprint: string) => string
+      sshHostKeyTrust: string
+      sshHostKeyReject: string
+      sshPromptTitle: string
       sshErrPlatform: string
       sshErrTimeout: string
       sshErrUpdateRequired: string
       sshErrUnknown: string
+      sshErrLocked: string
+      sshStepConnecting: string
+      sshStepAuthenticating: string
+      sshStepProbingPlatform: string
+      sshStepLocatingHermes: string
+      sshStepCheckingExisting: string
+      sshStepUploadingToken: string
+      sshStepSpawning: string
+      sshStepWaitingReady: string
+      sshStepForwarding: string
+      sshStepVerifying: string
     }
     keys: {
       loading: string
@@ -1391,6 +1534,31 @@ export interface Translations {
       deepLinkErrorShape: string
       deepLinkErrorUrl: string
       deepLinkErrorTooLarge: string
+      failedLoad: string
+      reload: string
+      tabServers: string
+      tabCatalog: string
+      newServer: string
+      emptyTitle: string
+      emptyDesc: string
+      waitingForBrowser: string
+      unsavedConnect: string
+      disableTool: (name: string) => string
+      enableTool: (name: string) => string
+      importButton: string
+      importPlaceholder: string
+      importNoMatch: string
+      importConfirm: string
+      importConfirmMany: (count: number) => string
+      catalogEnvPrompt: (name: string) => string
+      catalogInstallStarted: (name: string) => string
+      catalogEmpty: string
+      catalogNeedsInstall: string
+      catalogEnabled: string
+      catalogInstalled: string
+      catalogInstalling: string
+      catalogInstall: string
+      unusedPill: string
     }
     model: {
       loading: string
@@ -1583,6 +1751,7 @@ export interface Translations {
       failedLoad: string
       unarchiveFailed: string
       deleteFailed: string
+      deletePinnedWarning: string
       updateDirFailed: string
       clearDirFailed: string
     }
@@ -1699,6 +1868,7 @@ export interface Translations {
   skills: {
     tabSkills: string
     tabToolsets: string
+    tabMcp: string
     configuringProfile: string
     all: string
     searchSkills: string
@@ -1823,6 +1993,15 @@ export interface Translations {
     }
     officialCatalog: string
     officialPill: string
+    project: {
+      title: string
+      trustedCount: (loaded: number) => string
+      untrustedCount: (total: number) => string
+      quarantinedCount: (count: number) => string
+      disabled: string
+      trust: string
+      untrust: string
+    }
     hub: {
       searchPlaceholder: string
       search: string
@@ -1874,6 +2053,29 @@ export interface Translations {
       previewFailed: string
       scanFailed: string
       searchFailed: string
+      advisory: string
+      advisoryPassed: string
+      advisoryFlagged: (count: number) => string
+      advisoryIncomplete: (count: number) => string
+    }
+  }
+
+  downloads: {
+    title: string
+    empty: string
+    clearFinished: string
+    cancel: string
+    reveal: string
+    open: string
+    dismiss: string
+    inProgress: (count: number) => string
+    ofTotal: (received: string, total: string) => string
+    status: {
+      cancelled: string
+      done: string
+      failed: string
+      queued: string
+      running: string
     }
   }
 
@@ -1949,6 +2151,7 @@ export interface Translations {
   commandCenter: {
     close: string
     paletteTitle: string
+    settingsSearchPill: string
     back: string
     searchPlaceholder: string
     goTo: string
@@ -2078,6 +2281,14 @@ export interface Translations {
     logFile: string
     logLevel: string
     logSearchPlaceholder: string
+    tour: {
+      steps: {
+        sidebar: { title: string; text: string }
+        composer: { title: string; text: string }
+        statusbar: { title: string; text: string }
+        palette: { title: string; text: string }
+      }
+    }
     maintenance: {
       runOps: string
       doctor: string
@@ -2271,6 +2482,8 @@ export interface Translations {
     fieldPrompt: string
     fieldPromptPlaceholder: string
     nameRequired: string
+    nameInvalid: string
+    deliverOnlyNeedsTarget: string
     create: string
     creating: string
     created: string
@@ -2280,6 +2493,33 @@ export interface Translations {
   }
 
   profiles: {
+    editor: {
+      title: string
+      loading: string
+      loadFailed: string
+      descriptionLabel: string
+      descriptionPlaceholder: string
+      toolsetsLabel: string
+      toolsetsUnpinned: string
+      mcpLabel: string
+      noneInstalled: string
+      save: string
+      saved: string
+      savedPartial: string
+      saveFailed: string
+      avatarUpload: string
+      avatarReplace: string
+      avatarRemove: string
+      avatarHint: string
+      avatarSaved: string
+      avatarFailed: string
+      avatarRejected: string
+      avatarTooLarge: string
+      working: string
+      shareSignIn: string
+      shareSignInHint: string
+      noCredentials: string
+    }
     close: string
     nameHint: string
     title: string
@@ -2430,6 +2670,9 @@ export interface Translations {
     loading: string
     states: Record<string, string>
     lastRunFailed: string
+    deliveryFailed: string
+    missedScheduledFire: string
+    continuityToggle: string
     editJob: string
     runAgain: string
     deliveryLabels: Record<string, string>
@@ -2518,6 +2761,17 @@ export interface Translations {
       failedLoad: string
       emptyTitle: string
       emptyDesc: string
+    }
+    modelImpact: {
+      title: string
+      message: (count: number) => string
+      detailMore: (names: string, remaining: number) => string
+      review: string
+      saveFailed: string
+      confirmTitle: string
+      confirmDetail: string
+      confirmAction: string
+      declined: string
     }
   }
 
@@ -2883,6 +3137,10 @@ export interface Translations {
       done: (server: string) => string
       doneTip: string
       failed: (server: string) => string
+    }
+    bubbles: {
+      releaseToClose: string
+      releaseForNewChat: string
     }
     cronSuggestions: {
       label: string
@@ -3508,6 +3766,8 @@ export interface Translations {
       modelPinned: string
       modelTitle: (provider: string, model: string) => string
       providerModelTitle: (provider: string, model: string) => string
+      focusView: string
+      focusViewTitle: string
     }
   }
 
@@ -3548,10 +3808,33 @@ export interface Translations {
     terminalCloseOthers: string
     terminalCloseAll: string
     addToChat: string
+    terminalConnecting: string
+    terminalReconnecting: string
+    terminalReattached: string
+    terminalHostChip: (host: string) => string
+    terminalLocalFallbackChip: string
+    terminalRestart: string
+    terminalEndAuthTitle: string
+    terminalEndAuthBody: string
+    terminalEndDisabledTitle: string
+    terminalEndDisabledBody: string
+    terminalEndErrorTitle: string
+    terminalEndErrorBody: string
+    terminalEndRefusedTitle: string
+    terminalEndRefusedBody: string
+    terminalEndSupersededTitle: string
+    terminalEndSupersededBody: string
+    terminalEndNoGatewayShellTitle: string
+    terminalEndNoGatewayShellBody: string
+    terminalEndNoLocalShellTitle: string
+    terminalEndNoLocalShellBody: string
+    terminalEndExitedTitle: string
+    terminalEndExitedBody: string
   }
 
   preview: {
     tab: string
+    closeTab: (name: string) => string
     closePane: string
     loading: string
     unavailable: string
@@ -3579,6 +3862,9 @@ export interface Translations {
     edit: string
     editing: string
     unsavedChanges: string
+    closeDirtyTitle: string
+    closeDirtyBody: string
+    closeDirtyConfirm: string
     saveFailed: (message: string) => string
     diskChangedTitle: string
     diskChangedBody: string
@@ -3711,6 +3997,7 @@ export interface Translations {
     notExpressible: string
     zoneCount: (count: number) => string
     tabCount: (count: number) => string
+    detachedMissing: string
   }
 
   contextMenu: {
@@ -3725,6 +4012,8 @@ export interface Translations {
       copyImageAddress: string
       saveImageAs: string
     }
+    imageSaveFailed: string
+    checkForUpdates: string
     edit: {
       cut: string
       paste: string
@@ -3735,6 +4024,68 @@ export interface Translations {
       copyPageUrl: string
       inspectElement: string
     }
+    someItemsFailed: string
+  }
+
+  mobileReview: {
+    askHermes: string
+    askHermesPrompt: (path: string) => string
+    backToFiles: string
+    fileOf: (current: number, total: number) => string
+    filterAll: string
+    filterUnstaged: string
+    loading: string
+    loadingDiff: string
+    markUnviewed: string
+    markViewed: string
+    next: string
+    nextFile: string
+    noneInFilter: string
+    previous: string
+    previousFile: string
+    ship: string
+    shipNothing: string
+    shipTitle: (count: number) => string
+    summary: (count: number) => string
+    unwrap: string
+    wrap: string
+  }
+
+  nav: {
+    chat: string
+    agents: string
+    skills: string
+    routines: string
+    messaging: string
+    artifacts: string
+    profiles: string
+    commandCenter: string
+    settings: string
+    starmap: string
+    webhooks: string
+  }
+
+  quickEntry: {
+    label: string
+    placeholder: string
+    notConnected: string
+    targetLabel: string
+    sendTo: string
+    currentChat: string
+    newSession: string
+    settingsTitle: string
+    settingsDesc: string
+    shortcutHint: string
+  }
+
+  resourcePressure: {
+    diskCritical: string
+    diskElevated: string
+    diskFree: (mb: number) => string
+    dismiss: string
+    memoryCritical: string
+    memoryElevated: string
+    oomRestart: string
   }
 
   assistant: {
@@ -4050,6 +4401,8 @@ export interface Translations {
     stopFailed: string
     regenerateFailed: string
     editFailed: string
+    restoreMissing: string
+    restoreEmpty: string
     editTurnUnavailable: string
     resumeFailed: string
     readOnlyTranscriptTitle: string
@@ -4131,6 +4484,91 @@ export interface Translations {
     sendDiagnostics: string
     reloadWindow: string
     openLogs: string
+  }
+
+  browser: {
+    addressLabel: string
+    addressPlaceholder: string
+    back: string
+    copyUrl: string
+    forward: string
+    openExternally: string
+    reload: string
+    resume: string
+    stop: string
+    unsupportedTitle: string
+    openLinksInApp: string
+    openLinksInAppDescription: string
+    isolatedStore: string
+    isolatedStoreDescription: string
+    consoleDefault: string
+    consoleDefaultDescription: string
+    clearData: string
+    clearDataDescription: string
+    clearDataConfirm: string
+    cleared: string
+    sharedCookies: string
+    ephemeralStore: string
+  }
+  mobileWorkspace: {
+    backToChat: string
+    menu: string
+    tabsAria: string
+    review: string
+    files: string
+    editor: string
+    terminal: string
+    status: string
+  }
+  connect: {
+    back: string
+    chooseBody: string
+    chooseTitle: string
+    getStarted: string
+    welcomeBody: string
+    welcomeTitle: string
+    local: {
+      continue: string
+      detecting: string
+      done: string
+      doneBody: string
+      doneTitle: string
+      forkDesc: string
+      forkTitle: string
+      foundTitle: string
+      foundVersion: (version: string) => string
+      install: string
+      missingBody: string
+      missingTitle: string
+      retry: string
+      upstreamDesc: string
+      upstreamTitle: string
+    }
+  }
+  hud: {
+    collapseReply: string
+    expandReply: string
+    connecting: string
+    connectionFailed: string
+  }
+
+  tray: {
+    closeApp: string
+    closeDialogDesc: string
+    closeDialogTitle: string
+    keepInBackground: string
+    show: string
+    hud: string
+    keepRunning: string
+    quit: string
+    tooltip: string
+    status: {
+      connecting: string
+      error: string
+      idle: string
+      probing: string
+      ready: string
+    }
   }
 
   ui: {

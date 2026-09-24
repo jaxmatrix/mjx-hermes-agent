@@ -16,6 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CronJob } from '@/types/hermes'
 
 const hermes = vi.hoisted(() => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   createCronJob: vi.fn(),
   deleteCronJob: vi.fn(),
   getAutomationBlueprints: vi.fn(async () => []),
@@ -115,25 +117,16 @@ describe('trigger feedback', () => {
   })
 })
 
-describe('include_disabled filter', () => {
+describe('include_disabled listing', () => {
   const jobs = [job({ id: 'live', name: 'Live digest' }), job({ enabled: false, id: 'off', name: 'Paused digest' })]
 
-  // Default OFF: a management surface that hides paused jobs reads as if
-  // pausing deleted them.
-  it('shows paused jobs by default', async () => {
+  // The REST listing always returns disabled jobs (unlike `cron.manage`, which
+  // defaults include_disabled false). There is no client-side "Hide paused"
+  // control on the desktop-shaped surface — paused jobs stay visible.
+  it('shows paused jobs', async () => {
     renderCron(jobs)
 
     expect(await screen.findAllByText('Paused digest')).not.toHaveLength(0)
-  })
-
-  it('hides them once the filter is on', async () => {
-    renderCron(jobs)
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Hide paused' }))
-
-    await waitFor(() => expect(screen.queryByText('Paused digest')).toBeNull())
-    // ...and only those: the enabled job must survive the filter, or this is
-    // an empty list rather than a filter.
     expect(screen.getAllByText('Live digest').length).toBeGreaterThan(0)
   })
 })

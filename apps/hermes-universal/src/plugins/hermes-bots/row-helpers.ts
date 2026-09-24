@@ -7,7 +7,7 @@
  * competing answers in each surface.
  */
 
-import { atom, host, useValue } from '@hermes/plugin-sdk'
+import { atom, universalHost as host, useValue } from '@hermes/plugin-sdk'
 
 import { botActivitySession, botHandle, botRosterKey, isActiveRosterBot } from './data'
 import type { RosterActivityFilter, RosterRow } from './types'

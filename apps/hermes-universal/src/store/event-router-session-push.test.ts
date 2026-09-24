@@ -20,7 +20,7 @@ vi.mock('@/lib/completion-sound', () => ({ playCompletionSound: vi.fn() }))
 import { $approvalModes, approvalModeForProfile } from '@/store/approval-mode'
 import { routeGatewayEvent } from '@/store/event-router'
 import { requestGateway } from '@/store/gateway-client'
-import { $activeProfile } from '@/store/profiles'
+import { $activeGatewayProfile } from '@/store/profile'
 import { $activeSessionKey, $sessionKeyStates, ensureSessionSlice } from '@/store/session-state-types'
 
 /** A local-connection slice site: what a bare key encoded before MJXHRM-591. */
@@ -47,9 +47,7 @@ describe('event-router → unsolicited session pushes', () => {
     $activeSessionKey.set('s1')
     ensureSessionSlice(localSite('s1'))
     $approvalModes.set({})
-    // `$activeGatewayProfile` is COMPUTED over this one, so this is the only
-    // way to move it — setting the computed is a silent no-op.
-    $activeProfile.set('work')
+    $activeGatewayProfile.set('work')
   })
 
   const slice = (key = 's1') => $sessionKeyStates.get()[key]

@@ -13,6 +13,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { type CSSProperties, lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 
+import { FloatingPet } from '@/app/pet/floating-pet'
 import { formatRefValue } from '@/components/assistant-ui/directive-text'
 import { BootFailureOverlay } from '@/components/boot-failure-overlay'
 import { ConfirmHost } from '@/components/confirm-host'
@@ -31,7 +32,6 @@ import {
   $workspaceOwnerKey,
   setWorkspaceScope
 } from '@/components/pane-shell/workspace-scope'
-import { FloatingPet } from '@/app/pet/floating-pet'
 import { RemoteDisplayBanner } from '@/components/remote-display-banner'
 import { SendDiagnosticsHost } from '@/components/send-diagnostics-dialog'
 import { TipHost } from '@/components/tips'
@@ -221,7 +221,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
 
   // Generic in-app route intents raised by toast recovery buttons (Open Keys,
   // Open Gateways, Maintenance …) fired from stores with no router context.
-  // eslint-disable-next-line no-restricted-syntax -- one-shot request-seen sentinel, not an atom mirror
+   
   useEffect(() => {
     if (!routeRequest || routeRequest.seq === routeRequestSeenRef.current) {
       return
@@ -235,7 +235,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
   // looking at (same IPC the Models page uses), then let the boot hook re-dial.
   // A remote/cloud connection has no local process to recycle — there the
   // only meaningful "restart" is re-dialing the connection.
-  // eslint-disable-next-line no-restricted-syntax -- one-shot request-seen sentinel, not an atom mirror
+   
   useEffect(() => {
     if (backendRestartRequest === backendRestartSeenRef.current) {
       return
@@ -256,7 +256,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
     }
   }, [backendRestartRequest])
 
-  // eslint-disable-next-line no-restricted-syntax -- one-shot request-seen sentinel, not an atom mirror
+   
   useEffect(() => {
     if (billingSettingsRequest === billingSettingsSeenRef.current) {
       return
@@ -272,7 +272,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
   // Pool-cap recovery is fired by the notification action, which has no router
   // context. Keep navigation user-initiated: the counter changes only when the
   // user clicks "Open Advanced Settings" on a pool-slot failure.
-  // eslint-disable-next-line no-restricted-syntax -- one-shot request-seen sentinel, not an atom mirror
+   
   useEffect(() => {
     if (poolLimitsSettingsRequest === poolLimitsSettingsSeenRef.current) {
       return
@@ -285,7 +285,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
     }
   }, [navigate, poolLimitsSettingsRequest])
 
-  // eslint-disable-next-line no-restricted-syntax -- one-shot request-seen sentinel, not an atom mirror
+   
   useEffect(() => {
     if (cronReviewRequest === cronReviewSeenRef.current) {
       return
@@ -589,7 +589,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
   const freshSessionRequest = useStore($freshSessionRequest)
   const lastFreshRef = useRef(freshSessionRequest)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (freshSessionRequest === lastFreshRef.current) {
       return
@@ -605,7 +605,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
   const gatewayScope = `${activeConnectionId ?? ''}\0${activeGatewayProfile}`
   const lastGatewayScopeRef = useRef(gatewayScope)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (gatewayScope === lastGatewayScopeRef.current) {
       return
@@ -657,7 +657,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
   const startWorkSessionRequest = useStore($startWorkSessionRequest)
   const lastStartWorkTokenRef = useRef(startWorkSessionRequest?.token ?? 0)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (!startWorkSessionRequest || startWorkSessionRequest.token === lastStartWorkTokenRef.current) {
       return
@@ -1326,20 +1326,9 @@ export function ContribWiring({ children }: { children: ReactNode }) {
           the statusbar chip, the first-launch intro). It owns the flow; the
           entry points only record the intent. */}
       {!isAuxiliaryWindow() && <FreeTierSignInDialog onSelectModel={selectModel} />}
-      <ModelPickerOverlay
-        gateway={gateway || undefined}
-        onSelect={selectModel}
-        ownerConnectionId={activeConnectionId || undefined}
-        profile={activeGatewayProfile}
-        requestGateway={requestGateway}
-      />
+      <ModelPickerOverlay onOpenProviders={openProviderSettings} />
       <SessionPickerOverlay onResume={sessionId => openSessionFromPicker(sessionId, navigate)} />
-      <ModelVisibilityOverlay
-        gateway={gateway || undefined}
-        onOpenProviders={openProviderSettings}
-        ownerConnectionId={activeConnectionId || undefined}
-        profile={activeGatewayProfile}
-      />
+      <ModelVisibilityOverlay onOpenProviders={openProviderSettings} />
       <UpdatesOverlay />
       <GatewayConnectingOverlay />
       <BootFailureOverlay />

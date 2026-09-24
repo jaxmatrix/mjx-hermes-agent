@@ -11,7 +11,7 @@ import { sessionRowFor } from '@/store/session-lookup'
  *  subscriptions — this re-renders whenever the pending close moves anyway. */
 function labelFor(pending: PendingClose): string {
   if (pending.kind === 'file') {
-    return $previewTabs.get().find(tab => tab.path === pending.id)?.name ?? pending.id
+    return $previewTabs.get().find(tab => tab.id === pending.id)?.target.label ?? pending.id
   }
 
   const row = sessionRowFor(pending.id)

@@ -7,6 +7,12 @@ const getHermesConfigRecord = vi.fn()
 // MemorySection renders the memory.provider field plus, when a provider is set,
 // the inline OAuth Connect affordance and the collapsible provider-config panel.
 vi.mock('@/hermes', () => ({
+  peekConfigReadOrigin: () => undefined,
+  retainConfigReadOrigin: (record: object) => record,
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  profileScopeKey: (profile?: string | null) => (profile ?? '').trim() || 'default',
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   // Via ConfigSection → store/projects → store/profile → store/profiles, which
   // syncs the REST scope at import time.
   setApiRequestProfile: vi.fn(),

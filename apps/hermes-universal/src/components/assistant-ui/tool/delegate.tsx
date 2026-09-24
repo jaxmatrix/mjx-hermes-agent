@@ -96,7 +96,7 @@ function DelegateRowView({ row }: { row: DelegateRow }) {
         <button
           className={cn(
             SCAFFOLD_LABEL_CLASS,
-            'min-w-0 truncate text-left transition-colors',
+            'min-w-0 truncate text-start transition-colors',
             open ? 'hover:text-foreground focus-visible:text-foreground focus-visible:outline-none' : 'cursor-default'
           )}
           disabled={!open}
@@ -106,11 +106,11 @@ function DelegateRowView({ row }: { row: DelegateRow }) {
           {row.goal}
         </button>
         {meta.length > 0 && <span className={SCAFFOLD_META_CLASS}>{meta.join(' · ')}</span>}
-        {live && <ActivityTimerText className={cn(SCAFFOLD_META_CLASS, 'ml-auto')} seconds={elapsed} />}
-        <Codicon className="ml-auto shrink-0 text-(--conversation-scaffold-text)" name="agent" size="0.625rem" />
+        {live && <ActivityTimerText className={cn(SCAFFOLD_META_CLASS, 'ms-auto')} seconds={elapsed} />}
+        <Codicon className="ms-auto shrink-0 text-(--conversation-scaffold-text)" name="agent" size="0.625rem" />
       </div>
       {activity.length > 0 && (
-        <div className="min-w-0 max-w-full pl-5">
+        <div className="min-w-0 max-w-full ps-5">
           <ToolRunTicker>
             {activity.map((text, index) => (
               <FadeText

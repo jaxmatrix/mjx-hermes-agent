@@ -49,6 +49,9 @@ const saveHermesConfigRecord = vi.fn()
 const getElevenLabsVoices = vi.fn()
 
 vi.mock('@/hermes', () => ({
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   // useHermesConfigRecord (via VoiceProviderFields) reads these from the barrel.
   peekConfigReadOrigin: () => undefined,
   retainConfigReadOrigin: (next: unknown) => next,
@@ -81,7 +84,6 @@ vi.mock('@/hermes', () => ({
   // normalizeProfileKey import) calls this at module-init; the full-replacement
   // mock must provide it or the module graph throws on load.
   setApiRequestProfile: () => undefined,
-  getApiRequestProfile: () => null
 }))
 
 vi.mock('@/store/notifications', () => ({

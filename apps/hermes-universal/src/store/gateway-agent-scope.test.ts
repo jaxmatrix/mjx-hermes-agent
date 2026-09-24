@@ -1,3 +1,4 @@
+import { atom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Registry-agent scoping regression (multi-source roster): the active key can
@@ -16,6 +17,9 @@ const gatewayMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   setApiRequestConnection: vi.fn(),
   HermesGateway: class {
     connectionState = 'closed'
@@ -32,7 +36,8 @@ vi.mock('@/hermes', () => ({
 }))
 vi.mock('@/store/session', () => ({
   setConnection: gatewayMocks.setConnection,
-  setGatewayState: gatewayMocks.setGatewayState
+  setGatewayState: gatewayMocks.setGatewayState,
+  $gatewayState: atom('closed')
 }))
 vi.mock('@/store/notify-baseline', () => ({ markNativeNotifyBaseline: vi.fn() }))
 

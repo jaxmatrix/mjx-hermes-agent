@@ -1,6 +1,9 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getActionStatus: vi.fn(),
   installSkillFromHub: vi.fn(),
   scanSkillHub: vi.fn(),

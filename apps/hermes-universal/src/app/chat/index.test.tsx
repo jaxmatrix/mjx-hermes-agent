@@ -34,7 +34,7 @@ vi.mock('@/components/assistant-ui/thread', async () => {
   }
 })
 
-vi.mock('@/components/Backdrop', async () => {
+vi.mock('@/components/backdrop', async () => {
   const React = await import('react')
 
   return { Backdrop: () => React.createElement('div', { 'data-testid': 'backdrop' }) }

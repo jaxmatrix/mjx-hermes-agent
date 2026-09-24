@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react'
 
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
-import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tip } from '@/components/ui/tooltip'
 import { $restDoorEnabled, type PluginDisk, resolvePluginDisk } from '@/contrib/plugin-disk'
 import { $pluginRecords, type PluginRecord, setPluginEnabled } from '@/contrib/plugins-store'
 import { discoverRuntimePlugins } from '@/contrib/runtime-loader'
-import { setEnvVar } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { Download, Package, Plug } from '@/lib/icons'
@@ -20,7 +19,6 @@ import {
   $agentPlugins,
   $agentPluginsError,
   $agentPluginsStatus,
-  type AgentPluginEnvField,
   type AgentPluginRow,
   type GatewayRequest,
   loadAgentPlugins,
@@ -30,8 +28,9 @@ import { useStore } from '@/store/atom'
 import { $connection } from '@/store/connection'
 import { $gatewayState, requestGateway } from '@/store/gateway-client'
 import { modeIsRemoteLike } from '@/store/gateway-config'
-import { $changeEventsAvailable, $pluginsChangeTick } from '@/store/live-sync'
-import { notify, notifyError } from '@/store/notifications'
+import { $changeEventsAvailable } from '@/store/live-sync'
+import { $pluginsChangeTick } from '@/store/live-sync-universal'
+import { notifyError } from '@/store/notifications'
 import { openPluginInstallRequest } from '@/store/plugin-install-request'
 
 import {
@@ -43,7 +42,6 @@ import {
   SettingsContent,
   SettingsSection
 } from './primitives'
-import { settingRowElementId } from '@/app/settings/setting-row-id'
 
 // Ported from apps/desktop/src/app/settings/plugins-settings.tsx. Universal adds
 // the dual-door surface: the active door and its root are always named, and the
@@ -99,78 +97,6 @@ async function revealAgentPluginsDir(request: GatewayRequest, failTitle: string)
   }
 }
 
-/**
- * The env vars a backend plugin's manifest declares — in practice its API keys —
- * editable right under the plugin instead of by var name on the Keys page.
- * Writes go through the same /api/env door Settings ▸ Keys uses; `is_set` is the
- * backend's word, so a save refetches the list rather than guessing.
- */
-function AgentPluginEnvFields({ row }: { row: AgentPluginRow }) {
-  const { t } = useI18n()
-  const p = t.settings.plugins.agent
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [saving, setSaving] = useState<null | string>(null)
-
-  const save = async (field: AgentPluginEnvField) => {
-    const value = (drafts[field.name] ?? '').trim()
-
-    if (!value) {
-      return
-    }
-
-    setSaving(field.name)
-
-    try {
-      await setEnvVar(field.name, value)
-      setDrafts(prev => ({ ...prev, [field.name]: '' }))
-      notify({ message: p.keySaved(field.name) })
-      void loadAgentPlugins(requestGateway)
-    } catch (err) {
-      notifyError(err, p.keyFailed(field.name))
-    } finally {
-      setSaving(null)
-    }
-  }
-
-  return (
-    <div className="mt-2 flex flex-col gap-3">
-      {(row.env ?? []).map(field => (
-        <div className="flex flex-col gap-1" key={field.name}>
-          <span className="flex items-center gap-2 font-mono text-[0.68rem] text-(--ui-text-tertiary)">
-            {field.name}
-            {field.required && <Pill tone="primary">{p.required}</Pill>}
-            {field.is_set && <Pill>{p.keySet}</Pill>}
-          </span>
-          {field.description && (
-            <span className="text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
-              {field.description}
-            </span>
-          )}
-          <div className="flex items-center gap-2">
-            <Input
-              aria-label={field.name}
-              className="font-mono"
-              onChange={event => setDrafts(prev => ({ ...prev, [field.name]: event.target.value }))}
-              placeholder={field.is_set ? p.keepCurrent : ''}
-              spellCheck={false}
-              type={field.password ? 'password' : 'text'}
-              value={drafts[field.name] ?? ''}
-            />
-            <Button
-              disabled={!(drafts[field.name] ?? '').trim() || saving === field.name}
-              onClick={() => void save(field)}
-              size="sm"
-              variant="outline"
-            >
-              {p.saveKey}
-            </Button>
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 /** One backend plugin: name + source pills, description, and its enable switch. */
 function AgentPluginRowView({ row }: { row: AgentPluginRow }) {
   const { t } = useI18n()
@@ -194,11 +120,10 @@ function AgentPluginRowView({ row }: { row: AgentPluginRow }) {
             }
 
             triggerHaptic('selection')
-            void toggleAgentPlugin(requestGateway, key, on, p.agent.toggleFailed(row.name))
+            void toggleAgentPlugin(requestGateway, key, on, p.failed)
           }}
         />
       }
-      below={row.env?.length ? <AgentPluginEnvFields row={row} /> : undefined}
       // Desktop puts the read-only reason in a tooltip. Universal renders this
       // page on touch surfaces too (mobile, the Android activity screen), where
       // a hover tooltip never appears and a disabled switch would look broken
@@ -209,15 +134,15 @@ function AgentPluginRowView({ row }: { row: AgentPluginRow }) {
         ) : (
           <span className="flex flex-col">
             {detail && <span>{detail}</span>}
-            <span className="text-(--ui-text-tertiary)">{p.agent.updateBackendToManage}</span>
+            <span className="text-(--ui-text-tertiary)">{p.agentHalfMissingTip}</span>
           </span>
         )
       }
       title={
         <span className="flex items-center gap-2">
           {row.name}
-          <Pill>{p.agent.sources[row.source] ?? row.source}</Pill>
-          {row.portable && <Pill tone="primary">{p.agent.portable}</Pill>}
+          <Pill>{p.kinds[row.source as keyof typeof p.kinds] ?? row.source}</Pill>
+          {row.portable && <Pill tone="primary">portable</Pill>}
         </span>
       }
     />
@@ -275,10 +200,12 @@ function AgentPluginsSection() {
     .sort((a, b) => (SOURCE_ORDER[a.source] ?? 9) - (SOURCE_ORDER[b.source] ?? 9) || a.name.localeCompare(b.name))
 
   return (
-    <SettingsSection icon={Plug} meta={status === 'ready' ? p.count(sorted.length) : undefined} title={p.agent.title}>
-      <p className="mb-4 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
-        {p.agent.blurb}
-      </p>
+    <SettingsSection
+      icon={Plug}
+      meta={status === 'ready' ? p.count(sorted.length) : undefined}
+      title={p.installModal.agentLabel}
+    >
+      <p className="mb-4 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">{p.blurb}</p>
 
       {/* Two conditions, both necessary. `IS_DESKTOP`: revealing is an OS
           file-manager act — `reveal_item_in_dir` has nowhere to go on Android /
@@ -298,7 +225,7 @@ function AgentPluginsSection() {
       <input
         className="mb-2 w-full rounded-lg border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) px-3 py-1.5 text-[length:var(--conversation-caption-font-size)] outline-none placeholder:text-(--ui-text-tertiary) focus:border-(--ui-stroke-secondary)"
         onChange={event => setQuery(event.target.value)}
-        placeholder={p.agent.search}
+        placeholder="Search plugins"
         spellCheck={false}
         value={query}
       />
@@ -310,14 +237,14 @@ function AgentPluginsSection() {
           <ListRowSkeleton />
         </div>
       ) : status === 'error' ? (
-        <EmptyState description={error ?? undefined} title={p.agent.loadFailed} />
+        <EmptyState description={error ?? undefined} title="Failed to load plugins" />
       ) : sorted.length === 0 ? (
         needle ? (
           <p className="text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
-            {p.agent.noMatches}
+            No matches
           </p>
         ) : (
-          <EmptyState title={p.agent.empty} />
+          <EmptyState title={p.empty} />
         )
       ) : (
         <div className="divide-y divide-(--ui-stroke-tertiary)">
@@ -408,7 +335,7 @@ function PluginRow({ record, reveal }: { record: PluginRecord; reveal?: (path: s
       title={
         <span className="flex items-center gap-2">
           {record.name}
-          <Pill>{record.root ? p.roots[record.root] : p.kinds[record.kind]}</Pill>
+          <Pill>{p.kinds[record.kind]}</Pill>
           {record.status === 'error' && <Pill tone="primary">{p.failed}</Pill>}
         </span>
       }
@@ -427,11 +354,11 @@ export function PluginsSettings() {
     (a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.name.localeCompare(b.name)
   )
 
-  const sourceLabel = disk ? (disk.kind === 'local' ? p.sourceLocal : p.sourceGateway) : p.sourceNone
+  const sourceLabel = disk ? (disk.kind === 'local' ? 'Local plugins folder' : 'Gateway plugins folder') : 'Plugins unavailable'
 
   const openFolder = async () => {
     if (!disk?.reveal || !root) {
-      notifyError(p.sourceNone, p.openFolder)
+      notifyError('Plugins folder unavailable', p.openFolder)
 
       return
     }
@@ -485,18 +412,18 @@ export function PluginsSettings() {
             <Button
               onClick={() => {
                 triggerHaptic('selection')
-                openPluginInstallRequest({ origin: 'settings', repo: '' })
+                openPluginInstallRequest({ repo: '' })
               }}
               size="sm"
               variant="outline"
             >
               <Download size="0.8rem" />
-              {p.installFromGit}
+              {p.installModal.installFromGit}
             </Button>
           }
-          description={p.installFromGitHint}
+          description={p.installModal.repoPlaceholder}
           id={settingRowElementId('plugins.install')}
-          title={p.installFromGit}
+          title={p.installModal.installFromGit}
         />
       </div>
 
@@ -539,9 +466,9 @@ export function PluginsSettings() {
 
       {/* Says why an `agent package` row is off, next to the rows it explains —
           the badge alone answers "which root", not "why". */}
-      {rows.some(record => record.root === 'agent-packages') && (
+      {rows.some(record => record.packageName) && (
         <p className="mt-3 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
-          {p.agentPackagesNotice}
+          {p.agentHalfMissingTip}
         </p>
       )}
 

@@ -4419,6 +4419,8 @@ export const zh = defineLocale({
     stopFailed: '停止失败',
     regenerateFailed: '重新生成失败',
     editFailed: '编辑失败',
+    restoreMissing: '找不到要恢复的消息。',
+    restoreEmpty: '该消息没有可恢复的文本。',
     editTurnUnavailable: '此回合已不在服务器历史中（可能已被压缩移除）。',
     resumeFailed: '恢复失败',
     readOnlyTranscriptTitle: '已以只读方式打开',

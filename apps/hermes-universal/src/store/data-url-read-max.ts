@@ -12,6 +12,7 @@ import {
   DATA_URL_READ_MAX_MAX_MB,
   DATA_URL_READ_MIN_MAX_MB
 } from '@hermes/shared'
+import { invoke } from '@tauri-apps/api/core'
 import { atom } from 'nanostores'
 
 import { notifyError } from '@/store/notifications'
@@ -19,6 +20,14 @@ import { notifyError } from '@/store/notifications'
 export { clampDataUrlReadMaxMb, DATA_URL_READ_DEFAULT_MAX_MB, DATA_URL_READ_MAX_MAX_MB, DATA_URL_READ_MIN_MAX_MB }
 
 export const $dataUrlReadMaxMb = atom<number>(DATA_URL_READ_DEFAULT_MAX_MB)
+
+export function dataUrlReadMaxBytes(maxMb?: number): number {
+  return clampDataUrlReadMaxMb(maxMb ?? $dataUrlReadMaxMb.get()) * 1024 * 1024
+}
+
+export async function readCappedFileBase64(path: string): Promise<string> {
+  return invoke<string>('read_capped_file_base64', { path })
+}
 
 export async function refreshDataUrlReadMaxMb(): Promise<number> {
   const api = window.hermesDesktop?.dataUrlReadMax

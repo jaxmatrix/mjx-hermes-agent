@@ -33,6 +33,12 @@ export interface CountMetric {
   noun: string
 }
 
+export interface PersistedToolOutputRef {
+  path: string
+  preview: string
+  sizeLabel?: string
+}
+
 export interface ToolView {
   countLabel?: string
   detail: string
@@ -60,6 +66,8 @@ export interface ToolView {
   /** When set, the renderer uses stdout+stderr as separate sections and
    *  ignores the merged `detail`. */
   stdout?: string
+  /** Oversized tool output spilled to disk — user-facing path + kept preview. */
+  spilloverReference?: PersistedToolOutputRef
   status: ToolStatus
   subtitle: string
   title: string

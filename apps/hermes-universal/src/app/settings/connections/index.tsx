@@ -77,7 +77,7 @@ export function ConnectionsSection() {
 
       notify({
         kind: failed.length > 0 ? 'warning' : 'success',
-        message: c.updateAllSummary(results.length, failed.length),
+        message: failed.length > 0 ? c.updateAllFailed : c.updateAllDone,
         title: c.updateAll
       })
     } catch (error) {
@@ -92,11 +92,13 @@ export function ConnectionsSection() {
       {registry.degraded && (
         <div className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
           <p className="font-medium">{c.degradedTitle}</p>
-          <p className="text-xs text-muted-foreground">{c.degradedReason(registry.degraded)}</p>
+          <p className="text-xs text-muted-foreground">{c.degradedMessage}</p>
         </div>
       )}
 
-      {registry.readOnly && <p className="mb-3 text-sm text-muted-foreground">{c.readOnly}</p>}
+      {registry.readOnly && (
+        <p className="mb-3 text-sm text-muted-foreground">{t.settings.gateway.envOverrideDesc}</p>
+      )}
 
       <MasterDetail
         pane={
@@ -155,7 +157,7 @@ export function ConnectionsSection() {
               </div>
             ))}
 
-            {visible.length === 0 && <p className="px-2 py-3 text-sm text-muted-foreground">{c.searchEmpty(term)}</p>}
+            {visible.length === 0 && <p className="px-2 py-3 text-sm text-muted-foreground">{c.noSearchResults}</p>}
 
             <Button
               className="mt-1 justify-start"
@@ -168,7 +170,7 @@ export function ConnectionsSection() {
               variant="ghost"
             >
               <Codicon name="add" size="0.9rem" />
-              {c.add}
+              {c.addConnection}
             </Button>
           </div>
         }
@@ -186,12 +188,12 @@ export function ConnectionsSection() {
             registry={registry}
           />
         ) : (
-          <div className="p-4 text-sm text-muted-foreground">{c.pickOne}</div>
+          <div className="p-4 text-sm text-muted-foreground">{c.empty}</div>
         )}
       </MasterDetail>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <span className="text-sm">{c.launchMode}</span>
+        <span className="text-sm">{c.launchModeTitle}</span>
         {(['primary', 'last-used'] as const).map(mode => (
           <label className="flex items-center gap-1.5 text-sm" key={mode}>
             <input
@@ -201,7 +203,7 @@ export function ConnectionsSection() {
               onChange={() => void setLaunchMode(mode).catch(error => notifyError(error, c.saveFailed))}
               type="radio"
             />
-            {mode === 'primary' ? c.launchPrimary : c.launchLastUsed}
+            {mode === 'primary' ? c.primaryPill : c.currentPill}
           </label>
         ))}
 

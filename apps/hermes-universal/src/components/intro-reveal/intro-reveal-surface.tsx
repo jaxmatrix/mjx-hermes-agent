@@ -47,7 +47,7 @@ export function IntroRevealSurface() {
 
       {/* One frame clock keeps the spotlight and brand group together. */}
       <div
-        className="pointer-events-none absolute left-1/2 top-0 h-[130vmin] w-[150vmin] opacity-0"
+        className="pointer-events-none absolute start-1/2 top-0 h-[130vmin] w-[150vmin] opacity-0"
         ref={glowRef}
         style={{
           background:
@@ -84,7 +84,7 @@ export function IntroRevealSurface() {
       <BrandClose ref={brandRef} />
 
       <button
-        className="absolute bottom-6 right-7 text-[0.72rem] uppercase tracking-[0.24em] text-white/40 transition-colors hover:text-white/80"
+        className="absolute bottom-6 end-7 text-[0.72rem] uppercase tracking-[0.24em] text-white/40 transition-colors hover:text-white/80"
         onClick={skip}
         style={{ fontFamily: "'Collapse', sans-serif" }}
         type="button"
@@ -126,7 +126,7 @@ function HeroChat({ frame, viewportRef }: HeroChatProps) {
 
       <div className="flex min-h-[3.9rem] justify-end">
         <div
-          className="max-w-[80%] px-1 py-3.5 text-right text-[1.02rem] leading-7 text-white/92"
+          className="max-w-[80%] px-1 py-3.5 text-end text-[1.02rem] leading-7 text-white/92"
           style={{
             opacity: sent ? 1 : 0,
             transform: sent ? 'translateY(0) scale(1)' : 'translateY(10px) scale(0.97)',
@@ -169,18 +169,18 @@ function HeroChat({ frame, viewportRef }: HeroChatProps) {
                 {row.label}
               </span>
               <span
-                className="ml-auto grid text-[0.8rem] text-white/50"
+                className="ms-auto grid text-[0.8rem] text-white/50"
                 style={{ fontFamily: "'JetBrains Mono', monospace" }}
               >
                 {/* Stacking keeps the running/done crossfade in place. */}
                 <span
-                  className="col-start-1 row-start-1 text-right"
+                  className="col-start-1 row-start-1 text-end"
                   style={{ opacity: done ? 0 : 1, transition: `opacity 400ms ${EASE}` }}
                 >
                   {shown && !done ? decoded(row.runningText, row.at, frame.tick) : row.runningText}
                 </span>
                 <span
-                  className="col-start-1 row-start-1 text-right"
+                  className="col-start-1 row-start-1 text-end"
                   style={{ color: BLUE_DIM, opacity: done ? 1 : 0, transition: `opacity 400ms ${EASE}` }}
                 >
                   {done ? decoded(row.doneText, row.doneAt, frame.tick, 380) : row.doneText}
@@ -206,7 +206,7 @@ function HeroChat({ frame, viewportRef }: HeroChatProps) {
           {replyText || '\u00a0'}
           {replying && frame.replyWords < INTRO_REPLY_WORDS.length ? (
             <span
-              className="dither ml-1 inline-block h-[1.05em] w-[0.5em] translate-y-[3px]"
+              className="dither ms-1 inline-block h-[1.05em] w-[0.5em] translate-y-[3px]"
               style={{ animation: 'intro-caret 0.9s step-end infinite', color: BLUE }}
             />
           ) : null}
@@ -230,7 +230,7 @@ function HeroChat({ frame, viewportRef }: HeroChatProps) {
             )}
             {!sent ? (
               <span
-                className="dither ml-0.5 inline-block h-[1.1em] w-[0.52em] translate-y-[3px]"
+                className="dither ms-0.5 inline-block h-[1.1em] w-[0.52em] translate-y-[3px]"
                 style={{ animation: 'intro-caret 1.05s step-end infinite', color: BLUE }}
               />
             ) : null}
@@ -249,7 +249,7 @@ function HeroChat({ frame, viewportRef }: HeroChatProps) {
                 <path d="M8 3.5v9M3.5 8h9" />
               </svg>
             </span>
-            <span className="ml-auto grid size-6 place-items-center rounded-full text-white/45">
+            <span className="ms-auto grid size-6 place-items-center rounded-full text-white/45">
               <svg
                 fill="none"
                 height="13"

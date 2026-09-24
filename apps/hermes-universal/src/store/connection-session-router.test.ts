@@ -7,7 +7,9 @@ const { getGatewayClient, leaseSecondary, releaseSecondary, requestGateway } = v
   requestGateway: vi.fn(async () => 'ambient')
 }))
 
-vi.mock('@/hermes', () => ({ setApiRequestProfile: vi.fn() }))
+vi.mock('@/hermes', () => ({  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+ setApiRequestProfile: vi.fn() }))
 vi.mock('@/store/gateway-secondaries', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
   leaseSecondary,
@@ -30,7 +32,7 @@ import { $activeConnection, describeConnection, publishActiveConnection } from '
 import { registrySessionRouter } from './connection-session-router'
 import { $gatewayState, withGatewayProfile } from './gateway-client'
 import { $gatewaySwitching } from './gateway-switch'
-import { $activeProfile } from './profiles'
+import { $activeGatewayProfile } from './profile'
 import { $activeSessionRoute, requestForSession, SessionRouteError } from './session-route-dispatch'
 import { forgetSessionSources, spliceRegistrySessionRows } from './session-sources'
 
@@ -170,7 +172,7 @@ describe('the registry router', () => {
   // MJXHRM-592: a unified backend runs an RPC that names no profile against its
   // launch profile, so every primary RPC rides the active one.
   it('names the active profile on a primary RPC that names none', () => {
-    $activeProfile.set('work')
+    $activeGatewayProfile.set('work')
 
     try {
       expect(withGatewayProfile('session.list', {})).toEqual({ profile: 'work' })
@@ -182,7 +184,7 @@ describe('the registry router', () => {
       // `profiles.*` works ON profiles, keyed by `name` (tui_gateway/methods_profiles.py).
       expect(withGatewayProfile('profiles.list', { include_sessions: true })).toEqual({ include_sessions: true })
     } finally {
-      $activeProfile.set(null)
+      $activeGatewayProfile.set('default')
     }
 
     expect(withGatewayProfile('session.list', {})).toEqual({})

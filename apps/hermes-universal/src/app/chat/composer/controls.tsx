@@ -238,7 +238,7 @@ function ConversationPill({
             : c.listening
 
   return (
-    <div className="ml-auto flex shrink-0 items-center gap-(--composer-control-gap)">
+    <div className="ms-auto flex shrink-0 items-center gap-(--composer-control-gap)">
       {/* Keep the ear visible during voice chat — shown paused, since the
           conversation holds the mic (the one time wake must not listen). */}
       <WakeWordButton disabled={disabled} pausedForVoice />

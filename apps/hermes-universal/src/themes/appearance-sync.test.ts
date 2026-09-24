@@ -27,9 +27,9 @@ vi.mock('@/lib/platform', async importOriginal => ({
 }))
 
 import type * as PlatformModule from '@/lib/platform'
+import { $mode, $skin } from '@/themes/mode-skin-atoms'
 
 import { APPEARANCE_EVENT, initAppearanceSync } from './appearance-sync'
-import { $mode, $skin } from './context'
 
 /** Deliver an event the way Tauri would — to every registered listener. */
 function deliver(payload: unknown): void {

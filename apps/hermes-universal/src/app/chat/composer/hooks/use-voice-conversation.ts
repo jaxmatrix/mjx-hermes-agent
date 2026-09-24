@@ -89,39 +89,39 @@ export function useVoiceConversation({
   const onStopWordRef = useRef(onStopWord)
   const onInterruptRef = useRef(onInterrupt)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     onInterruptRef.current = onInterrupt
   }, [onInterrupt])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     onStopWordRef.current = onStopWord
   }, [onStopWord])
 
   const beforeMicOpenRef = useRef(beforeMicOpen)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     beforeMicOpenRef.current = beforeMicOpen
   }, [beforeMicOpen])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     enabledRef.current = enabled
   }, [enabled])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     mutedRef.current = muted
   }, [muted])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     busyRef.current = busy
   }, [busy])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     statusRef.current = status
   }, [status])
@@ -690,7 +690,7 @@ export function useVoiceConversation({
   // Drive the loop: when a voice-submitted reply appears, open a live speech
   // session (which feeds itself from then on). Otherwise start listening when
   // idle between turns.
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (!enabled || muted) {
       return
@@ -733,7 +733,7 @@ export function useVoiceConversation({
     }
   }, [busy, enabled, muted, ensureBargeMonitor, openLiveSpeech, pendingResponse, startListening, status])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (enabled && !wasEnabledRef.current) {
       void start()

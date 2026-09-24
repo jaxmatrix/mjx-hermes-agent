@@ -5,6 +5,7 @@ const getApiRequestConnection = vi.fn<() => null | string>(() => null)
 const triggerCronJob = vi.fn()
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
   getApiRequestConnection: () => getApiRequestConnection(),
   getCronJobs: (...args: unknown[]) => getCronJobs(...args),
   triggerCronJob: (...args: unknown[]) => triggerCronJob(...args)
@@ -31,7 +32,7 @@ describe('triggerAndRefreshCronJobs', () => {
 
     const result = await triggerAndRefreshCronJobs('deleted-one-shot', 'work')
 
-    expect(triggerCronJob).toHaveBeenCalledWith('deleted-one-shot')
+    expect(triggerCronJob).toHaveBeenCalledWith('deleted-one-shot', undefined)
     expect(getCronJobs).toHaveBeenCalledWith('work')
     expect(result).toEqual({ jobs: authoritative, refreshError: null, stale: false })
   })

@@ -18,7 +18,7 @@ const request = vi.fn()
 vi.mock('@hermes/plugin-sdk', async importOriginal => {
   const sdk = await importOriginal<typeof HermesSdk>()
 
-  return { ...sdk, host: { ...sdk.host, request } }
+  return { ...sdk, host: { ...sdk.host, request }, universalHost: { ...sdk.host, request } }
 })
 
 const { loadRoutines } = await import('./cron')

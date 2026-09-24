@@ -7,35 +7,7 @@
  * the name pattern that gates the draft.
  */
 
-import {
-  Badge,
-  Button,
-  Checkbox,
-  cn,
-  Codicon,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DisclosureCaret,
-  GlyphSpinner,
-  host,
-  Input,
-  queryClient,
-  RowButton,
-  SearchField,
-  SegmentedControl,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Textarea,
-  useI18n,
-  useValue
-} from '@hermes/plugin-sdk'
+import { Badge, Button, Checkbox, cn, Codicon, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DisclosureCaret, GlyphSpinner, universalHost as host, Input, queryClient, RowButton, SearchField, SegmentedControl, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, useI18n, useValue } from '@hermes/plugin-sdk'
 import { useEffect, useRef, useState } from 'react'
 
 import { avatarColor, blobatarSvg, botAppearance, BotFace } from './avatar'
@@ -795,7 +767,7 @@ export function CreateAgentDialog({ open, onClose, roster }: CreateAgentDialogPr
                     <Checkbox checked={shareAuth} onCheckedChange={value => setShareAuth(Boolean(value))} />
                     Share keys & accounts with the main profile
                   </label>
-                  <div className="pl-6 pt-0.5 text-[0.7rem] leading-5 text-(--ui-text-tertiary)">
+                  <div className="ps-6 pt-0.5 text-[0.7rem] leading-5 text-(--ui-text-tertiary)">
                     Subscriptions, OAuth logins, and API keys stay shared (not copied), so token refreshes never
                     invalidate each other. Uncheck for an isolated snapshot copy.
                   </div>
@@ -939,7 +911,7 @@ export function CreateAgentDialog({ open, onClose, roster }: CreateAgentDialogPr
                             <span className="min-w-0">
                               <span>{m.name}</span>
                               {m.fromCatalog && !needsSetup ? (
-                                <span className="ml-1.5 text-[0.65rem] text-(--ui-text-quaternary)">
+                                <span className="ms-1.5 text-[0.65rem] text-(--ui-text-quaternary)">
                                   {m.installed ? 'catalog · installed' : 'catalog'}
                                 </span>
                               ) : null}
@@ -1245,7 +1217,7 @@ export function CreateGroupChatDialog({ open, roster, onClose, onCreated }: Crea
             {selected.map(bot => (
               <Badge
                 asChild
-                className="rounded-full bg-(--chrome-action-hover) pl-2 pr-1.5 text-[0.6875rem] text-(--ui-text-secondary) transition-colors hover:text-foreground"
+                className="rounded-full bg-(--chrome-action-hover) ps-2 pe-1.5 text-[0.6875rem] text-(--ui-text-secondary) transition-colors hover:text-foreground"
                 key={botRosterKey(bot)}
                 variant="muted"
               >
@@ -1266,7 +1238,7 @@ export function CreateGroupChatDialog({ open, roster, onClose, onCreated }: Crea
           </div>
         ) : null}
         <div className="max-h-64 min-h-0 overflow-y-auto overscroll-contain">
-          <div className="grid gap-0.5 pr-2">
+          <div className="grid gap-0.5 pe-2">
             {visible.length ? (
               visible.map(bot => {
                 const meta = botRosterMeta(bot, allMeta)

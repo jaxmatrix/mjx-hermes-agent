@@ -72,4 +72,20 @@ export function saveHandoffReceipt(key: string, receipt: HandoffReceipt): void {
   }
 
   unsavedReceipts.delete(key)
+  markFirstBuildSession(receipt.storedId)
+}
+
+const FIRST_BUILD_SESSION_PREFIX = 'hermes.onboarding.first-build-session.v1.'
+const CONNECT_PHASE_PREFIX = 'hermes.onboarding.connect-phase.v1.'
+
+export function markFirstBuildSession(storedId: string): void {
+  writeKey(`${FIRST_BUILD_SESSION_PREFIX}${storedId}`, '1')
+}
+
+export function isFirstBuildSession(storedId: string): boolean {
+  return readKey(`${FIRST_BUILD_SESSION_PREFIX}${storedId}`) === '1'
+}
+
+export function endFirstBuildConnect(storedId: string): void {
+  writeKey(`${CONNECT_PHASE_PREFIX}${storedId}`, '1')
 }

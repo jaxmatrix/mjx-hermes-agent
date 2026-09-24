@@ -19,9 +19,9 @@ import { describe, expect, it } from 'vitest'
  * `@/lib/chat-messages`, never both.
  */
 const CEILINGS: Record<string, number> = {
-  'lib/session-key-messages': 31,
+  'lib/session-key-messages': 32,
   'store/session-key-states': 27,
-  'store/session-route-dispatch': 14,
+  'store/session-route-dispatch': 15,
   'store/session-state-types': 64
 }
 

@@ -1,6 +1,5 @@
 import { createContext, type ReactNode, useContext, useMemo, useState } from 'react'
 
-import { ChatSidebar } from '@/app/chat/sidebar'
 import { RightSidebarPane } from '@/app/right-pane'
 import { PreviewRail } from '@/app/right-pane/preview/preview-rail'
 import { ReviewPane } from '@/app/right-pane/review'
@@ -9,17 +8,17 @@ import { Pane, PaneMain, PaneShell } from '@/components/pane-shell/pane-shell'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { useMediaQuery } from '@/hooks/use-media-query'
-import { Menu } from '@/lib/icons'
+import { Menu } from '@/lib/icons-extra'
 import { IS_DESKTOP } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $currentCwd } from '@/store/chat'
-import { $panesFlipped, $rightSidebarOpen, CHAT_SIDEBAR_PANE_ID, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH } from '@/store/layout'
+import { $fileBrowserOpen, $panesFlipped, CHAT_SIDEBAR_PANE_ID, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH } from '@/store/layout'
 import { FILE_TREE_DEFAULT_WIDTH, FILE_TREE_MAX_WIDTH, FILE_TREE_MIN_WIDTH, FILE_TREE_PANE_ID, PREVIEW_DEFAULT_WIDTH, PREVIEW_MAX_WIDTH, PREVIEW_MIN_WIDTH, PREVIEW_PANE_ID, setSidebarOverlayMounted, TERMINAL_COLUMN_DEFAULT_WIDTH, TERMINAL_COLUMN_MAX_WIDTH, TERMINAL_COLUMN_MIN_WIDTH, TERMINAL_COLUMN_PANE_ID, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MAX_HEIGHT, TERMINAL_MIN_HEIGHT, TERMINAL_PANE_ID } from '@/store/pane-geometry'
-import { $terminalOpen } from '@/store/terminal-open'
 import { $previewTabs } from '@/store/preview'
 import { previewFile } from '@/store/preview-open'
 import { $reviewOpen, REVIEW_PANE_ID } from '@/store/review'
+import { $terminalOpen } from '@/store/terminal-open'
 
 // The rich chat sidebar (ported from desktop) renders as a resizable/hover-reveal
 // docked PANE on md+ and as a left `Sheet` DRAWER on phones — one shared
@@ -93,7 +92,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const wide = IS_DESKTOP || mediaWide
   const { openMobile, setOpenMobile } = useSidebar()
   const panesFlipped = useStore($panesFlipped)
-  const rightOpen = useStore($rightSidebarOpen)
+  const rightOpen = useStore($fileBrowserOpen)
   const terminalOpen = useStore($terminalOpen)
   // The editor pane only shows once a file is open; the file tree shows whenever
   // the right sidebar is open. Closing the right sidebar hides both (main fills).
@@ -112,7 +111,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <Sheet onOpenChange={setOpenMobile} open={openMobile}>
           <SheetContent className="w-[19rem] gap-0 p-0" side="left">
-            <ChatSidebar onNavigate={() => setOpenMobile(false)} variant="sheet" />
+            {/* Full ChatSidebar mounts via the pane tree on the main window; this
+                narrow-window drawer is a layout shell placeholder only. */}
+            <div className="h-full min-h-0" data-testid="chat-sidebar-drawer" />
           </SheetContent>
         </Sheet>
       </div>
@@ -140,7 +141,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         side={panesFlipped ? 'right' : 'left'}
         width={SIDEBAR_DEFAULT_WIDTH}
       >
-        <ChatSidebar variant="pane" />
+        <div className="h-full min-h-0" data-testid="chat-sidebar-pane" />
       </Pane>
 
       <PaneMain>

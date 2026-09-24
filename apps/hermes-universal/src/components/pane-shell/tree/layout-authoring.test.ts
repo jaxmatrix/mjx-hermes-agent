@@ -126,10 +126,12 @@ describe('user presets', () => {
 describe('insertAtGroup into a minimized zone', () => {
   const target = () => group(['files'], { id: 'z', minimized: true })
 
-  it('un-minimizes on a GESTURE drop — the pane must not land behind the strip', () => {
+  // Desktop-shaped insertAtGroup no longer clears `minimized` on a gesture —
+  // reachability owns the strip; landing a pane behind a folded zone is fine.
+  it('keeps the zone minimized on a GESTURE drop', () => {
     const tree = insertAtGroup(target(), 'z', 'terminal', 'center')
 
-    expect(tree?.type === 'group' && tree.minimized).toBeUndefined()
+    expect(tree?.type === 'group' && tree.minimized).toBe(true)
     expect(tree?.type === 'group' && tree.active).toBe('terminal')
   })
 

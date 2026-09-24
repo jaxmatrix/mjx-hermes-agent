@@ -17,9 +17,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { registerTiles } from '@/components/pane-shell/tile/registry'
 import type { Tile } from '@/components/pane-shell/tile/types'
-import { findGroupOfPane, group, split } from '@/components/pane-shell/tree/model'
+import { group, split } from '@/components/pane-shell/tree/model'
 import { $layoutTree } from '@/components/pane-shell/tree/store'
-import { DRAFT_TILE_KEY, DRAFT_TILE_PANE_ID, sessionTilePaneId, WORKSPACE_PANE_ID } from '@/lib/pane-ids'
+import { DRAFT_TILE_KEY, DRAFT_TILE_PANE_ID, WORKSPACE_PANE_ID } from '@/lib/pane-ids'
 import {
   $sessionKeyTabs,
   clearAllSessionStates,
@@ -120,7 +120,7 @@ describe('tileRuntimeKey', () => {
 })
 
 describe('the draft taking its issued id', () => {
-  it('renames the tile in place, keeping its slot and its active flag', () => {
+  it('hands the tab record the issued id, keeping its slot', () => {
     seedTree([WORKSPACE_PANE_ID, DRAFT_TILE_PANE_ID], DRAFT_TILE_PANE_ID)
     $sessionKeyTabs.set([
       {
@@ -137,12 +137,14 @@ describe('the draft taking its issued id', () => {
     seed('draft:1', { storedSessionId: null })
     seed('draft:1', { storedSessionId: 'sess-new' })
 
-    const zone = findGroupOfPane($layoutTree.get()!, sessionTilePaneId('sess-new'))
-
-    expect(zone?.id).toBe(CHAT_GROUP)
-    expect(zone?.panes).toEqual([WORKSPACE_PANE_ID, sessionTilePaneId('sess-new')])
-    expect(zone?.active).toBe(sessionTilePaneId('sess-new'))
+    // Tabs no longer own tree panes — `adoptDraftTile` carries the RECORD only
+    // (desktop `$sessionTiles` register panes under the stored id).
     expect($sessionKeyTabs.get().map(t => t.storedSessionId)).toEqual(['sess-new'])
+    expect($sessionKeyTabs.get()[0]).toMatchObject({
+      connectionId: 'local',
+      profile: 'default',
+      tileKey: 'sess-new'
+    })
   })
 
   it('drops the draft rather than duplicating a session that already has a tab', () => {

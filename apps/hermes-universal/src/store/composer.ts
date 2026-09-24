@@ -408,6 +408,7 @@ export function stashSessionDraft(scope: string | null | undefined, text: string
 
   persistDraftTexts()
   publishDraftTitle(key, deriveDraftTitle(text))
+  void import('./composer-draft-transport').then(({ noteComposerDraftPersisted }) => noteComposerDraftPersisted())
 }
 
 export function takeSessionDraft(scope: string | null | undefined): SessionDraft {
@@ -713,6 +714,8 @@ export function clearComposerTerminalSelections() {
 
   $composerTerminalSelections.set({})
 }
+
+export { requestPeerComposerFlush } from './composer-draft-transport'
 
 function upsertAttachment(attachments: ComposerAttachment[], attachment: ComposerAttachment) {
   const index = attachments.findIndex(item => item.id === attachment.id)

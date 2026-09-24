@@ -65,6 +65,20 @@ export const CONTEXT_KIT: MenuKit = {
   copyAppearance: 'context-menu-item'
 }
 
+/** Drawer kit item surface — mirrors Radix menu item props without importing Radix here. */
+export interface MenuItemProps {
+  children?: React.ReactNode
+  className?: string
+  disabled?: boolean
+  onSelect?: (event: Event) => void
+  variant?: 'default' | 'destructive'
+}
+
+export interface MenuSectionProps {
+  children?: React.ReactNode
+  className?: string
+}
+
 /** A single action row. Provide `icon` (codicon name) or `iconNode` (any node). */
 export interface ActionItemSpec {
   className?: string

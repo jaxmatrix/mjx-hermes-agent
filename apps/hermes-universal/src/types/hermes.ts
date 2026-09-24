@@ -1,4 +1,23 @@
 import type { ConnectionRequestPayload, ToolLabel } from '@hermes/shared'
+import type { PendingApproval } from '@hermes/shared/gateway-contract.generated'
+
+/** Gateway approval queue entry (`approval.request` / `approval.pending`). */
+export type PendingApprovalPayload = PendingApproval
+
+export type CronModelDriftAxis = 'model' | 'provider'
+
+export interface CronModelImpactJob {
+  drifted_axes: CronModelDriftAxis[]
+  id: string
+  name: string
+}
+
+export interface CronModelImpact {
+  affected_count: number
+  available: boolean
+  jobs: CronModelImpactJob[]
+  truncated: boolean
+}
 
 export type StoredToolCallLabels = Record<string, ToolLabel[]>
 
@@ -933,17 +952,23 @@ export interface AnalyticsTotals {
 }
 
 export interface CronJob {
-  deliver?: null | string
+  deliver?: null | string | string[]
   enabled: boolean
   id: string
+  context_from?: null | string | string[]
+  continuity?: boolean
+  last_delivery_error?: null | string
   last_error?: null | string
+  last_fire_error?: { at?: null | string; detail?: null | string } | null
   last_run_at?: null | string
   model?: null | string
   name?: null | string
   next_run_at?: null | string
   no_agent?: boolean
+  profile?: null | string
   prompt?: null | string
   provider?: null | string
+  repeat?: { completed?: null | number; times?: null | number } | null
   schedule?: CronJobSchedule
   schedule_display?: null | string
   script?: null | string
@@ -966,6 +991,8 @@ export interface CronJobSchedule {
 }
 
 export interface CronJobUpdates {
+  context_from?: null | string | string[]
+  continuity?: boolean
   deliver?: string
   enabled?: boolean
   model?: null | string
@@ -1310,10 +1337,39 @@ export interface PlatformStatus {
   updated_at: string
 }
 
+/** NS-656: coarse disk telemetry served by /api/status. */
+export interface DiskStatus {
+  pressure: 'critical' | 'elevated' | 'ok' | 'unknown'
+  free_mb?: null | number
+  total_mb?: null | number
+  used_percent?: null | number
+}
+
+/** NS-656: coarse memory telemetry served by /api/status. */
+export interface MemoryStatus {
+  boot_id?: null | string
+  gateway_rss_mb?: null | number
+  last_boot_suspected_oom?: boolean
+  last_boot_unclean?: boolean
+  pressure: 'critical' | 'elevated' | 'ok' | 'unknown'
+  sampled_at?: null | string
+  swap_used_mb?: null | number
+  system_available_mb?: null | number
+  system_total_mb?: null | number
+}
+
+export interface ConfigFloorWarning {
+  below_floor: boolean
+  support_floor_version: number
+}
+
 export interface StatusResponse {
   active_sessions: number
+  config_floor_warning?: ConfigFloorWarning | null
   config_path: string
   config_version: number
+  /** NS-656: disk-usage rollup for the HERMES_HOME volume. */
+  disk?: DiskStatus
   env_path: string
   gateway_exit_reason: string | null
   gateway_health_url: string | null
@@ -1330,6 +1386,8 @@ export interface StatusResponse {
   gateway_updated_at: string | null
   hermes_home: string
   latest_config_version: number
+  /** NS-656: memory-pressure rollup from the gateway heartbeat. */
+  memory?: MemoryStatus
   release_date: string
   version: string
 }
@@ -1625,6 +1683,22 @@ export interface SkillHubScanFinding {
 }
 
 /** `GET /api/skills/hub/scan` — install-time security scan verdict. */
+export interface SkillHubTier1Finding {
+  check: string
+  validator: string
+  severity: string
+  message: string
+  file: string | null
+  line: number | null
+  secrets_class?: boolean
+}
+
+export interface SkillHubTier1Scan {
+  passed: boolean
+  incomplete_checks: number
+  findings: SkillHubTier1Finding[]
+}
+
 export interface SkillHubScanResult {
   name: string
   identifier: string
@@ -1636,6 +1710,7 @@ export interface SkillHubScanResult {
   policy_reason: string | null
   findings: SkillHubScanFinding[]
   severity_counts: Record<string, number>
+  tier1?: SkillHubTier1Scan | null
 }
 
 /** One configured MCP server row from `GET /api/mcp/servers`. */
@@ -1741,4 +1816,5 @@ export interface ModelAssignmentResponse {
    *  their helper tasks aren't following the switch. Only set on scope:'main'. */
   stale_aux?: StaleAuxAssignment[]
   tasks?: string[]
+  cron_model_impact?: CronModelImpact | null
 }

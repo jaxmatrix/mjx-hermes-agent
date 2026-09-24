@@ -19,6 +19,9 @@ afterEach(() => {
 })
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   renameProfile: vi.fn(async () => ({ name: 'renamed', ok: true, path: '/x' }))
 }))
 

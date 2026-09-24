@@ -3,7 +3,7 @@ import { speakText } from '@/hermes'
 import { mintWsTicket } from '@/lib/auth'
 import { atom } from '@/store/atom'
 import type { Connection } from '@/store/connection'
-import { $voiceOutputVolume } from '@/store/voice-prefs'
+import { $voiceOutputVolume } from '@/store/voice-levels'
 import { TerminalSocket } from '@/transport/terminal-socket'
 
 // Text-to-speech playback. Two paths, in preference order:

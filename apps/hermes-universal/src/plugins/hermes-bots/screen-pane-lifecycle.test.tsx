@@ -26,7 +26,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
     Tip: ({ children }: { children: ReactNode }) => <>{children}</>,
     EmptyState: () => null,
     useValue: useStore,
-    host: {
+    universalHost: {
       onEvent: onGatewayEvent,
       retainProfile: async () => {
         retention.held += 1

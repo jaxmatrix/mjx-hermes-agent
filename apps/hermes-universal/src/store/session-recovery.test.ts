@@ -90,7 +90,8 @@ describe('withSessionNotFoundResume', () => {
 
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-1',
-      omit_messages: true
+      omit_messages: true,
+      source: 'desktop'
     })
     // The recovered binding is published, or every later call still holds the
     // dead id and recovers again on each one. With no open slice there is
@@ -146,7 +147,8 @@ describe('withSessionNotFoundResume', () => {
     expect(requestGateway).toHaveBeenCalledWith('session.resume', {
       session_id: 'stored-1',
       omit_messages: true,
-      profile: 'work'
+      profile: 'work',
+      source: 'desktop'
     })
     expect(resolveSessionProfile).not.toHaveBeenCalled()
   })

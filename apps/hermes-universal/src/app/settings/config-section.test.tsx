@@ -3,6 +3,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/hermes', () => ({
+  profileScopeKey: (profile?: string | null) => (profile ?? '').trim() || 'default',
+  peekConfigReadOrigin: () => undefined,
+  retainConfigReadOrigin: (record: object) => record,
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   // ConfigSection reaches `store/projects` (repository discovery), which pulls in
   // `store/profile` → `store/profiles`, and that syncs the REST scope at import.
   setApiRequestProfile: vi.fn(),
@@ -25,7 +30,7 @@ import { getHermesConfigRecord, getHermesConfigSchema, saveHermesConfig } from '
 import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 import { $approvalModes } from '@/store/approval-mode'
-import { $profiles, setActiveProfile } from '@/store/profiles'
+import { $activeGatewayProfile, $profiles } from '@/store/profile'
 import { $settingsScopeOverride } from '@/store/settings-scope'
 
 import { ConfigField, ConfigSection } from './config-section'
@@ -51,11 +56,11 @@ describe('ConfigSection', () => {
     save.mockClear()
     vi.mocked(getHermesConfigRecord).mockClear()
     queryClient.clear()
-    setActiveProfile(null)
+    $activeGatewayProfile.set('default')
   })
   afterEach(() => {
     queryClient.clear()
-    setActiveProfile(null)
+    $activeGatewayProfile.set('default')
   })
 
   it('renders the section schema fields once config + schema load', async () => {
@@ -90,8 +95,9 @@ describe('ConfigSection', () => {
     // Profile B's config: the same key, still off.
     vi.mocked(getHermesConfigRecord).mockResolvedValue({ display: { show_reasoning: false }, timezone: 'Asia/Tokyo' })
 
+    // useOnProfileSwitch watches the gateway profile atom (not store/profiles).
     await act(async () => {
-      setActiveProfile('b')
+      $activeGatewayProfile.set('b')
     })
 
     // Re-seeded from B, so the edit made against A is gone…
@@ -121,9 +127,7 @@ describe('ConfigSection', () => {
       // Both rows render; edit the OTHER one so max_turns is only along for the
       // ride — which is exactly the case a coercing save loses.
       const inputs = await screen.findAllByRole('spinbutton')
-      // Both declared rows plus timeouts.tools.sequential_call, which renders
-      // from FALLBACK_FIELD_SCHEMA with nothing seeding it.
-      expect(inputs).toHaveLength(3)
+      expect(inputs).toHaveLength(2)
       // Pick the field by its VALUE: a null max_turns renders as an empty box,
       // so an index would silently drift if the section order changed.
       const retries = inputs.find(input => (input as HTMLInputElement).value === '3')
@@ -139,15 +143,12 @@ describe('ConfigSection', () => {
     })
 
     it('leaves an unset stt.provider unset instead of writing local back', async () => {
-      // A fresh install: stt exists, provider does not, and the backend schema
-      // no longer declares it either (the seed removal stranded its override).
+      // A fresh install: stt exists, provider does not. Schema only declares the
+      // echo toggle — provider stays out of the draft unless something coerces it.
       vi.mocked(getHermesConfigRecord).mockResolvedValue({ stt: { echo_transcripts: true } })
       vi.mocked(getHermesConfigSchema).mockResolvedValue({ fields: { 'stt.echo_transcripts': { type: 'boolean' } } })
 
       renderSection('voice')
-
-      // The picker still renders — that is FALLBACK_FIELD_SCHEMA doing its job.
-      expect(await screen.findByRole('combobox')).toBeInTheDocument()
 
       fireEvent.click(await screen.findByRole('switch'))
 
@@ -243,7 +244,7 @@ describe('ConfigSection "Applies to" scope', () => {
     vi.mocked(getHermesConfigRecord).mockClear()
     vi.mocked(getHermesConfigSchema).mockClear()
     queryClient.clear()
-    setActiveProfile(null)
+    $activeGatewayProfile.set('default')
     // Earlier describes leave their own mockResolvedValue on these two; restate
     // the fixture so this block reads the schema it asserts against.
     vi.mocked(getHermesConfigRecord).mockResolvedValue({ display: { show_reasoning: false }, timezone: 'UTC' })
@@ -258,7 +259,7 @@ describe('ConfigSection "Applies to" scope', () => {
   })
   afterEach(() => {
     queryClient.clear()
-    setActiveProfile(null)
+    $activeGatewayProfile.set('default')
     $settingsScopeOverride.set(null)
     $profiles.set([])
   })

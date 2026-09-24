@@ -18,6 +18,8 @@ const gatewayMocks = vi.hoisted(() => {
 })
 
 vi.mock('@/hermes', () => ({
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   setApiRequestProfile: vi.fn(),
   getProfiles: vi.fn(async () => ({ profiles: [] })),
   HermesGateway: class {
@@ -39,7 +41,8 @@ vi.mock('@/hermes', () => ({
 vi.mock('@/store/session', () => ({
   $connection: atom(null),
   setConnection: vi.fn(),
-  setGatewayState: vi.fn()
+  setGatewayState: vi.fn(),
+  $gatewayState: atom('closed')
 }))
 vi.mock('@/store/notify-baseline', () => ({ markNativeNotifyBaseline: vi.fn() }))
 vi.mock('@/lib/query-client', () => ({ invalidateProfileScopedQueries: vi.fn() }))

@@ -488,7 +488,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
   // in-progress edit — the draft is the user's until they save or reset.
   const draftSeeded = useRef(false)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     // profilePending: config still holds the PREVIOUS profile's record right
     // after a switch — seeding from it would latch the wrong profile's doc.
@@ -561,7 +561,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
   // on a fresh success, errorUpdatedAt on a fresh failure. Releasing on error too
   // means a failed refetch surfaces the retry UI instead of leaving mutations
   // silently no-op forever.
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (
       profilePending &&
@@ -1048,7 +1048,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
   return (
     <div className={cn('grid h-full min-h-0 grid-cols-1', MASTER_DETAIL_WIDE_COLS)}>
       {/* LEFT: the focused block's server config, or the unified fleet+catalog list. */}
-      <aside className="flex min-h-0 flex-col overflow-hidden border-r border-(--ui-stroke-quaternary)">
+      <aside className="flex min-h-0 flex-col overflow-hidden border-e border-(--ui-stroke-quaternary)">
         {selected && activeEntry ? (
           <ServerConfig
             authing={authing === selected}
@@ -1077,7 +1077,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
               {/* Geometry mirrors ListStrip (mb-1 h-6 pl-2) so this header
                   lands on the exact line the sort link occupies in the
                   Skills/Tools views. */}
-              <div className="mb-1 flex h-6 shrink-0 items-center pl-2 pr-1">
+              <div className="mb-1 flex h-6 shrink-0 items-center ps-2 pe-1">
                 <span className="flex-1 text-[0.72rem] font-medium text-(--ui-text-tertiary)">{m.tabServers}</span>
                 <McpImportButton disabled={profilePending} onImport={importServers} />
               </div>
@@ -1127,7 +1127,7 @@ export function McpTab({ gateway, profile }: { gateway: HermesGateway | null; pr
               )}
               {(catalogQuery.isLoading || availableCatalog.length > 0) && (
                 <>
-                  <div className="mb-1 mt-3 flex h-6 shrink-0 items-center border-t border-(--ui-stroke-quaternary) pl-2 pr-1 pt-2">
+                  <div className="mb-1 mt-3 flex h-6 shrink-0 items-center border-t border-(--ui-stroke-quaternary) ps-2 pe-1 pt-2">
                     <span className="text-[0.72rem] font-medium text-(--ui-text-tertiary)">{m.tabCatalog}</span>
                   </div>
                   <McpCatalog
@@ -1263,7 +1263,7 @@ function ServerConfig({
           config: items-start with per-element top margins that reproduce the
           row's h-11 centering exactly (h-5 controls → mt-3, size-6 avatar →
           mt-2.5, h-4 switch → mt-3.5) no matter how tall the text column gets. */}
-      <div className="flex items-start gap-2 pr-1.5">
+      <div className="flex items-start gap-2 pe-1.5">
         <Tip label={m.allServers}>
           <Button
             aria-label={m.allServers}
@@ -1335,21 +1335,21 @@ function ServerConfig({
             const on = isToolEnabled(entry, tool.name)
 
             return (
-              <button
-                aria-pressed={on}
-                className={cn(
-                  'rounded-md px-1.5 py-0.5 font-mono text-[0.65rem] text-(--ui-text-tertiary) hover:text-foreground',
-                  saved ? 'cursor-pointer' : 'cursor-default',
-                  on ? 'bg-(--ui-bg-quinary)' : 'line-through opacity-70'
-                )}
-                disabled={!saved}
-                key={tool.name}
-                onClick={() => onToggleTool(tool.name)}
-                title={on ? m.disableTool(tool.name) : m.enableTool(tool.name)}
-                type="button"
-              >
-                {tool.name}
-              </button>
+              <Tip key={tool.name} label={on ? m.disableTool(tool.name) : m.enableTool(tool.name)}>
+                <button
+                  aria-pressed={on}
+                  className={cn(
+                    'rounded-md px-1.5 py-0.5 font-mono text-[0.65rem] text-(--ui-text-tertiary) hover:text-foreground',
+                    saved ? 'cursor-pointer' : 'cursor-default',
+                    on ? 'bg-(--ui-bg-quinary)' : 'line-through opacity-70'
+                  )}
+                  disabled={!saved}
+                  onClick={() => onToggleTool(tool.name)}
+                  type="button"
+                >
+                  {tool.name}
+                </button>
+              </Tip>
             )
           })}
         </div>
@@ -1810,13 +1810,13 @@ function McpRow({
   return (
     <div
       className={cn(
-        'group/row row-hover flex h-11 w-full shrink-0 items-center gap-2 rounded-md pl-2 pr-1.5 hover:text-foreground',
+        'group/row row-hover flex h-11 w-full shrink-0 items-center gap-2 rounded-md ps-2 pe-1.5 hover:text-foreground',
         active ? 'bg-(--ui-row-active-background) text-foreground' : 'text-(--ui-text-secondary)'
       )}
       id={`mcp-server-${name}`}
     >
       <button
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-start"
         onClick={onSelect}
         type="button"
       >

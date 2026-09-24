@@ -15,8 +15,8 @@ import type {
   DesktopUpdateStatus,
   DesktopVersionInfo
 } from '@/global'
-import type { UpdateProgress, UpdateStatus } from '@/lib/updates'
 import { IS_DESKTOP } from '@/lib/platform'
+import type { UpdateProgress, UpdateStatus } from '@/lib/updates'
 
 type Bridge = NonNullable<typeof window.hermesDesktop>
 
@@ -87,8 +87,10 @@ const onProgress: Bridge['updates']['onProgress'] = callback => {
   void (async () => {
     try {
       const { listen } = await import('@tauri-apps/api/event')
+
       const unlisten = await listen<UpdateProgress>('update://progress', event => {
         const { downloaded, total } = event.payload
+
         const percent =
           typeof total === 'number' && total > 0
             ? Math.min(100, Math.round((downloaded / total) * 100))

@@ -25,7 +25,7 @@ import type { RosterRow } from './types'
 
 vi.mock('@hermes/plugin-sdk', () => ({
   BOT_CHAT_SESSION_HYDRATION_TIMEOUT_MS: 15_000,
-  host: {}
+  universalHost: {}
 }))
 vi.mock('./routing', () => ({
   backendTargetProfile: (_route: unknown, name: string) => name,

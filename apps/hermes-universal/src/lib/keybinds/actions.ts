@@ -221,6 +221,13 @@ export function contributedKeybinds(
 }
 
 /** Built-ins + contributed, one metadata list (panel, bindings, conflicts). */
+/** Actions that may register an OS-global chord (desktop Tauri only). */
+const GLOBAL_KEYBIND_IDS = new Set(['view.toggleHud'])
+
+export function globalKeybindActions(): KeybindActionMeta[] {
+  return allKeybindActions().filter(action => GLOBAL_KEYBIND_IDS.has(action.id))
+}
+
 export function allKeybindActions(contributions?: readonly Contribution[]): KeybindActionMeta[] {
   return [
     ...KEYBIND_ACTIONS,

@@ -35,6 +35,7 @@ const onBrowserPopoutClosed: NonNullable<Bridge['onBrowserPopoutClosed']> = call
   void (async () => {
     try {
       const { listen } = await import('@tauri-apps/api/event')
+
       const unlisten = await listen<string>('hermes://browser-window-closed', event => {
         const tabId = String(event.payload ?? '').trim()
 

@@ -26,6 +26,9 @@ import { useSessionActions } from './use-session-actions'
 import { useSessionStateCache } from './use-session-state-cache'
 
 vi.mock('@/hermes', async original => ({
+  getApiRequestConnection: () => null,
+  setApiRequestProfile: vi.fn(),
+  getApiRequestProfile: () => 'default',
   ...(await original<Record<string, unknown>>()),
   getLatestSessionMessages: vi.fn()
 }))

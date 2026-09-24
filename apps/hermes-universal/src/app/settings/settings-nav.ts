@@ -1,7 +1,8 @@
 import type { ComponentType } from 'react'
 
 import { useI18n } from '@/i18n'
-import { Archive, BarChart3, Bell, Globe, Info, Key, Keyboard, Paw, Plug, Settings, Wrench, Zap } from '@/lib/icons'
+import { Archive, BarChart3, Bell, Globe, Info, Keyboard, KeyRound, Plug, Settings, Wrench, Zap } from '@/lib/icons'
+import { Paw } from '@/lib/icons-extra'
 
 import { SECTIONS } from './constants'
 
@@ -30,7 +31,7 @@ export function useSettingsNav(): SettingsNavEntry[] {
     { id: 'gateway', icon: Globe, label: t.settings.nav.gateway },
     { id: 'notifications', icon: Bell, label: t.settings.nav.notifications },
     { id: 'billing', icon: BarChart3, label: t.settings.nav.billing },
-    { id: 'keys', icon: Key, label: t.settings.nav.apiKeys },
+    { id: 'keys', icon: KeyRound, label: t.settings.nav.apiKeys },
     { id: 'shortcuts', icon: Keyboard, label: t.keybinds.title },
     { id: 'pet', icon: Paw, label: t.commandCenter.pets.title },
     { id: 'plugins', icon: Plug, label: t.settings.nav.plugins },
@@ -81,8 +82,8 @@ export function useSettingsNavGroups(): SettingsNavGroupModel[] {
       label: t.settings.nav.providers,
       gapBefore: true,
       children: [
-        { id: 'providers', icon: Key, label: t.settings.nav.providerAccounts },
-        { id: 'providers/keys', icon: Key, label: t.settings.nav.providerApiKeys },
+        { id: 'providers', icon: KeyRound, label: t.settings.nav.providerAccounts },
+        { id: 'providers/keys', icon: KeyRound, label: t.settings.nav.providerApiKeys },
         { id: 'providers/custom-endpoints', icon: Globe, label: t.settings.nav.providerCustomEndpoints }
       ]
     },
@@ -90,7 +91,7 @@ export function useSettingsNavGroups(): SettingsNavGroupModel[] {
     { id: 'shortcuts', icon: Keyboard, label: t.keybinds.title },
     {
       id: 'keys',
-      icon: Key,
+      icon: KeyRound,
       label: t.settings.nav.apiKeys,
       children: [
         { id: 'keys', icon: Wrench, label: t.settings.nav.keysTools },

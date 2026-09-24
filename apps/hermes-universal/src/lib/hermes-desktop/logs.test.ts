@@ -8,18 +8,23 @@ const native = vi.hoisted(() => ({
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (command: string, args?: Record<string, unknown>) => {
     native.calls.push([command, args])
+
     if (native.fail.has(command)) {
       throw new Error('refused')
     }
+
     if (command === 'logs_reveal') {
       return { ok: true, path: '/home/me/.hermes/logs/desktop.log' }
     }
+
     if (command === 'logs_recent') {
       return { path: '/home/me/.hermes/logs/desktop.log', lines: ['a', 'b'] }
     }
+
     if (command === 'logs_root') {
       return '/home/me/.hermes/logs'
     }
+
     return undefined
   })
 }))

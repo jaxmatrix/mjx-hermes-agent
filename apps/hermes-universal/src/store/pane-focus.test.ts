@@ -10,7 +10,7 @@ const { openReview, revealTreePane, setFileBrowserOpen, setSidebarOpen, setTermi
   setTerminalTakeover: vi.fn()
 }))
 
-vi.mock('@/app/right-sidebar/store', () => ({ setTerminalTakeover }))
+vi.mock('@/app/right-pane/store', () => ({ setTerminalTakeover }))
 vi.mock('@/components/pane-shell/tree/store', () => ({ revealTreePane }))
 vi.mock('./layout', () => ({ setFileBrowserOpen, setSidebarOpen }))
 vi.mock('./review', () => ({ openReview }))

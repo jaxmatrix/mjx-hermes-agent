@@ -32,7 +32,7 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => {
   return {
     ...sdk,
     ackStoredSessionId: vi.fn(),
-    host: { ...sdk.host, notify, request },
+    universalHost: { ...sdk.host, notify, request },
     markSessionUnreadFinished
   }
 })

@@ -24,6 +24,7 @@ const tileView = (reasoningEffort: string, reasoningEffortWire = ''): SessionVie
   $fast: atom(false),
   $lastVisibleIsUser: atom(false),
   $messages: atom([]),
+  $paintedMessages: atom([]),
   $messagesEmpty: atom(true),
   $model: atom('tile/claude-sonnet'),
   $provider: atom('anthropic'),

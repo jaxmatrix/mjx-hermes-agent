@@ -87,9 +87,13 @@ function declaration(source: ts.SourceFile, name: string): ts.Expression {
 }
 
 /** Evaluate the literal-only expressions this file's constants are made of. */
-function literalValue(node: ts.Expression): unknown {
-  if (ts.isAsExpression(node) || ts.isParenthesizedExpression(node)) {
-    return literalValue(node.expression)
+function literalValue(node: ts.Expression, source: ts.SourceFile = sharedSource()): unknown {
+  if (ts.isAsExpression(node) || ts.isParenthesizedExpression(node) || ts.isSatisfiesExpression(node)) {
+    return literalValue(node.expression, source)
+  }
+
+  if (ts.isTypeAssertionExpression?.(node)) {
+    return literalValue(node.expression, source)
   }
 
   if (ts.isNumericLiteral(node)) {
@@ -100,12 +104,16 @@ function literalValue(node: ts.Expression): unknown {
     return node.text
   }
 
+  if (ts.isIdentifier(node)) {
+    return literalValue(declaration(source, node.text), source)
+  }
+
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
-    return -(literalValue(node.operand) as number)
+    return -(literalValue(node.operand, source) as number)
   }
 
   if (ts.isArrayLiteralExpression(node)) {
-    return node.elements.map(element => literalValue(element))
+    return node.elements.map(element => literalValue(element, source))
   }
 
   if (ts.isObjectLiteralExpression(node)) {
@@ -122,7 +130,7 @@ function literalValue(node: ts.Expression): unknown {
         throw new Error(`unsupported key in ${SHARED}`)
       }
 
-      out[key] = literalValue(property.initializer)
+      out[key] = literalValue(property.initializer, source)
     }
 
     return out

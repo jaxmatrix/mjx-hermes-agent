@@ -4,14 +4,14 @@ import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 
 import { OverlayMain, OverlayNav, type OverlayNavGroup, OverlaySplitLayout } from '@/app/overlays/overlay-split-layout'
-import { type OverlayVariant, OverlayView } from '@/app/overlays/overlay-view'
+import { OverlayView } from '@/app/overlays/overlay-view'
 import { Button } from '@/components/ui/button'
 import { KbdCombo } from '@/components/ui/kbd'
 import { Tip } from '@/components/ui/tooltip'
 import { getHermesConfigDefaults, getHermesConfigRecord, saveHermesConfig } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
-import { Download, Refresh, Search, Upload } from '@/lib/icons'
+import { Download, RefreshCw, Search, Upload } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $commandPaletteOpen, openCommandPalettePage } from '@/store/command-palette'
@@ -210,7 +210,7 @@ export function SettingsFooter() {
           size="icon-sm"
           variant="ghost"
         >
-          <Refresh className="size-4" />
+          <RefreshCw className="size-4" />
         </Button>
       </Tip>
     </>
@@ -230,7 +230,7 @@ export function SettingsView({
   returnPath?: string
   // Fullscreen when hosted as a native activity screen; the activity's Home
   // button supplies `onClose` (close the window) instead of routing back.
-  variant?: OverlayVariant
+  variant?: 'fullscreen' | 'overlay'
   onClose?: () => void
   // Render only the active section body (no OverlayNav rail/dropdown) — the
   // Android activity shell owns nav in its left drawer instead.
@@ -246,22 +246,26 @@ export function SettingsView({
   const section = pathname.startsWith('/settings/') ? pathname.slice('/settings/'.length) : DEFAULT_SECTION
   const topId = section.split('/')[0]
 
-  const groups: OverlayNavGroup[] = useSettingsNavGroups().map(group => ({
+  const groups = useSettingsNavGroups().map(group => ({
     active: group.id === topId,
     gapBefore: group.gapBefore,
     icon: group.icon,
     id: group.id,
     label: group.label,
     // `replace` so switching sections never stacks history (keeps close correct).
-    onSelect: () => navigate(`/settings/${group.id}`, { replace: true }),
+    onSelect: () => {
+      void navigate(`/settings/${group.id}`, { replace: true })
+    },
     children: group.children?.map(child => ({
       active: child.id === section,
       icon: child.icon,
       id: child.id,
       label: child.label,
-      onSelect: () => navigate(`/settings/${child.id}`, { replace: true })
+      onSelect: () => {
+        void navigate(`/settings/${child.id}`, { replace: true })
+      }
     }))
-  }))
+  })) as OverlayNavGroup[]
 
   // Close returns to the route the user was on before opening settings, not the
   // previously-viewed settings section. In a native activity the host passes
@@ -281,12 +285,7 @@ export function SettingsView({
   )
 
   return (
-    <OverlayView
-      closeLabel={t.settings.closeSettings}
-      headerContent={<SettingsSearchPill />}
-      onClose={close}
-      variant={variant}
-    >
+    <OverlayView closeLabel={t.settings.closeSettings} edgeBadge={<SettingsSearchPill />} onClose={close}>
       {hideNav ? (
         main
       ) : (

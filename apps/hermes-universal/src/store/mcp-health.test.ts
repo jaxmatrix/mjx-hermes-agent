@@ -39,6 +39,9 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getHermesConfigRecord: mocks.getHermesConfigRecord,
   setMcpServerEnabled: mocks.setMcpServerEnabled,
   testMcpServer: mocks.testMcpServer

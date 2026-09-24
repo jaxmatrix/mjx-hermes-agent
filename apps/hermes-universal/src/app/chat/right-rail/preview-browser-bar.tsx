@@ -174,7 +174,7 @@ export function PreviewBrowserBar({
             reads as chrome rather than as this page's state. */}
         {loading && (
           <Codicon
-            className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+            className="absolute start-2 top-1/2 -translate-y-1/2 text-muted-foreground"
             name="loading"
             size="0.75rem"
             spinning
@@ -183,7 +183,7 @@ export function PreviewBrowserBar({
         <Input
           aria-invalid={invalid || undefined}
           aria-label={copy.address}
-          className={cn('pr-7', loading && 'pl-6')}
+          className={cn('pe-7', loading && 'ps-6')}
           inputMode="url"
           onBlur={() => setDraft(null)}
           onChange={event => setDraft(event.target.value)}
@@ -209,7 +209,7 @@ export function PreviewBrowserBar({
         />
         <CopyButton
           appearance="inline"
-          className="absolute right-1 top-1/2 -translate-y-1/2 rounded-sm p-1"
+          className="absolute end-1 top-1/2 -translate-y-1/2 rounded-sm p-1"
           iconClassName="size-3"
           label={t.contextMenu.link.copyUrl}
           showLabel={false}

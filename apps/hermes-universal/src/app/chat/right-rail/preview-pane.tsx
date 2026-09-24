@@ -7,7 +7,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { requestComposerAttachImages, requestComposerFocus, requestComposerInsert } from '@/app/chat/composer/focus'
-import { openGuestContextMenu } from '@/app/context-menu/store'
+import { openGuestContextMenu } from '@/app/context-menu/store-desktop-menu'
 import { PanelEmpty } from '@/app/overlays/panel'
 import { isElementInHiddenPane } from '@/components/pane-shell/pane-visibility'
 import { Tip } from '@/components/ui/tooltip'
@@ -834,7 +834,7 @@ export function PreviewPane({ embedded = false, onRestartServer, reloadRequest =
     })
   }, [isRemoteHtml, isWebPreview, tabId])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (!consoleOpen) {
       return
@@ -850,7 +850,7 @@ export function PreviewPane({ embedded = false, onRestartServer, reloadRequest =
     return () => window.cancelAnimationFrame(handle)
   }, [consoleOpen])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (
       !previewServerRestart ||
@@ -909,7 +909,7 @@ export function PreviewPane({ embedded = false, onRestartServer, reloadRequest =
     return () => window.clearTimeout(timer)
   }, [copy.stillWorking, previewServerRestart, restartingServer])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (reloadRequest === lastReloadRequestRef.current) {
       return
@@ -1018,7 +1018,7 @@ export function PreviewPane({ embedded = false, onRestartServer, reloadRequest =
     }
   }, [appendConsoleEntry, copy, reloadPreview, target.kind, target.url])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     const host = hostRef.current
 
@@ -1307,7 +1307,7 @@ export function PreviewPane({ embedded = false, onRestartServer, reloadRequest =
             <div className="min-w-0 flex-1">
               <Tip label={copy.openTarget(currentUrl)}>
                 <a
-                  className="pointer-events-auto inline max-w-full truncate text-left text-xs font-medium text-foreground underline-offset-4 decoration-current/20 transition-colors hover:text-primary hover:underline"
+                  className="pointer-events-auto inline max-w-full truncate text-start text-xs font-medium text-foreground underline-offset-4 decoration-current/20 transition-colors hover:text-primary hover:underline"
                   href={isRemoteHtmlTarget ? undefined : currentUrl}
                   onClick={event => {
                     if (isRemoteHtmlTarget) {

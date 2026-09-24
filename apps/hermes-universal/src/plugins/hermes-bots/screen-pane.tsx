@@ -12,7 +12,7 @@
  * attaches is bounded to a few rapid retries before the error state.
  */
 
-import { Button, Codicon, EmptyState, GlyphSpinner, host, Tip, useValue } from '@hermes/plugin-sdk'
+import { Button, Codicon, EmptyState, GlyphSpinner, universalHost as host, Tip, useValue } from '@hermes/plugin-sdk'
 import type { RpcEvent } from '@hermes/plugin-sdk'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -169,9 +169,11 @@ export function BotScreenPane({ bot }: { bot: RosterRow }) {
       // old lease can only be cleared by force. The server honours a minted id only on the connection
       // that minted it; a foreign or stale id is silently replaced.
       const priorViewer = screenStateFor($screenState.get(), bot)?.viewer?.id
+
       const observe = await displayRequest<DisplayObserveResult>(
         bot, 'display.observe', priorViewer ? { viewer_id: priorViewer } : {},
       )
+
       const minted = { id: observe.viewer_id, hash: await viewerHash(observe.viewer_id) }
       setScreenStatus(bot, observe)
       const url = await resolveScreenWsUrl(bot, observe.ticket)

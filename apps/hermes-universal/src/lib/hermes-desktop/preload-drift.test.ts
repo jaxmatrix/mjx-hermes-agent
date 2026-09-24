@@ -131,6 +131,7 @@ function preloadSurface(): string[] {
 
         if (ts.isObjectLiteralExpression(init)) {
           collect(init, `${prefix}${name}.`)
+
           continue
         }
       }

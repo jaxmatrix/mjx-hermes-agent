@@ -45,7 +45,12 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('ApprovalBar', () => {
-  const request = { allowPermanent: true, command: 'rm -rf /tmp/x', description: 'dangerous command' }
+  const request = {
+    allowPermanent: true,
+    command: 'rm -rf /tmp/x',
+    description: 'dangerous command',
+    sessionId: KEY
+  }
 
   it('answers for the session it was handed, not the active one', async () => {
     render(<ApprovalBar request={request} sessionKey={KEY} />)
@@ -78,7 +83,7 @@ describe('ApprovalBar', () => {
 })
 
 describe('SudoBar', () => {
-  const request = { prompt: 'Password for hermes:', requestId: 's1' }
+  const request = { prompt: 'Password for hermes:', requestId: 's1', sessionId: KEY }
 
   it('sends the typed password for its own session', async () => {
     render(<SudoBar request={request} sessionKey={KEY} />)
@@ -124,7 +129,7 @@ describe('SudoBar', () => {
 })
 
 describe('SecretBar', () => {
-  const request = { envVar: 'API_KEY', prompt: 'Value for API_KEY', requestId: 'x1' }
+  const request = { envVar: 'API_KEY', prompt: 'Value for API_KEY', requestId: 'x1', sessionId: KEY }
 
   it('sends the typed value for its own session', async () => {
     render(<SecretBar request={request} sessionKey={KEY} />)

@@ -445,9 +445,10 @@ function ScopedConfigSection({
     // The header slot (Settings -> Model) owns its own DOM-shaped skeleton, so
     // keep it mounted and let it load in parallel with the schema.
     return (
-      <SettingsSkeleton sections={[{ rows: 6 }]}>
+      <>
         {headerSlot && <div className="pt-1">{headerSlot}</div>}
-      </SettingsSkeleton>
+        <SettingsSkeleton sections={[{ rows: 6 }]} />
+      </>
     )
   }
 

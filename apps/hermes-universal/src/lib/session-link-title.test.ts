@@ -8,6 +8,9 @@ import { __resetSessionLinkTitleCache, fetchSessionLinkTitle, lookupLocalSession
 import { sessionRefCacheKey } from './session-refs'
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getSession: vi.fn()
 }))
 

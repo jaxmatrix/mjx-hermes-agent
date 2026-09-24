@@ -56,6 +56,9 @@ export interface ChatBarProps {
   onPickFiles?: () => void
   onPickFolders?: () => void
   onPickImages?: () => void
+  /** Backend-fs attachment pickers (universal remote connections). */
+  onPickRemoteFiles?: () => void
+  onPickRemoteFolders?: () => void
   onRemoveAttachment?: (id: string) => void
   onSteer?: (text: string) => Promise<boolean> | boolean
   /** Delivers a hidden note to the model mid-turn with no user turn (gateway session.steer). */

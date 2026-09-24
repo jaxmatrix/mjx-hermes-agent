@@ -238,7 +238,7 @@ export function MessagingView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
   // rows can't be toggled against the wrong backend.
   const scopeSeenRef = useRef(scopeProfile)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (scope-change guard)
+   
   useEffect(() => {
     if (scopeSeenRef.current === scopeProfile) {
       return
@@ -623,7 +623,7 @@ function PlatformRow({
   return (
     <button
       className={cn(
-        'row-hover flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:text-foreground',
+        'row-hover flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start hover:text-foreground',
         active ? 'bg-(--ui-row-active-background) text-foreground' : 'text-(--ui-text-secondary)'
       )}
       onClick={onSelect}
@@ -858,7 +858,7 @@ function PlatformDetail({
       {hiddenCount > 0 && (
         <section>
           <button
-            className="flex w-full items-center justify-between gap-2 py-0.5 text-left text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:text-foreground"
+            className="flex w-full items-center justify-between gap-2 py-0.5 text-start text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => setShowAdvanced(value => !value)}
             type="button"
           >
@@ -912,7 +912,7 @@ function PlatformActionBar({
         size="xs"
       />
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ms-auto flex items-center gap-2">
         {hasEdits && <span className="text-xs text-muted-foreground">{m.unsavedChanges}</span>}
         <Button disabled={!hasEdits || isSavingEnv} onClick={onSave} size="sm">
           <Save />

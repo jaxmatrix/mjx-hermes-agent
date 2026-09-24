@@ -4379,6 +4379,10 @@ export interface StatusUpdatePayload {
   kind: string
   text: string
 }
+/** ``prompt_turn._run_post_turn_followups`` — a /steer the ended turn never saw (requeued next). */
+export interface SteerMissedPayload {
+  text: string
+}
 /** ``server._start_usage_ticker``. */
 export interface SessionUsagePayload {
   usage: Usage

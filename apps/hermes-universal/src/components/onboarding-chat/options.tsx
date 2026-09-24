@@ -186,8 +186,8 @@ function MiniWindowButtons() {
       <span className="h-px w-1.5 bg-current" />
       <span className="size-1.5 border border-current" />
       <span className="relative size-1.5">
-        <span className="absolute top-1/2 left-0 h-px w-full rotate-45 bg-current" />
-        <span className="absolute top-1/2 left-0 h-px w-full -rotate-45 bg-current" />
+        <span className="absolute top-1/2 start-0 h-px w-full rotate-45 bg-current" />
+        <span className="absolute top-1/2 start-0 h-px w-full -rotate-45 bg-current" />
       </span>
     </span>
   )

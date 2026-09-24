@@ -145,6 +145,7 @@ function buildTileView(storedSessionId: string): SessionView {
     $fast: computed($state, state => Boolean(state?.fast)),
     $lastVisibleIsUser: computed($messages, lastVisibleMessageIsUser),
     $messages,
+    $paintedMessages: $messages,
     $messagesEmpty: computed($messages, messages => messages.length === 0),
     $model: computed($state, state => state?.model ?? ''),
     $provider: computed($state, state => state?.provider ?? ''),
@@ -430,7 +431,7 @@ export function SessionTilePane({ storedSessionId }: { storedSessionId: string }
   }, [hasMessages, ownerRoute, runtimeId, storedSessionId, storedSessionStillExists])
 
   // Gating lives in shouldResumeSessionTile (unit-tested there).
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (
       !shouldResumeSessionTile({

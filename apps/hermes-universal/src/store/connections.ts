@@ -577,8 +577,24 @@ export async function loadConnectionsRegistry(): Promise<RegistryView> {
 }
 
 /** Desktop's name, shape and signature (its `null` is an Electron with no
- *  registry): what its switcher and settings refresh. */
+ *  registry): what its switcher and settings refresh. Prefer the bridge list
+ *  when present — production's hermesDesktop.connections.list is the Rust
+ *  projection, and gateway-boot tests stub the same surface. */
 export async function refreshConnectionsRegistry(): Promise<DesktopConnectionsRegistry | null> {
+  const bridge = window.hermesDesktop?.connections
+
+  if (bridge?.list) {
+    const registry = await bridge.list()
+
+    setConnectionsRegistry(registry)
+
+    return registry
+  }
+
+  if (!IS_TAURI) {
+    return null
+  }
+
   return toDesktopRegistry(await refreshConnections())
 }
 

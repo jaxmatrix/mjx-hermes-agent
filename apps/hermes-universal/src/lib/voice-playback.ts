@@ -663,6 +663,26 @@ async function playSpeechDataUrl(
   return true
 }
 
+export type SpeechPlaybackOutcome = 'done' | 'error' | 'stopped'
+
+/** Voice-conversation playback: maps stop/interrupt to `'stopped'`, failures to `'error'`. */
+export async function playSpeechTextUntilDone(
+  text: string,
+  options: VoicePlaybackOptions
+): Promise<SpeechPlaybackOutcome> {
+  try {
+    const ok = await playSpeechText(text, options)
+
+    if (takeVoicePlaybackInterrupted()) {
+      return 'stopped'
+    }
+
+    return ok ? 'done' : 'error'
+  } catch {
+    return 'error'
+  }
+}
+
 export async function playSpeechText(text: string, options: VoicePlaybackOptions): Promise<boolean> {
   stopVoicePlayback()
 

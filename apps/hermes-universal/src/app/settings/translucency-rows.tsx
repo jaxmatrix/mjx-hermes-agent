@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { settingRowElementId } from '@/app/settings/setting-row-id'
 import { SegmentedControl } from '@/components/ui/segmented-control'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
@@ -27,7 +28,6 @@ import {
 } from '@/store/translucency'
 
 import { ListRow } from './primitives'
-import { settingRowElementId } from '@/app/settings/setting-row-id'
 
 /**
  * The Appearance page's translucency rows: mode, tint, frost, area, fade.
@@ -82,7 +82,6 @@ function Slider({ label, onChange, value }: { label: string; onChange: (value: n
 export function TranslucencySettings() {
   const { t } = useI18n()
   const a = t.settings.appearance
-  const g = a.glass
   const state = useStore($translucency)
   const capabilities = useStore($glassCapabilities)
   // Session-scoped, so turning translucency off and on again lands back where it
@@ -101,9 +100,9 @@ export function TranslucencySettings() {
   const glassOn = mode === 'glass'
 
   const modeOptions: readonly { id: ModeOption; label: string }[] = [
-    { id: 'off', label: g.modeOff },
-    { id: 'clear', label: g.modeClear },
-    ...(glassOk ? [{ id: 'glass' as const, label: g.modeGlass }] : [])
+    { id: 'off', label: a.translucencyModeOff },
+    { id: 'clear', label: a.translucencyModeClear },
+    ...(glassOk ? [{ id: 'glass' as const, label: a.translucencyModeGlass }] : [])
   ]
 
   const chooseMode = (next: ModeOption): void => {
@@ -132,17 +131,17 @@ export function TranslucencySettings() {
   const modeNote = glassOk
     ? null
     : capabilities?.platform === 'windows'
-      ? g.unsupportedWindows(String(capabilities.osBuild ?? '—'))
-      : g.unsupportedLinux
+      ? a.translucencyUnsupportedWindows(String(capabilities.osBuild ?? '—'))
+      : a.translucencyUnsupportedLinux
 
   const frostOptions = (capabilities?.materials ?? []).map(material => ({
     id: material,
-    label: g.frost[material === 'under-window' ? 'underWindow' : material]
+    label: a.translucencyFrost[material]
   }))
 
   const areaOptions = [
-    { id: 'window', label: g.areaWindow },
-    { id: 'sidebar', label: g.areaSidebar }
+    { id: 'window', label: a.translucencyScope.window },
+    { id: 'sidebar', label: a.translucencyScope.sidebar }
   ] as const satisfies readonly { id: GlassScope; label: string }[]
 
   return (
@@ -151,7 +150,7 @@ export function TranslucencySettings() {
         action={<SegmentedControl onChange={chooseMode} options={modeOptions} value={mode} />}
         description={
           <>
-            {mode === 'clear' ? g.clearDesc : a.translucencyDesc}
+            {mode === 'glass' ? a.translucencyGlassDesc : a.translucencyDesc}
             {modeNote && <div className="mt-1">{modeNote}</div>}
           </>
         }
@@ -161,10 +160,10 @@ export function TranslucencySettings() {
 
       {mode !== 'off' && (
         <ListRow
-          action={<Slider label={g.tintTitle} onChange={setTranslucency} value={state.intensity} />}
-          description={g.tintDesc}
+          action={<Slider label={a.translucencyTintTitle} onChange={setTranslucency} value={state.intensity} />}
+          description={a.translucencyTintDesc}
           id={settingRowElementId('appearance.tint')}
-          title={g.tintTitle}
+          title={a.translucencyTintTitle}
         />
       )}
 
@@ -183,9 +182,9 @@ export function TranslucencySettings() {
               value={glassMaterialForPicker(state.material, capabilities?.platform === 'windows')}
             />
           }
-          description={g.frostDesc}
+          description={a.translucencyFrostDesc}
           id={settingRowElementId('appearance.frost')}
-          title={g.frostTitle}
+          title={a.translucencyFrostTitle}
         />
       )}
 
@@ -203,16 +202,16 @@ export function TranslucencySettings() {
             />
           }
           id={settingRowElementId('appearance.area')}
-          title={g.areaTitle}
+          title={a.translucencyScopeTitle}
         />
       )}
 
       {glassOn && (
         <ListRow
-          action={<Slider label={g.fadeTitle} onChange={setTranslucencyFade} value={state.fade} />}
-          description={g.fadeDesc}
+          action={<Slider label={a.translucencyFadeTitle} onChange={setTranslucencyFade} value={state.fade} />}
+          description={a.translucencyFadeDesc}
           id={settingRowElementId('appearance.fade')}
-          title={g.fadeTitle}
+          title={a.translucencyFadeTitle}
         />
       )}
     </div>

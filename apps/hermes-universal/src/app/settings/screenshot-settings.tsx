@@ -52,7 +52,7 @@ export function ScreenshotSettings() {
     [api]
   )
 
-  // eslint-disable-next-line no-restricted-syntax -- IPC request/status generations, not atom mirrors.
+   
   useEffect(() => {
     if (!api) {
       return

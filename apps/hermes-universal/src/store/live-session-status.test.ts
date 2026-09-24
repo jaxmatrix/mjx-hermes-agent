@@ -24,6 +24,9 @@ vi.mock('@/components/chat/vibe-hearts', () => ({ burstVibeHearts: vi.fn() }))
 
 vi.mock('@/hermes', async importOriginal => ({
   ...(await importOriginal<typeof HermesApi>()),
+  getApiRequestConnection: () => null,
+  setApiRequestProfile: vi.fn(),
+  getApiRequestProfile: () => 'default',
   listAllProfileSessions: vi.fn().mockResolvedValue({ sessions: [], total: 0 })
 }))
 

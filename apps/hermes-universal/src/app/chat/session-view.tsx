@@ -1,12 +1,14 @@
 import { computed, type ReadableAtom } from 'nanostores'
 import { createContext, useContext } from 'react'
 
+import { $primaryBusy } from '@/app/chat/primary-session-busy'
 import type { ClientSessionState } from '@/app/types'
 import type { ChatMessage } from '@/lib/chat-messages'
+import type { ChatMessage as LegacyChatMessage } from '@/lib/session-key-messages'
+import { $statusLine } from '@/store/chat'
 import {
   $activeSessionId,
   $awaitingResponse,
-  $busy,
   $currentCwd,
   $currentFastMode,
   $currentModel,
@@ -17,6 +19,7 @@ import {
   $selectedStoredSessionId,
   $turnStartedAt
 } from '@/store/session'
+import type { BranchSource } from '@/store/session-lifecycle'
 import { $sessionStates } from '@/store/session-states'
 
 import { lastVisibleMessageIsUser } from './thread-loading'
@@ -46,6 +49,8 @@ export interface SessionView {
   $runtimeId: ReadableAtom<string | null>
   $storedId: ReadableAtom<string | null>
   $messages: ReadableAtom<ChatMessage[]>
+  /** Paint-lane transcript; equals `$messages` when no cached tail is active. */
+  $paintedMessages: ReadableAtom<ChatMessage[]>
   $busy: ReadableAtom<boolean>
   $awaitingResponse: ReadableAtom<boolean>
   $messagesEmpty: ReadableAtom<boolean>
@@ -61,6 +66,8 @@ export interface SessionView {
   $reasoningEffort: ReadableAtom<string>
   /** Gateway-reported level the route sends for `$reasoningEffort` ('' = unknown). */
   $reasoningEffortWire: ReadableAtom<string>
+  /** Mid-turn status text while busy (primary session state only). */
+  $statusLine?: ReadableAtom<string>
 }
 
 /** The active session's own slice, or `undefined` while it's a draft. */
@@ -84,17 +91,6 @@ function primaryField<T>(select: (state: ClientSessionState) => T, $draft: Reada
 
 const $primaryMessages = primaryField<ChatMessage[]>(state => state.messages, $messages)
 
-/**
- * Turn-busy for the workspace pane. A selected stored session that has no
- * slice yet (cold resume) must stay idle — the global `$busy` atom is a
- * leftover from whichever session last published, and inheriting it is how
- * focusing B while A runs marked B busy. The draft atom is only for a true
- * new chat (no stored id) so the first-send optimistic lock still paints.
- */
-const $primaryBusy = computed([$primaryState, $busy, $selectedStoredSessionId], (state, draftBusy, selected) =>
-  state ? state.busy : selected ? false : draftBusy
-)
-
 export const PRIMARY_SESSION_VIEW: SessionView = {
   kind: 'primary',
   $awaitingResponse: primaryField<boolean>(state => state.awaitingResponse, $awaitingResponse),
@@ -103,6 +99,7 @@ export const PRIMARY_SESSION_VIEW: SessionView = {
   $fast: primaryField<boolean>(state => state.fast, $currentFastMode),
   $lastVisibleIsUser: computed($primaryMessages, lastVisibleMessageIsUser),
   $messages: $primaryMessages,
+  $paintedMessages: $primaryMessages,
   $messagesEmpty: computed($primaryMessages, messages => messages.length === 0),
   $model: primaryField<string>(state => state.model, $currentModel),
   $provider: primaryField<string>(state => state.provider, $currentProvider),
@@ -110,6 +107,7 @@ export const PRIMARY_SESSION_VIEW: SessionView = {
   $reasoningEffortWire: primaryField<string>(state => state.reasoningEffortWire ?? '', $currentReasoningEffortWire),
   $runtimeId: $activeSessionId,
   $storedId: $selectedStoredSessionId,
+  $statusLine: primaryField<string>(state => state.statusLine, $statusLine),
   $turnStartedAt: primaryField<number | null>(state => state.turnStartedAt, $turnStartedAt)
 }
 
@@ -118,3 +116,14 @@ const SessionViewContext = createContext<SessionView>(PRIMARY_SESSION_VIEW)
 export const SessionViewProvider = SessionViewContext.Provider
 
 export const useSessionView = (): SessionView => useContext(SessionViewContext)
+
+/** Branch source for a specific chat surface (tile/mobile bubble), not the foreground atoms. */
+export function branchSourceOf(view: SessionView): BranchSource {
+  return {
+    busy: view.$busy.get(),
+    cwd: view.$cwd.get(),
+    messages: view.$messages.get() as LegacyChatMessage[],
+    runtimeId: view.$runtimeId.get(),
+    storedId: view.$storedId.get()
+  }
+}

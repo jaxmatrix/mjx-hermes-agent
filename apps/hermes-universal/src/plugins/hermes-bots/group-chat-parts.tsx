@@ -8,7 +8,7 @@
  * controls without either surface importing the other.
  */
 
-import { Button, cn, Codicon, host, Input, RowButton, Textarea, useI18n, useValue } from '@hermes/plugin-sdk'
+import { Button, cn, Codicon, universalHost as host, Input, RowButton, Textarea, useI18n, useValue } from '@hermes/plugin-sdk'
 import type { ClipboardEvent } from 'react'
 import { useRef, useState } from 'react'
 
@@ -258,11 +258,11 @@ export function GroupMentionInput({ members, onChange, onSubmitDraft, value, ...
   return (
     <div className="relative min-w-0 flex-1">
       {open ? (
-        <div className="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-md border border-(--ui-stroke-secondary) bg-(--ui-bg-elevated) py-1 shadow-lg">
+        <div className="absolute bottom-full start-0 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-md border border-(--ui-stroke-secondary) bg-(--ui-bg-elevated) py-1 shadow-lg">
           {options.map((option, index) => (
             <RowButton
               className={cn(
-                'flex w-full items-baseline gap-2 px-2 py-1 text-left text-xs',
+                'flex w-full items-baseline gap-2 px-2 py-1 text-start text-xs',
                 index === active ? 'bg-(--ui-control-hover-background) text-foreground' : 'text-(--ui-text-secondary)'
               )} // preventDefault on mousedown so the input keeps focus.
               key={option.handle}

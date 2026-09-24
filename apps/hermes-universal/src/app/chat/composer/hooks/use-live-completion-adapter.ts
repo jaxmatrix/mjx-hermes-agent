@@ -61,7 +61,7 @@ export function useLiveCompletionAdapter(options: {
 
   useEffect(() => () => cancelTimer(), [cancelTimer])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (enabled) {
       return
@@ -74,7 +74,7 @@ export function useLiveCompletionAdapter(options: {
     setState({ query: EMPTY_QUERY, items: [] })
   }, [cancelTimer, enabled])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     // Invalidate by forgetting which query the held items answer, so the next
     // search() re-fetches. The items themselves stay until the new answer

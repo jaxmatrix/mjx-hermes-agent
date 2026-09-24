@@ -54,7 +54,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
     Button: () => null,
     Checkbox: () => null,
     GlyphSpinner: () => null,
-    host: hostMock,
+    host: hostMock, universalHost: hostMock,
     Input: () => null,
     ConnectorsTab: undefined,
     queryClient: { invalidateQueries: invalidateMock },

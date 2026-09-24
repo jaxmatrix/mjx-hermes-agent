@@ -16,6 +16,9 @@ const envVar = (over: Partial<EnvVarInfo>): EnvVarInfo => ({
 })
 
 vi.mock('@/hermes', () => ({
+  profileScopeKey: (profile?: string | null) => (profile ?? '').trim() || 'default',
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getEnvVars: vi.fn(async () => ({
     TAVILY_API_KEY: envVar({ category: 'tool', description: 'Tavily search' }),
     GATEWAY_PROXY: envVar({ category: 'setting', is_password: false }),
@@ -90,10 +93,10 @@ describe('KeysSection (Tools & Keys)', () => {
     fireEvent.change(input, { target: { value: 'http://proxy' } })
     fireEvent.click(await screen.findByRole('button', { name: /save/i }))
 
-    // Third arg = the "Applies to" override: undefined means "follow the app's
-    // active profile", which is what keeps the request byte-identical for
-    // single-profile users.
-    await waitFor(() => expect(setVar).toHaveBeenCalledWith('GATEWAY_PROXY', 'http://proxy', undefined))
+    // Third arg = the concrete profile the page is editing (#118432). With no
+    // "Applies to" override that is the app's active profile key — never
+    // `undefined`, which would drop `?profile=` and hit the launch home.
+    await waitFor(() => expect(setVar).toHaveBeenCalledWith('GATEWAY_PROXY', 'http://proxy', 'default'))
   })
 })
 
@@ -138,9 +141,12 @@ describe('KeysSection "Applies to" scope', () => {
     expect(screen.getByText('Applies to')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'default' }))
 
-    // Picking the app's ACTIVE profile clears the override, so the next request
-    // goes back to its unscoped shape rather than pinning "default".
+    // Picking the app's ACTIVE profile clears the override; subsequent reads
+    // resolve to that profile's name (desktop-shaped), not an omitted arg.
     await waitFor(() => expect($settingsScopeOverride.get()).toBeNull())
-    await waitFor(() => expect(readVars).toHaveBeenLastCalledWith(undefined))
+    await waitFor(() => {
+      const last = readVars.mock.calls.at(-1) ?? []
+      expect(last[0]).toBe('default')
+    })
   })
 })

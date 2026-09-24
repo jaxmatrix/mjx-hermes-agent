@@ -107,7 +107,7 @@ export function useRouteResume({
   const prevResumeExhaustedRef = useRef<string | null>(null)
   const handledResumeRequestRef = useRef(0)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     const gatewayOpen = gatewayState === 'open'
     const pathnameChanged = lastPathnameRef.current !== locationPathname
@@ -230,7 +230,7 @@ export function useRouteResume({
   // again. resumeSession clears resumeFailedSessionId on its next attempt; a
   // success keeps it clear (the effect's guard then no-ops), a repeat failure
   // re-arms it and we back off further, capped at MAX_RESUME_RETRIES.
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     // Detect the exhausted-latch armed->cleared edge for the current route. Only
     // resumeSession clears $resumeExhaustedSessionId (manual Retry / reconnect /

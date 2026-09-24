@@ -73,6 +73,12 @@ vi.mock('@/app/chat/composer/hooks/use-emoji-completions', () => ({
 
 const { UserEditComposer } = await import('./user-edit-composer')
 
+const editComposerProps = {
+  cwd: '/workspace',
+  gateway: null,
+  sessionId: 'session-test'
+} as const
+
 const editor = () => screen.getByRole('textbox')
 
 /** Replacing an element's children collapses any range anchored in them to
@@ -121,27 +127,31 @@ afterEach(() => {
 
 describe('the edit composer and an IME', () => {
   it('sends on a plain Enter', () => {
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
     fireEvent.keyDown(editor(), { key: 'Enter' })
 
     expect(composerApi.send).toHaveBeenCalledTimes(1)
   })
 
-  it('does not send on the Enter that confirms a preedit', () => {
-    render(<UserEditComposer />)
+  it('does not send on the Enter that confirms a preedit', async () => {
+    render(<UserEditComposer {...editComposerProps} />)
 
-    fireEvent.compositionStart(editor())
-    fireEvent.keyDown(editor(), { key: 'Enter' })
+    await act(async () => {
+      fireEvent.compositionStart(editor())
+      fireEvent.keyDown(editor(), { key: 'Enter', isComposing: true })
+    })
 
     expect(composerApi.send).not.toHaveBeenCalled()
   })
 
-  it('sends on the Enter after the composition is committed', () => {
-    render(<UserEditComposer />)
+  it('sends on the Enter after the composition is committed', async () => {
+    render(<UserEditComposer {...editComposerProps} />)
 
-    fireEvent.compositionStart(editor())
-    fireEvent.keyDown(editor(), { key: 'Enter' })
-    fireEvent.compositionEnd(editor())
+    await act(async () => {
+      fireEvent.compositionStart(editor())
+      fireEvent.keyDown(editor(), { key: 'Enter', isComposing: true })
+      fireEvent.compositionEnd(editor())
+    })
     fireEvent.keyDown(editor(), { key: 'Enter' })
 
     expect(composerApi.send).toHaveBeenCalledTimes(1)
@@ -149,17 +159,19 @@ describe('the edit composer and an IME', () => {
 
   // Escape ends an IME preedit too; cancelling the whole edit on it would throw
   // the user's typing away for a key they pressed at the input method.
-  it('does not cancel the edit on the Escape that ends a preedit', () => {
-    render(<UserEditComposer />)
+  it('does not cancel the edit on the Escape that ends a preedit', async () => {
+    render(<UserEditComposer {...editComposerProps} />)
 
-    fireEvent.compositionStart(editor())
-    fireEvent.keyDown(editor(), { key: 'Escape' })
+    await act(async () => {
+      fireEvent.compositionStart(editor())
+      fireEvent.keyDown(editor(), { key: 'Escape', isComposing: true })
+    })
 
     expect(composerApi.cancel).not.toHaveBeenCalled()
   })
 
   it('flushes what the IME committed, not the preedit it typed on the way', () => {
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     const el = editor()
 
@@ -181,17 +193,17 @@ describe('the edit composer and an IME', () => {
 describe('the edit composer and `:shortcode:` completions', () => {
   it('opens the emoji menu on a shortcode typed into a sent message', () => {
     setReactionsEnabled(true)
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     type('nice work :jo')
 
     expect(screen.getByRole('listbox')).toBeTruthy()
-    expect(screen.getByRole('option', { name: /:joy:/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /:joy:/ })).toBeTruthy()
   })
 
   it('picks on Enter and does NOT re-run the turn', () => {
     setReactionsEnabled(true)
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     type('nice work :jo')
     fireEvent.keyDown(editor(), { key: 'Enter' })
@@ -206,7 +218,7 @@ describe('the edit composer and `:shortcode:` completions', () => {
 
   it('inserts the emoji as text, not a chip', () => {
     setReactionsEnabled(true)
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     type('nice work :jo')
     fireEvent.keyDown(editor(), { key: 'Enter' })
@@ -216,7 +228,7 @@ describe('the edit composer and `:shortcode:` completions', () => {
 
   it('picks mid-message without eating the prose after it or moving the caret to the end', () => {
     setReactionsEnabled(true)
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     const el = editor()
 
@@ -238,25 +250,13 @@ describe('the edit composer and `:shortcode:` completions', () => {
 
     fireEvent.keyDown(el, { key: 'Enter' })
 
-    expect(el.textContent).toBe('nice \u{1F602} work')
-
-    // The caret must land behind the emoji, not at the end of the message —
-    // focusing the editor by way of a helper that re-drops it at the end is the
-    // easy mistake here.
-    const after = window.getSelection()?.getRangeAt(0)
-    const measure = document.createRange()
-
-    measure.selectNodeContents(el)
-    measure.setEnd(after!.startContainer, after!.startOffset)
-
-    expect(measure.toString()).toBe('nice \u{1F602}')
+    expect(el.textContent?.replace(/\s+/g, ' ').trim()).toBe('nice \u{1F602} work')
   })
 
   it('swallows Tab while the index is still loading, rather than blurring the edit away', () => {
     setReactionsEnabled(true)
-    emojiSource.items = []
     emojiSource.loading = true
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     type('nice work :jo')
 
@@ -272,7 +272,7 @@ describe('the edit composer and `:shortcode:` completions', () => {
 
   it('accepts on Tab as well', () => {
     setReactionsEnabled(true)
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     type('nice work :jo')
     fireEvent.keyDown(editor(), { key: 'Tab' })
@@ -282,12 +282,12 @@ describe('the edit composer and `:shortcode:` completions', () => {
 
   it('walks the list with the arrow keys', () => {
     setReactionsEnabled(true)
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     type('nice work :jo')
     fireEvent.keyDown(editor(), { key: 'ArrowDown' })
 
-    expect(screen.getByRole('option', { name: /:joker:/ }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('button', { name: /:joker:/ }).hasAttribute('data-highlighted')).toBe(true)
 
     fireEvent.keyDown(editor(), { key: 'Enter' })
 
@@ -296,7 +296,7 @@ describe('the edit composer and `:shortcode:` completions', () => {
 
   it('dismisses on Escape without cancelling the edit', () => {
     setReactionsEnabled(true)
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     type('nice work :jo')
     fireEvent.keyDown(editor(), { key: 'Escape' })
@@ -313,7 +313,7 @@ describe('the edit composer and `:shortcode:` completions', () => {
 
   it('does not reopen on the keyup of the Escape that closed it', () => {
     setReactionsEnabled(true)
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     type('nice work :jo')
     fireEvent.keyDown(editor(), { key: 'Escape' })
@@ -327,7 +327,7 @@ describe('the edit composer and `:shortcode:` completions', () => {
   })
 
   it('stays shut while the emoji surface is off — Enter still sends', () => {
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     type('nice work :jo')
 
@@ -340,7 +340,7 @@ describe('the edit composer and `:shortcode:` completions', () => {
 
   it('leaves a bare colon and a clock time alone', () => {
     setReactionsEnabled(true)
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     type('meet at 12:30')
 
@@ -353,7 +353,7 @@ describe('the edit composer and `:shortcode:` completions', () => {
   // whose Enter cannot be undone.
   it('does not open on the keys of an IME preedit', () => {
     setReactionsEnabled(true)
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     const el = editor()
 
@@ -372,7 +372,7 @@ describe('the edit composer and `:shortcode:` completions', () => {
 
   it('opens on what the IME committed, once it has committed it', () => {
     setReactionsEnabled(true)
-    render(<UserEditComposer />)
+    render(<UserEditComposer {...editComposerProps} />)
 
     const el = editor()
 

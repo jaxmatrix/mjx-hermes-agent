@@ -4,6 +4,9 @@ const getTerminalBackends = vi.fn()
 const selectTerminalBackend = vi.fn()
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getTerminalBackends: (...args: unknown[]) => getTerminalBackends(...args),
   selectTerminalBackend: (...args: unknown[]) => selectTerminalBackend(...args)
 }))

@@ -19,6 +19,9 @@ const paths = vi.hoisted(() => [
 ])
 
 vi.mock('@/hermes', async () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   ...(await vi.importActual('@/hermes')),
   listAllProfileSessions: async () => ({
     sessions: [{ id: 'artifact-session', title: 'Fixture', profile: 'origin-profile' }]

@@ -8,6 +8,7 @@ import {
   tailBoundedRemend
 } from '@assistant-ui/react-streamdown'
 import type { code as streamdownCode } from '@streamdown/code'
+import type { Element as HastElement } from 'hast'
 import { type ComponentProps, memo, type ReactNode, useEffect, useMemo, useState } from 'react'
 
 import { ExpandableBlock } from '@/components/chat/expandable-block'
@@ -19,7 +20,7 @@ import { ErrorBoundary } from '@/components/error-boundary'
 import { detectArtifact } from '@/lib/artifact-detect'
 import { renderMediaTags } from '@/lib/chat-messages/parts'
 import { normalizeExternalUrl, openExternalLink, PrettyLink } from '@/lib/external-link'
-import { createMemoizedMathPlugin } from '@/lib/katex-memo'
+import { createMemoizedMathPlugin, KATEX_HTML_TAG } from '@/lib/katex-memo'
 import { parseMarkdownIntoBlocksCached } from '@/lib/markdown-blocks'
 import { preprocessMarkdown } from '@/lib/markdown-preprocess'
 import {
@@ -48,6 +49,41 @@ import { ResizableMarkdownTable, ResizableMarkdownTh } from './markdown-table'
 import { paragraphPlainText, TranscriptDirectiveLeaf, useResolvedParagraph } from './transcript-directive'
 
 const onboardingEnabled = isOnboardingEnabled()
+
+// Why the tag survives streamdown's sanitizer: streamdown appends
+// `plugins.math.rehypePlugin` AFTER rehype-sanitize (see the `Lt` memo in
+// streamdown's bundle), which is the same slot stock rehype-katex uses to get
+// its raw spans through. A `katex-html` element created by an EARLIER plugin
+// would be unwrapped by the sanitizer instead — so this only works from the
+// math plugin slot. Don't move it.
+//
+// memo on the html string: an equation's markup never changes once rendered, so
+// re-renders of the surrounding message skip it entirely.
+const KatexHtml = memo(
+  function KatexHtml({ node }: { node?: HastElement }) {
+    const first = node?.children?.[0]
+    const html = first && first.type === 'text' ? first.value : ''
+    const display = node?.properties?.dataDisplay === 'true'
+
+    return (
+      <span
+        className="katex-host"
+        // KaTeX-generated markup only; see katex-memo.
+        dangerouslySetInnerHTML={{ __html: html }}
+        data-display={display ? 'true' : 'false'}
+      />
+    )
+  },
+  (a, b) => {
+    const aFirst = a.node?.children?.[0]
+    const bFirst = b.node?.children?.[0]
+
+    return (
+      a.node?.properties?.dataDisplay === b.node?.properties?.dataDisplay &&
+      (aFirst?.type === 'text' ? aFirst.value : '') === (bFirst?.type === 'text' ? bFirst.value : '')
+    )
+  }
+)
 
 // Math rendering plugin (KaTeX). Configured once at module scope — the
 // plugin is stateless beyond its internal cache so re-creating per-render
@@ -686,6 +722,10 @@ function MarkdownTextSurface({
           </td>
         ),
         img: previewOnly ? ({ alt }: ComponentProps<'img'>) => <span>{alt}</span> : MarkdownImage,
+        // One entry per equation, emitted by the memoized math plugin.
+        // hast-util-to-jsx-runtime resolves components by an exact
+        // own-property lookup on tagName, so a custom tag routes here.
+        [KATEX_HTML_TAG]: KatexHtml as unknown as StreamdownTextComponents[string],
         // ```mermaid / ```svg fences route to their lazy renderers; substantial
         // html/svg/code fences promote to an artifact card that opens in the
         // right rail; every other language falls back to the Shiki-highlighted
@@ -707,7 +747,7 @@ function MarkdownTextSurface({
             />
           )
         }
-      }) as StreamdownTextComponents,
+      }) as unknown as StreamdownTextComponents,
     [decorateText, disableArtifacts, isStreaming, previewOnly, scratchpad]
   )
 

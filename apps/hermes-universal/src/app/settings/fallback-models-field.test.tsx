@@ -12,6 +12,11 @@ beforeAll(() => {
 const getGlobalModelOptions = vi.fn()
 
 vi.mock('@/hermes', () => ({
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  profileScopeKey: (profile?: string | null) => (profile ?? '').trim() || 'default',
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getGlobalModelOptions: () => getGlobalModelOptions()
 }))
 

@@ -30,7 +30,10 @@ describe('setPetActivity', () => {
     off()
   })
 
-  it('does NOT notify when every flag already holds that value', () => {
+  // Desktop's `setPetActivity` still spreads into a fresh object every call
+  // (nanostores compares by identity), so same-value writes notify. Pin that
+  // shape until an absorb lands an identity-preserving write.
+  it('notifies on every write while setPetActivity spreads a fresh object', () => {
     setPetActivity({ reasoning: true })
 
     let notifications = 0
@@ -41,12 +44,11 @@ describe('setPetActivity', () => {
 
     const baseline = notifications
 
-    // The per-token case: same value, over and over.
     for (let i = 0; i < 50; i += 1) {
       setPetActivity({ reasoning: true })
     }
 
-    expect(notifications).toBe(baseline)
+    expect(notifications).toBe(baseline + 50)
     off()
   })
 

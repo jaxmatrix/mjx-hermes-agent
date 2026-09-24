@@ -101,10 +101,19 @@ describe('cronEditorUpdates', () => {
   it('omits prompt when saving a script-only job with an empty prompt', () => {
     expect(
       cronEditorUpdates(
-        { deliver: 'local', model: '', name: 'Weekly', prompt: '', provider: '', schedule: '0 9 * * 1' },
+        {
+          continuity: false,
+          deliver: 'local',
+          model: '',
+          name: 'Weekly',
+          prompt: '',
+          provider: '',
+          schedule: '0 9 * * 1'
+        },
         { scriptOnlyJob: true }
       )
     ).toEqual({
+      context_from: null,
       deliver: 'local',
       name: 'Weekly',
       schedule: '0 9 * * 1'
@@ -114,7 +123,15 @@ describe('cronEditorUpdates', () => {
   it('includes prompt when the user typed one on a script-only job', () => {
     expect(
       cronEditorUpdates(
-        { deliver: 'email', model: '', name: 'Weekly', prompt: 'note', provider: '', schedule: '0 9 * * 1' },
+        {
+          continuity: false,
+          deliver: 'email',
+          model: '',
+          name: 'Weekly',
+          prompt: 'note',
+          provider: '',
+          schedule: '0 9 * * 1'
+        },
         { scriptOnlyJob: true }
       ).prompt
     ).toBe('note')
@@ -123,6 +140,7 @@ describe('cronEditorUpdates', () => {
   it('writes the model override for agent jobs', () => {
     const updates = cronEditorUpdates(
       {
+        continuity: false,
         deliver: 'local',
         model: 'claude-sonnet-4',
         name: 'Daily',
@@ -139,7 +157,15 @@ describe('cronEditorUpdates', () => {
 
   it('clears a previous pin when the override is reset to default', () => {
     const updates = cronEditorUpdates(
-      { deliver: 'local', model: '', name: 'Daily', prompt: 'go', provider: '', schedule: '0 9 * * *' },
+      {
+        continuity: false,
+        deliver: 'local',
+        model: '',
+        name: 'Daily',
+        prompt: 'go',
+        provider: '',
+        schedule: '0 9 * * *'
+      },
       { scriptOnlyJob: false }
     )
 
@@ -149,7 +175,15 @@ describe('cronEditorUpdates', () => {
 
   it('never touches model fields on script-only jobs', () => {
     const updates = cronEditorUpdates(
-      { deliver: 'local', model: 'x', name: 'Weekly', prompt: '', provider: 'y', schedule: '0 9 * * 1' },
+      {
+        continuity: false,
+        deliver: 'local',
+        model: 'x',
+        name: 'Weekly',
+        prompt: '',
+        provider: 'y',
+        schedule: '0 9 * * 1'
+      },
       { scriptOnlyJob: true }
     )
 

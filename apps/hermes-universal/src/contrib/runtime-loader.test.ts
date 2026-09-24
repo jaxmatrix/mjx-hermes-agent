@@ -19,6 +19,9 @@ const getStatus = vi.fn(async () => ({ hermes_home: '/remote/box/.hermes' }))
 
 vi.mock('@/hermes', async importActual => ({
   ...(await importActual<typeof HermesModule>()),
+  getApiRequestConnection: () => null,
+  setApiRequestProfile: vi.fn(),
+  getApiRequestProfile: () => 'default',
   getStatus: () => getStatus()
 }))
 

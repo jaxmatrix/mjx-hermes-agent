@@ -5,6 +5,9 @@ import { listAllProfileSessions, type SessionInfo } from '@/hermes'
 import { $archivedSessions, loadArchivedSessions } from './sidebar-archive'
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   listAllProfileSessions: vi.fn()
 }))
 

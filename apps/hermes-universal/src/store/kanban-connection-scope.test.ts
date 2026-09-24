@@ -11,6 +11,24 @@ import type { HermesConnection } from '@/global'
 // the HermesGateway socket class stubbed — same harness as
 // plugin-socket-scope.test.ts.
 
+const { authenticate, invoke } = vi.hoisted(() => ({
+  authenticate: vi.fn(async ({ connectionId, url }: { connectionId?: string; url: string }) => ({
+    authMode: 'oauth' as const,
+    baseUrl: url,
+    connectionId,
+    mode: 'remote' as const,
+    token: 'fake-test-token',
+    wsUrl: `${url.replace(/^http/, 'ws')}/api/ws?token=fake-test-token`
+  })),
+  invoke: vi.fn(async (_command: string, _args?: Record<string, unknown>): Promise<unknown> => undefined)
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
+vi.mock('@/store/connection', async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  authenticate
+}))
+
 vi.mock('@/hermes', async importOriginal => {
   const actual = await importOriginal<Record<string, unknown>>()
 
@@ -34,6 +52,7 @@ vi.mock('@/store/starmap', () => ({ resetStarmapGraph: vi.fn() }))
 
 const { getApiRequestConnection, setApiRequestConnection, setApiRequestProfile } = await import('@/api/client')
 const { queryClient } = await import('@/lib/query-client')
+const { $activeConnection } = await import('@/store/active-connection')
 const { closeSecondaryGateways, configureGatewayRegistry, setPrimaryGateway } = await import('@/store/gateway')
 const { $activeGatewayProfile } = await import('@/store/profile')
 const { selectConnection, setConnectionsRegistry, _resetConnectionsForTests } = await import('@/store/connections')
@@ -62,8 +81,54 @@ const registry = {
 describe('connection-switch query invalidation', () => {
   let tagsAtFetch: Array<null | string>
   let observer: QueryObserver<any, any, any, any, any> | undefined
+  let stopApiConnectionMirror: (() => void) | undefined
 
   beforeEach(() => {
+    invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      const connectionId = String(args?.connectionId ?? 'spark')
+      const isSpark = connectionId === 'spark'
+
+      if (command === 'connections_list') {
+        return registry
+      }
+
+      if (command === 'connections_set_last_used' || command === 'connections_commit_source') {
+        return { connectionId, dialSeq: 1, seq: 1 }
+      }
+
+      if (command === 'connections_resolve') {
+        return {
+          authMode: 'oauth',
+          baseUrl: isSpark ? 'https://spark.invalid' : 'http://127.0.0.1:8117',
+          connectionId,
+          dialConnectionId: connectionId,
+          headerNames: [],
+          kind: isSpark ? 'remote' : 'local',
+          label: isSpark ? 'Spark' : 'This device',
+          mode: isSpark ? 'remote' : 'local',
+          profile: (args?.profile as string) ?? 'default',
+          scopeKey: `${connectionId}:default`,
+          tokenAttached: true
+        }
+      }
+
+      if (command === 'connections_current_source') {
+        return { connectionId: 'local', dialSeq: 1, seq: 1 }
+      }
+
+      return undefined
+    })
+
+    // Stand in for the gateway boot hook's softSwitch: it writes desktop's
+    // `$connection` (which `$activeConnectionId` here is computed from) and
+    // stamps the REST tag. Without both, invalidate never fires / refetches
+    // still read a null connection tag.
+    stopApiConnectionMirror?.()
+    stopApiConnectionMirror = $activeConnection.listen(active => {
+      setConnection((active?.connection as HermesConnection | undefined) ?? null)
+      setApiRequestConnection(active?.connectionId ?? null)
+    })
+
     vi.stubGlobal('window', {
       hermesDesktop: {
         api: vi.fn(async () => ({})),
@@ -102,6 +167,8 @@ describe('connection-switch query invalidation', () => {
     $activeGatewayProfile.set('default')
     setApiRequestProfile(null)
     setApiRequestConnection(null)
+    stopApiConnectionMirror?.()
+    stopApiConnectionMirror = undefined
     _resetConnectionsForTests()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()

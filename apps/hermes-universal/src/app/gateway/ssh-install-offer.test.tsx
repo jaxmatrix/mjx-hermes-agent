@@ -65,8 +65,8 @@ describe('the offer', () => {
     renderOffer()
 
     expect(screen.getByText('Install Hermes on box.example.com?')).toBeInTheDocument()
-    expect(screen.getByText('NousResearch Hermes Agent')).toBeInTheDocument()
-    expect(screen.getByText('MJX Fork of Hermes Agent')).toBeInTheDocument()
+    expect(screen.getByText('Official release')).toBeInTheDocument()
+    expect(screen.getByText('My fork')).toBeInTheDocument()
   })
 
   it('says no administrator access is needed', () => {
@@ -79,19 +79,17 @@ describe('the offer', () => {
   it('installs nothing until a repo is picked and Install is pressed', async () => {
     renderOffer()
 
-    fireEvent.click(screen.getByText('MJX Fork of Hermes Agent'))
+    fireEvent.click(screen.getByText('My fork'))
 
     expect(await screen.findByRole('button', { name: 'Install' })).toBeInTheDocument()
-    expect(
-      screen.getByText('A fork of Hermes Agent built for testing experimental features in Hermes Agent.')
-    ).toBeInTheDocument()
+    expect(screen.getByText('Install from your fork of the repository.')).toBeInTheDocument()
     expect(invokeMock).not.toHaveBeenCalledWith('ssh_install', expect.anything())
   })
 
   it('backs out of the repo description without installing', async () => {
     renderOffer()
 
-    fireEvent.click(screen.getByText('MJX Fork of Hermes Agent'))
+    fireEvent.click(screen.getByText('My fork'))
     fireEvent.click(await screen.findByRole('button', { name: 'Back' }))
 
     expect(await screen.findByText('Install Hermes on box.example.com?')).toBeInTheDocument()

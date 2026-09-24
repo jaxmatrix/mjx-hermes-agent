@@ -13,7 +13,15 @@ vi.mock('@/store/connection', async () => {
 
   return { $connection: atom<unknown>({ baseUrl: 'http://127.0.0.1:1', mode: 'local' }) }
 })
-vi.mock('@/store/gateway-client', () => ({ requestGateway }))
+vi.mock('@/store/gateway-client', async () => {
+  const { atom } = await import('@/store/atom')
+
+  return {
+    $gatewayState: atom('open'),
+    addGatewayEventListener: () => () => {},
+    requestGateway
+  }
+})
 vi.mock('@/store/local-backend', () => ({ restartLocalBackend }))
 vi.mock('@/store/notifications', () => ({ notify }))
 
@@ -44,7 +52,9 @@ describe('a profile change', () => {
 
     announceProfileChatScope('work')
 
-    expect(notify.mock.calls[0]?.[0]).toMatchObject({ action: { label: 'Restart backend' } })
+    expect(notify.mock.calls[0]?.[0]).toMatchObject({
+      action: { label: 'settings.connections.profileRestartAction' }
+    })
   })
 })
 
@@ -63,7 +73,7 @@ describe('Restart backend', () => {
 
     expect(requestGateway).toHaveBeenCalledWith('session.active_list', {})
     expect(confirm).toHaveBeenCalledTimes(1)
-    expect(confirm.mock.calls[0]?.[0].description).toContain('Release notes, Room: planning')
+    expect(confirm.mock.calls[0]?.[0].description).toBe('settings.connections.restartLocalDescription')
     expect(confirm.mock.calls[0]?.[0].description).not.toContain('Old chat')
     expect(restartLocalBackend).not.toHaveBeenCalled()
   })

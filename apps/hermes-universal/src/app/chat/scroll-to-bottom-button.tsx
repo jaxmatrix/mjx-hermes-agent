@@ -101,7 +101,7 @@ export function ScrollToBottomButton({ sessionId }: { sessionId: string | null }
       aria-hidden={!visible}
       aria-label={label}
       className={cn(
-        'thread-jump-button absolute left-1/2 z-20 flex h-8 items-center gap-1.5 rounded-full border bg-(--composer-fill) px-3 text-xs font-medium backdrop-blur-[0.75rem] [-webkit-backdrop-filter:blur(0.75rem)]',
+        'thread-jump-button absolute start-1/2 z-20 flex h-8 items-center gap-1.5 rounded-full border bg-(--composer-fill) px-3 text-xs font-medium backdrop-blur-[0.75rem] [-webkit-backdrop-filter:blur(0.75rem)]',
         visibleApproval
           ? 'border-primary/40 text-primary hover:bg-primary/10'
           : 'border-border/65 text-muted-foreground hover:text-foreground',

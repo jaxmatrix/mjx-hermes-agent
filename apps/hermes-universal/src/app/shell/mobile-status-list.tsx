@@ -1,8 +1,10 @@
+import { useStore } from '@nanostores/react'
 import { cva } from 'class-variance-authority'
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router'
 
 import { useStatusbarContributions } from '@/app/contrib/panes'
+import { useStatusSnapshot } from '@/app/shell/hooks/use-status-snapshot'
 import { useStatusbarItems } from '@/app/shell/hooks/use-statusbar-items'
 import { NAV_ROW_ACTIVE } from '@/app/shell/nav-row'
 import { SidebarPanelLabel } from '@/app/shell/sidebar-label'
@@ -10,6 +12,9 @@ import { type StatusbarItem, StatusbarItemView } from '@/app/shell/statusbar-con
 import { useI18n } from '@/i18n'
 import { Settings, Users } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import { $activeConnectionId } from '@/store/active-connection'
+import { $activeGatewayProfile } from '@/store/profile'
+import { $freshDraftReady, $gatewayState } from '@/store/session'
 import { openProfilesScreen, openSettingsScreen } from '@/store/windows'
 
 /** MobileStatusList CVA (MJXHRM-315). */
@@ -124,12 +129,27 @@ export function MobileStatusList() {
   // surface on mobile — pull them here too, not just in the bar.
   const extraLeftItems = useStatusbarContributions('left')
   const extraRightItems = useStatusbarContributions('right')
+  const gatewayState = useStore($gatewayState)
+  const freshDraftReady = useStore($freshDraftReady)
+  const activeConnectionId = useStore($activeConnectionId)
+  const activeGatewayProfile = useStore($activeGatewayProfile)
+  const gatewayScope = `${activeConnectionId ?? ''}\0${activeGatewayProfile}`
+  const { inferenceStatus, statusSnapshot } = useStatusSnapshot(gatewayState, async () => undefined as never, gatewayScope)
 
   const { leftStatusbarItems, statusbarItems } = useStatusbarItems({
+    agentsOpen: false,
+    chatOpen: true,
+    commandCenterOpen: false,
     extraLeftItems,
     extraRightItems,
-    includeAll: true,
-    rich: true
+    freshDraftReady,
+    gatewayState,
+    inferenceStatus,
+    openAgents: () => {},
+    openCommandCenterSection: () => {},
+    requestGateway: async () => undefined as never,
+    statusSnapshot,
+    toggleCommandCenter: () => {}
   })
 
   // Open Settings — appended to the System section (opens the Settings activity on

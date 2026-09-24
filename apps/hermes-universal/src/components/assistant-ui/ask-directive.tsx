@@ -85,12 +85,12 @@ export function AskDirective({ attrs, streaming }: { attrs: Record<string, strin
           {options.map(option => (
             <button
               className={cn(
-                'max-w-full shrink-0 rounded-full border px-3 py-1.5 text-left text-[12px] whitespace-normal wrap-anywhere transition-colors',
+                'max-w-full shrink-0 rounded-full border px-3 py-1.5 text-start text-[12px] whitespace-normal wrap-anywhere transition-colors',
                 picked === option
                   ? 'border-primary bg-primary text-primary-foreground'
                   : closed
-                    ? 'border-border/60 text-muted-foreground/50'
-                    : 'border-border bg-card hover:border-primary/50 hover:bg-primary/10'
+                    ? 'border-(--ui-stroke-tertiary) text-muted-foreground/50'
+                    : 'border-(--ui-stroke-tertiary) bg-card hover:border-primary/50 hover:bg-primary/10'
               )}
               disabled={closed || streaming}
               key={option}

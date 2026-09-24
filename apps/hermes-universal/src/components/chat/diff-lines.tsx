@@ -541,7 +541,7 @@ function DiffOverviewRuler({ lines }: { lines: DiffLine[] }) {
   }
 
   return (
-    <div aria-hidden className="pointer-events-none absolute top-0 right-0 bottom-0 w-1.5 opacity-80">
+    <div aria-hidden className="pointer-events-none absolute top-0 end-0 bottom-0 w-1.5 opacity-80">
       {/* Cap the tick field to the diff's natural height (rows × line px) so a
           short diff renders thin, line-aligned ticks instead of stretching a few
           changes into gross full-height blocks. A long diff hits the 100% cap and
@@ -648,14 +648,14 @@ export function FileDiffPanel({
   return (
     <div className={cn(DIFF_BOX_CLASS, 'relative overflow-hidden', className)} data-slot="file-diff-panel">
       <div
-        className={cn('absolute inset-0 overflow-auto', showLineNumbers && 'pr-2.5')}
+        className={cn('absolute inset-0 overflow-auto', showLineNumbers && 'pe-2.5')}
         onScroll={onScroll}
         ref={scrollerRef}
       >
         {showLineNumbers ? (
           <div className="grid min-w-max grid-cols-[auto_minmax(0,1fr)]">
             <div
-              className="sticky left-0 z-1 select-none bg-(--ui-editor-surface-background) py-3 text-muted-foreground/55"
+              className="sticky start-0 z-1 select-none bg-(--ui-editor-surface-background) py-3 text-muted-foreground/55"
               // Masks the code scrolling horizontally beneath it, so it has to
               // stay opaque when window glass thins the field. See
               // `[data-glass-opaque]` in styles.css.
@@ -669,7 +669,7 @@ export function FileDiffPanel({
 
                     return (
                       <div
-                        className="h-5 w-9 pr-2 text-right leading-5 tabular-nums"
+                        className="h-5 w-9 pe-2 text-end leading-5 tabular-nums"
                         key={`${index}-${line.oldNo}-${line.newNo}`}
                       >
                         {line.newNo ?? ''}

@@ -17,9 +17,9 @@ vi.mock('@/store/native-notifications', () => ({ dispatchNativeNotification: vi.
 vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undefined) }))
 
 import type { ToolCallPart } from '@/lib/session-key-messages'
+import { $clarifyRequests, sessionClarifyRequest } from '@/store/clarify'
 import { routeGatewayEvent } from '@/store/event-router'
 import { clearAllPrompts } from '@/store/prompts';
-import { sessionClarifyRequest } from '@/store/clarify'
 import { $activeSessionKey, $sessionKeyStates } from '@/store/session-state-types'
 
 const event = (type: string, payload: Record<string, unknown>): GatewayEvent =>
@@ -37,6 +37,7 @@ const event = (type: string, payload: Record<string, unknown>): GatewayEvent =>
 describe('event-router → clarify lifecycle', () => {
   beforeEach(() => {
     clearAllPrompts()
+    $clarifyRequests.set({})
     $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
   })
@@ -50,7 +51,9 @@ describe('event-router → clarify lifecycle', () => {
     expect(sessionClarifyRequest('s1').get()).toEqual({
       requestId: 'req-1',
       question: 'Which branch?',
-      choices: ['main']
+      choices: ['main'],
+      multiSelect: false,
+      sessionId: 's1'
     })
   })
 
@@ -85,6 +88,7 @@ const toolParts = (key: string): ToolCallPart[] =>
 describe('event-router → batch clarify', () => {
   beforeEach(() => {
     clearAllPrompts()
+    $clarifyRequests.set({})
     $sessionKeyStates.set({})
     $activeSessionKey.set('s1')
   })
@@ -109,7 +113,9 @@ describe('event-router → batch clarify', () => {
     expect(sessionClarifyRequest('s1').get()).toEqual({
       requestId: 'req-batch',
       question: '',
-      choices: null,
+      choices: [],
+      multiSelect: false,
+      sessionId: 's1',
       questions: [
         { qid: 'q0', question: 'Drink?', choices: ['Coffee', 'Tea'], multiSelect: false },
         // No choices survived, so multi_select has nothing to multi-pick from.

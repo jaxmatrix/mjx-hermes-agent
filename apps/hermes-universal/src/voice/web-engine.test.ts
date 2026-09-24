@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/hermes', () => ({ transcribeAudio: vi.fn(async () => ({ transcript: '' })) }))
+vi.mock('@/hermes', () => ({  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+ transcribeAudio: vi.fn(async () => ({ transcript: '' })) }))
 vi.mock('@/lib/mic-permission', () => ({ ensureMicPermission: async () => true }))
 
 import type { VoiceEvent } from './types'

@@ -13,6 +13,8 @@ interface LayoutEntry {
 export const LAYOUT_KEYS = {
   floating: 'hermes.desktop.floatingPanes.v1',
   tree: 'hermes.desktop.layoutTree.v2',
+  /** Bumped when a profile import writes a layout from an activity window. */
+  imported: 'hermes.desktop.layoutTree.imported',
   preset: 'hermes.desktop.layoutPreset.active',
   panes: 'hermes.desktop.paneStates.v1',
   dismissed: 'hermes.desktop.dismissedPanes.v1',

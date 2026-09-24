@@ -258,7 +258,7 @@ describe('the connecting state', () => {
 
     const { container } = summonAt('/')
 
-    expect(container.textContent).toContain('Connecting to Hermes…')
+    expect(container.textContent).toContain('Connecting…')
     expect(container.textContent).not.toContain('This tile is not available in this window.')
     expect(bandState(container)).toBe('collapsed')
   })

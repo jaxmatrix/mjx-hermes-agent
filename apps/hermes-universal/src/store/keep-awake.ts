@@ -21,6 +21,30 @@ export function setKeepAwake(on: boolean): void {
   $keepAwake.set(on)
 }
 
+/** Temporary keep-awake for unattended runs (e.g. bot-room drive). Ref-counted. */
+let holdCount = 0
+let restoreAfterHold = false
+
+export function holdKeepAwake(_reason: string): () => void {
+  if (holdCount === 0) {
+    restoreAfterHold = $keepAwake.get()
+
+    if (!restoreAfterHold) {
+      setKeepAwake(true)
+    }
+  }
+
+  holdCount += 1
+
+  return () => {
+    holdCount = Math.max(0, holdCount - 1)
+
+    if (holdCount === 0 && !restoreAfterHold) {
+      setKeepAwake(false)
+    }
+  }
+}
+
 if (typeof window !== 'undefined') {
   $keepAwake.subscribe(on => {
     persistBoolean(KEY, on)

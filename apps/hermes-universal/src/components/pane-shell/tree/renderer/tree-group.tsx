@@ -200,7 +200,7 @@ function ZoneMenu({
               {/* The hint's `ml-auto` makes the label the row's flexible part,
                   so without this it breaks mid-phrase before the menu widens. */}
               <span className="whitespace-nowrap">{stripVisible ? t.zones.hideTabStrip : t.zones.showTabStrip}</span>
-              {toggleHint && <span className="ml-auto pl-2 text-(--ui-text-quaternary)">{toggleHint}</span>}
+              {toggleHint && <span className="ms-auto ps-2 text-(--ui-text-quaternary)">{toggleHint}</span>}
             </>
           ),
           onSelect: () => setTreeGroupTabStrip(nodeId, stripVisible ? 'never' : 'always')
@@ -597,7 +597,7 @@ export function TreeGroup({
                     {minimizable && (
                       <button
                         aria-label={node.minimized ? t.zones.restore : minimizeLabel}
-                        className="mx-1 grid size-5 shrink-0 place-items-center self-center [-webkit-app-region:no-drag] rounded-md text-(--ui-text-tertiary) opacity-0 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground focus-visible:opacity-100 group-hover/pane-header:opacity-100"
+                        className="mx-1 grid size-5 shrink-0 place-items-center self-center [-webkit-app-region:no-drag] rounded-md text-(--ui-text-tertiary) opacity-0 coarse:opacity-100 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground focus-visible:opacity-100 group-hover/pane-header:opacity-100"
                         onClick={toggleCollapse}
                         onPointerDown={e => e.stopPropagation()}
                         type="button"
@@ -708,7 +708,7 @@ export function TreeGroup({
                       style={{ cursor: 'grab' }}
                     >
                       {chrome.tabLead ? (
-                        <span className="ml-2 -mr-1 flex shrink-0 items-center">
+                        <span className="ms-2 -mr-1 flex shrink-0 items-center">
                           <TabKeyHint groupId={node.id} slot={index + 1}>
                             {chrome.tabLead()}
                           </TabKeyHint>

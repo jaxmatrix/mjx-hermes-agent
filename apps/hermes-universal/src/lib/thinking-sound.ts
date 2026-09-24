@@ -13,6 +13,7 @@
 
 import { getAudioContext } from '@/lib/audio-context'
 import { $hapticsMuted } from '@/store/haptics'
+import type { VoiceConversationState } from '@/store/voice-conversation'
 import { $thinkingSoundEnabled } from '@/store/voice-prefs'
 
 let timer: number | null = null
@@ -70,6 +71,15 @@ export function startThinkingSound(): void {
   }
 
   timer = window.setTimeout(tick, 400)
+}
+
+/** Keep thinking blips aligned with the voice-conversation status atom. */
+export function syncThinkingSound(state: VoiceConversationState): void {
+  if (state.status === 'thinking') {
+    startThinkingSound()
+  } else {
+    stopThinkingSound()
+  }
 }
 
 /** Stop the thinking blips instantly (idempotent). */

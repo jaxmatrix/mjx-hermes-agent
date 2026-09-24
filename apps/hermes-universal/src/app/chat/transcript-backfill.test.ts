@@ -12,6 +12,9 @@ import {
 } from './transcript-backfill'
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getOlderSessionMessages: vi.fn()
 }))
 

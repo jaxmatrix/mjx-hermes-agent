@@ -59,7 +59,7 @@ export function NotificationStack() {
     }
   }, [defaultStack.length])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     const latest = notifications[0]
 
@@ -118,7 +118,7 @@ function TopCenterStack({
       aria-label={copy.region}
       className={cn(
         REGION_BASE,
-        'left-1/2 top-[calc(var(--titlebar-height,34px)+max(0.75rem,var(--safe-area-inset-top)))] w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 flex-col p-1',
+        'start-1/2 top-[calc(var(--titlebar-height,34px)+max(0.75rem,var(--safe-area-inset-top)))] w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 flex-col p-1',
         expanded && 'max-h-[70vh] overflow-y-auto overscroll-contain'
       )}
       role="region"
@@ -161,7 +161,7 @@ function BottomRightStack({
       aria-label={copy.region}
       className={cn(
         REGION_BASE,
-        'right-4 bottom-4 w-[min(24rem,calc(100%-2rem))] flex-col-reverse p-1',
+        'end-4 bottom-4 w-[min(24rem,calc(100%-2rem))] flex-col-reverse p-1',
         expanded && 'max-h-[70vh] overflow-y-auto overscroll-contain'
       )}
       role="region"
@@ -256,7 +256,7 @@ function NotificationItem({ notification, stack }: { notification: AppNotificati
   return (
     <Alert
       aria-live={!stack.active ? 'off' : notification.kind === 'error' ? 'assertive' : 'polite'}
-      className="grid-cols-[auto_minmax(0,1fr)_auto] border-0 bg-transparent pr-2.5 shadow-none"
+      className="grid-cols-[auto_minmax(0,1fr)_auto] border-0 bg-transparent pe-2.5 shadow-none"
       role={notification.kind === 'error' ? 'alert' : 'status'}
       variant={styles.variant}
     >

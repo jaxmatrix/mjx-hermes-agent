@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router'
 
 import { useViewedInterval } from '@/hooks/use-viewed-interval'
 import { chatMessageText } from '@/lib/chat-messages'
-import { $activeSessionAwaitingInput } from '@/store/prompts'
+import { $activeSessionAwaitingInput } from '@/store/prompt-session-bridge'
 import { $busy, $messages } from '@/store/session'
 
 import { RICH_INPUT_SLOT } from '../chat/composer/rich-editor'
@@ -67,7 +67,7 @@ function useRecentActivity(): [boolean, () => void] {
 
   const bumpRef = useRef(() => {})
 
-  // eslint-disable-next-line no-restricted-syntax -- timer handle, not an atom mirror
+   
   useEffect(() => {
     let signature = ''
 

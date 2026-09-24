@@ -75,7 +75,7 @@ export function useMcpDraft({ config, names, profilePending, servers, writable }
 
   const draftSeeded = useRef(false)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (!config || profilePending) {
       return

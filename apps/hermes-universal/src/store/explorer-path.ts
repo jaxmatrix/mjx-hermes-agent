@@ -18,13 +18,13 @@
  */
 
 import { translateNow } from '@/i18n'
-import { setSessionCwd } from '@/lib/gateway-rpc'
 import { atom } from '@/store/atom'
 import { setDefaultProjectDir } from '@/store/default-project-dir'
 import { explorerPathFailure, planExplorerPath } from '@/store/explorer-path-decision'
+import { requestGateway } from '@/store/gateway-client'
 import { notify } from '@/store/notifications'
+import { setCurrentCwd } from '@/store/session'
 import { $focusedRuntimeId, $focusedSessionState } from '@/store/session-states'
-import { setWorkspaceCwd } from '@/store/workspace-events'
 
 /**
  * The pending "move this chat, or only new ones?" question.
@@ -124,7 +124,7 @@ export async function confirmExplorerPathMoveSession(): Promise<void> {
   $explorerPathPrompt.set(null)
 
   try {
-    await setSessionCwd({ cwd: prompt.path, sessionId: prompt.runtimeSessionId })
+    await requestGateway('session.cwd.set', { cwd: prompt.path, session_id: prompt.runtimeSessionId })
   } catch (error) {
     // The turn can start between the idle check and this call, so `4009` is a
     // race rather than a mistake — and the honest thing to say is the same
@@ -170,10 +170,10 @@ export async function confirmExplorerPathDefaultOnly(): Promise<void> {
   }
 }
 
-/** No live session: the workspace root IS `$effectiveCwd`, so setting it moves
+/** No live session: the workspace root IS `$currentCwd`, so setting it moves
  *  the tree, and the default project dir makes the move outlive this chat. */
 function applyToWorkspace(path: string): void {
-  setWorkspaceCwd(path)
+  setCurrentCwd(path)
   setDefaultProjectDir(path)
 }
 

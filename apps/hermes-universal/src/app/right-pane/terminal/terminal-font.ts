@@ -39,6 +39,14 @@ export function resolveTerminalFontFamily(value: unknown): string {
   return `${preferred}, ${DEFAULT_TERMINAL_FONT_FAMILY}`
 }
 
+export function terminalFontFamilyFromConfig(config: Record<string, unknown>): unknown {
+  const terminal = config.terminal
+
+  return terminal && typeof terminal === 'object' && !Array.isArray(terminal)
+    ? (terminal as Record<string, unknown>).font_family
+    : undefined
+}
+
 export function setTerminalFontFamilyFromConfig(value: unknown): void {
   $terminalFontFamily.set(normalizeTerminalFontFamily(value))
 }

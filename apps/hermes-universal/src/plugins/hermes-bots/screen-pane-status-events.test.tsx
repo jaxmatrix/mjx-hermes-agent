@@ -24,7 +24,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
     Tip: ({ children }: { children: ReactNode }) => <>{children}</>,
     EmptyState: () => null,
     useValue: useStore,
-    host: { onEvent: onGatewayEvent }
+    universalHost: { onEvent: onGatewayEvent }
   }
 })
 vi.mock('./routing', () => {
@@ -61,7 +61,7 @@ vi.mock('@novnc/novnc', () => ({
   }
 }))
 
-// eslint-disable-next-line no-restricted-imports
+ 
 import { emitGatewayEvent } from '../../contrib/events'
 
 import { displayRequest } from './screen-connection'

@@ -44,7 +44,7 @@ const { clearBotAttentionMock, hostMock, noteBotAttentionMock, UnboundedCache } 
   }
 }))
 
-vi.mock('@hermes/plugin-sdk', () => ({ host: hostMock, LruCache: UnboundedCache }))
+vi.mock('@hermes/plugin-sdk', () => ({ host: hostMock, universalHost: hostMock, LruCache: UnboundedCache }))
 
 vi.mock('./data', () => ({
   botHandle: (name: string) => (name === 'default' ? 'hermes' : name),

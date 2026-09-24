@@ -44,7 +44,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
 
   return {
     atom,
-    host: hostMock,
+    host: hostMock, universalHost: hostMock,
     queryClient: { getQueryData: vi.fn(), invalidateQueries: vi.fn() },
     useQuery,
     useValue: (store: { get: () => unknown }) => store.get()

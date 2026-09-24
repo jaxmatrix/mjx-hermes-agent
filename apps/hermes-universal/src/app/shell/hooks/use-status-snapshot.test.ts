@@ -9,6 +9,9 @@ import { deferred } from '../../../test/deferred'
 import { useStatusSnapshot } from './use-status-snapshot'
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getStatus: vi.fn()
 }))
 

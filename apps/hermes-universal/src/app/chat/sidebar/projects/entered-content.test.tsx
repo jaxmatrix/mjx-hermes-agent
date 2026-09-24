@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { HermesGitWorktree } from '@/global'
-import { $dismissedWorktreeIds, $sidebarWorkspaceNodeOpen } from '@/store/layout'
+import { $dismissedWorktreeIds, $removedWorktreeIds, $sidebarWorkspaceNodeOpen } from '@/store/layout'
 import type * as ProjectsModule from '@/store/projects'
 import { removeWorktreePath } from '@/store/projects'
 import type { SessionInfo } from '@/types/hermes'
@@ -74,6 +74,7 @@ const renderContent = (repoWorktrees: Record<string, HermesGitWorktree[]>) =>
 
 beforeEach(() => {
   $dismissedWorktreeIds.set([])
+  $removedWorktreeIds.set([])
   $sidebarWorkspaceNodeOpen.set({})
   vi.mocked(removeWorktreePath).mockClear()
 })
@@ -104,8 +105,24 @@ describe('EnteredProjectContent', () => {
     expect(container.textContent).not.toContain('gone')
   })
 
-  it('keeps a dismissed lane visible when git still reports the worktree', () => {
+  it('keeps an explicit sidebar hide even when git still reports the worktree', () => {
+    // Discovery resurrects a REMOVED worktree, never an explicit hide
+    // (`entered-content` filter + `dismissWorktree` without `{ removed: true }`).
     $dismissedWorktreeIds.set(['/work/repo/.worktrees/feature-x'])
+
+    renderContent({
+      '/work/repo': [
+        ...worktrees['/work/repo'],
+        worktree({ branch: 'feature/x', path: '/work/repo/.worktrees/feature-x' })
+      ]
+    })
+
+    expect(screen.queryByTitle(/feature\/x/)).toBeNull()
+  })
+
+  it('resurfaces a removed worktree when git still reports it', () => {
+    $dismissedWorktreeIds.set(['/work/repo/.worktrees/feature-x'])
+    $removedWorktreeIds.set(['/work/repo/.worktrees/feature-x'])
 
     renderContent({
       '/work/repo': [
@@ -121,7 +138,8 @@ describe('EnteredProjectContent', () => {
     renderContent(worktrees)
 
     // The main lane's header has no kebab (remove is the only kebab action set).
-    expect(screen.queryByRole('button', { name: /project actions/i })).toBeNull()
+    // i18n: `sidebar.projects.menu` → "Actions".
+    expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull()
   })
 
   it('escalates to the force prompt when git refuses a dirty worktree', async () => {
@@ -134,7 +152,7 @@ describe('EnteredProjectContent', () => {
       ]
     })
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: /project actions/i }), {
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Actions' }), {
       button: 0,
       pointerType: 'mouse'
     })

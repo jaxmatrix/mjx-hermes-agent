@@ -8,7 +8,6 @@ vi.mock('./external', () => ({
 }))
 
 import { externalBridge } from './external'
-
 import { previewOpenBridge } from './preview-open'
 
 describe('hermesDesktop preview open', () => {

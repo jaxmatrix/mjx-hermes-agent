@@ -4,20 +4,28 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { I18nProvider } from '@/i18n'
 import { $defaultProfileRoute } from '@/store/default-profile'
 import { notify, notifyError } from '@/store/notifications'
+import type * as Windows from '@/store/windows'
 
 import { ProfileLaunchContextMenu } from './profile-launch-menu'
 
 vi.mock('@/store/notifications', () => ({ notify: vi.fn(), notifyError: vi.fn() }))
 
-const openWindow = vi.fn()
+const openNewWindow = vi.hoisted(() => vi.fn(async () => undefined))
+
+vi.mock('@/store/windows', async importOriginal => ({
+  ...(await importOriginal<typeof Windows>()),
+  canOpenNewWindow: () => true,
+  openNewWindow
+}))
+
 const setDefault = vi.fn()
 
 beforeEach(() => {
-  openWindow.mockResolvedValue({ ok: true })
+  openNewWindow.mockClear()
   setDefault.mockImplementation(async route => route)
   Object.defineProperty(window, 'hermesDesktop', {
     configurable: true,
-    value: { openWindow, profile: { setDefault } }
+    value: { profile: { setDefault } }
   })
   $defaultProfileRoute.set(null)
 })
@@ -28,7 +36,7 @@ afterEach(() => {
   $defaultProfileRoute.set(null)
 })
 
-it('opens the clicked canonical route without selecting it and saves only that route as default', async () => {
+it('opens a new window without selecting the profile and saves only that route as default', async () => {
   const select = vi.fn()
   const route = { connectionId: 'homelab', profile: 'designer' }
   render(
@@ -43,7 +51,7 @@ it('opens the clicked canonical route without selecting it and saves only that r
 
   fireEvent.contextMenu(screen.getByRole('button', { name: 'Design studio' }))
   await act(async () => fireEvent.click(screen.getByRole('menuitem', { name: 'Open in new window' })))
-  expect(openWindow).toHaveBeenCalledWith(route)
+  expect(openNewWindow).toHaveBeenCalled()
   expect(select).not.toHaveBeenCalled()
   expect(setDefault).not.toHaveBeenCalled()
 

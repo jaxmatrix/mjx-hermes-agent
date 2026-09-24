@@ -130,7 +130,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
     }
   }
 
-  // eslint-disable-next-line no-restricted-syntax -- lifecycle guard drops stale async completions; it does not mirror an atom
+   
   useEffect(() => {
     let cancelled = false
     mounted.current = true
@@ -345,7 +345,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
               endpoints.map(endpoint => (
                 <div className="grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" key={endpoint.id}>
                   <button
-                    className="min-w-0 text-left"
+                    className="min-w-0 text-start"
                     onClick={() => {
                       setForm(formFromEndpoint(endpoint))
                       setDiscoveredModels(endpoint.models)

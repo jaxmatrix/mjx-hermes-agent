@@ -301,7 +301,7 @@ describe('connections.test', () => {
     local.localBackendStatus.mockResolvedValueOnce({ running: false })
 
     expect(await connections.test('local')).toEqual({
-      error: 'The backend on this device is not running.',
+      error: 'The local Hermes runtime is not running.',
       ok: false,
       reachable: false
     })
@@ -341,7 +341,7 @@ describe('connections.updateAll', () => {
       { connectionId: 'home', detail: 'Update started', kind: 'remote', label: 'Homelab', ok: true, skipped: false },
       {
         connectionId: 'box',
-        detail: 'Connect to this gateway to update it.',
+        detail: 'Connect to this gateway before updating it.',
         kind: 'ssh',
         label: 'Box',
         ok: false,
@@ -429,7 +429,8 @@ describe('the namespace', () => {
       'setLaunchMode',
       'setPrimary',
       'test',
-      'updateAll'
+      'updateAll',
+      'updateManaged'
     ])
   })
 })

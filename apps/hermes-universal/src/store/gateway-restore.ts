@@ -5,7 +5,6 @@ import { oauthStatus } from '@/lib/auth'
 import { loadString, removeKey, saveString } from '@/lib/persist'
 import { reconnectBackoffDelayMs } from '@/lib/reconnect-backoff'
 import { atom } from '@/store/atom'
-import { forgetBrowserForGatewaySwitch } from '@/store/browser'
 import {
   connect,
   connectCloud,
@@ -113,7 +112,7 @@ export function clearGatewayTarget(): void {
   // Same reasoning for the in-app browser's tab and its SSH forward leases
   // (MJXHRM-447/G4): this is the OTHER wipe door, and a lease that survives
   // "use a different gateway" is a tunnel into a machine the user has left.
-  forgetBrowserForGatewaySwitch()
+  void import('@/store/browser').then(({ forgetBrowserForGatewaySwitch }) => forgetBrowserForGatewaySwitch())
 }
 
 // --- Mobile OAuth resume marker -----------------------------------------------------

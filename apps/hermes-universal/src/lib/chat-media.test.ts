@@ -105,7 +105,8 @@ describe('applyCompletion and generated images', () => {
   it('strips the image the final response restates, keeping the prose', () => {
     const messages = applyCompletion(generated(), 'Here is your peacock! ![peacock](/host/p.png) Enjoy.')
 
-    expect(textOf(messages[0].parts)).toBe('Here is your peacock! Enjoy.')
+    // stripGeneratedImageEchoes leaves the surrounding spaces (desktop contract).
+    expect(textOf(messages[0].parts)).toBe('Here is your peacock!  Enjoy.')
     expect(messages[0].parts.some(part => part.type === 'tool-call')).toBe(true)
   })
 

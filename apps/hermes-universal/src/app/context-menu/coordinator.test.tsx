@@ -157,7 +157,7 @@ describe('AppContextMenu — what a gesture opens', () => {
 
     expect(screen.getByText('New session')).toBeTruthy()
     expect(screen.getByText('Command palette')).toBeTruthy()
-    expect(screen.getByText('Check for updates')).toBeTruthy()
+    expect(screen.getByText('Check for updates…')).toBeTruthy()
   })
 
   it('hides New session in window where a second window cannot be opened', () => {
@@ -290,7 +290,7 @@ describe('AppContextMenu — plugin contributions', () => {
     rightClick(fixture('<a href="https://example.test/">link</a>').firstElementChild as Element)
 
     expect(screen.getByText('Copy URL')).toBeTruthy()
-    expect(screen.getByText('Some items could not be loaded')).toBeTruthy()
+    expect(screen.getByText('Some menu items could not be loaded')).toBeTruthy()
   })
 
   it('contributes nothing for a target kind that is not open', () => {
@@ -302,7 +302,7 @@ describe('AppContextMenu — plugin contributions', () => {
     rightClick(fixture('<a href="https://example.test/">link</a>').firstElementChild as Element)
 
     expect(screen.queryByText('Terminal plugin row')).toBeNull()
-    expect(screen.queryByText('Some items could not be loaded')).toBeNull()
+    expect(screen.queryByText('Some menu items could not be loaded')).toBeNull()
   })
 })
 

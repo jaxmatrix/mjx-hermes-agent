@@ -56,7 +56,7 @@ export function SendDiagnosticsHost() {
                 <Lock className="size-4 text-(--ui-text-tertiary)" />
                 {copy.title}
               </DialogTitle>
-              <DialogDescription className="whitespace-pre-line text-left">{copy.privacyNotice}</DialogDescription>
+              <DialogDescription className="whitespace-pre-line text-start">{copy.privacyNotice}</DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button onClick={dismissSendDiagnostics} variant="ghost">
@@ -78,7 +78,7 @@ export function SendDiagnosticsHost() {
           <>
             <DialogHeader>
               <DialogTitle>{copy.failedTitle}</DialogTitle>
-              <DialogDescription className="text-left">
+              <DialogDescription className="text-start">
                 {state.error}
                 {'\n'}
                 {copy.failedHint}
@@ -94,7 +94,7 @@ export function SendDiagnosticsHost() {
           <>
             <DialogHeader>
               <DialogTitle>{copy.doneTitle}</DialogTitle>
-              <DialogDescription className="text-left">{copy.doneDescription}</DialogDescription>
+              <DialogDescription className="text-start">{copy.doneDescription}</DialogDescription>
             </DialogHeader>
             {(state.result?.viewUrl || state.result?.uploadId) && (
               <div

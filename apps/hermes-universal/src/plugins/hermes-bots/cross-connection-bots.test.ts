@@ -32,11 +32,14 @@ vi.mock('@hermes/plugin-sdk', async importOriginal => {
   overrides.request = request
   overrides.requestProfile = requestProfile
 
+  const host = new Proxy(sdk.host, {
+    get: (target, prop) => (prop in overrides ? overrides[prop as string] : Reflect.get(target, prop))
+  })
+
   return {
     ...sdk,
-    host: new Proxy(sdk.host, {
-      get: (target, prop) => (prop in overrides ? overrides[prop as string] : Reflect.get(target, prop))
-    })
+    host,
+    universalHost: host
   }
 })
 

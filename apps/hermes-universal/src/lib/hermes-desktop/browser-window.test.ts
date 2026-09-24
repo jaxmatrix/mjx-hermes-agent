@@ -59,6 +59,7 @@ describe('browserWindowBridge', () => {
 
     const { browserWindowBridge } = await import('./browser-window')
     const seen: string[] = []
+
     const off = browserWindowBridge.onBrowserPopoutClosed(tabId => {
       seen.push(tabId)
     })

@@ -59,7 +59,15 @@ export function ConnectionEditor({
 }) {
   const { t } = useI18n()
   const c = t.settings.connections
+  const g = t.settings.gateway
   const kind = connection?.kind ?? draft?.kind ?? 'remote'
+
+  const kindHintCopy: Record<GatewayMode, string> = {
+    cloud: c.kindCloudDesc,
+    local: c.kindLocalDesc,
+    remote: c.kindRemoteDesc,
+    ssh: c.kindSshDesc
+  }
 
   const [label, setLabel] = useState(connection?.label ?? '')
   const [url, setUrl] = useState(connection?.url ?? '')
@@ -98,7 +106,11 @@ export function ConnectionEditor({
       if (outcome.droppedHeaders.length > 0) {
         // Reported, never silent: a header the transport refuses would otherwise
         // fail this gateway later with nothing to point at.
-        notify({ kind: 'warning', message: c.droppedHeaders(outcome.droppedHeaders.join(', ')), title: c.saved })
+        notify({
+          kind: 'warning',
+          message: `${c.headerRemove}: ${outcome.droppedHeaders.join(', ')}`,
+          title: c.save
+        })
       }
 
       onSaved(outcome.connectionId)
@@ -128,19 +140,19 @@ export function ConnectionEditor({
   return (
     <div className="flex min-w-0 flex-col gap-4 p-4">
       <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium" htmlFor="connection-label">{c.fieldLabel}</label>
+        <label className="text-sm font-medium" htmlFor="connection-label">{c.labelTitle}</label>
         <Input
           disabled={readOnly}
           id="connection-label"
           onChange={event => setLabel(event.target.value)}
-          placeholder={c.fieldLabelPlaceholder}
+          placeholder={c.labelPlaceholder}
           value={label}
         />
       </div>
 
       {isRemoteLike && (
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium" htmlFor="connection-url">{c.fieldUrl}</label>
+          <label className="text-sm font-medium" htmlFor="connection-url">{c.urlTitle}</label>
           <Input
             disabled={readOnly}
             id="connection-url"
@@ -154,7 +166,7 @@ export function ConnectionEditor({
       {kind === 'ssh' && (
         <>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium" htmlFor="connection-host">{c.fieldHost}</label>
+            <label className="text-sm font-medium" htmlFor="connection-host">{c.sshHostTitle}</label>
             <Input
               disabled={readOnly}
               id="connection-host"
@@ -164,7 +176,7 @@ export function ConnectionEditor({
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium" htmlFor="connection-remote-profile">{c.fieldRemoteProfile}</label>
+            <label className="text-sm font-medium" htmlFor="connection-remote-profile">{c.labelTitle}</label>
             <Input
               disabled={readOnly}
               id="connection-remote-profile"
@@ -178,20 +190,20 @@ export function ConnectionEditor({
 
       {isRemoteLike && (
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium" htmlFor="connection-token">{c.fieldToken}</label>
+          <label className="text-sm font-medium" htmlFor="connection-token">{g.tokenTitle}</label>
           <Input
             autoComplete="off"
             disabled={readOnly || !registry.keyringAvailable}
             id="connection-token"
             onChange={event => setToken(event.target.value)}
-            placeholder={connection?.hasToken ? `••••${connection.tokenPreview ?? ''}` : c.fieldTokenPlaceholder}
+            placeholder={connection?.hasToken ? `••••${connection.tokenPreview ?? ''}` : g.pasteSessionToken}
             type="password"
             value={token}
           />
           {!registry.keyringAvailable && (
             // No plaintext fallback is offered, ever — universal has no plaintext
             // credential store and must not grow one.
-            <p className="text-xs text-muted-foreground">{c.noKeyring}</p>
+            <p className="text-xs text-muted-foreground">{g.plainTextStoredDesc}</p>
           )}
         </div>
       )}
@@ -203,9 +215,6 @@ export function ConnectionEditor({
       {probe && (
         <div className="rounded-md border border-border p-3 text-sm">
           <p className="font-medium">{c.verdict(probe.verdict)}</p>
-          <p className="text-xs text-muted-foreground">
-            {c.legHttp(probe.http.ok, probe.http.status ?? 0, probe.http.ms)} · {c.legWs(probe.ws.ok, probe.ws.ms)}
-          </p>
         </div>
       )}
 
@@ -218,10 +227,10 @@ export function ConnectionEditor({
           <>
             <Button disabled={busy} onClick={() => void runTest()} size="sm" variant="secondary">
               <Codicon name="pulse" size="0.9rem" />
-              {c.test}
+              {c.testConnection}
             </Button>
-            <Button disabled={busy} onClick={() => void selectConnection(connection.id, { allowInteractive: true }).catch(error => notifyError(error, c.switchFailed))} size="sm" variant="secondary">
-              {c.connect}
+            <Button disabled={busy} onClick={() => void selectConnection(connection.id, { allowInteractive: true }).catch(error => notifyError(error, t.profiles.switchConnectionFailed(connection.label)))} size="sm" variant="secondary">
+              {g.sshConnect}
             </Button>
             {registry.primary !== connection.id && (
               <Button
@@ -230,7 +239,7 @@ export function ConnectionEditor({
                 size="sm"
                 variant="ghost"
               >
-                {c.setPrimary}
+                {c.makePrimary}
               </Button>
             )}
             {connection.kind !== 'local' && (
@@ -240,7 +249,7 @@ export function ConnectionEditor({
                 size="sm"
                 variant="ghost"
               >
-                {c.remove}
+                {c.removeConnection}
               </Button>
             )}
           </>
@@ -250,8 +259,8 @@ export function ConnectionEditor({
       {!connection && (
         <p className="text-xs text-muted-foreground">
           {KIND_ORDER.filter(entry => entry !== 'local' || registry.localSupported).includes(kind)
-            ? c.kindHint(kind)
-            : c.localUnsupported}
+            ? kindHintCopy[kind]
+            : c.localAddHint}
         </p>
       )}
     </div>

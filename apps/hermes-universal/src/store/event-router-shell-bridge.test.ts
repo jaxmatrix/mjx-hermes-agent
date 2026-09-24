@@ -27,7 +27,7 @@ vi.mock('@/store/gateway-client', async () => {
   }
 })
 
-vi.mock('@/store/pane-focus', () => bridge)
+vi.mock('@/store/pane-focus-universal', () => bridge)
 vi.mock('@/components/chat/vibe-hearts', () => ({ burstVibeHearts: vi.fn() }))
 vi.mock('@/store/native-notifications', () => ({ dispatchNativeNotification: vi.fn() }))
 vi.mock('@/lib/haptics', () => ({ triggerHaptic: vi.fn().mockResolvedValue(undefined) }))

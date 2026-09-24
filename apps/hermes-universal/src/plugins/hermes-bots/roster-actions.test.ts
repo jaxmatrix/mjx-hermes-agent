@@ -35,7 +35,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
     ackStoredSessionId: vi.fn(),
     atom,
     haptic: vi.fn(),
-    host: hostMock,
+    host: hostMock, universalHost: hostMock,
     markSessionUnreadFinished: markUnreadMock,
     queryClient: { invalidateQueries: vi.fn() },
     useQuery: vi.fn(),

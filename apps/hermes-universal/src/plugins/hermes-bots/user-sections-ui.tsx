@@ -7,30 +7,7 @@
  * that outlives a dialog.
  */
 
-import {
-  Button,
-  cn,
-  Codicon,
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-  Input,
-  isSubmitEnter,
-  useI18n,
-  useValue
-} from '@hermes/plugin-sdk'
+import { Button, cn, Codicon, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger, Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Input, isSubmitEnter, useI18n, useValue } from '@hermes/plugin-sdk'
 import { type DragEvent, type ReactNode, useEffect, useRef, useState } from 'react'
 
 import { useBots } from './i18n'
@@ -172,7 +149,7 @@ export function UserSectionHeader({
       <DropdownMenuTrigger asChild>
         <button
           aria-label={b.sections.options(name)}
-          className="shrink-0 rounded-md p-0.5 text-(--ui-text-quaternary) opacity-0 transition hover:text-foreground group-hover/section:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+          className="shrink-0 rounded-md p-0.5 text-(--ui-text-quaternary) opacity-0 coarse:opacity-100 transition hover:text-foreground group-hover/section:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
           type="button"
         >
           <Codicon name="ellipsis" />
@@ -181,13 +158,13 @@ export function UserSectionHeader({
       <DropdownMenuContent align="end">
         {items.map(item => (
           <DropdownMenuItem disabled={item.disabled} key={item.label} onSelect={item.onSelect}>
-            <Codicon className="mr-1.5" name={item.icon} />
+            <Codicon className="me-1.5" name={item.icon} />
             {item.label}
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={onDelete} variant="destructive">
-          <Codicon className="mr-1.5" name="trash" />
+          <Codicon className="me-1.5" name="trash" />
           {t.common.delete}
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -285,7 +262,7 @@ export function SectionDropZone({ children, isSource, nested, onDropBot }: Secti
     <div
       className={cn(
         'relative min-w-0 rounded-md transition-[background-color,box-shadow] duration-100',
-        nested && 'ml-2.5 border-l border-(--ui-stroke-tertiary) pl-1',
+        nested && 'ms-2.5 border-s border-(--ui-stroke-tertiary) ps-1',
         // While a drag is live, every valid target gets a faint outline so the
         // user can see where a drop is allowed before hovering one.
         armed && 'ring-1 ring-inset ring-(--ui-stroke-secondary)',

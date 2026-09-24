@@ -124,7 +124,7 @@ describe('the contributed Gateways page', () => {
       .map(entry => entry.data as PaletteContribution)
       .find(entry => entry.id === 'universal.connections.open')
 
-    expect(row?.label).toBe('Gateways: keys, tunnels and sign-in')
+    expect(row?.label).toBe('Gateways')
     expect(row?.keywords).toEqual(expect.arrayContaining(['ssh', 'tunnel']))
 
     row?.run()

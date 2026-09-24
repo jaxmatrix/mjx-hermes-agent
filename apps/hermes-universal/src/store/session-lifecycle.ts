@@ -1705,7 +1705,7 @@ function releaseHydration(storedId: string, own: { generation: number }): void {
 export function newSession(cwd?: string): void {
   resetChat(cwd)
   $activeStoredSessionId.set(null)
-  flashPetActivity({ greeting: true }) // pet: wave hello on a fresh chat
+  flashPetActivity({ celebrate: true }) // pet: wave hello on a fresh chat
 }
 
 /**

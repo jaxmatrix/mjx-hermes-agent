@@ -1,21 +1,24 @@
 /**
- * MJXHRM-308 — a tile's composer scope has to follow its session's KEY.
+ * MJXHRM-308 (desktop-shaped) — a tile's composer scope must follow the
+ * runtime id the tile is bound to.
  *
- * A stale-runtime recovery rekeys the slice onto a fresh runtime id
- * (`store/session-recovery.ts`) and `store/prompts.ts` carries the blocking
- * prompts across with it, but nothing patches the tile record's cached
- * `runtimeId`. The scope was built from that cached id, so after a recovery the
- * composer's awaiting-input edge was subscribed to a key nothing writes any
- * more — and Esc, which reads exactly that edge, would interrupt a turn that is
- * actually parked on a clarify, discarding the question.
+ * Desktop recovery rebinds via `patchSessionTile({ runtimeId })`
+ * (`bindRecoveredRuntime` in session-tile-actions). After that rebind, a
+ * clarify parked on the new runtime must light `$awaitingInput` so Esc leaves
+ * the question answerable instead of interrupting the turn.
  */
 
-import { act, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, cleanup, render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useComposerScope } from '@/app/chat/composer/scope'
 import { useSessionView } from '@/app/chat/session-view'
+import { createClientSessionState } from '@/lib/chat-runtime'
 import { useStore } from '@/store/atom'
+
+import type * as ChatIndex from '.'
 
 vi.mock('@/store/gateway-client', async () => {
   const { atom } = await import('@/store/atom')
@@ -28,66 +31,84 @@ vi.mock('@/store/gateway-client', async () => {
   }
 })
 
-// The whole point of the tile is the ChatScreen subtree; the assertion is about
-// the SCOPE that subtree is handed, so stand in for it with a probe.
-vi.mock('@/app/chat/chat-screen', () => ({
-  ChatScreen: () => {
-    const scope = useComposerScope()
-    const view = useSessionView()
+// TileChat mounts ChatView under SessionView + ComposerScope; stand in with a
+// probe so the assertion is about the scope, not the full chat shell.
+vi.mock('.', async importOriginal => {
+  const actual = await importOriginal<typeof ChatIndex>()
 
-    return (
-      <span data-testid="awaiting">
-        {String(useStore(scope.$awaitingInput))}
-        <b data-testid="key">{String(useStore(view.$runtimeId))}</b>
-      </span>
-    )
+  return {
+    ...actual,
+    ChatView: () => {
+      const scope = useComposerScope()
+      const view = useSessionView()
+
+      return (
+        <span data-testid="awaiting">
+          {String(useStore(scope.$awaitingInput))}
+          <b data-testid="key">{String(useStore(view.$runtimeId))}</b>
+        </span>
+      )
+    }
   }
-}))
+})
 
-// BRIDGE (MJXHRM-602): the pane under test is desktop's and reads desktop's
-// `$sessionTiles`; the rekey it is asserted against belongs to the legacy
-// session-key fold. The one file that names both keyspaces — it retires with
-// the old fold.
-const { $sessionTiles, patchSessionTile } = await import('@/store/session-states')
-
-const { $sessionKeyStates, emptySessionState, publishSessionState, rekeySession } =
-  await import('@/store/session-state-types')
-
-const { setSessionClarify } = await import('@/store/prompts')
+const { $gatewayState } = await import('@/store/session')
+const { $sessionStates, $sessionTiles, patchSessionTile, publishSessionState } = await import('@/store/session-states')
+const { clearAllPrompts } = await import('@/store/prompts')
+const { setSessionClarify } = await import('@/store/prompt-session-bridge')
 const { SessionTilePane } = await import('./session-tile')
 
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
 beforeEach(() => {
-  $sessionKeyStates.set({})
+  $sessionStates.set({})
   $sessionTiles.set([])
+  $gatewayState.set('open')
+  clearAllPrompts()
+})
+
+afterEach(() => {
+  cleanup()
+  clearAllPrompts()
 })
 
 describe('SessionTilePane composer scope', () => {
-  it('sees a clarify raised after a recovery moved the slice', async () => {
-    publishSessionState('runtime-1', { ...emptySessionState('stored-1'), runtimeSessionId: 'runtime-1' })
-    $sessionTiles.set([{ connectionId: 'local', profile: 'default', storedSessionId: 'stored-1', tileKey: 'stored-1' }])
+  it('sees a clarify raised after a recovery rebound the tile runtime', async () => {
+    publishSessionState('runtime-1', createClientSessionState('stored-1'))
+    $sessionTiles.set([{ connectionId: 'local', profile: 'default', storedSessionId: 'stored-1' }])
     patchSessionTile('stored-1', { runtimeId: 'runtime-1' })
 
-    render(<SessionTilePane storedSessionId="stored-1" />)
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SessionTilePane storedSessionId="stored-1" />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
 
     expect(screen.getByTestId('awaiting').textContent).toBe('falseruntime-1')
 
-    // What a stale-runtime recovery does. The tile record is NOT patched — only
-    // the reverse index learns the session moved — so a scope built from the
-    // cached `runtimeId` goes on watching a key nothing writes any more.
+    // Desktop recovery rebinds the tile's cached runtimeId (session-tile-actions
+    // `bindRecoveredRuntime`) — the pane then rebuilds composer scope for the
+    // live key.
     act(() => {
-      rekeySession('runtime-1', 'runtime-2', { runtimeSessionId: 'runtime-2' })
+      publishSessionState('runtime-2', {
+        ...createClientSessionState('stored-1'),
+        runtimeSessionId: 'runtime-2'
+      })
+      patchSessionTile('stored-1', { runtimeId: 'runtime-2' })
     })
 
-    // The tile record still names the dead runtime; only the reverse index — and
-    // therefore `tileRuntimeKey` — knows where the session went.
-    expect($sessionTiles.get()[0].runtimeId).toBe('runtime-1')
+    expect($sessionTiles.get()[0].runtimeId).toBe('runtime-2')
     expect(screen.getByTestId('key').textContent).toBe('runtime-2')
 
-    // The gateway parks the recovered turn on a question. Bound to the dead key
-    // this stays `false`, and Esc then interrupts the turn instead of leaving
-    // the clarify answerable.
     act(() => {
-      setSessionClarify('runtime-2', { requestId: 'c1', question: 'which one?', choices: null })
+      setSessionClarify('runtime-2', {
+        requestId: 'c1',
+        question: 'which one?',
+        choices: null,
+        multiSelect: false
+      })
     })
 
     expect(await screen.findByText('true')).toBeTruthy()

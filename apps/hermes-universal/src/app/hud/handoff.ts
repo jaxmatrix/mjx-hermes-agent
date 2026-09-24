@@ -17,8 +17,9 @@
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 
-import { reloadPersistedDrafts, requestComposerDraftSync } from '@/store/composer'
-import { reportHudSession, watchHudState } from '@/store/hud'
+import { requestComposerDraftSync } from '@/lib/composer-draft-bus'
+import { reloadPersistedDrafts } from '@/store/composer'
+import { reportHudSession as publishHudSessionToHost, watchHudState } from '@/store/hud'
 import { $selectedStoredSessionId } from '@/store/session'
 import { focusOpenSession, sessionTileDelegate } from '@/store/session-states'
 import { isHudWindow } from '@/store/windows'
@@ -26,6 +27,15 @@ import { isHudWindow } from '@/store/windows'
 import { getActiveComposer, requestComposerFocus } from '../chat/composer/focus'
 import { openSession, type OpenSessionNavigate } from '../open-session'
 import { sessionRoute } from '../routes'
+
+import {
+  installHudHandoff,
+  noteHudSummoned,
+  reportHudSession,
+  resetHudHandoff
+} from './handoff-satellite'
+
+export { installHudHandoff, noteHudSummoned, reportHudSession, resetHudHandoff }
 
 /** Session tiles route on `tile:<storedSessionId>` (see session-tile.tsx). */
 const TILE_TARGET_PREFIX = 'tile:'
@@ -125,7 +135,9 @@ export function useReportHudSession(): void {
 
   useEffect(() => {
     if (isHudWindow()) {
+      publishHudSessionToHost(selectedStoredSessionId)
       reportHudSession(selectedStoredSessionId)
     }
   }, [selectedStoredSessionId])
 }
+

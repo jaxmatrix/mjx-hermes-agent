@@ -46,6 +46,10 @@ const INLINE_CODE_SPLIT_RE = /(`[^`\n]+`)/g
 // via isEscapedAt. The two alternatives are disjoint on their first character,
 // so the body cannot backtrack ambiguously.
 const MATH_SPAN_SPLIT_RE = /((?<!\\)\$\$[\s\S]*?(?<!\\)\$\$|(?<!\\)\$(?:[^\n$\\]|\\[^\n])+?(?<!\\)\$)/g
+// A whole-paragraph single-line `$$x$$`. remark-math classes that as math-inline;
+// only the multi-line form gets math-display. Promote an isolated line so a
+// standalone equation renders as display math.
+const STANDALONE_DISPLAY_MATH_RE = /^[ \t]{0,3}\$\$(.+)\$\$[ \t]*$/
 const LATEX_DISPLAY_OPEN_LINE_RE = /^([ \t]*(?:>[ \t]*)*(?:(?:[-+*]|\d+[.)])[ \t]+)?[ \t]*)\\{1,2}\[[ \t]*\r?$/
 const LATEX_DISPLAY_CLOSE_LINE_RE = /^([ \t]*(?:>[ \t]*)*(?:(?:[-+*]|\d+[.)])[ \t]+)?[ \t]*)\\{1,2}\][ \t]*\r?$/
 const CUSTOM_DISPLAY_MATH_LINE_RE = /^([ \t]*(?:>[ \t]*)*(?:(?:[-+*]|\d+[.)])[ \t]+)?[ \t]*)\[\/math\][ \t]*\r?$/
@@ -265,6 +269,50 @@ export function shieldDirectiveLines(text: string): string {
     DIRECTIVE_LINE_RE,
     (_match, indent: string, directive: string) => indent + directive.replace(MARKDOWN_INLINE_META_RE, '\\$&')
   )
+}
+
+/**
+ * remark-math classes a single-line `$$x$$` as math-inline — only the multi-line
+ * form gets math-display. Rewrite a whole-paragraph `$$x$$` to the multi-line
+ * form so a standalone equation renders as display math. Mid-sentence `$$x$$`
+ * stays inline (adjacent non-blank lines refuse the rewrite).
+ */
+export function promoteStandaloneDisplayMath(text: string): string {
+  if (!text.includes('$$')) {
+    return text
+  }
+
+  const lines = text.split('\n')
+  let changed = false
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = lines[i].match(STANDALONE_DISPLAY_MATH_RE)
+
+    if (!match) {
+      continue
+    }
+
+    const body = match[1].trim()
+
+    // A body containing `$$` means the line holds more than one expression (or
+    // an empty `$$$$`), which this rewrite has no safe reading of.
+    if (!body || body.includes('$$')) {
+      continue
+    }
+
+    // Its own paragraph: nothing but blank lines adjacent. A segment edge counts
+    // as blank — segments are split at fence boundaries, so the edge is a break.
+    const isolated = (i === 0 || !lines[i - 1].trim()) && (i === lines.length - 1 || !lines[i + 1].trim())
+
+    if (!isolated) {
+      continue
+    }
+
+    lines[i] = `$$\n${body}\n$$`
+    changed = true
+  }
+
+  return changed ? lines.join('\n') : text
 }
 
 /**
@@ -549,7 +597,12 @@ function normalizeProseMath(text: string): string {
   // a source of the hugging form: a multi-line `\[…\]` comes out of it as
   // `$$\begin{aligned}…\end{aligned}$$`. Running afterwards catches both the
   // hugging math the model emitted and the hugging math the rewrite produced.
-  const normalized = splitHuggingDisplayMath(normalizeMathDelimiters(normalizeDisplayMathForMarkdown(text)))
+  //
+  // promoteStandaloneDisplayMath turns an isolated single-line `$$x$$` into the
+  // multi-line form so remark-math emits math-display (not math-inline).
+  const normalized = promoteStandaloneDisplayMath(
+    splitHuggingDisplayMath(normalizeMathDelimiters(normalizeDisplayMathForMarkdown(text)))
+  )
 
   return escapeCurrencyDollarsPreservingMath(normalized)
 }

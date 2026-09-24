@@ -283,7 +283,7 @@ export const BackgroundResumeNotice: FC = () => {
   const label = t.assistant.thread.resumeWhenBackgroundDone(resume.count)
 
   return (
-    <StatusRow className="pl-(--message-text-indent)" data-slot="aui_background-resume" label={label}>
+    <StatusRow className="ps-(--message-text-indent)" data-slot="aui_background-resume" label={label}>
       <Codicon name="sync" size="0.875rem" />
       <span className={cn(SCAFFOLD_LABEL_CLASS, 'min-w-0 truncate')}>{label}</span>
     </StatusRow>

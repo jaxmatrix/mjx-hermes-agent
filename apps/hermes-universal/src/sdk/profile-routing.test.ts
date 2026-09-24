@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type * as ModStore from '@/components/pane-shell/tree/store'
+import type * as ModSession from '@/store/session'
 import type { ProfileInfo } from '@/types/hermes'
 
 vi.mock('@/app/chat/session-view', async () => {
@@ -8,22 +10,32 @@ vi.mock('@/app/chat/session-view', async () => {
   return { PRIMARY_SESSION_VIEW: { $awaitingResponse: atom(false), $busy: atom(false) } }
 })
 vi.mock('@/app/open-session', () => ({ openSession: vi.fn() }))
-vi.mock('@/components/pane-shell/tree/store', async () => {
+vi.mock('@/components/pane-shell/tree/store', async importOriginal => {
+  const actual = await importOriginal<typeof ModStore>()
   const { atom } = await import('nanostores')
 
-  return { $narrowViewport: atom(false) }
+  return {
+    ...actual,
+    $narrowViewport: atom(false)
+  }
 })
 vi.mock('@/contrib/events', () => ({ onGatewayEvent: vi.fn() }))
-vi.mock('@/hermes', () => ({ deleteProfile: vi.fn(), getLogs: vi.fn(), getStatus: vi.fn(), hermesApi: vi.fn() }))
+vi.mock('@/hermes', () => ({  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
+ deleteProfile: vi.fn(), getLogs: vi.fn(), getStatus: vi.fn(), hermesApi: vi.fn() }))
 vi.mock('@/store/notifications', () => ({ notify: vi.fn(), notifyError: vi.fn() }))
 vi.mock('@/store/system-actions', () => ({ runGatewayRestart: vi.fn() }))
-vi.mock('@/store/session', async () => {
+vi.mock('@/store/session', async importOriginal => {
+  const actual = await importOriginal<typeof ModSession>()
   const { atom } = await import('nanostores')
 
   type LineageRow = { _lineage_root_id?: null | string; id: string }
 
   return {
+    ...actual,
     $activeSessionId: atom(null),
+    $busy: atom(false),
     $connection: atom(null),
     $cronSessions: atom([]),
     $currentCwd: atom(''),
@@ -34,6 +46,7 @@ vi.mock('@/store/session', async () => {
     $selectedStoredSessionId: atom(null),
     $sessions: atom([]),
     $unreadFinishedSessionIds: atom([]),
+    $workspaceCwdOwner: atom(null),
     lineageAliases: (storedId: string) => [storedId],
     rememberedSessionProfile: (_sessions: unknown, _sessionId: null | string, activeProfile: null | string) =>
       (activeProfile ?? '').trim() || 'default',

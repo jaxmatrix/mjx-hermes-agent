@@ -274,7 +274,7 @@ export const DiffusionCanvas: FC = () => {
 
   useResizeObserver(fitToContainer, canvasRef)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     const probe = document.createElement('span')
     probe.style.cssText = 'position:absolute;width:0;height:0;visibility:hidden;pointer-events:none'
@@ -296,7 +296,7 @@ export const DiffusionCanvas: FC = () => {
     }
   }, [])
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')

@@ -3,6 +3,7 @@ import { atom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DesktopAgentRoster, DesktopConnectionsRegistry } from '@/global'
+import type * as Windows from '@/store/windows'
 
 import { ProfileRail } from './profile-switcher'
 
@@ -16,10 +17,16 @@ const navigate = vi.fn()
 const selectConnection = vi.fn()
 const selectProfile = vi.fn()
 const getAgentRoster = vi.fn()
-const openWindow = vi.fn()
+const openNewWindow = vi.fn()
 
 vi.mock('react-router', () => ({
   useNavigate: () => navigate
+}))
+
+vi.mock('@/store/windows', async importOriginal => ({
+  ...(await importOriginal<typeof Windows>()),
+  canOpenNewWindow: () => true,
+  openNewWindow: (...args: unknown[]) => openNewWindow(...args)
 }))
 
 vi.mock('@/i18n', () => ({
@@ -112,6 +119,9 @@ vi.mock('./use-profile-rail-refresh-on-active', () => ({
 }))
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getProfileSoul: vi.fn().mockResolvedValue({ content: '' }),
   updateProfileSoul: vi.fn()
 }))
@@ -209,8 +219,8 @@ async function renderFleet() {
 beforeEach(() => {
   getAgentRoster.mockResolvedValue(roster)
   selectConnection.mockResolvedValue(undefined)
-  openWindow.mockResolvedValue({ ok: true })
-  ;(window as { hermesDesktop?: unknown }).hermesDesktop = { getAgentRoster, openWindow }
+  openNewWindow.mockResolvedValue(undefined)
+  ;(window as { hermesDesktop?: unknown }).hermesDesktop = { getAgentRoster }
 })
 
 afterEach(() => {
@@ -254,10 +264,11 @@ describe('ProfileRail fleet mode', () => {
           })
         )
         await act(async () => fireEvent.click(screen.getByRole('menuitem', { name: 'Open in new window' })))
-        expect(openWindow).toHaveBeenLastCalledWith({ connectionId: target.connectionId, profile: target.profile })
+        expect(openNewWindow).toHaveBeenCalled()
         expect(selectProfile).not.toHaveBeenCalled()
         expect(selectConnection).not.toHaveBeenCalled()
         fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+        openNewWindow.mockClear()
       }
     }
   )

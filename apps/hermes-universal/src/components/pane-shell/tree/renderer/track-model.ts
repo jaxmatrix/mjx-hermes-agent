@@ -310,6 +310,21 @@ export function fixedTrackSize(node: LayoutNode, axis: 'row' | 'column', ctx: Tr
  * toggles over a terminal, a review rail or an unregistered plugin pane still
  * collapse and still hand their space to their neighbors.
  */
+/** True when every visible child is folded to a minimized strip (cascading fold). */
+export function subtreeFolded(node: LayoutNode, ctx: TrackContext): boolean {
+  if (node.type === 'group') {
+    return node.minimized === true
+  }
+
+  const visible = node.children.filter(child => !subtreeGone(child, ctx))
+
+  if (visible.length === 0) {
+    return false
+  }
+
+  return visible.every(child => subtreeFolded(child, ctx))
+}
+
 export function subtreeGone(node: LayoutNode, ctx: TrackContext): boolean {
   const ids = allPaneIds(node)
 

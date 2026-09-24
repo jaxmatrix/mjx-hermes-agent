@@ -76,7 +76,7 @@ describe('session tile tab title', () => {
     // source the lookup reads, or a better title arrives one page-load late and
     // the tab sits on its placeholder until something unrelated re-renders.
     $sessionTiles.set([{ storedSessionId: 'late-1' }] as never)
-    expect(tabTitle('late-1')).toBe('Loading…')
+    expect(tabTitle('late-1')).toBe('New session')
 
     $projectTree.set([treeWith([row('late-1', 'Arrived with the tree')])])
 

@@ -107,7 +107,6 @@ describe('the bridge install', () => {
 
     for (const file of [
       'hermes.ts',
-      'store/active-connection.ts',
       'store/connection-tunnels.ts',
       'store/connections.ts',
       'store/gateway.ts',

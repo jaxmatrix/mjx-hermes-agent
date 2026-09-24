@@ -29,6 +29,7 @@ let satellite = false
 
 vi.mock('@tauri-apps/api/event', () => ({ listen }))
 vi.mock('@/lib/platform', () => ({ IS_TAURI: true }))
+vi.mock('@/app/routes', () => ({ sessionRoute: (id: string) => `/s/${id}` }))
 vi.mock('@/lib/route-nav', () => ({ navigateTo }))
 vi.mock('@/store/notifications', () => ({ notifyError }))
 vi.mock('@/lib/composer-draft-bus', () => ({ requestComposerDraftSync }))
@@ -45,7 +46,7 @@ vi.mock('@/store/windows', () => ({
 }))
 
 async function load() {
-  const mod = await import('./handoff')
+  const mod = await import('./handoff-satellite')
   mod.resetHudHandoff()
 
   return mod
@@ -58,6 +59,7 @@ async function summonHud() {
 
   mod.installHudHandoff()
   mod.noteHudSummoned()
+  await vi.waitFor(() => expect(listen).toHaveBeenCalled())
 
   return mod
 }
@@ -194,6 +196,7 @@ describe('HUD handoff', () => {
     mod.installHudHandoff()
     mod.installHudHandoff()
     mod.installHudHandoff()
+    await vi.waitFor(() => expect(listen).toHaveBeenCalledTimes(1))
 
     expect(listen).toHaveBeenCalledTimes(1)
   })

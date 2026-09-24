@@ -12,16 +12,7 @@
  * and drifted from the real UI on every transcript feature that shipped after.
  */
 
-import {
-  Button,
-  Codicon,
-  host,
-  SessionThread,
-  StatusDot,
-  Textarea,
-  usePluginI18n,
-  useValue
-} from '@hermes/plugin-sdk'
+import { Button, Codicon, universalHost as host, SessionThread, StatusDot, Textarea, usePluginI18n, useValue } from '@hermes/plugin-sdk'
 import { useEffect, useMemo, useState } from 'react'
 
 import { MAIN_THREAD } from '../ids'

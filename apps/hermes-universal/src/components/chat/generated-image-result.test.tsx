@@ -1,5 +1,8 @@
 import { render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ComponentProps } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { I18nProvider } from '@/i18n'
 
 /**
  * A generated image lands on the GATEWAY's disk (`~/.hermes/cache/images/…`), so
@@ -14,51 +17,62 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  */
 
 const DATA_URL = 'data:image/png;base64,Ynl0ZXM='
-const readDesktopFileDataUrl = vi.fn(async (_path: string) => DATA_URL)
-
-vi.mock('@/lib/desktop-fs', async importOriginal => ({
-  ...((await importOriginal()) as Record<string, unknown>),
-  readDesktopFileDataUrl: (path: string) => readDesktopFileDataUrl(path)
-}))
+const readFileDataUrl = vi.fn(async (_path: string) => DATA_URL)
 
 const { GeneratedImage } = await import('./generated-image-result')
 
 const GATEWAY_PATH = '/Users/me/.hermes/cache/images/gen-1.png'
 
+function renderImage(props: ComponentProps<typeof GeneratedImage>) {
+  return render(
+    <I18nProvider>
+      <GeneratedImage {...props} />
+    </I18nProvider>
+  )
+}
+
 beforeEach(() => {
-  readDesktopFileDataUrl.mockClear()
-  readDesktopFileDataUrl.mockResolvedValue(DATA_URL)
+  readFileDataUrl.mockClear()
+  readFileDataUrl.mockResolvedValue(DATA_URL)
+  Object.defineProperty(window, 'hermesDesktop', {
+    configurable: true,
+    value: { readFileDataUrl }
+  })
+})
+
+afterEach(() => {
+  delete (window as { hermesDesktop?: unknown }).hermesDesktop
 })
 
 describe('GeneratedImage', () => {
   it('paints a gateway-local image through the authenticated fs bridge', async () => {
-    render(<GeneratedImage result={{ host_image: GATEWAY_PATH }} />)
+    renderImage({ result: { host_image: GATEWAY_PATH } })
 
     await waitFor(() => expect(screen.getByRole('img')).toHaveAttribute('src', DATA_URL))
-    expect(readDesktopFileDataUrl).toHaveBeenCalledWith(GATEWAY_PATH)
+    expect(readFileDataUrl).toHaveBeenCalledWith(GATEWAY_PATH)
   })
 
   it('leaves an inline source alone rather than asking the gateway to read it', async () => {
-    render(<GeneratedImage result={{ host_image: DATA_URL }} />)
+    renderImage({ result: { host_image: DATA_URL } })
 
     await waitFor(() => expect(screen.getByRole('img')).toHaveAttribute('src', DATA_URL))
-    expect(readDesktopFileDataUrl).not.toHaveBeenCalled()
+    expect(readFileDataUrl).not.toHaveBeenCalled()
   })
 
   it('holds the pulse frame while the read is in flight, never an empty box', () => {
     // The read is async, so the first paint has no src. Showing the sized
     // placeholder is what keeps the transcript from shifting under the image.
-    render(<GeneratedImage result={{ host_image: GATEWAY_PATH }} />)
+    renderImage({ result: { host_image: GATEWAY_PATH } })
 
-    expect(screen.getByRole('status')).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="aui_generated-image"]')).not.toBeNull()
     expect(screen.queryByRole('img')).toBeNull()
   })
 
   it('renders nothing when the gateway cannot read the file', async () => {
-    readDesktopFileDataUrl.mockRejectedValue(new Error('gone'))
+    readFileDataUrl.mockRejectedValue(new Error('gone'))
 
-    const { container } = render(<GeneratedImage result={{ host_image: GATEWAY_PATH }} />)
+    renderImage({ result: { host_image: GATEWAY_PATH } })
 
-    await waitFor(() => expect(container).toBeEmptyDOMElement())
+    await waitFor(() => expect(screen.getByRole('link')).toHaveTextContent(GATEWAY_PATH.split('/').pop()!))
   })
 })

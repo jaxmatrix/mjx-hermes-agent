@@ -139,7 +139,7 @@ function ThemePreview({ name, mode }: { name: string; mode: 'light' | 'dark' }) 
     >
       <div className="flex h-full">
         <div
-          className="w-12 border-r"
+          className="w-12 border-e"
           style={{
             backgroundColor: c.sidebarBackground ?? c.muted,
             borderColor: c.sidebarBorder ?? c.border
@@ -295,7 +295,7 @@ function MarketplaceThemeResults({
           return (
             <button
               className={cn(
-                'flex items-center gap-2.5 px-2.5 py-2 text-left disabled:opacity-60',
+                'flex items-center gap-2.5 px-2.5 py-2 text-start disabled:opacity-60',
                 selectableCardClass({ prominent: done })
               )}
               disabled={Boolean(installingId) && !busy}
@@ -384,7 +384,7 @@ function TranslucencySlider({ label, onChange, value }: TranslucencySliderProps)
         type="range"
         value={value}
       />
-      <span className="w-9 text-right text-[length:var(--conversation-caption-font-size)] tabular-nums text-(--ui-text-tertiary)">
+      <span className="w-9 text-end text-[length:var(--conversation-caption-font-size)] tabular-nums text-(--ui-text-tertiary)">
         {value}%
       </span>
     </>
@@ -588,7 +588,7 @@ export function AppearanceSettings({ subpage }: AppearanceSettingsProps = {}) {
 
                   {/* The dedicated theme page uses the page scroller rather
                       than clipping its gallery inside another scroll area. */}
-                  <div className={cn('mt-3', subpage === undefined && 'max-h-96 overflow-y-auto pr-1')}>
+                  <div className={cn('mt-3', subpage === undefined && 'max-h-96 overflow-y-auto pe-1')}>
                     {filteredThemes.length === 0 ? (
                       needle ? (
                         <p className="text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
@@ -604,7 +604,7 @@ export function AppearanceSettings({ subpage }: AppearanceSettingsProps = {}) {
                           return (
                             <div className="group relative" key={theme.name}>
                               <button
-                                className={cn('w-full p-2 text-left', selectableCardClass({ active, prominent: true }))}
+                                className={cn('w-full p-2 text-start', selectableCardClass({ active, prominent: true }))}
                                 onClick={() => {
                                   triggerHaptic('crisp')
                                   setTheme(theme.name)
@@ -624,7 +624,7 @@ export function AppearanceSettings({ subpage }: AppearanceSettingsProps = {}) {
                               {removable && (
                                 <button
                                   aria-label={a.removeTheme}
-                                  className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-md bg-(--ui-bg-elevated)/80 text-(--ui-text-tertiary) opacity-0 backdrop-blur-sm transition hover:text-(--ui-red) focus-visible:opacity-100 group-hover:opacity-100"
+                                  className="absolute end-1.5 top-1.5 grid size-6 place-items-center rounded-md bg-(--ui-bg-elevated)/80 text-(--ui-text-tertiary) opacity-0 coarse:opacity-100 backdrop-blur-sm transition hover:text-(--ui-red) focus-visible:opacity-100 group-hover:opacity-100"
                                   onClick={() => {
                                     triggerHaptic('crisp')
                                     removeUserTheme(theme.name)

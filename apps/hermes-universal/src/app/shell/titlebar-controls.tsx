@@ -274,7 +274,7 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
 
   const leftClusterClass = cn(
     titlebarToolClusterClass,
-    'left-(--titlebar-controls-left) top-(--titlebar-controls-top) translate-y-(--titlebar-controls-y-nudge)'
+    'start-(--titlebar-controls-left) top-(--titlebar-controls-top) translate-y-(--titlebar-controls-y-nudge)'
   )
 
   // A contributed full page (`extension`) yields the fixed clusters only while
@@ -296,7 +296,7 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
           <Slot area="titleBar.left" />
         </div>
         <div
-          className={cn(titlebarToolClusterClass, 'right-(--titlebar-tools-right) top-(--titlebar-controls-top)')}
+          className={cn(titlebarToolClusterClass, 'end-(--titlebar-tools-right) top-(--titlebar-controls-top)')}
           data-titlebar-cluster="right"
         >
           <Slot area="titleBar.right" />
@@ -328,7 +328,7 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
           aria-label={t.shell.appControls}
           className={cn(
             titlebarToolClusterClass,
-            'top-[calc(var(--titlebar-controls-top)+var(--right-rail-top-inset,0px))] right-[calc(var(--titlebar-tools-right)+var(--shell-preview-toolbar-gap,0))]'
+            'top-[calc(var(--titlebar-controls-top)+var(--right-rail-top-inset,0px))] end-[calc(var(--titlebar-tools-right)+var(--shell-preview-toolbar-gap,0))]'
           )}
         >
           {visiblePaneTools.map(tool => (
@@ -339,7 +339,7 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
 
       <div
         aria-label={t.shell.appControls}
-        className={cn(titlebarToolClusterClass, 'right-(--titlebar-tools-right) top-(--titlebar-controls-top)')}
+        className={cn(titlebarToolClusterClass, 'end-(--titlebar-tools-right) top-(--titlebar-controls-top)')}
         data-titlebar-cluster="right"
       >
         {visibleSystemTools.map(tool => (

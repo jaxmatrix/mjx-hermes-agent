@@ -35,22 +35,22 @@ describe('useSkinCommand', () => {
   it('sets a named skin and persists it', () => {
     render_()
     fireEvent.click(screen.getByText('set'))
-    expect(screen.getByTestId('out')).toHaveTextContent('Theme switched to Ember')
-    expect(localStorage.getItem('hermes.skin')).toBe('ember')
+    expect(screen.getByTestId('out')).toHaveTextContent('Desktop theme switched to Ember')
+    expect(localStorage.getItem('hermes-desktop-theme-v2')).toBe('ember')
   })
 
   it('cycles to the next skin on a bare command', () => {
     render_()
     fireEvent.click(screen.getByText('cycle'))
     // nous is first; a bare /skin advances to the next built-in.
-    expect(screen.getByTestId('out')).toHaveTextContent('Theme switched to')
-    expect(localStorage.getItem('hermes.skin')).not.toBe('nous')
+    expect(screen.getByTestId('out')).toHaveTextContent('Desktop theme switched to')
+    expect(localStorage.getItem('hermes-desktop-theme-v2')).not.toBe('nous')
   })
 
   it('reports an unknown skin without changing the selection', () => {
     render_()
     fireEvent.click(screen.getByText('bad'))
-    expect(screen.getByTestId('out')).toHaveTextContent('Unknown theme: nope')
-    expect(localStorage.getItem('hermes.skin')).toBeNull()
+    expect(screen.getByTestId('out')).toHaveTextContent('Unknown desktop theme: nope')
+    expect(localStorage.getItem('hermes-desktop-theme-v2')).toBeNull()
   })
 })

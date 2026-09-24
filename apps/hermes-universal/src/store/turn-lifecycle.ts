@@ -35,9 +35,8 @@ import { isLiveTailRow, reconcileLiveTail } from '@/lib/live-tail'
 import { appendLiveSessionProjection } from '@/lib/session-history'
 import type { ChatMessage } from '@/lib/session-key-messages'
 import { applyResumedApproval } from '@/store/approvals'
-import { applyResumedClarify } from '@/store/clarify'
 import { $gatewayState } from '@/store/gateway-client'
-import { applyResumedMcpSetup } from '@/store/mcp-setup'
+import { applyResumedClarify, applyResumedMcpSetup } from '@/store/resume-prompts'
 import { requestForSession } from '@/store/session-route-dispatch'
 import {
   $sessionKeyStates,

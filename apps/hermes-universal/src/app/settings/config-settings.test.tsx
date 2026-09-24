@@ -22,6 +22,9 @@ const getElevenLabsVoices = vi.fn()
 // Keep the real read-origin helpers (WeakMap peek/bind) live: the shared
 // config hook reaches them through the barrel, and a bare mock would throw.
 vi.mock('@/hermes', async () => ({
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   ...(await vi.importActual<typeof ConfigApi>('@/api/config')),
   // use-config-record folds the scope into its cache key via the barrel; the
   // real one is a pure string fold, mirrored here for the string scopes this

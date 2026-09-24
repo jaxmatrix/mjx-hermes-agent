@@ -32,7 +32,7 @@ vi.mock('@hermes/plugin-sdk', () => ({
   Button: (props: React.ComponentProps<'button'>) => <button {...props} />,
   cn: (...parts: unknown[]) => parts.filter(Boolean).join(' '),
   GlyphSpinner: () => <span />,
-  host: hostMock,
+  host: hostMock, universalHost: hostMock,
   Input: (props: React.ComponentProps<'input'>) => <input {...props} />,
   LruCache: UnboundedCache,
   RowButton: (props: React.ComponentProps<'button'>) => <button {...props} />,

@@ -19,7 +19,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
     Codicon: () => null,
     useValue: useStore,
     resolveSiblingWsUrl: vi.fn(),
-    host: { onEvent: vi.fn(onGatewayEvent), requestProfile: vi.fn() }
+    universalHost: { onEvent: vi.fn(onGatewayEvent), requestProfile: vi.fn() }
   }
 })
 vi.mock('./data', async () => {
@@ -30,7 +30,7 @@ vi.mock('./data', async () => {
 vi.mock('./i18n', () => ({ useBots: () => ({ screen: {} }) }))
 vi.mock('./screen-open', () => ({ openBotScreen: vi.fn() }))
 
-import { host } from '@hermes/plugin-sdk'
+import { universalHost as host } from '@hermes/plugin-sdk'
 
 import type { DisplayStatus } from './screen-connection'
 import { useScreenPortalState } from './screen-portal'

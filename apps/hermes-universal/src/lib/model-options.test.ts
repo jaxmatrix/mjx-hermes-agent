@@ -8,6 +8,9 @@ import { catalogProviderMatches, modelOptionsQueryKey, requestModelOptions } fro
 const globalOptions = { model: 'hermes-4', provider: 'nous', providers: [] }
 
 vi.mock('@/hermes', () => ({
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   getGlobalModelOptions: vi.fn(() => Promise.resolve(globalOptions))
 }))
 

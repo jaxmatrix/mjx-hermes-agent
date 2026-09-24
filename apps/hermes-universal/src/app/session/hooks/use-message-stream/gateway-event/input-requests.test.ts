@@ -15,6 +15,7 @@ const deps = { updateSessionState: vi.fn(), upsertToolCall: vi.fn() } as unknown
 
 function cancel(requestId: string, routedSession: string | null): GatewayEventContext {
   const payload = { id: requestId, method: 'display.install.sudo', reason: 'timeout' }
+
   return {
     deps: deps as unknown as GatewayEventContext['deps'],
     event: { payload, type: 'request.cancel' },

@@ -17,6 +17,8 @@ import { isLayoutNode, normalize } from '@/components/pane-shell/tree/model'
 import { $layoutTree, markActivePreset, persistTree } from '@/components/pane-shell/tree/store'
 import { exportProfileArchive, importProfileArchive } from '@/hermes'
 import { translateNow } from '@/i18n'
+import { LAYOUT_KEYS } from '@/lib/layout-persistence'
+import { readKey, writeKey } from '@/lib/storage'
 import { modePref, skinPref, type ThemeMode } from '@/themes/context'
 import { BUILTIN_THEMES } from '@/themes/presets'
 import type { DesktopTheme } from '@/themes/types'
@@ -37,6 +39,19 @@ import {
 export const DESKTOP_OVERLAY_FILENAME = 'desktop.json'
 
 const OVERLAY_VERSION = 1
+
+/** Activity-window profile imports bump this so primary windows reload the tree. */
+function bumpLayoutImportToken() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  const prev = readKey(LAYOUT_KEYS.imported)
+  const next = prev === null ? '1' : String(Number(prev) + 1)
+
+  writeKey(LAYOUT_KEYS.imported, next)
+  window.dispatchEvent(new StorageEvent('storage', { key: LAYOUT_KEYS.imported, newValue: next }))
+}
 
 /**
  * Snapshot the desktop appearance/interface for `profile` into the overlay.
@@ -130,6 +145,7 @@ export function applyDesktopOverlay(profile: string, overlay: null | ProfileDesk
       $layoutTree.set(tree)
       persistTree()
       markActivePreset('custom')
+      bumpLayoutImportToken()
     }
   }
 }

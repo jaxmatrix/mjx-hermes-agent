@@ -84,7 +84,7 @@ export function MobileSurfaceShell({
           : surface === 'profiles'
             ? t.profiles.title
             : surface === 'webhooks'
-              ? t.webhooks.title
+              ? 'Webhooks'
               : t.commandCenter.settings
 
   // Command Center / Cron / Profiles need a live connection for their data;
@@ -106,8 +106,7 @@ export function MobileSurfaceShell({
                the bar, full width, with touch-sized rows. */
             <>
               <TitleMenuTrigger
-                className="w-full justify-start"
-                density="mobile"
+                className="w-full justify-start text-sm"
                 onClick={() => {
                   setNavOffset(topBarBottom(navTriggerRef.current))
                   setNavOpen(true)
@@ -153,21 +152,19 @@ export function MobileSurfaceShell({
             <SettingsView hideNav onClose={onHome} variant="fullscreen" />
           ) : surface === 'command-center' ? (
             <CommandCenterView
-              hideNav
               onClose={onHome}
               onDeleteSession={deleteSessionLocal}
               onNavigateRoute={onNavigateRoute}
               onOpenSession={onOpenSession}
-              variant="fullscreen"
             />
           ) : surface === 'cron' ? (
-            <CronView onClose={onHome} onOpenSession={onOpenSession} variant="fullscreen" />
+            <CronView onClose={onHome} onOpenSession={onOpenSession} />
           ) : surface === 'agents' ? (
-            <AgentsView onClose={onHome} variant="fullscreen" />
+            <AgentsView onClose={onHome} />
           ) : surface === 'webhooks' ? (
-            <WebhooksView onClose={onHome} variant="fullscreen" />
+            <WebhooksView onClose={onHome} />
           ) : (
-            <ProfilesView onClose={onHome} variant="fullscreen" />
+            <ProfilesView onClose={onHome} />
           )
         ) : (
           <GatewayConnectingScreen />

@@ -38,15 +38,24 @@
 
 import { readActiveTerminal } from '@/app/right-pane/terminal/buffer'
 import type { GatewayEvent } from '@/gateway'
-import {
-  type AgentReadRespondResult,
-  respondPreviewAct,
-  respondPreviewRead,
-  respondTerminalRead,
-  respondTour,
-  respondWindowRead
-} from '@/lib/gateway-rpc'
-import { addGatewayEventListener } from '@/store/gateway-client'
+import { addGatewayEventListener, requestGateway } from '@/store/gateway-client'
+
+/** Wire shape for `*.read.respond` / `*.act.respond` / `tour.respond` acks. */
+type AgentReadRespondResult = { status?: string }
+
+const respondAgentRead = (method: string, requestId: string, text: string) =>
+  requestGateway<AgentReadRespondResult>(method, { request_id: requestId, text })
+
+const respondPreviewRead = (requestId: string, text: string) => respondAgentRead('preview.read.respond', requestId, text)
+
+const respondTerminalRead = (requestId: string, text: string) =>
+  respondAgentRead('terminal.read.respond', requestId, text)
+
+const respondWindowRead = (requestId: string, text: string) => respondAgentRead('window.read.respond', requestId, text)
+
+const respondPreviewAct = (requestId: string, text: string) => respondAgentRead('preview.act.respond', requestId, text)
+
+const respondTour = (requestId: string, text: string) => respondAgentRead('tour.respond', requestId, text)
 
 /** Windowing the read_preview tool asks for. Both are optional — the tool omits
  *  them entirely when it wants the whole page. */

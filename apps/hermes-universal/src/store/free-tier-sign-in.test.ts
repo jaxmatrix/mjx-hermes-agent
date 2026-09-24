@@ -9,6 +9,9 @@ const cancelOAuthSession = vi.fn(async (_id: string) => ({ ok: true }))
 
 vi.mock('@/hermes', async importOriginal => ({
   ...(await importOriginal<typeof HermesApi>()),
+  getApiRequestConnection: () => null,
+  setApiRequestProfile: vi.fn(),
+  getApiRequestProfile: () => 'default',
   cancelOAuthSession: (id: string) => cancelOAuthSession(id),
   listOAuthProviders: async () => ({ providers: [] }),
   pollOAuthSession: (providerId: string, sessionId: string) => pollOAuthSession(providerId, sessionId),

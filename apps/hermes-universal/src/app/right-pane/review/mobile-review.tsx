@@ -372,7 +372,7 @@ function ShipSheet({ onOpenChange, open }: { onOpenChange: (open: boolean) => vo
             <Textarea
               className="min-h-20 text-sm"
               onChange={event => setMessage(event.target.value)}
-              placeholder={c.commitPlaceholder}
+              placeholder={c.commitPlaceholder('Enter')}
               value={message}
             />
 

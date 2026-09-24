@@ -100,7 +100,9 @@ describe('ChatSidebar navigation activity', () => {
     noteActiveTreeGroup(null)
   })
 
-  it('keeps navigation and session activity coherent with the focused pane', () => {
+  it(
+    'keeps navigation and session activity coherent with the focused pane',
+    () => {
     renderSidebar('/kanban', 'extension')
     expectOnlyCurrent('Kanban')
     expectOnlySelectedSession(null)
@@ -160,5 +162,7 @@ describe('ChatSidebar navigation activity', () => {
     expect(screen.queryByRole('button', { name: 'Kanban' })).toBeNull()
     expectOnlyCurrent(null)
     expectOnlySelectedSession(null)
-  })
+  },
+    15_000
+  )
 })

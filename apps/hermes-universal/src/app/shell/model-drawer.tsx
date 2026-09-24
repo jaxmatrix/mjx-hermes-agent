@@ -1,3 +1,4 @@
+import type { ModelOptionProvider, ModelOptionsResult } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
@@ -12,15 +13,15 @@ import type { HermesGateway } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { ChevronLeft, ChevronRight, X } from '@/lib/icons'
 import { modelOptionsQueryKey, requestModelOptions } from '@/lib/model-options'
-import { modelDisplayParts, reasoningEffortLabel } from '@/lib/model-status-label'
-import { DEFAULT_REASONING_EFFORT } from '@/lib/reasoning-effort';
-import { REASONING_EFFORTS } from '@/sdk'
+import { modelDisplayParts } from '@/lib/model-status-label'
+import { DEFAULT_REASONING_EFFORT, reasoningEffortLabel } from '@/lib/reasoning-effort'
 import { cn } from '@/lib/utils'
+import { REASONING_EFFORTS } from '@/sdk'
 import { $visibleModels, effectiveVisibleKeys, type ModelFamily } from '@/store/model-visibility'
 import { $activeGatewayProfile } from '@/store/profile'
-import type { ModelOptionProvider, ModelOptionsResponse } from '@/types/hermes'
 
-import { groupModels, type ModelMenuController } from './model-catalog-menu'
+import type { ModelMenuController } from './model-catalog-menu'
+import { groupModelsForDrawer } from './model-drawer-grouping'
 import { resolveFastControl } from './model-edit-submenu'
 
 /**
@@ -91,7 +92,7 @@ export function ModelDrawer({
 
   const modelOptions = useQuery({
     queryKey: modelOptionsQueryKey(profile ?? activeProfile, sessionId),
-    queryFn: (): Promise<ModelOptionsResponse> => requestModelOptions({ gateway, sessionId })
+    queryFn: (): Promise<ModelOptionsResult> => requestModelOptions({ gateway, sessionId })
   })
 
   const pickerProviders = useMemo(
@@ -103,7 +104,7 @@ export function ModelDrawer({
 
   const groups = useMemo(
     () =>
-      groupModels(
+      groupModelsForDrawer(
         pickerProviders,
         search,
         { model: current.model, provider: current.provider },
@@ -290,7 +291,7 @@ function ModelList({
 }: {
   controller: ModelMenuController
   current: ModelMenuController['current']
-  groups: ReturnType<typeof groupModels>
+  groups: ReturnType<typeof groupModelsForDrawer>
   onOpenEffort: (page: EffortPage) => void
   onSelect: (family: ModelFamily, provider: ModelOptionProvider) => void
   search: string
@@ -331,7 +332,7 @@ function ModelList({
 
             const meta = [
               fastControl.kind !== 'none' && fastControl.on ? copy.fast : null,
-              reasoning ? reasoningEffortLabel(effEffort) || copy.medium : null
+              reasoning ? reasoningEffortLabel(effEffort) || options.medium : null
             ]
               .filter(Boolean)
               .join(' ')

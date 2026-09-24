@@ -1,11 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type * as WindowsStore from '@/store/windows'
+
 vi.mock('@/store/gateway-client', () => ({
   addGatewayEventListener: () => () => {},
   requestGateway: vi.fn(),
-  subscribeGateway: vi.fn(() => () => {})
+  subscribeGateway: vi.fn(() => () => {}),
+  $gatewayState: { get: () => 'open', subscribe: () => () => {}, set: vi.fn() }
 }))
 vi.mock('@/store/pet-gallery', () => ({ loadPetGallery: vi.fn() }))
+vi.mock('@/store/windows', async importActual => {
+  const actual = await importActual<typeof WindowsStore>()
+
+  return { ...actual, openAppRoute: vi.fn() }
+})
 
 import { requestGateway } from '@/store/gateway-client'
 
@@ -21,7 +29,7 @@ import {
   generateDrafts,
   hatchSelected,
   resetPetGen
-} from './pet-generate'
+} from './pet-generate-universal'
 
 const rpc = vi.mocked(requestGateway)
 

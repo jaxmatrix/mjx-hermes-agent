@@ -78,7 +78,7 @@ export function PetPalettePage({ search, onGenerate }: PetPalettePageProps) {
       {onGenerate && (
         <button
           className={cn(
-            'flex w-full items-center gap-2 rounded-md text-left text-foreground transition-colors hover:bg-(--chrome-action-hover)',
+            'flex w-full items-center gap-2 rounded-md text-start text-foreground transition-colors hover:bg-(--chrome-action-hover)',
             HUD_ITEM,
             HUD_TEXT
           )}
@@ -105,7 +105,7 @@ export function PetPalettePage({ search, onGenerate }: PetPalettePageProps) {
           return (
             <button
               className={cn(
-                'flex w-full items-center gap-2 rounded-md text-left transition-colors hover:bg-(--chrome-action-hover) disabled:opacity-60',
+                'flex w-full items-center gap-2 rounded-md text-start transition-colors hover:bg-(--chrome-action-hover) disabled:opacity-60',
                 HUD_ITEM,
                 HUD_TEXT,
                 isActive && 'bg-(--chrome-action-hover)/70'
@@ -138,7 +138,7 @@ export function PetPalettePage({ search, onGenerate }: PetPalettePageProps) {
                   {pet.installed ? ` · ${copy.installed}` : ''}
                 </span>
               </span>
-              <span className="ml-auto flex shrink-0 items-center text-[0.6875rem] text-muted-foreground">
+              <span className="ms-auto flex shrink-0 items-center text-[0.6875rem] text-muted-foreground">
                 {isBusy ? (
                   <Loader2 className="size-3 animate-spin" />
                 ) : isActive ? (

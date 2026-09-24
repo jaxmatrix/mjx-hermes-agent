@@ -344,7 +344,7 @@ export function ProfileRail() {
   const createRequest = useStore($profileCreateRequest)
   const lastCreateRef = useRef(createRequest)
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     if (createRequest === lastCreateRef.current) {
       return
@@ -972,7 +972,7 @@ function FleetDivider({
   const marker = (
     <span
       aria-hidden="true"
-      className={cn('flex h-5 shrink-0 items-center gap-0.5', first ? 'mr-0.5' : 'mx-0.5')}
+      className={cn('flex h-5 shrink-0 items-center gap-0.5', first ? 'me-0.5' : 'mx-0.5')}
       data-connection-id={connectionId}
       data-reachable={reachable}
       data-slot="profile-rail-divider"

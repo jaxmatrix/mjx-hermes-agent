@@ -21,7 +21,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
     Codicon: () => null,
     GlyphSpinner: () => null,
     resolveSiblingWsUrl: vi.fn(),
-    host: {
+    universalHost: {
       onEvent: onGatewayEvent,
       requestProfile: vi.fn(async (_route: unknown, method: string) => {
         calls.push(`request:${method}`)
@@ -58,9 +58,8 @@ vi.mock('./i18n', () => ({
   })
 }))
 
-import { host } from '@hermes/plugin-sdk'
+import { universalHost as host } from '@hermes/plugin-sdk'
 
-// eslint-disable-next-line no-restricted-imports
 import { emitGatewayEvent } from '../../contrib/events'
 
 import { ScreenInstallCard } from './screen-install'

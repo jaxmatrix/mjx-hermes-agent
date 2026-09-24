@@ -1,3 +1,4 @@
+import type { SessionRedirectResponse } from '@/app/types'
 import { translateNow } from '@/i18n'
 import {
   appendAssistantTextPart,
@@ -30,6 +31,7 @@ import {
 import { $activeConnectionId } from '@/store/active-connection'
 import { replayPendingApproval } from '@/store/approvals'
 import { atom, computed } from '@/store/atom'
+import { sessionClarifyRequest } from '@/store/clarify'
 import { requestGateway } from '@/store/gateway-client'
 import { newSessionOverrides } from '@/store/model'
 import { clearNotifications, notifyError } from '@/store/notifications'
@@ -38,9 +40,8 @@ import { clearPreviewArtifacts } from '@/store/preview-status'
 import { normalizeProfileKey } from '@/store/profile'
 import { $activeProfile } from '@/store/profiles'
 import { resolveNewSessionCwd } from '@/store/project-scope'
+import { type ApprovalRequest, type ClarifyRequest, clearSessionApproval, clearSessionClarify, clearSessionSecret, clearSessionSudo, type SecretRequest, type SudoRequest } from '@/store/prompt-session-bridge'
 import { sessionApprovalRequest, sessionSecretRequest, sessionSudoRequest } from '@/store/prompts'
-import { $approval, $clarify, $secret, $sudo, type ApprovalRequest, type ClarifyRequest, clearSessionApproval, clearSessionClarify, clearSessionSecret, clearSessionSudo, type SecretRequest, type SudoRequest } from '@/store/prompt-session-bridge'
-import { sessionClarifyRequest } from '@/store/clarify'
 import {
   $activeSessionKey,
   $sessionKeyStates,
@@ -59,7 +60,7 @@ import {
 import { clearSessionSubagents } from '@/store/subagents'
 import { $transcriptPaint } from '@/store/transcript-paint'
 import { beginTurn, getInflightTurn, recordTurnCorrection, settleTurn } from '@/store/turn-lifecycle'
-import type { SessionCreateResponse, SessionRedirectResponse, UsageStats } from '@/types/hermes'
+import type { SessionCreateResponse, UsageStats } from '@/types/hermes'
 
 // The chat transcript model and its pure reducers now live in the LEAF module
 // @/lib/session-key-messages, so the unified session reducer can apply the exact same
@@ -172,10 +173,6 @@ export const $lastVisibleMessageIsUser = computed($messages, messages => {
 export const $awaitingResponse = computed([$busy, $lastVisibleMessageIsUser], (busy, lastIsUser) => busy && lastIsUser)
 
 export const $statusLine = computed($active, state => state.statusLine)
-
-// The ACTIVE session's blocking prompts. Every session's prompt is stored keyed
-// in store/prompts.ts; these are the active one's entries.
-export { $approval, $clarify, $secret, $sudo }
 
 /**
  * The gateway's LIVE session id for the active chat, or null for a draft that
@@ -471,7 +468,7 @@ export async function sendPrompt(text: string, options: { displayText?: string }
       // on the STORED id (what the list refresh + session.title use), with the
       // first message as the provisional title (preview). Dynamic import —
       // store/session imports store/chat, so a static import here would cycle.
-      void import('@/store/session').then(m => m.registerNewSession(storedId, shown)).catch(() => {})
+      void import('@/store/session-lifecycle').then(m => m.registerNewSession(storedId, shown)).catch(() => {})
     }
 
     // Stop, pressed while the session was still being created. `sendPrompt` goes

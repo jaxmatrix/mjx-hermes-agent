@@ -228,6 +228,36 @@ export function formatCombo(combo: string): string {
   return IS_MAC ? tokens.join('') : tokens.join('+')
 }
 
+/** Tauri / OS accelerator spelling for a canonical combo (`mod+shift+h` → `CommandOrControl+Shift+H`). */
+export function acceleratorFromCombo(combo: string): string | null {
+  const parts = canonicalizeCombo(combo)
+    .split('+')
+    .map(part => part.trim())
+    .filter(Boolean)
+
+  if (!parts.length) {
+    return null
+  }
+
+  return parts
+    .map(part => {
+      if (part === 'mod') {
+        return 'CommandOrControl'
+      }
+
+      if (part.length === 1) {
+        return part.toUpperCase()
+      }
+
+      if (/^f\d{1,2}$/.test(part)) {
+        return part.toUpperCase()
+      }
+
+      return part.charAt(0).toUpperCase() + part.slice(1)
+    })
+    .join('+')
+}
+
 // True when focus currently sits inside an element matching `selector`. The
 // primitive for focus-scoped shortcuts — e.g. routing ⌘W to whichever surface
 // (terminal, preview, …) owns focus.

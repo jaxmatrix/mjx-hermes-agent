@@ -2,7 +2,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 
 import { formatRefValue as refValue } from '@/components/assistant-ui/directive-text'
 import { translateNow } from '@/i18n'
-import { selectRemotePaths } from '@/lib/desktop-fs'
+import { selectRemotePaths } from '@/lib/desktop-fs-universal'
 import { ensureSession } from '@/store/chat'
 import type { ComposerAttachment } from '@/store/composer'
 import { $dataUrlReadMaxMb, dataUrlReadMaxBytes, readCappedFileBase64 } from '@/store/data-url-read-max'

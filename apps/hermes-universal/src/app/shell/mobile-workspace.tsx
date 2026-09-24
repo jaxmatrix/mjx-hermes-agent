@@ -16,7 +16,7 @@ import { persistentAtom } from '@/lib/persisted'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
 import { $currentCwd } from '@/store/chat'
-import { $dirtyPreviewPaths } from '@/store/preview-edit'
+import { $dirtyPreviewUrls } from '@/store/preview-edit'
 import { previewFile } from '@/store/preview-open'
 import { $reviewFiles, openReview } from '@/store/review'
 
@@ -71,7 +71,7 @@ export function MobileWorkspace({ onClose }: { onClose: () => void }) {
   const tab = useStore($workspaceTab)
   const cwd = useStore($currentCwd)
   const reviewFiles = useStore($reviewFiles)
-  const dirtyPaths = useStore($dirtyPreviewPaths)
+  const dirtyPaths = useStore($dirtyPreviewUrls)
 
   // Panels mount on first visit and stay mounted from then on: an xterm must
   // never be torn down by a tab switch, and re-mounting the tree or a diff would
@@ -126,7 +126,7 @@ export function MobileWorkspace({ onClose }: { onClose: () => void }) {
   }, [onClose])
 
   const badges: Partial<Record<TabId, boolean | number>> = {
-    editor: dirtyPaths.size > 0,
+    editor: Object.keys(dirtyPaths).length > 0,
     review: reviewFiles.length
   }
 
@@ -194,7 +194,6 @@ export function MobileWorkspace({ onClose }: { onClose: () => void }) {
                 show('editor')
               }}
               onActivateFolder={previewFile}
-              onFileOpened={() => show('editor')}
             />
           </div>
         )}

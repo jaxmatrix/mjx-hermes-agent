@@ -190,7 +190,7 @@ export function useComposerMetrics({
     syncComposerMetrics()
   }, [poppedOut, syncComposerMetrics])
 
-  // eslint-disable-next-line no-restricted-syntax -- resets a publish-dedupe cache in cleanup, not a mirrored atom
+   
   useEffect(() => {
     // Resolve the owning surface while the composer is still attached; the
     // unmount cleanup runs after React detached the node, where closest() can

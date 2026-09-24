@@ -7,6 +7,7 @@ const native = vi.hoisted(() => ({
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (command: string, args?: Record<string, unknown>) => {
     native.calls.push([command, args])
+
     return { ok: true }
   })
 }))

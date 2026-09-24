@@ -1,3 +1,4 @@
+import type { ProfilesConfigureResult, ProfilesDescribeResult, ProfilesGetAssetResult } from '@hermes/shared/gateway-events'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { PageLoader } from '@/components/page-loader'
@@ -5,15 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useI18n } from '@/i18n'
-import {
-  clearProfileAsset,
-  configureProfile,
-  describeProfile,
-  getProfileAsset,
-  type ProfileDescription,
-  setProfileAsset
-} from '@/lib/gateway-rpc'
 import { AlertTriangle } from '@/lib/icons'
+import { requestGateway } from '@/store/gateway-client'
 import { notify, notifyError } from '@/store/notifications'
 
 import { PanelSectionLabel } from '../overlays/panel'
@@ -44,7 +38,7 @@ export function ProfileEditor({ profileName }: { profileName: string }) {
   const { t } = useI18n()
   const p = t.profiles
   const e = p.editor
-  const [description, setDescription] = useState<null | ProfileDescription>(null)
+  const [description, setDescription] = useState<null | ProfilesDescribeResult>(null)
   const [loadError, setLoadError] = useState<null | string>(null)
   const [descriptionDraft, setDescriptionDraft] = useState('')
   const [skills, setSkills] = useState<Toggle[]>([])
@@ -70,17 +64,23 @@ export function ProfileEditor({ profileName }: { profileName: string }) {
 
     void (async () => {
       try {
-        const described = await describeProfile(profileName)
+        const described = await requestGateway<ProfilesDescribeResult>('profiles.describe', { name: profileName })
 
         if (requestRef.current !== profileName) {
           return
         }
 
         setDescription(described)
-        setDescriptionDraft(described.description)
-        setSkills(described.skills.map(skill => ({ name: skill.name, enabled: skill.enabled })))
-        setToolsets(described.toolsets.map(toolset => ({ name: toolset.name, enabled: toolset.enabled })))
-        setMcpServers(described.mcp_servers.map(server => ({ name: server.name, enabled: server.enabled })))
+        setDescriptionDraft(described.description ?? '')
+        setSkills(
+          (described.skills ?? []).map(skill => ({ name: skill.name, enabled: skill.enabled ?? false }))
+        )
+        setToolsets(
+          (described.toolsets ?? []).map(toolset => ({ name: toolset.name, enabled: toolset.enabled ?? false }))
+        )
+        setMcpServers(
+          (described.mcp_servers ?? []).map(server => ({ name: server.name, enabled: server.enabled ?? false }))
+        )
       } catch (err) {
         if (requestRef.current === profileName) {
           setLoadError(err instanceof Error ? err.message : e.loadFailed)
@@ -90,7 +90,10 @@ export function ProfileEditor({ profileName }: { profileName: string }) {
     void (async () => {
       try {
         // `found: false` is the normal answer for a profile with no avatar.
-        const asset = await getProfileAsset(profileName)
+        const asset = await requestGateway<ProfilesGetAssetResult>('profiles.get_asset', {
+          asset: 'avatar',
+          name: profileName
+        })
 
         if (requestRef.current === profileName && asset.found && asset.data) {
           setAvatar(asset.data)
@@ -109,12 +112,12 @@ export function ProfileEditor({ profileName }: { profileName: string }) {
     setSaving(true)
 
     try {
-      const result = await configureProfile({
+      const result = await requestGateway<ProfilesConfigureResult>('profiles.configure', {
         name: profileName,
         ...(dirty.description ? { description: descriptionDraft } : {}),
-        ...(dirty.skills ? { disabledSkills: skills.filter(row => !row.enabled).map(row => row.name) } : {}),
-        ...(dirty.toolsets ? { enabledToolsets: enabledNames(toolsets) } : {}),
-        ...(dirty.mcp ? { enabledMcpServers: enabledNames(mcpServers) } : {})
+        ...(dirty.skills ? { disabled_skills: skills.filter(row => !row.enabled).map(row => row.name) } : {}),
+        ...(dirty.toolsets ? { enabled_toolsets: enabledNames(toolsets) } : {}),
+        ...(dirty.mcp ? { enabled_mcp_servers: enabledNames(mcpServers) } : {})
       })
 
       // Every section is applied independently and best-effort, so `ok` alone
@@ -161,7 +164,7 @@ export function ProfileEditor({ profileName }: { profileName: string }) {
           reader.readAsDataURL(file)
         })
 
-        await setProfileAsset({ data, name: profileName })
+        await requestGateway('profiles.set_asset', { asset: 'avatar', data, name: profileName })
         setAvatar(data)
         notify({ kind: 'success', title: e.avatarSaved, message: profileName })
       } catch (err) {
@@ -177,7 +180,7 @@ export function ProfileEditor({ profileName }: { profileName: string }) {
     setAvatarBusy(true)
 
     try {
-      await clearProfileAsset(profileName)
+      await requestGateway('profiles.set_asset', { asset: 'avatar', clear: true, name: profileName })
       setAvatar(null)
     } catch (err) {
       notifyError(err, e.avatarFailed)

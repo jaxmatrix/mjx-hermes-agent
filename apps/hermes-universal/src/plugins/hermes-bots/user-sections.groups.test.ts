@@ -17,7 +17,7 @@ const { saveBotMeta, storage } = vi.hoisted(() => ({
 vi.mock('@hermes/plugin-sdk', async () => {
   const { atom } = await import('nanostores')
 
-  return { atom, host: {} }
+  return { atom, host: {}, universalHost: {} }
 })
 
 vi.mock('./data', async () => {

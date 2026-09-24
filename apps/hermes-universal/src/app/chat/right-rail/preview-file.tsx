@@ -623,7 +623,7 @@ export function SourceView({ filePath, language, text }: { filePath?: string; la
         {beforeRows > 0 && <div aria-hidden className="col-span-2" style={{ height: beforeRows * SOURCE_LINE_PX }} />}
         {visibleChunks.map(chunk => (
           <Fragment key={chunk.start}>
-            <div className="select-none text-right text-muted-foreground/55">
+            <div className="select-none text-end text-muted-foreground/55">
               {chunk.lines.map((_lineText, offset) => {
                 const line = chunk.start + offset + 1
                 const selected = inSelection(line)
@@ -631,7 +631,7 @@ export function SourceView({ filePath, language, text }: { filePath?: string; la
                 return (
                   <div
                     className={cn(
-                      'h-5 w-9 pr-2 leading-5 tabular-nums transition-colors',
+                      'h-5 w-9 pe-2 leading-5 tabular-nums transition-colors',
                       filePath && 'cursor-pointer',
                       selected
                         ? 'bg-amber-200/45 text-amber-900 dark:bg-amber-300/20 dark:text-amber-100'
@@ -704,7 +704,7 @@ export function LocalFilePreview({
   const isImage = target.previewKind === 'image'
   const isPdf = target.previewKind === 'pdf'
 
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+   
   useEffect(() => {
     setUserMode(null)
     setEditing(false)

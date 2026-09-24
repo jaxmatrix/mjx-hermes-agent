@@ -36,7 +36,7 @@ export function StartVoiceButton({
       <Tip label={engine ? `${label} — ${engine}` : label} placement="control">
         <Button
           aria-label={label}
-          className={cn(PRIMARY_ICON_BTN, engine && 'rounded-r-none')}
+          className={cn(PRIMARY_ICON_BTN, engine && 'rounded-e-none')}
           disabled={disabled}
           onClick={() => {
             triggerHaptic('open')
@@ -54,7 +54,7 @@ export function StartVoiceButton({
             <DropdownMenuTrigger asChild>
               <Button
                 aria-label={t.composer.voiceEngine}
-                className={cn(GHOST_ICON_BTN, 'w-5 rounded-l-none p-0')}
+                className={cn(GHOST_ICON_BTN, 'w-5 rounded-s-none p-0')}
                 disabled={disabled}
                 size="icon"
                 type="button"

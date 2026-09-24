@@ -7,7 +7,7 @@
  * says whose it is.
  */
 
-import { host, useValue, Wordmark } from '@hermes/plugin-sdk'
+import { universalHost as host, useValue, Wordmark } from '@hermes/plugin-sdk'
 
 import { avatarColor, botAppearance, BotFace } from './avatar'
 import { isBackfilledFacePng } from './avatar-image'

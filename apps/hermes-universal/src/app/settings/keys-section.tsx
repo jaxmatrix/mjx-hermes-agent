@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import { credentialRowElementId } from '@/app/settings/setting-row-id'
 import { useI18n } from '@/i18n'
 import { useStore } from '@/store/atom'
-import { $settingsScopeOverride } from '@/store/settings-scope'
+import { $settingsRequestProfile } from '@/store/settings-scope'
 
 import { CredentialKeyCard, credentialPlaceholder, credentialRowLabel } from './credential-key-ui'
 import { useEnvCredentials } from './env-credentials'
 import { SettingsContent, SettingsSkeleton } from './primitives'
 import { SettingsProfileScope } from './profile-scope'
-import { credentialRowElementId } from '@/app/settings/setting-row-id'
 import { useDeepLinkHighlight } from './use-deep-link-highlight'
 
 // Settings → Tools & Keys. Ported to desktop parity (apps/desktop/src/app/settings/
@@ -34,7 +34,7 @@ export function KeysSection({ view }: { view: KeysView }) {
   const { t } = useI18n()
   // Keys are per-profile .env entries, so this page edits whichever profile the
   // shared "Applies to" scope names (desktop keys-settings does the same).
-  const scopeProfile = useStore($settingsScopeOverride)
+  const scopeProfile = useStore($settingsRequestProfile)
   const { rowProps, vars } = useEnvCredentials(scopeProfile)
   const [openKey, setOpenKey] = useState<null | string>(null)
 
@@ -66,11 +66,7 @@ export function KeysSection({ view }: { view: KeysView }) {
   })
 
   if (!vars) {
-    return (
-      <SettingsSkeleton sections={[{ rows: 5 }]}>
-        <SettingsProfileScope className="mb-5" />
-      </SettingsSkeleton>
-    )
+    return <SettingsSkeleton sections={[{ rows: 5 }]} />
   }
 
   return (
@@ -86,18 +82,18 @@ export function KeysSection({ view }: { view: KeysView }) {
             const label = credentialRowLabel(key, info)
 
             return (
-              <CredentialKeyCard
-                elementId={credentialRowElementId(key)}
-                expanded={openKey === key}
-                info={info}
-                key={key}
-                label={label}
-                onExpand={() => setOpenKey(key)}
-                onToggle={() => setOpenKey(prev => (prev === key ? null : key))}
-                placeholder={credentialPlaceholder(key, info, label)}
-                rowProps={rowProps}
-                varKey={key}
-              />
+              <div className="scroll-mt-6 rounded-[6px]" id={credentialRowElementId(key)} key={key}>
+                <CredentialKeyCard
+                  expanded={openKey === key}
+                  info={info}
+                  label={label}
+                  onExpand={() => setOpenKey(key)}
+                  onToggle={() => setOpenKey(prev => (prev === key ? null : key))}
+                  placeholder={credentialPlaceholder(key, info, label)}
+                  rowProps={rowProps}
+                  varKey={key}
+                />
+              </div>
             )
           })}
         </div>

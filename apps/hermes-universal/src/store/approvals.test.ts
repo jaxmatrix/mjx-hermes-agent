@@ -139,7 +139,7 @@ describe('approval queue correlation', () => {
 
     it('ignores a session with nothing parked, and a nameless one', () => {
       expect(applyResumedApproval('s1', {})).toBe(false)
-      expect(applyResumedApproval('s1', { pending_approval: null })).toBe(false)
+      expect(applyResumedApproval('s1', { pending_approval: undefined })).toBe(false)
       expect(applyResumedApproval('s1', { pending_approval: { command: 'rm -rf /' } })).toBe(false)
       expect(sessionApprovalRequest('s1').get()).toBeNull()
     })

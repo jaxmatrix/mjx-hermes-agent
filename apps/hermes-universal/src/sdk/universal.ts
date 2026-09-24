@@ -1,16 +1,31 @@
 /**
  * `@hermes/plugin-sdk` as universal serves it: desktop's barrel, verbatim, plus
  * what only universal has.
- *
- * `sdk/index.ts` is desktop's file and is never edited here. A name a universal
- * plugin needs and desktop's SDK does not carry is exported from THIS module,
- * which is what the public specifier resolves to — the vite alias and the
- * tsconfig path for a bundled plugin, `sdk/runtime.ts`'s namespace for a
- * runtime-loaded one — so both kinds of plugin see one surface. An explicit
- * export below wins over the same name arriving through `export *`.
  */
-export * from './index'
+import './plugin-host-universal'
 
-// The accent picker's drag (`plugins/accent/picker.tsx`). Universal's primitive
-// ends a drag on `pointercancel` too, which a touch gesture needs.
+export * from './index'
+export type { UniversalHost } from './plugin-host-universal'
+/** Typed universal view of the same object as desktop `host` (mutated in plugin-host-universal). */
+export { universalHost } from './plugin-host-universal'
+
+export { SessionThread } from '@/app/chat/session-thread'
+export { CONTEXT_MENU_ITEMS_AREA } from '@/app/context-menu/contrib'
+export { registerContextTarget } from '@/app/context-menu/registry'
 export { startPointerDrag } from '@/lib/pointer-drag'
+export { createTap, isCoarsePointer } from '@/lib/touch'
+export { confirm } from '@/store/confirm'
+export { confirmDelete } from '@/store/confirm-delete'
+export { holdKeepAwake } from '@/store/keep-awake'
+export { livePollIntervalMs } from '@/store/live-poll'
+export {
+  type PluginAgent,
+  type PluginAgentRoster,
+  type PluginConnection,
+  setPluginConnectionSource
+} from '@/store/plugin-connection-source'
+export type {
+  PluginCreatedSession,
+  PluginOpenSessionResult,
+  PluginOpenSessionOptions as UniversalOpenSessionOptions
+} from '@/store/plugin-open-session'

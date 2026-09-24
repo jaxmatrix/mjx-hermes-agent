@@ -6,7 +6,19 @@ const { request } = vi.hoisted(() => ({ request: vi.fn(async () => undefined) })
 vi.mock('@/store/gateway', async () => {
   const { atom } = await import('nanostores')
 
-  return { $gateway: atom<unknown>(null), activeGateway: () => ({ request }) }
+  return {
+    $gateway: atom<unknown>(null),
+    $gatewayState: atom('open'),
+    activeGateway: () => ({ request })
+  }
+})
+vi.mock('@/store/connection', async () => {
+  const { atom } = await import('nanostores')
+
+  return {
+    $gatewayState: atom('open'),
+    $connectionState: atom('idle')
+  }
 })
 vi.mock('@/store/session', async () => {
   const { atom } = await import('nanostores')

@@ -57,6 +57,7 @@ function listenEvent<T>(event: string, callback: (payload: T) => void): () => vo
 function syncWindowing(): NonNullable<Hud['windowing']> {
   switch (PLATFORM) {
     case 'macos':
+
     case 'windows':
       return {
         clientPlacement: true,
@@ -99,8 +100,10 @@ const open: Hud['open'] = async request => {
       typeof request?.sessionId === 'string' && request.sessionId.trim()
         ? request.sessionId.trim()
         : null
+
     const profile =
       typeof request?.profile === 'string' && request.profile.trim() ? request.profile.trim() : null
+
     const existed = await doesSatelliteWindowExist(HUD_SURFACE)
     const route = sessionId ? sessionRoute(sessionId) : undefined
     const label = await openSatelliteWindow(HUD_SURFACE, route, profile)
@@ -192,6 +195,7 @@ const setFrost: Hud['setFrost'] = async showing => {
       import('@/store/translucency'),
       import('@/lib/translucency-model')
     ])
+
     const state = $translucency.get()
     const active = Boolean(showing) && glassActive(state)
 

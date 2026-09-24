@@ -4,39 +4,7 @@
  * detail dialogs, and the pane the right tile renders.
  */
 
-import {
-  atom,
-  Button,
-  Checkbox,
-  cn,
-  Codicon,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  GlyphSpinner,
-  host,
-  Input,
-  nextRunOverdueMs,
-  PanelEmpty,
-  queryClient,
-  relativeTime,
-  RowButton,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Switch,
-  Textarea,
-  Tip,
-  translateNow,
-  useI18n,
-  useQuery,
-  useValue
-} from '@hermes/plugin-sdk'
+import { atom, Button, Checkbox, cn, Codicon, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, GlyphSpinner, universalHost as host, Input, nextRunOverdueMs, PanelEmpty, queryClient, relativeTime, RowButton, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch, Textarea, Tip, translateNow, useI18n, useQuery, useValue } from '@hermes/plugin-sdk'
 import { useState } from 'react'
 
 import { avatarColor, botAppearance, BotFace } from './avatar'
@@ -453,7 +421,7 @@ export function RoutineDetailDialog({ job, onClose, open }: RoutineDetailDialogP
             {rows.map(row => (
               <div className="flex items-baseline justify-between gap-3 text-xs" key={row.label}>
                 <span className="shrink-0 text-(--ui-text-tertiary)">{row.label}</span>
-                <span className="min-w-0 truncate text-right">{row.value}</span>
+                <span className="min-w-0 truncate text-end">{row.value}</span>
               </div>
             ))}
           </div>
@@ -540,7 +508,7 @@ export function RoutineRow({ job, onOpen, owner }: RoutineRowProps) {
       // re-pins the whole row.
       className={cn(
         'group grid min-w-0 gap-1.5 rounded-lg border border-(--ui-stroke-secondary) p-2.5 transition-colors',
-        'hover:border-(--ui-stroke-primary, var(--ui-stroke-secondary))'
+        'hover:border-(--ui-stroke-primary)'
       )}
     >
       <div className="flex min-w-0 items-center gap-2">
@@ -548,7 +516,7 @@ export function RoutineRow({ job, onOpen, owner }: RoutineRowProps) {
         /* and delete control are siblings, so opening the details can never */
         /* swallow a toggle (and a nested button would be invalid markup). */}
         <RowButton
-          className="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:text-foreground"
+          className="flex min-w-0 flex-1 items-center gap-2 text-start transition-colors hover:text-foreground"
           onClick={() => onOpen?.(job)}
           title={c.manage}
         >
@@ -571,7 +539,7 @@ export function RoutineRow({ job, onOpen, owner }: RoutineRowProps) {
         <Tip label={t.common.delete}>
           <Button
             aria-label={t.common.delete}
-            className="opacity-0 transition-opacity group-hover:opacity-100"
+            className="opacity-0 coarse:opacity-100 transition-opacity group-hover:opacity-100"
             disabled={busy}
             onClick={() => act('remove')}
             size="icon-xs"
@@ -584,12 +552,12 @@ export function RoutineRow({ job, onOpen, owner }: RoutineRowProps) {
       {/* The schedule pill and the next-run label keep their words: when the
           pane can't fit both on one line the next-run label wraps to a second
           line instead of being cut to "next in 4" (#89534). */}
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pl-3.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 ps-3.5">
         <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-(--ui-stroke-secondary) px-1.5 py-0.5 text-[0.65rem] text-(--ui-text-tertiary)">
           <Codicon className="text-[0.7rem]" name="calendar" />
           {scheduleLabel(job.schedule)}
         </span>
-        <span className="ml-auto shrink-0 whitespace-nowrap text-[0.65rem] text-(--ui-text-quaternary)">
+        <span className="ms-auto shrink-0 whitespace-nowrap text-[0.65rem] text-(--ui-text-quaternary)">
           {active && job.next_run_at
             ? `${nextRunOverdueMs(job) === null ? c.next : c.overdueSince} ${relativeTime(new Date(job.next_run_at).getTime())}`
             : c.states.paused}

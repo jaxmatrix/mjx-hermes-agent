@@ -1,10 +1,15 @@
+import type * as Nanostores from 'nanostores'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Isolate the bubble list logic from the runtime: a controllable active-id atom
 // stands in for the real session store, and the tile delegate / slice eviction
 // are inert spies. This keeps the store platform-agnostic and directly testable.
-vi.mock('@/store/session-lifecycle', async () => {
-  const { atom } = await import('nanostores')
+//
+// Hoisted so tests can seed `$sessions` without importing a non-exported symbol
+// from `@/store/session-lifecycle` (TS2459). `require` keeps nanostores usable
+// inside `vi.hoisted` (ESM imports are not initialized yet when hoisted runs).
+const lifecycle = vi.hoisted(() => {
+  const { atom } = require('nanostores') as typeof Nanostores
   const $activeStoredSessionId = atom<null | string>(null)
   // The loaded recents page. `sameStoredSession` is the only thing that reads it
   // here, and the rule is reproduced rather than stubbed to `a === b`, so a test
@@ -42,6 +47,8 @@ vi.mock('@/store/session-lifecycle', async () => {
   }
 })
 
+vi.mock('@/store/session-lifecycle', () => lifecycle)
+
 // The reverse index stands in for the real session map: `live` holds the stored
 // ids that currently have a slice, so the store's "is this session already
 // live?" questions are answerable without booting the whole session graph.
@@ -63,9 +70,7 @@ vi.mock('@/store/session-key-states', () => ({
   })
 }))
 
-import { $sessions } from '@/store/session'
 import { dropSessionState, sessionTileDelegate } from '@/store/session-key-states'
-import { $activeStoredSessionId } from '@/store/session-lifecycle'
 import { $activeSessionKey } from '@/store/session-state-types'
 
 import {
@@ -78,6 +83,8 @@ import {
 } from './chat-bubbles'
 import { $pendingClose, resolvePendingClose } from './close-confirm'
 
+const { $activeStoredSessionId, $sessions } = lifecycle
+
 const ids = () => $chatBubbles.get().map(b => b.storedSessionId)
 
 afterEach(() => {
@@ -87,7 +94,7 @@ afterEach(() => {
 
   $chatBubbles.set([])
   $activeStoredSessionId.set(null)
-  ;($sessions as unknown as { set: (v: unknown[]) => void }).set([])
+  $sessions.set([])
   $activeSessionKey.set('')
   busyKeys.clear()
   live.clear()
@@ -338,7 +345,7 @@ describe('chat-bubbles store', () => {
    * in bubble" from that row added a SECOND bubble onto one live slice.
    */
   it('does not add a second bubble for a session already in the row under another id', () => {
-    ;($sessions as unknown as { set: (v: unknown[]) => void }).set([{ _lineage_root_id: 'root', id: 'tip' }])
+    $sessions.set([{ _lineage_root_id: 'root', id: 'tip' }])
     $activeStoredSessionId.set('a')
     addBubble('root')
     expect(ids()).toEqual(['a', 'root'])
@@ -349,7 +356,7 @@ describe('chat-bubbles store', () => {
   })
 
   it('does not bubble the conversation already in the active chat under another id', () => {
-    ;($sessions as unknown as { set: (v: unknown[]) => void }).set([{ _lineage_root_id: 'root', id: 'tip' }])
+    $sessions.set([{ _lineage_root_id: 'root', id: 'tip' }])
     $activeStoredSessionId.set('tip')
 
     addBubble('root')
@@ -358,7 +365,7 @@ describe('chat-bubbles store', () => {
   })
 
   it('still bubbles a genuinely different session', () => {
-    ;($sessions as unknown as { set: (v: unknown[]) => void }).set([{ _lineage_root_id: 'root', id: 'tip' }])
+    $sessions.set([{ _lineage_root_id: 'root', id: 'tip' }])
     $activeStoredSessionId.set('a')
     addBubble('root')
 

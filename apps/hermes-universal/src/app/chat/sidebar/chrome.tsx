@@ -29,6 +29,14 @@ export function SidebarSectionMeta({ children }: { children: React.ReactNode }) 
   return <span className="shrink-0 text-[0.6875rem] font-medium text-(--ui-text-quaternary)">{children}</span>
 }
 
+export function SidebarCount({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="ms-auto shrink-0 tabular-nums text-[0.6875rem] font-medium text-(--ui-text-quaternary)">
+      {typeof children === 'number' ? compactNumber(children) : children}
+    </span>
+  )
+}
+
 // Row geometry lives in `row-geometry.ts` — see that file for why each class
 // belongs to the box it belongs to. Re-exported here because this module is
 // where callers already look for row chrome.
@@ -110,7 +118,7 @@ export function SidebarRowStack({ className, ...props }: React.ComponentProps<'d
 
 /** Nested rows (session previews, worktree bodies). */
 export function SidebarRowNest({ className, ...props }: React.ComponentProps<'div'>) {
-  return <SidebarRowStack className={cn('pb-1 pl-2', className)} {...props} />
+  return <SidebarRowStack className={cn('pb-1 ps-2', className)} {...props} />
 }
 
 /**
@@ -147,7 +155,7 @@ export function SidebarDateDivider({
         <button
           aria-expanded={toggle.open}
           aria-label={toggle.ariaLabel}
-          className="flex min-w-0 flex-1 items-center gap-2 bg-transparent text-left"
+          className="flex min-w-0 flex-1 items-center gap-2 bg-transparent text-start"
           onClick={toggle.onToggle}
           type="button"
         >
@@ -208,7 +216,7 @@ export function SidebarRowCluster({ className, ...props }: React.ComponentProps<
 
 /** Session row main tap target. */
 export function SidebarRowBody({ className, ...props }: React.ComponentProps<'button'>) {
-  return <RowButton className={cn(SIDEBAR_ROW_INSET, 'bg-transparent text-left', className)} {...props} />
+  return <RowButton className={cn(SIDEBAR_ROW_INSET, 'bg-transparent text-start', className)} {...props} />
 }
 
 /** Tappable label — underline/truncate live on the inner span, not the button. */
@@ -219,7 +227,7 @@ export function SidebarRowLink({
   ...props
 }: React.ComponentProps<'button'> & { labelClassName?: string }) {
   return (
-    <RowButton className={cn('min-w-0 shrink bg-transparent p-0 text-left', className)} {...props}>
+    <RowButton className={cn('min-w-0 shrink bg-transparent p-0 text-start', className)} {...props}>
       <span className={cn(SIDEBAR_ROW_LABEL, labelClassName)}>{children}</span>
     </RowButton>
   )
@@ -282,10 +290,10 @@ export function SidebarGroupRow({
         // group, never both at once.
         facts.length ? (
           <div className="relative flex items-center">
-            <span className="min-w-9 whitespace-nowrap text-right text-[0.625rem] leading-none text-(--ui-text-tertiary) transition-opacity group-hover/workspace:opacity-0">
+            <span className="min-w-9 whitespace-nowrap text-end text-[0.625rem] leading-none text-(--ui-text-tertiary) transition-opacity group-hover/workspace:opacity-0">
               {facts.join(' · ')}
             </span>
-            {actions ? <div className="absolute right-0 flex items-center">{actions}</div> : null}
+            {actions ? <div className="absolute end-0 flex items-center">{actions}</div> : null}
           </div>
         ) : (
           actions

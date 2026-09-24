@@ -1,7 +1,8 @@
 import { atom, computed } from 'nanostores'
 
 import { type SessionView } from '@/app/chat/session-view'
-import { type ChatMessage } from '@/store/chat'
+import { type ChatMessage } from '@/lib/chat-messages'
+import { type ChatMessage as LegacyChatMessage } from '@/lib/session-key-messages'
 import { $sessionKeyTabs, tileRuntimeKey } from '@/store/session-key-states'
 import { $sessionKeyStates } from '@/store/session-state-types'
 import { $transcriptPaint } from '@/store/transcript-paint'
@@ -21,9 +22,9 @@ import { $transcriptPaint } from '@/store/transcript-paint'
  * consumer branches on that meaning.
  */
 
-const NO_MESSAGES: ChatMessage[] = []
+const NO_MESSAGES: LegacyChatMessage[] = []
 
-function lastVisibleIsUser(messages: ChatMessage[]): boolean {
+function lastVisibleIsUser(messages: LegacyChatMessage[]): boolean {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === 'system') {
       continue
@@ -54,23 +55,25 @@ export function buildSessionView(storedSessionId: string): SessionView {
     messages.length || !key ? messages : (paint[key]?.messages ?? messages)
   )
 
+  const $viewMessages = computed($paintedMessages, messages => messages as ChatMessage[])
+
   return {
     kind: 'tile',
     $runtimeId,
     $storedId: atom(storedSessionId),
-    $messages,
-    $paintedMessages,
-    $paintedMessagesEmpty: computed($paintedMessages, m => m.length === 0),
+    $messages: $viewMessages,
+    $paintedMessages: $viewMessages,
     $busy: computed($state, s => Boolean(s?.busy)),
     $awaitingResponse: computed($state, s => Boolean(s?.awaitingResponse)),
     $messagesEmpty: computed($messages, m => m.length === 0),
     $lastVisibleIsUser: computed($messages, lastVisibleIsUser),
-    $statusLine: computed($state, s => s?.statusLine ?? ''),
+    $turnStartedAt: computed($state, s => s?.turnStartedAt ?? null),
     $cwd: computed($state, s => s?.cwd ?? ''),
     $model: computed($state, s => s?.model ?? ''),
     $provider: computed($state, s => s?.provider ?? ''),
     $fast: computed($state, s => Boolean(s?.fast)),
-    $reasoningEffort: computed($state, s => s?.reasoningEffort ?? '')
+    $reasoningEffort: computed($state, s => s?.reasoningEffort ?? ''),
+    $reasoningEffortWire: computed($state, () => '')
   }
 }
 

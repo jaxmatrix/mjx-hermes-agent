@@ -28,7 +28,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
     get createBudgetedLoop() {
       return budgetedLoopMock.impl
     },
-    host: { state: { connectionId: { get: () => 'local' } } },
+    universalHost: { state: { connectionId: { get: () => 'local' } } },
     profileColor: () => '#8b5cf6',
     PROFILE_SWATCHES: [],
     queryClient: undefined,

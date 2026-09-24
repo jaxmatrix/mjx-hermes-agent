@@ -26,7 +26,10 @@ import type { PendingApprovalPayload, SessionResumeResult } from '@/types/hermes
 
 /** The client-side request an `approval.request` payload (or its replay
  *  snapshot) describes. Both shapes come from `_approval_request_payload`. */
-export function readApprovalPayload(payload: PendingApprovalPayload): ApprovalRequest {
+export function readApprovalPayload(
+  payload: PendingApprovalPayload,
+  sessionId: string | null = null
+): ApprovalRequest {
   return {
     requestId: typeof payload.request_id === 'string' ? payload.request_id : undefined,
     command: typeof payload.command === 'string' ? payload.command : '',
@@ -36,7 +39,8 @@ export function readApprovalPayload(payload: PendingApprovalPayload): ApprovalRe
     choices: Array.isArray(payload.choices)
       ? payload.choices.filter((choice): choice is string => typeof choice === 'string')
       : undefined,
-    smartDenied: payload.smart_denied === true
+    smartDenied: payload.smart_denied === true,
+    sessionId
   }
 }
 
@@ -83,7 +87,7 @@ export async function replayPendingApproval(sessionId: string, key: string): Pro
     return false
   }
 
-  const request = readApprovalPayload(pending)
+  const request = readApprovalPayload(pending, sessionId)
 
   setSessionApproval(key, request)
 
@@ -107,7 +111,7 @@ export function applyResumedApproval(key: string, resumed: Pick<SessionResumeRes
     return false
   }
 
-  setSessionApproval(key, readApprovalPayload(pending))
+  setSessionApproval(key, readApprovalPayload(pending, key))
 
   return true
 }

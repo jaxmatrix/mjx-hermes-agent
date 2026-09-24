@@ -42,7 +42,7 @@ export function SudoBar({ request, sessionKey }: { request: SudoRequest; session
 
   return (
     <RequestBar title="Sudo password required">
-      <RequestBarDescription>{request.prompt}</RequestBarDescription>
+      <RequestBarDescription>{request.description || request.command || 'Enter your sudo password'}</RequestBarDescription>
       <Input
         autoFocus
         onChange={e => setPassword(e.target.value)}

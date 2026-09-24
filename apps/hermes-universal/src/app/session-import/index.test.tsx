@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { atom } from 'nanostores'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { setSessionOwnerHint } from '@/store/session'
@@ -9,7 +10,10 @@ import { type ForeignImportResult, foreignRequest } from './api'
 import { SessionImportView } from './index'
 
 vi.mock('./api', () => ({ foreignRequest: vi.fn() }))
-vi.mock('@/store/session', () => ({ setSessionOwnerHint: vi.fn() }))
+vi.mock('@/store/session', () => ({
+  setSessionOwnerHint: vi.fn(),
+  $gatewayState: atom('closed')
+}))
 vi.mock('@/components/assistant-ui/markdown-text', () => ({
   MarkdownTextContent: ({ text }: { text: string }) => <p>{text}</p>
 }))

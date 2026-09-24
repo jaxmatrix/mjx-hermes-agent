@@ -1,3 +1,4 @@
+import { SLASH_COMMAND_RE } from '@hermes/shared'
 import { useCallback, useEffect } from 'react'
 
 import {
@@ -19,9 +20,8 @@ import { submitPromptToSurface } from '@/app/chat/surface-submit'
 import { ModelMenuPanel } from '@/app/shell/model-menu-panel'
 import { transcribeAudio } from '@/hermes'
 import { translateNow } from '@/i18n'
-import { SLASH_COMMAND_RE } from '@/lib/chat-runtime'
-import { canReadClipboardImage, readClipboardImage } from '@/lib/clipboard'
-import { gatewayOwnsLocalFs } from '@/lib/desktop-fs'
+import { canReadClipboardImage, readClipboardImage } from '@/lib/clipboard-universal'
+import { gatewayOwnsLocalFs } from '@/lib/desktop-fs-universal'
 import { triggerHaptic } from '@/lib/haptics'
 import { useStore } from '@/store/atom'
 import { interruptSession, redirectPrompt } from '@/store/chat'
@@ -339,20 +339,7 @@ export function ChatComposer() {
               onSelectModel={selectModel}
               requestGateway={requestGateway}
             />
-          ) : null,
-          // Same panel, drawer mode. Built here rather than in the pill for the
-          // same reason the menu is: this is where the gateway and the
-          // session-scoped `selectModel` live.
-          modelDrawer: isPrimary
-            ? drawer => (
-                <ModelMenuPanel
-                  drawer={drawer}
-                  gateway={getGatewayClient() ?? undefined}
-                  onSelectModel={selectModel}
-                  requestGateway={requestGateway}
-                />
-              )
-            : undefined
+          ) : null
         },
         tools: { enabled: true, label: 'Add context' },
         voice: { enabled: true, active: false }

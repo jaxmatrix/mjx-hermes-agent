@@ -16,6 +16,11 @@ const session = (over: Partial<SessionInfo>): SessionInfo =>
   }) as SessionInfo
 
 vi.mock('@/hermes', () => ({
+  getProfiles: vi.fn(async () => ({ profiles: [] })),
+  profileScopeKey: (profile?: string | null) => (profile ?? '').trim() || 'default',
+  setApiRequestProfile: vi.fn(),
+  getApiRequestConnection: () => null,
+  getApiRequestProfile: () => 'default',
   listSessions: vi.fn(async () => ({
     sessions: [
       session({ id: 's1', title: 'Old chat', message_count: 3 }),
@@ -56,7 +61,7 @@ const unarchive = vi.mocked(setSessionArchived)
 const pinned = vi.mocked(isSessionPinned)
 
 const PINNED_WARNING =
-  'This chat is pinned. Pinning marks it as kept — bulk cleanups skip it, but deleting it here is permanent.'
+  'This chat is pinned — unpin it first if you did not mean to delete it.'
 
 /** Open the permanent-delete confirm on the first archived row. */
 const openDeleteConfirm = async () => {

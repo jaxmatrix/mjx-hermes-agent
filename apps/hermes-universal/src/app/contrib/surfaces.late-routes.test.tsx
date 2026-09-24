@@ -13,17 +13,35 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { registry } from '@/contrib/registry'
+import type * as ModProfile from '@/store/profile'
+import type * as ModSession from '@/store/session'
 
 import { ChatRoutesSurface } from './surfaces'
 import type { WiringActions } from './types'
 
 vi.mock('@/store/connections', () => ({ $activeConnectionId: atom('local') }))
 vi.mock('@/store/gateway', () => ({ $gateway: atom<unknown>(null) }))
-vi.mock('@/store/profile', () => ({ $activeGatewayProfile: atom('default') }))
-vi.mock('@/store/session', () => ({
-  $freshDraftReady: atom(false),
-  $gatewayState: atom('open')
-}))
+vi.mock('@/store/profile', async importOriginal => {
+  const actual = await importOriginal<typeof ModProfile>()
+  const { atom } = await import('nanostores')
+
+  return {
+    ...actual,
+    $activeGatewayProfile: atom('default'),
+    $showAllProfiles: atom(false)
+  }
+})
+vi.mock('@/store/session', async importOriginal => {
+  const actual = await importOriginal<typeof ModSession>()
+  const { atom } = await import('nanostores')
+
+  return {
+    ...actual,
+    $currentCwd: atom(''),
+    $freshDraftReady: atom(false),
+    $gatewayState: atom('open')
+  }
+})
 vi.mock('../chat', () => ({ ChatView: () => <div data-testid="chat-view" /> }))
 vi.mock('../chat/sidebar', () => ({ ChatSidebar: () => null }))
 vi.mock('../right-sidebar/terminal/chrome', () => ({ TerminalPaneChrome: () => null }))

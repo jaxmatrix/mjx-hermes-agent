@@ -1,3 +1,4 @@
+import { atom } from 'nanostores'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { $activeTip, $retiredTips, $tipsEnabled, dismissTip, resetTips, retireActiveTip } from '@/store/tips'
@@ -9,7 +10,11 @@ vi.mock('@/app/right-sidebar/terminal/agent-terminal-stream', () => ({ writeAgen
 vi.mock('@/app/right-sidebar/terminal/terminals', () => ({ closeAgentTerminalByProc: vi.fn() }))
 vi.mock('@/store/pane-focus', () => ({ applyDesktopLayoutPreset: vi.fn(), revealDesktopPane: vi.fn() }))
 vi.mock('@/store/reactions-local', () => ({ recordAgentReaction: vi.fn() }))
-vi.mock('@/store/session', () => ({ setMessages: vi.fn() }))
+vi.mock('@/store/session', () => ({
+  setMessages: vi.fn(),
+  $currentCwd: atom(''),
+  $gatewayState: atom('closed')
+}))
 
 const tipShow = (text: string): GatewayEventContext =>
   ({

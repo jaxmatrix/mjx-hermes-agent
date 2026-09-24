@@ -18,6 +18,7 @@ import { COMPOSER_HEART_CONFIG, HeartField } from '@/components/chat/vibe-hearts
 import { IS_MOBILE } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store/atom'
+import { $statusLine as $globalStatusLine } from '@/store/chat'
 import { $petActive } from '@/store/pet'
 import { sessionApprovalRequest, sessionSecretRequest, sessionSudoRequest } from '@/store/prompts'
 import { tabIsBroken } from '@/store/tab-connection'
@@ -39,7 +40,7 @@ export const ChatScreen = memo(function ChatScreen() {
   const sessionKey = useStore(view.$runtimeId) ?? ''
 
   const busy = useStore(view.$busy)
-  const statusLine = useStore(view.$statusLine)
+  const statusLine = useStore(view.$statusLine ?? $globalStatusLine)
   // Blocking prompts are per SESSION, so each chat surface renders its own
   // inline bars. These used to read the global prompt atoms and were therefore
   // gated to the primary chat, leaving a tile to surface its prompts through a
@@ -82,7 +83,7 @@ export const ChatScreen = memo(function ChatScreen() {
             than a statement about the connection (owner, Design v1.2). An empty
             chat on a live connection keeps whatever it does today. */}
         {broken && connection.transcriptEmpty ? <TranscriptUnavailable /> : <Thread />}
-        <ScrollToBottomButton />
+        <ScrollToBottomButton sessionId={sessionKey || null} />
         {barsPresent && (
           <div className="composer-bars">
             {busy && statusLine && <div className="ps-0.5 text-[0.8125rem] text-muted-foreground">{statusLine}</div>}
@@ -125,7 +126,7 @@ export const ChatScreen = memo(function ChatScreen() {
 
       {/* OS file drag-and-drop affordance — covers the whole chat area (Tauri
           delivers drops window-globally; the drop is handled by useFileDrop). */}
-      <ChatDropOverlay active={dragActive} />
+      <ChatDropOverlay kind={dragActive ? 'files' : null} />
     </div>
   )
 })
